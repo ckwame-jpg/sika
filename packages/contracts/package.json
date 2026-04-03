@@ -1,0 +1,9 @@
+{
+  "name": "@kalshi-sports-copilot/contracts",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "generate": "echo \"Export OpenAPI from apps/api, then generate TS contracts in this package.\""
+  }
+}

@@ -1,0 +1,185 @@
+@import "tailwindcss";
+@config "../tailwind.config.ts";
+
+/* ── Tailwind v4 theme: maps utility names to CSS variables ── */
+@theme inline {
+  /* Colors */
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-bright: var(--border-bright);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-dim: var(--accent-dim);
+  --color-positive: var(--positive);
+  --color-positive-dim: var(--positive-dim);
+  --color-negative: var(--negative);
+  --color-negative-dim: var(--negative-dim);
+  --color-warning: var(--warning);
+  --color-sport-nba: var(--sport-nba);
+  --color-sport-nfl: var(--sport-nfl);
+  --color-sport-mlb: var(--sport-mlb);
+  --color-sport-soccer: var(--sport-soccer);
+  --color-sport-tennis: var(--sport-tennis);
+  --color-sport-ufc: var(--sport-ufc);
+
+  /* Fonts */
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), monospace;
+
+  /* Border radius */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+
+  /* Shadows */
+  --shadow-surface: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+  --shadow-elevated: 0 4px 12px 0 rgb(0 0 0 / 0.5), 0 1px 3px -1px rgb(0 0 0 / 0.3);
+  --shadow-glow-accent: 0 0 16px 0 hsl(217 91% 60% / 0.2);
+  --shadow-glow-positive: 0 0 12px 0 hsl(160 72% 46% / 0.25);
+
+  /* Animations */
+  --animate-fade-in: fade-in 150ms ease-out;
+  --animate-slide-up: slide-up 150ms ease-out;
+  --animate-slide-in-right: slide-in-right 150ms ease-out;
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slide-in-right {
+    from { opacity: 0; transform: translateX(12px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+}
+
+/* ── Light mode CSS variables ── */
+:root {
+  --background: hsl(220 30% 97%);
+  --surface: hsl(0 0% 100%);
+  --surface-hover: hsl(220 25% 94%);
+  --border: hsl(220 20% 87%);
+  --border-bright: hsl(220 25% 80%);
+  --foreground: hsl(220 47% 10%);
+  --muted: hsl(220 20% 92%);
+  --muted-foreground: hsl(220 15% 45%);
+  --accent: hsl(217 91% 50%);
+  --accent-foreground: hsl(0 0% 100%);
+  --accent-dim: hsl(217 91% 50% / 0.1);
+  --positive: hsl(160 84% 35%);
+  --positive-dim: hsl(160 84% 35% / 0.12);
+  --negative: hsl(0 78% 55%);
+  --negative-dim: hsl(0 78% 55% / 0.12);
+  --warning: hsl(40 95% 48%);
+
+  --sport-nba: hsl(25 95% 53%);
+  --sport-nfl: hsl(218 75% 45%);
+  --sport-mlb: hsl(0 75% 50%);
+  --sport-soccer: hsl(142 71% 38%);
+  --sport-tennis: hsl(78 80% 42%);
+  --sport-ufc: hsl(0 90% 52%);
+}
+
+/* ── Dark mode CSS variables ── */
+.dark {
+  --background: hsl(222 47% 4%);
+  --surface: hsl(220 42% 8%);
+  --surface-hover: hsl(220 40% 12%);
+  --border: hsl(220 28% 16%);
+  --border-bright: hsl(220 25% 22%);
+  --foreground: hsl(213 31% 91%);
+  --muted: hsl(220 30% 12%);
+  --muted-foreground: hsl(215 18% 54%);
+  --accent: hsl(217 91% 60%);
+  --accent-foreground: hsl(0 0% 100%);
+  --accent-dim: hsl(217 91% 60% / 0.12);
+  --positive: hsl(160 72% 46%);
+  --positive-dim: hsl(160 72% 46% / 0.12);
+  --negative: hsl(0 85% 65%);
+  --negative-dim: hsl(0 85% 65% / 0.12);
+  --warning: hsl(40 95% 58%);
+
+  --sport-nba: hsl(25 95% 58%);
+  --sport-nfl: hsl(210 80% 62%);
+  --sport-mlb: hsl(0 80% 62%);
+  --sport-soccer: hsl(142 65% 50%);
+  --sport-tennis: hsl(78 75% 55%);
+  --sport-ufc: hsl(0 90% 60%);
+}
+
+@layer base {
+  * {
+    /* Direct CSS — avoids @apply on a token that hasn't been registered yet */
+    border-color: var(--border);
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-geist-sans), system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* Subtle scrollbars */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--border-bright); }
+
+  .font-mono {
+    font-feature-settings: "tnum", "ss01";
+  }
+}
+
+@layer utilities {
+  .ring-focus {
+    @apply outline-none ring-2 ring-accent/40 ring-offset-1 ring-offset-background;
+  }
+
+  .border-inset {
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+
+  .glass {
+    background-color: var(--surface);
+    opacity: 0.92;
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+  }
+
+  .rule-top {
+    border-top: 1px solid var(--border);
+  }
+
+  .stat-value {
+    @apply font-mono text-sm tabular-nums;
+  }
+
+  .live-dot {
+    @apply inline-block w-1.5 h-1.5 rounded-full bg-positive animate-pulse;
+  }
+}
