@@ -7,9 +7,21 @@ from app.config import get_settings
 
 settings = get_settings()
 
-is_sqlite = settings.database_url.startswith("sqlite")
+
+def normalize_database_url(database_url: str) -> str:
+    if database_url.startswith("postgresql+"):
+        return database_url
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql+psycopg://", 1)
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return database_url
+
+
+resolved_database_url = normalize_database_url(settings.database_url)
+is_sqlite = resolved_database_url.startswith("sqlite")
 connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite else {}
-engine = create_engine(settings.database_url, future=True, connect_args=connect_args)
+engine = create_engine(resolved_database_url, future=True, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
 Base = declarative_base()
 
