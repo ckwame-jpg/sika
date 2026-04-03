@@ -1,4 +1,4 @@
-# Kalshi Sports Copilot
+# SIKA
 
 Backend-first monorepo for a six-sport Kalshi copilot with paper tracking and demo trading support.
 
