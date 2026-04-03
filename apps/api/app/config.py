@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     sports_api_key: str = "123"
     kalshi_public_base_url: str = "https://api.elections.kalshi.com/trade-api/v2"
     kalshi_demo_base_url: str = "https://demo-api.kalshi.co/trade-api/v2"
-    kalshi_key_id: str = "432d778c-b0c5-44aa-b0f1-e73beb0b831b"
-    kalshi_private_key_path: Path = Path("/Users/chris/.config/kalshi/kalshi-demo.key")
+    kalshi_key_id: str = ""
+    kalshi_private_key_path: Path = Path("/etc/secrets/kalshi-demo.key")
     default_timezone: str = "America/Chicago"
     web_origins: list[str] = Field(
         default_factory=lambda: [
