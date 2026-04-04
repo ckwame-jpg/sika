@@ -16,7 +16,7 @@ from app.services.ml import capture_shadow_artifacts
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import OPEN_MARKET_STATUSES, settle_predictions
 from app.services.scoring import PropStatsResolver, regenerate_watchlist, warm_prop_context_cache
-from app.services.watchlist_coverage import warm_current_watchlist_prop_context
+from app.services.watchlist_coverage import current_watchlist_markets, warm_current_watchlist_prop_context
 from app.sports.base import NormalizedEvent
 from app.sports.registry import ADAPTERS
 
@@ -216,6 +216,8 @@ def refresh_sports_data(
     niche_provider: TheSportsDBClient | None = None,
     sports: Iterable[str] | None = None,
     anchor_day: date | None = None,
+    lookback_days: int | None = None,
+    lookahead_days: int | None = None,
 ) -> dict[str, object]:
     settings = get_settings()
     seed_sports(db)
@@ -223,8 +225,10 @@ def refresh_sports_data(
     niche_provider = niche_provider or TheSportsDBClient()
     sports = list(sports or settings.enabled_sports)
     anchor_day = anchor_day or datetime.now(timezone.utc).date()
-    major_start_day = anchor_day - timedelta(days=settings.lookback_days)
-    major_end_day = anchor_day + timedelta(days=settings.lookahead_days)
+    effective_lookback = settings.lookback_days if lookback_days is None else lookback_days
+    effective_lookahead = settings.lookahead_days if lookahead_days is None else lookahead_days
+    major_start_day = anchor_day - timedelta(days=effective_lookback)
+    major_end_day = anchor_day + timedelta(days=effective_lookahead)
     free_start_day = anchor_day - timedelta(days=settings.free_provider_lookback_days)
     free_end_day = anchor_day + timedelta(days=settings.free_provider_lookahead_days)
 
@@ -561,51 +565,74 @@ def run_refresh_cycle(
     niche_provider: TheSportsDBClient | None = None,
     public_client: KalshiPublicClient | None = None,
     sports: Iterable[str] | None = None,
+    current_slate_only: bool = False,
 ) -> Run:
-    run = Run(kind="refresh", status="running", details={"sports": list(sports or get_settings().enabled_sports)})
+    initial_sports = list(sports or (["NBA", "MLB"] if current_slate_only else get_settings().enabled_sports))
+    run = Run(kind="refresh", status="running", details={"sports": initial_sports})
     db.add(run)
     db.flush()
     try:
         with httpx.Client(follow_redirects=True, timeout=20) as shared_http_client:
             kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)
             espn_client = major_provider or EspnPublicClient(http_client=shared_http_client)
+            settings = get_settings()
+            active_sports = list(sports or (["NBA", "MLB"] if current_slate_only else settings.enabled_sports))
             sports_summary = refresh_sports_data(
                 db,
                 provider=provider,
                 major_provider=espn_client,
                 niche_provider=niche_provider,
-                sports=sports,
+                sports=active_sports,
+                lookback_days=settings.current_slate_lookback_days if current_slate_only else None,
+                lookahead_days=settings.current_slate_lookahead_days if current_slate_only else None,
             )
             kalshi_summary = refresh_kalshi_markets(
                 db,
                 client=kalshi_client,
                 include_standalone=True,
-                refresh_combo_prop_tickers=True,
+                refresh_combo_prop_tickers=not current_slate_only,
                 discover_combo_props=False,
             )
             mapped_count = map_markets_to_events(db)
             current_watchlist_resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
             current_watchlist_summary = warm_current_watchlist_prop_context(db, resolver=current_watchlist_resolver)
+            target_market_ids = {market.id for market in current_watchlist_markets(db)} if current_slate_only else None
             resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=False)
             watchlist_summary = regenerate_watchlist(
                 db,
                 run_id=run.id,
                 resolver=resolver,
+                allowed_market_ids=target_market_ids,
+                replace_all=not current_slate_only,
+                capture_parlays=not current_slate_only,
             )
-            shadow_prediction_count, shadow_parlay_prediction_count = capture_shadow_artifacts(
-                db,
-                run_id=run.id,
-                candidates=[],
-            )
+            if current_slate_only:
+                shadow_prediction_count, shadow_parlay_prediction_count = 0, 0
+            else:
+                shadow_prediction_count, shadow_parlay_prediction_count = capture_shadow_artifacts(
+                    db,
+                    run_id=run.id,
+                    candidates=[],
+                )
             single_settlement_summary = settle_predictions(
                 db,
                 client=kalshi_client,
                 open_market_tickers=set(kalshi_summary.get("open_market_tickers") or set()),
+                sport_keys=set(active_sports) if current_slate_only else None,
             )
-            parlay_settlement_summary = settle_parlay_predictions(db)
+            parlay_settlement_summary = settle_parlay_predictions(db) if not current_slate_only else {
+                "updated": 0,
+                "won": 0,
+                "lost": 0,
+                "push": 0,
+                "cancelled": 0,
+                "pending": 0,
+                "unresolved": 0,
+                "errors": 0,
+            }
             run.details, records = _build_watchlist_run_details(
                 db,
-                sports=sports,
+                sports=active_sports,
                 sports_summary=sports_summary,
                 kalshi_summary=kalshi_summary,
                 mapped_count=mapped_count,
@@ -614,7 +641,10 @@ def run_refresh_cycle(
                 shadow_parlay_prediction_count=shadow_parlay_prediction_count,
                 single_settlement_summary=single_settlement_summary,
                 parlay_settlement_summary=parlay_settlement_summary,
-                extra_details=_merge_numeric_detail_maps(current_watchlist_summary, resolver.stats.as_dict()),
+                extra_details={
+                    **_merge_numeric_detail_maps(current_watchlist_summary, resolver.stats.as_dict()),
+                    "refresh_scope": "current_slate" if current_slate_only else "full",
+                },
             )
         run.status = "completed"
         run.records_processed = records

@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import useSWR, { mutate } from "swr";
+import useSWR from "swr";
 import { ArrowRight, ArrowUpDown, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
-import { fetchWatchlist, fetchWatchlistCoverage, fetchWatchlistDiagnostics, keys, triggerRefresh } from "@/lib/api";
+import { fetchWatchlist, fetchWatchlistCoverage, fetchWatchlistDiagnostics, keys } from "@/lib/api";
 import type { PredictionRead, RecommendationRead, WatchlistCoverageRowRead, WatchlistDiagnosticsRead } from "@/lib/types";
 import type { RecommendationViewMode } from "@/components/filters/quality-filter-select";
 import {
@@ -33,6 +33,7 @@ import { ENTRY_LABEL, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-cop
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TradeDialog } from "@/components/positions/trade-dialog";
 import { usePriceDisplay } from "@/lib/price-display";
+import { triggerRefreshAndRevalidate } from "@/lib/refresh";
 import { matchesRecommendationViewMode } from "@/lib/recommendation-quality";
 
 type SortKey = "market" | "sport" | "ticker" | "side" | "entry" | "edge" | "winProb" | "age";
@@ -979,22 +980,11 @@ export function WatchlistTable({
   async function handleRefresh() {
     setRefreshing(true);
     try {
-      await triggerRefresh();
-      await Promise.all([
-        mutate((key) => typeof key === "string" && key.startsWith("/runs")),
-        mutate((key) => typeof key === "string" && key.startsWith("/events")),
-        mutate((key) => typeof key === "string" && key.startsWith("/watchlist")),
-        mutate((key) => typeof key === "string" && key.startsWith("/markets")),
-        mutate((key) => typeof key === "string" && key.startsWith("/positions")),
-        mutate((key) => typeof key === "string" && key.startsWith("/predictions")),
-        mutate((key) => typeof key === "string" && key.startsWith("/parlays")),
-        mutate(keys.watchlistDiagnostics),
-        mutate("/health"),
-      ]);
+      await triggerRefreshAndRevalidate();
     } catch {
       /* ignore */
     } finally {
-      setTimeout(() => setRefreshing(false), 1200);
+      setRefreshing(false);
     }
   }
 

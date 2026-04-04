@@ -16,6 +16,7 @@ from app.models import (
     ParlayPrediction,
     ParlayRecommendation,
     Prediction,
+    RefreshJob,
     Recommendation,
     Run,
     SignalSnapshot,
@@ -44,6 +45,7 @@ from app.schemas import (
     PredictionRead,
     PredictionSettlementResponse,
     PredictionSummaryRead,
+    RefreshJobRead,
     RecommendationRead,
     RunDetailRead,
     RunRead,
@@ -60,7 +62,8 @@ from app.services.ml.readiness import build_model_readiness_detail, build_model_
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
-from app.services.scheduler import get_refresh_runtime_state, queue_prop_refresh_if_due, run_refresh_cycle_now
+from app.services.refresh_jobs import enqueue_refresh_job, get_refresh_job
+from app.services.scheduler import get_refresh_runtime_state
 from app.services.stats_query import StatsQueryService
 from app.services.watchlist_coverage import (
     current_watchlist_markets,
@@ -70,6 +73,24 @@ from app.services.watchlist_coverage import (
 )
 
 router = APIRouter()
+
+
+def _serialize_refresh_job(item: RefreshJob | None) -> RefreshJobRead | None:
+    if item is None:
+        return None
+    return RefreshJobRead(
+        id=item.id,
+        kind=item.kind,
+        scope=item.scope,
+        reason=item.reason,
+        status=item.status,
+        run_id=item.run_id,
+        error_message=item.error_message,
+        details=dict(item.details or {}),
+        queued_at=item.queued_at,
+        started_at=item.started_at,
+        finished_at=item.finished_at,
+    )
 
 
 def get_stats_query_service() -> StatsQueryService:
@@ -320,7 +341,7 @@ def _prediction_stmt(
     captured_from: date | None = None,
     captured_to: date | None = None,
 ):
-    stmt = select(Prediction).order_by(Prediction.captured_at.desc(), Prediction.id.desc())
+    stmt = select(Prediction)
     if sport:
         stmt = stmt.where(Prediction.sport_key == sport.upper())
     if market_family:
@@ -335,6 +356,7 @@ def _prediction_stmt(
     if captured_to:
         end = datetime.combine(captured_to, datetime.max.time(), tzinfo=timezone.utc)
         stmt = stmt.where(Prediction.captured_at <= end)
+    stmt = stmt.order_by(Prediction.captured_at.desc(), Prediction.id.desc())
     return stmt
 
 
@@ -509,6 +531,147 @@ def _build_parlay_prediction_summary(predictions: list[ParlayPrediction]) -> Par
     )
 
 
+def _aggregate_prediction_summary(
+    db: Session,
+    *,
+    sport: str | None = None,
+    market_family: str | None = None,
+    stat_key: str | None = None,
+    outcome: str | None = None,
+    captured_from: date | None = None,
+    captured_to: date | None = None,
+) -> PredictionSummaryRead:
+    base_stmt = _prediction_stmt(
+        sport=sport,
+        market_family=market_family,
+        stat_key=stat_key,
+        outcome=outcome,
+        captured_from=captured_from,
+        captured_to=captured_to,
+    ).order_by(None)
+    subquery = base_stmt.subquery()
+
+    totals = db.execute(
+        select(
+            func.count(subquery.c.id),
+            func.avg(subquery.c.edge),
+            func.avg(subquery.c.confidence),
+            func.avg(subquery.c.realized_pnl),
+        )
+    ).one()
+    total_predictions = int(totals[0] or 0)
+
+    by_outcome_rows = db.execute(
+        select(subquery.c.prediction_outcome, func.count(subquery.c.id))
+        .group_by(subquery.c.prediction_outcome)
+    ).all()
+    by_outcome = {str(key or "pending"): int(count or 0) for key, count in by_outcome_rows}
+
+    by_sport_rows = db.execute(
+        select(subquery.c.sport_key, func.count(subquery.c.id))
+        .group_by(subquery.c.sport_key)
+    ).all()
+    by_sport = {str(key or "UNKNOWN"): int(count or 0) for key, count in by_sport_rows}
+
+    by_market_family_rows = db.execute(
+        select(subquery.c.market_family, func.count(subquery.c.id))
+        .group_by(subquery.c.market_family)
+    ).all()
+    by_market_family = {str(key or "unknown"): int(count or 0) for key, count in by_market_family_rows}
+
+    settled_predictions = sum(by_outcome.get(name, 0) for name in ("won", "lost", "push", "cancelled"))
+    pending_predictions = by_outcome.get("pending", 0)
+    unresolved_predictions = by_outcome.get("unresolved", 0)
+    won_predictions = by_outcome.get("won", 0)
+    lost_predictions = by_outcome.get("lost", 0)
+    push_predictions = by_outcome.get("push", 0)
+    cancelled_predictions = by_outcome.get("cancelled", 0)
+    win_loss_total = won_predictions + lost_predictions
+
+    return PredictionSummaryRead(
+        total_predictions=total_predictions,
+        settled_predictions=settled_predictions,
+        pending_predictions=pending_predictions,
+        unresolved_predictions=unresolved_predictions,
+        won_predictions=won_predictions,
+        lost_predictions=lost_predictions,
+        push_predictions=push_predictions,
+        cancelled_predictions=cancelled_predictions,
+        win_rate=round(won_predictions / win_loss_total, 4) if win_loss_total else None,
+        loss_rate=round(lost_predictions / win_loss_total, 4) if win_loss_total else None,
+        average_edge=round(float(totals[1]), 4) if totals[1] is not None else None,
+        average_confidence=round(float(totals[2]), 4) if totals[2] is not None else None,
+        average_realized_pnl=round(float(totals[3]), 4) if totals[3] is not None else None,
+        by_sport=by_sport,
+        by_market_family=by_market_family,
+        by_outcome=by_outcome,
+    )
+
+
+def _aggregate_parlay_prediction_summary(
+    db: Session,
+    *,
+    sport_scope: str,
+    leg_count: int | None,
+) -> ParlayPredictionSummaryRead:
+    subquery = _parlay_prediction_stmt(sport_scope=sport_scope, leg_count=leg_count).order_by(None).subquery()
+    totals = db.execute(
+        select(
+            func.count(subquery.c.id),
+            func.avg(subquery.c.edge),
+            func.avg(subquery.c.confidence),
+            func.avg(subquery.c.realized_pnl),
+        )
+    ).one()
+    total_predictions = int(totals[0] or 0)
+
+    by_outcome_rows = db.execute(
+        select(subquery.c.prediction_outcome, func.count(subquery.c.id))
+        .group_by(subquery.c.prediction_outcome)
+    ).all()
+    by_outcome = {str(key or "pending"): int(count or 0) for key, count in by_outcome_rows}
+
+    by_scope_rows = db.execute(
+        select(subquery.c.sport_scope, func.count(subquery.c.id))
+        .group_by(subquery.c.sport_scope)
+    ).all()
+    by_sport_scope = {str(key or "MIXED"): int(count or 0) for key, count in by_scope_rows}
+
+    by_leg_count_rows = db.execute(
+        select(subquery.c.leg_count, func.count(subquery.c.id))
+        .group_by(subquery.c.leg_count)
+    ).all()
+    by_leg_count = {str(key): int(count or 0) for key, count in by_leg_count_rows}
+
+    settled_predictions = sum(by_outcome.get(name, 0) for name in ("won", "lost", "push", "cancelled"))
+    pending_predictions = by_outcome.get("pending", 0)
+    unresolved_predictions = by_outcome.get("unresolved", 0)
+    won_predictions = by_outcome.get("won", 0)
+    lost_predictions = by_outcome.get("lost", 0)
+    push_predictions = by_outcome.get("push", 0)
+    cancelled_predictions = by_outcome.get("cancelled", 0)
+    win_loss_total = won_predictions + lost_predictions
+
+    return ParlayPredictionSummaryRead(
+        total_predictions=total_predictions,
+        settled_predictions=settled_predictions,
+        pending_predictions=pending_predictions,
+        unresolved_predictions=unresolved_predictions,
+        won_predictions=won_predictions,
+        lost_predictions=lost_predictions,
+        push_predictions=push_predictions,
+        cancelled_predictions=cancelled_predictions,
+        win_rate=round(won_predictions / win_loss_total, 4) if win_loss_total else None,
+        loss_rate=round(lost_predictions / win_loss_total, 4) if win_loss_total else None,
+        average_edge=round(float(totals[1]), 4) if totals[1] is not None else None,
+        average_confidence=round(float(totals[2]), 4) if totals[2] is not None else None,
+        average_realized_pnl=round(float(totals[3]), 4) if totals[3] is not None else None,
+        by_sport_scope=by_sport_scope,
+        by_leg_count=by_leg_count,
+        by_outcome=by_outcome,
+    )
+
+
 def _merge_settlement_summaries(*summaries: dict[str, int]) -> dict[str, int]:
     merged = {
         "processed": 0,
@@ -545,6 +708,10 @@ def health() -> HealthResponse:
         last_prop_refresh_at=runtime["last_prop_refresh_at"],
         prop_data_stale=bool(runtime["prop_data_stale"]),
         prop_refresh_error_message=runtime["prop_refresh_error_message"],
+        active_refresh_job=RefreshJobRead.model_validate(runtime["active_refresh_job"]) if runtime["active_refresh_job"] else None,
+        latest_refresh_job=RefreshJobRead.model_validate(runtime["latest_refresh_job"]) if runtime["latest_refresh_job"] else None,
+        active_prop_refresh_job=RefreshJobRead.model_validate(runtime["active_prop_refresh_job"]) if runtime["active_prop_refresh_job"] else None,
+        latest_prop_refresh_job=RefreshJobRead.model_validate(runtime["latest_prop_refresh_job"]) if runtime["latest_prop_refresh_job"] else None,
     )
 
 
@@ -605,6 +772,10 @@ def get_watchlist_diagnostics(db: Session = Depends(get_db)) -> WatchlistDiagnos
         current_recommendation_count=int(current_recommendation_count),
         watchlist_min_edge=settings.watchlist_min_edge,
         watchlist_min_confidence=settings.watchlist_min_confidence,
+        active_refresh_job=RefreshJobRead.model_validate(runtime["active_refresh_job"]) if runtime["active_refresh_job"] else None,
+        latest_refresh_job=RefreshJobRead.model_validate(runtime["latest_refresh_job"]) if runtime["latest_refresh_job"] else None,
+        active_prop_refresh_job=RefreshJobRead.model_validate(runtime["active_prop_refresh_job"]) if runtime["active_prop_refresh_job"] else None,
+        latest_prop_refresh_job=RefreshJobRead.model_validate(runtime["latest_prop_refresh_job"]) if runtime["latest_prop_refresh_job"] else None,
     )
 
 
@@ -712,17 +883,15 @@ def prediction_summary(
     captured_to: date | None = None,
     db: Session = Depends(get_db),
 ) -> PredictionSummaryRead:
-    predictions = db.scalars(
-        _prediction_stmt(
-            sport=sport,
-            market_family=market_family,
-            stat_key=stat_key,
-            outcome=outcome,
-            captured_from=captured_from,
-            captured_to=captured_to,
-        )
-    ).all()
-    return _build_prediction_summary(predictions)
+    return _aggregate_prediction_summary(
+        db,
+        sport=sport,
+        market_family=market_family,
+        stat_key=stat_key,
+        outcome=outcome,
+        captured_from=captured_from,
+        captured_to=captured_to,
+    )
 
 
 @router.get("/parlays/predictions", response_model=list[ParlayPredictionRead])
@@ -746,8 +915,7 @@ def parlay_prediction_summary(
 ) -> ParlayPredictionSummaryRead:
     scope = _normalized_parlay_sport_scope(sport_scope)
     validated_leg_count = _validated_leg_count(leg_count)
-    predictions = db.scalars(_parlay_prediction_stmt(sport_scope=scope, leg_count=validated_leg_count)).all()
-    return _build_parlay_prediction_summary(predictions)
+    return _aggregate_parlay_prediction_summary(db, sport_scope=scope, leg_count=validated_leg_count)
 
 
 @router.get("/positions", response_model=PositionsRead)
@@ -790,24 +958,16 @@ def list_markets(
         )
 
     markets = db.scalars(stmt).all()
+    market_ids = [market.id for market in markets]
+    latest_snapshots = latest_snapshot_by_market_id(db, market_ids)
+    latest_recommendations = latest_recommendation_by_market_id(db, market_ids)
     payload: list[MarketListRead] = []
     for market in markets:
         raw_data = market.raw_data or {}
         if not raw_data.get("copilot_market_kind"):
             continue
-        latest_snapshot = db.scalars(
-            select(MarketSnapshot)
-            .where(MarketSnapshot.market_id == market.id)
-            .order_by(MarketSnapshot.captured_at.desc())
-            .limit(1)
-        ).first()
-        latest_recommendation = db.scalars(
-            select(Recommendation)
-            .options(joinedload(Recommendation.event), joinedload(Recommendation.market))
-            .where(Recommendation.market_id == market.id)
-            .order_by(Recommendation.captured_at.desc())
-            .limit(1)
-        ).first()
+        latest_snapshot = latest_snapshots.get(market.id)
+        latest_recommendation = latest_recommendations.get(market.id)
         event_name = market.event.name if market.event else None
         payload.append(
             MarketListRead(
@@ -943,18 +1103,29 @@ def cancel_order(order_id: int, db: Session = Depends(get_db)) -> DemoOrderRead:
     return DemoOrderRead.model_validate(order)
 
 
-@router.post("/jobs/refresh", response_model=JobRefreshResponse)
-def refresh_jobs() -> JobRefreshResponse:
-    run = run_refresh_cycle_now(reason="manual")
-    if run is None:
-        raise HTTPException(status_code=409, detail="Refresh already in progress")
-    queued_prop_refresh = queue_prop_refresh_if_due(reason="manual")
-    return JobRefreshResponse(
-        run_id=run.run_id,
-        status=run.status,
-        records_processed=run.records_processed,
-        queued_prop_refresh=queued_prop_refresh,
+@router.post("/jobs/refresh", response_model=JobRefreshResponse, status_code=202)
+def refresh_jobs(db: Session = Depends(get_db)) -> JobRefreshResponse:
+    job, _created = enqueue_refresh_job(
+        db,
+        kind="refresh",
+        scope="current_slate",
+        reason="manual",
     )
+    db.commit()
+    return JobRefreshResponse(
+        job_id=job.id,
+        kind=job.kind,
+        scope=job.scope,
+        status=job.status,
+    )
+
+
+@router.get("/jobs/{job_id}", response_model=RefreshJobRead)
+def refresh_job_detail(job_id: int, db: Session = Depends(get_db)) -> RefreshJobRead:
+    job = get_refresh_job(db, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Refresh job not found")
+    return _serialize_refresh_job(job)  # type: ignore[return-value]
 
 
 @router.post("/jobs/settle-predictions", response_model=PredictionSettlementResponse)

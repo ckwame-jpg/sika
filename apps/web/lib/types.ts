@@ -25,6 +25,24 @@ export interface HealthResponse {
   last_prop_refresh_at: string | null;
   prop_data_stale: boolean;
   prop_refresh_error_message: string | null;
+  active_refresh_job: RefreshJobRead | null;
+  latest_refresh_job: RefreshJobRead | null;
+  active_prop_refresh_job: RefreshJobRead | null;
+  latest_prop_refresh_job: RefreshJobRead | null;
+}
+
+export interface RefreshJobRead {
+  id: number;
+  kind: string;
+  scope: string;
+  reason: string;
+  status: "queued" | "running" | "completed" | "failed";
+  run_id: number | null;
+  error_message: string | null;
+  details: Record<string, unknown>;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
 }
 
 export interface SportRead {
@@ -310,13 +328,17 @@ export interface WatchlistDiagnosticsRead {
   current_recommendation_count: number;
   watchlist_min_edge: number;
   watchlist_min_confidence: number;
+  active_refresh_job: RefreshJobRead | null;
+  latest_refresh_job: RefreshJobRead | null;
+  active_prop_refresh_job: RefreshJobRead | null;
+  latest_prop_refresh_job: RefreshJobRead | null;
 }
 
 export interface JobRefreshResponse {
-  run_id: number;
-  status: string;
-  records_processed: number;
-  queued_prop_refresh: boolean;
+  job_id: number;
+  kind: string;
+  scope: string;
+  status: "queued" | "running" | "completed" | "failed";
 }
 
 export type ReadinessStatus =

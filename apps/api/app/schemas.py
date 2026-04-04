@@ -15,6 +15,20 @@ UTCDateTime = Annotated[
 ]
 
 
+class RefreshJobRead(BaseModel):
+    id: int
+    kind: str
+    scope: str
+    reason: str
+    status: Literal["queued", "running", "completed", "failed"]
+    run_id: int | None = None
+    error_message: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    queued_at: UTCDateTime
+    started_at: UTCDateTime | None = None
+    finished_at: UTCDateTime | None = None
+
+
 class HealthResponse(BaseModel):
     status: str
     environment: str
@@ -29,6 +43,10 @@ class HealthResponse(BaseModel):
     last_prop_refresh_at: UTCDateTime | None = None
     prop_data_stale: bool
     prop_refresh_error_message: str | None = None
+    active_refresh_job: RefreshJobRead | None = None
+    latest_refresh_job: RefreshJobRead | None = None
+    active_prop_refresh_job: RefreshJobRead | None = None
+    latest_prop_refresh_job: RefreshJobRead | None = None
 
 
 class SportRead(BaseModel):
@@ -308,6 +326,10 @@ class WatchlistDiagnosticsRead(BaseModel):
     current_recommendation_count: int = 0
     watchlist_min_edge: float
     watchlist_min_confidence: float
+    active_refresh_job: RefreshJobRead | None = None
+    latest_refresh_job: RefreshJobRead | None = None
+    active_prop_refresh_job: RefreshJobRead | None = None
+    latest_prop_refresh_job: RefreshJobRead | None = None
 
 
 ReadinessStatus = Literal[
@@ -467,10 +489,10 @@ class PositionsRead(BaseModel):
 
 
 class JobRefreshResponse(BaseModel):
-    run_id: int
-    status: str
-    records_processed: int
-    queued_prop_refresh: bool = False
+    job_id: int
+    kind: str
+    scope: str
+    status: Literal["queued", "running", "completed", "failed"]
 
 
 class PredictionRead(BaseModel):

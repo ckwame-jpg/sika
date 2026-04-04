@@ -535,3 +535,21 @@ class Run(Base):
     details = Column(JSON, default=dict)
     records_processed = Column(Integer, nullable=False, default=0)
     error_message = Column(Text, nullable=True)
+
+
+class RefreshJob(Base):
+    __tablename__ = "refresh_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String, nullable=False, index=True)
+    scope = Column(String, nullable=False, index=True)
+    reason = Column(String, nullable=False, default="manual", index=True)
+    status = Column(String, nullable=False, default="queued", index=True)
+    run_id = Column(Integer, ForeignKey("runs.id"), nullable=True, index=True)
+    error_message = Column(Text, nullable=True)
+    details = Column(JSON, default=dict)
+    queued_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    started_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    run = relationship("Run")

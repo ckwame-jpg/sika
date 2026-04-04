@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fmtDatetime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { useHealthStatus } from "@/lib/health-status";
 
 function statusVariant(status: string) {
   if (status === "completed") return "positive";
@@ -25,6 +26,7 @@ function countEntries(details: Record<string, unknown>, key: string) {
 
 export function RunsDesk() {
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const { data: health } = useHealthStatus();
   const { data: runs, isLoading } = useSWR<RunRead[]>(
     keys.runs,
     () => fetchRuns(25),
@@ -56,6 +58,19 @@ export function RunsDesk() {
           <CardDescription>Refresh history, diagnostics, and emitted recommendations</CardDescription>
         </CardHeader>
         <CardContent className="min-h-0 pb-0">
+          {health?.active_refresh_job && (
+            <div className="mb-3 rounded-xl border border-warning/20 bg-warning/8 px-3 py-3 text-sm">
+              <div className="flex items-center gap-2">
+                <Badge variant="warning">{health.active_refresh_job.status}</Badge>
+                <span className="text-foreground">
+                  {health.active_refresh_job.scope === "current_slate" ? "Current-slate refresh" : "Refresh job"} #{health.active_refresh_job.id}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Queued {fmtDatetime(health.active_refresh_job.queued_at)}
+              </p>
+            </div>
+          )}
           <ScrollArea className="h-[560px] pr-3">
             <div className="space-y-2">
               {isLoading

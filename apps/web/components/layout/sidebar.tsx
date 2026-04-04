@@ -19,7 +19,6 @@ import {
   Star,
   Target,
 } from "lucide-react";
-import { mutate } from "swr";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -30,8 +29,8 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { keys, triggerRefresh } from "@/lib/api";
 import { getSyncState, useHealthStatus } from "@/lib/health-status";
+import { triggerRefreshAndRevalidate } from "@/lib/refresh";
 import { SPORT_OPTIONS, cn, fmtRelative } from "@/lib/utils";
 import { useSportQueryParam } from "@/components/filters/sport-filter-select";
 
@@ -158,7 +157,13 @@ function SyncStatusBadge() {
       ? "bg-negative"
       : "bg-warning";
   const detail = syncState === "refreshing"
-    ? (health.last_successful_refresh_at ? `last success ${fmtRelative(health.last_successful_refresh_at)}` : "background refresh in progress")
+    ? (
+      health.active_refresh_job?.scope === "current_slate"
+        ? "current slate refresh queued"
+        : health.last_successful_refresh_at
+          ? `last success ${fmtRelative(health.last_successful_refresh_at)}`
+          : "background refresh in progress"
+    )
     : health.last_successful_refresh_at
       ? fmtRelative(health.last_successful_refresh_at)
       : "awaiting first refresh";
@@ -186,22 +191,11 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
   async function handleRefresh() {
     setRefreshing(true);
     try {
-      await triggerRefresh();
-      await Promise.all([
-        mutate((key) => typeof key === "string" && key.startsWith("/runs")),
-        mutate((key) => typeof key === "string" && key.startsWith("/events")),
-        mutate((key) => typeof key === "string" && key.startsWith("/watchlist")),
-        mutate((key) => typeof key === "string" && key.startsWith("/markets")),
-        mutate((key) => typeof key === "string" && key.startsWith("/positions")),
-        mutate((key) => typeof key === "string" && key.startsWith("/predictions")),
-        mutate((key) => typeof key === "string" && key.startsWith("/parlays")),
-        mutate(keys.watchlistDiagnostics),
-        mutate("/health"),
-      ]);
+      await triggerRefreshAndRevalidate();
     } catch {
       /* ignore */
     } finally {
-      setTimeout(() => setRefreshing(false), 1200);
+      setRefreshing(false);
     }
   }
 
@@ -264,8 +258,8 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
           </TooltipTrigger>
           <TooltipContent side="right">
             {syncState === "refreshing"
-              ? "A refresh is already running in the background."
-              : "Trigger a data refresh cycle."}
+              ? "A current-slate refresh is already queued or running."
+              : "Queue a fast current-slate refresh."}
           </TooltipContent>
         </Tooltip>
       </div>

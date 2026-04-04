@@ -74,6 +74,9 @@ SCHEMA_PATCHES: dict[str, dict[str, str]] = {
         "last_error_at": "DATETIME",
         "degraded_until": "DATETIME",
     },
+    "refresh_jobs": {
+        "details": "JSON",
+    },
 }
 
 

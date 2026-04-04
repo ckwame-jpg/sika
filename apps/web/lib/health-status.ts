@@ -44,14 +44,17 @@ export function getFreshnessBanner(health?: HealthResponse | null) {
   if (!health) return null;
   const refreshError = getUserSafeRefreshErrorMessage(health.refresh_error_message);
   const propRefreshError = getUserSafeRefreshErrorMessage(health.prop_refresh_error_message);
+  const activeRefreshScope = health.active_refresh_job?.scope;
 
   if (health.refresh_status === "queued" || health.refresh_status === "running") {
     return {
       tone: "neutral" as const,
       message:
-        health.prop_refresh_status === "queued" || health.prop_refresh_status === "running"
-          ? "Refreshing markets and props in background; cached data may be shown briefly."
-          : "Refreshing market data in background; cached data may be shown briefly.",
+        activeRefreshScope === "current_slate"
+          ? "Refreshing the current NBA/MLB slate in background; cached data may be shown briefly."
+          : health.prop_refresh_status === "queued" || health.prop_refresh_status === "running"
+            ? "Refreshing markets and props in background; cached data may be shown briefly."
+            : "Refreshing market data in background; cached data may be shown briefly.",
     };
   }
   if (health.refresh_status === "failed" && health.data_stale) {

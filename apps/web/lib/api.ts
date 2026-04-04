@@ -19,6 +19,7 @@ import type {
   PredictionRead,
   PredictionSettlementResponse,
   PredictionSummaryRead,
+  RefreshJobRead,
   RecommendationRead,
   RunDetailRead,
   RunRead,
@@ -39,7 +40,8 @@ async function request<T>(
     ...init,
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
+    const raw = await res.text().catch(() => res.statusText);
+    const text = raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
     throw new Error(`${res.status} ${text}`);
   }
   return res.json() as Promise<T>;
@@ -138,6 +140,9 @@ export const triggerRefresh = () =>
     "/jobs/refresh",
     { method: "POST" },
   );
+
+export const fetchRefreshJob = (id: number) =>
+  request<RefreshJobRead>(`/jobs/${id}`);
 
 export const fetchPredictions = (
   options: {
@@ -240,6 +245,7 @@ export const keys = {
     `/markets/${ticker}/history?range=${range}`,
   runs: "/runs",
   run: (id: number) => `/runs/${id}`,
+  refreshJob: (id: number) => `/jobs/${id}`,
   predictions: (args?: Record<string, string | number | undefined>) =>
     `/predictions?${new URLSearchParams(
       Object.entries(args ?? {}).flatMap(([key, value]) =>

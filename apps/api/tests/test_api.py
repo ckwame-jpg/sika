@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from app.api import routes
-from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, Recommendation, Run
+from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, Recommendation, RefreshJob, Run
 
 
 def test_watchlist_and_positions_endpoints(client, db_session):
@@ -208,23 +207,26 @@ def test_watchlist_coverage_endpoint_reports_prediction_only_rows(client, db_ses
     assert row["latest_prediction"]["capture_scope"] == "coverage"
 
 
-def test_refresh_jobs_returns_prop_queue_flag(client, monkeypatch):
-    monkeypatch.setattr(
-        routes,
-        "run_refresh_cycle_now",
-        lambda reason="manual": type("Snapshot", (), {"run_id": 44, "status": "completed", "records_processed": 77})(),
-    )
-    monkeypatch.setattr(routes, "queue_prop_refresh_if_due", lambda reason="manual": True)
-
+def test_refresh_jobs_enqueues_current_slate_job(client, db_session):
     response = client.post("/jobs/refresh")
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "run_id": 44,
-        "status": "completed",
-        "records_processed": 77,
-        "queued_prop_refresh": True,
-    }
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["kind"] == "refresh"
+    assert payload["scope"] == "current_slate"
+    assert payload["status"] == "queued"
+
+    job = db_session.get(RefreshJob, payload["job_id"])
+    assert job is not None
+    assert job.kind == "refresh"
+    assert job.scope == "current_slate"
+    assert job.reason == "manual"
+    assert job.status == "queued"
+
+    detail = client.get(f"/jobs/{job.id}")
+    assert detail.status_code == 200
+    assert detail.json()["id"] == job.id
+    assert detail.json()["status"] == "queued"
 
 
 def test_watchlist_diagnostics_endpoint_reports_zero_emission_refresh(client, db_session):

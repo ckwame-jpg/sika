@@ -1628,19 +1628,31 @@ def regenerate_watchlist(
     *,
     run_id: int | None = None,
     resolver: PropStatsResolver | None = None,
+    allowed_market_ids: set[int] | None = None,
+    replace_all: bool = True,
+    capture_parlays: bool = True,
 ) -> WatchlistGenerationSummary:
-    db.query(Recommendation).delete()
-    clear_active_parlay_watchlist(db)
+    if replace_all:
+        db.query(Recommendation).delete()
+        if capture_parlays:
+            clear_active_parlay_watchlist(db)
+    elif allowed_market_ids:
+        db.query(Recommendation).filter(Recommendation.market_id.in_(tuple(sorted(allowed_market_ids)))).delete(synchronize_session=False)
     summary = WatchlistGenerationSummary()
     active_resolver = resolver or PropStatsResolver(db, allow_network=False)
     parlay_candidates: list[ParlayCandidateInput] = []
     pending_recommendations: list[tuple[Market, ScoredRecommendation]] = []
     current_coverage_candidates: list[tuple[Market, ScoredRecommendation]] = []
-    markets = db.scalars(
+    stmt = (
         select(Market)
         .options(joinedload(Market.event).selectinload(Event.participants).joinedload(EventParticipant.participant))
         .where(Market.event_id.is_not(None), Market.status.in_(tuple(OPEN_MARKET_STATUSES)))
-    ).all()
+    )
+    if allowed_market_ids is not None:
+        if not allowed_market_ids:
+            return summary
+        stmt = stmt.where(Market.id.in_(tuple(sorted(allowed_market_ids))))
+    markets = db.scalars(stmt).all()
     for market in markets:
         if not market.event:
             continue
@@ -1714,12 +1726,13 @@ def regenerate_watchlist(
         )
         summary.prediction_count += 1
     db.flush()
-    parlay_recommendation_count, parlay_prediction_count = capture_parlay_artifacts(
-        db,
-        run_id=run_id,
-        candidates=parlay_candidates,
-    )
-    summary.parlay_recommendation_count = parlay_recommendation_count
-    summary.parlay_prediction_count = parlay_prediction_count
+    if capture_parlays:
+        parlay_recommendation_count, parlay_prediction_count = capture_parlay_artifacts(
+            db,
+            run_id=run_id,
+            candidates=parlay_candidates,
+        )
+        summary.parlay_recommendation_count = parlay_recommendation_count
+        summary.parlay_prediction_count = parlay_prediction_count
     db.flush()
     return summary

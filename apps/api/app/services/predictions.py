@@ -247,13 +247,17 @@ def settle_predictions(
     *,
     client: KalshiPublicClient | None = None,
     open_market_tickers: set[str] | None = None,
+    sport_keys: set[str] | None = None,
 ) -> dict[str, int]:
-    unsettled = db.scalars(
+    stmt = (
         select(Prediction)
         .options(joinedload(Prediction.market))
         .where(Prediction.settlement_status.in_(("pending", "unresolved")))
         .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
-    ).all()
+    )
+    if sport_keys:
+        stmt = stmt.where(Prediction.sport_key.in_(tuple(sorted(sport_keys))))
+    unsettled = db.scalars(stmt).all()
 
     if not unsettled:
         return {

@@ -1,7 +1,6 @@
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from threading import Lock, Thread
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,27 +11,17 @@ from sqlalchemy import desc, func, select
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import EspnPlayerGamelogCache, Event, Run
-from app.services.ingestion import run_prop_refresh_cycle, run_refresh_cycle
+from app.services.ingestion import run_refresh_cycle
 from app.services.orders import reconcile_demo_state
+from app.services.refresh_jobs import (
+    active_job_for_kind,
+    enqueue_refresh_job,
+    latest_job_for_kind,
+    process_refresh_job_queue_once,
+)
 
 
 scheduler = BackgroundScheduler(timezone=get_settings().default_timezone)
-_refresh_lock = Lock()
-_prop_refresh_lock = Lock()
-_refresh_state_lock = Lock()
-_prop_refresh_state_lock = Lock()
-_refresh_runtime_state: dict[str, object | None] = {
-    "refresh_status": "idle",
-    "refresh_reason": "none",
-    "last_successful_refresh_at": None,
-    "refresh_error_message": None,
-}
-_prop_refresh_runtime_state: dict[str, object | None] = {
-    "prop_refresh_status": "idle",
-    "prop_refresh_reason": "none",
-    "last_prop_refresh_at": None,
-    "prop_refresh_error_message": None,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,76 +106,65 @@ def _prop_data_stale(latest_finished_at: datetime | None, now: datetime | None =
     )
 
 
-def _set_refresh_runtime_state(
-    *,
-    refresh_status: str | None = None,
-    refresh_reason: str | None = None,
-    last_successful_refresh_at: datetime | None | object = ...,
-    refresh_error_message: str | None | object = ...,
-) -> None:
-    with _refresh_state_lock:
-        if refresh_status is not None:
-            _refresh_runtime_state["refresh_status"] = refresh_status
-        if refresh_reason is not None:
-            _refresh_runtime_state["refresh_reason"] = refresh_reason
-        if last_successful_refresh_at is not ...:
-            _refresh_runtime_state["last_successful_refresh_at"] = _as_utc(last_successful_refresh_at)  # type: ignore[arg-type]
-        if refresh_error_message is not ...:
-            _refresh_runtime_state["refresh_error_message"] = refresh_error_message
-
-
-def _set_prop_refresh_runtime_state(
-    *,
-    prop_refresh_status: str | None = None,
-    prop_refresh_reason: str | None = None,
-    last_prop_refresh_at: datetime | None | object = ...,
-    prop_refresh_error_message: str | None | object = ...,
-) -> None:
-    with _prop_refresh_state_lock:
-        if prop_refresh_status is not None:
-            _prop_refresh_runtime_state["prop_refresh_status"] = prop_refresh_status
-        if prop_refresh_reason is not None:
-            _prop_refresh_runtime_state["prop_refresh_reason"] = prop_refresh_reason
-        if last_prop_refresh_at is not ...:
-            _prop_refresh_runtime_state["last_prop_refresh_at"] = _as_utc(last_prop_refresh_at)  # type: ignore[arg-type]
-        if prop_refresh_error_message is not ...:
-            _prop_refresh_runtime_state["prop_refresh_error_message"] = prop_refresh_error_message
-
-
 def sync_refresh_runtime_state_from_db() -> None:
-    _set_refresh_runtime_state(
-        refresh_status="idle",
-        refresh_reason="none",
-        last_successful_refresh_at=_latest_successful_refresh_finished_at(),
-        refresh_error_message=None,
-    )
-    _set_prop_refresh_runtime_state(
-        prop_refresh_status="idle",
-        prop_refresh_reason="none",
-        last_prop_refresh_at=_latest_successful_prop_refresh_finished_at(),
-        prop_refresh_error_message=None,
-    )
+    return None
+
+
+def _serialize_job(job) -> dict[str, object] | None:
+    if job is None:
+        return None
+    return {
+        "id": job.id,
+        "kind": job.kind,
+        "scope": job.scope,
+        "reason": job.reason,
+        "status": job.status,
+        "run_id": job.run_id,
+        "error_message": job.error_message,
+        "details": dict(job.details or {}),
+        "queued_at": _as_utc(job.queued_at),
+        "started_at": _as_utc(job.started_at),
+        "finished_at": _as_utc(job.finished_at),
+    }
 
 
 def get_refresh_runtime_state() -> dict[str, object | None]:
-    with _refresh_state_lock:
-        refresh_snapshot = dict(_refresh_runtime_state)
-    with _prop_refresh_state_lock:
-        prop_snapshot = dict(_prop_refresh_runtime_state)
+    with SessionLocal() as db:
+        active_refresh = active_job_for_kind(db, "refresh")
+        latest_refresh = latest_job_for_kind(db, "refresh")
+        active_prop_refresh = active_job_for_kind(db, "prop_refresh")
+        latest_prop_refresh = latest_job_for_kind(db, "prop_refresh")
 
-    last_successful_refresh_at = _as_utc(refresh_snapshot["last_successful_refresh_at"])  # type: ignore[arg-type]
-    last_prop_refresh_at = _as_utc(prop_snapshot["last_prop_refresh_at"])  # type: ignore[arg-type]
+    last_successful_refresh_at = _latest_successful_refresh_finished_at()
+    last_prop_refresh_at = _latest_successful_prop_refresh_finished_at()
+
+    refresh_status = active_refresh.status if active_refresh else ("failed" if latest_refresh and latest_refresh.status == "failed" else "idle")
+    refresh_reason = active_refresh.reason if active_refresh else (latest_refresh.reason if latest_refresh and latest_refresh.status == "failed" else "none")
+    refresh_error_message = active_refresh.error_message if active_refresh else (latest_refresh.error_message if latest_refresh and latest_refresh.status == "failed" else None)
+
+    prop_refresh_status = active_prop_refresh.status if active_prop_refresh else ("failed" if latest_prop_refresh and latest_prop_refresh.status == "failed" else "idle")
+    prop_refresh_reason = active_prop_refresh.reason if active_prop_refresh else (latest_prop_refresh.reason if latest_prop_refresh and latest_prop_refresh.status == "failed" else "none")
+    prop_refresh_error_message = active_prop_refresh.error_message if active_prop_refresh else (latest_prop_refresh.error_message if latest_prop_refresh and latest_prop_refresh.status == "failed" else None)
+
     return {
-        "refresh_status": refresh_snapshot["refresh_status"],
-        "refresh_reason": refresh_snapshot["refresh_reason"],
+        "refresh_status": refresh_status,
+        "refresh_reason": refresh_reason,
         "last_successful_refresh_at": last_successful_refresh_at,
         "data_stale": _refresh_data_stale(last_successful_refresh_at),
-        "refresh_error_message": refresh_snapshot["refresh_error_message"],
-        "prop_refresh_status": prop_snapshot["prop_refresh_status"],
-        "prop_refresh_reason": prop_snapshot["prop_refresh_reason"],
+        "refresh_error_message": summarize_refresh_error_message(
+            str(refresh_error_message).strip() if refresh_error_message else None
+        ),
+        "prop_refresh_status": prop_refresh_status,
+        "prop_refresh_reason": prop_refresh_reason,
         "last_prop_refresh_at": last_prop_refresh_at,
         "prop_data_stale": _prop_data_stale(last_prop_refresh_at),
-        "prop_refresh_error_message": prop_snapshot["prop_refresh_error_message"],
+        "prop_refresh_error_message": summarize_refresh_error_message(
+            str(prop_refresh_error_message).strip() if prop_refresh_error_message else None
+        ),
+        "active_refresh_job": _serialize_job(active_refresh),
+        "latest_refresh_job": _serialize_job(latest_refresh),
+        "active_prop_refresh_job": _serialize_job(active_prop_refresh),
+        "latest_prop_refresh_job": _serialize_job(latest_prop_refresh),
     }
 
 
@@ -207,189 +185,64 @@ def prop_refresh_needed(now: datetime | None = None) -> bool:
     return _prop_cache_empty()
 
 
-def _run_refresh_cycle_guarded(
-    *,
-    reason: str,
-    only_if_stale: bool = False,
-    raise_on_error: bool = False,
-) -> RefreshRunSnapshot | None:
-    if not _refresh_lock.acquire(blocking=False):
-        return None
-    try:
-        _set_refresh_runtime_state(
-            refresh_status="running",
-            refresh_reason=reason,
-            refresh_error_message=None,
-        )
-        if only_if_stale and not startup_refresh_needed():
-            _set_refresh_runtime_state(refresh_status="idle", refresh_reason="none", refresh_error_message=None)
-            return None
-        with SessionLocal() as db:
-            run = run_refresh_cycle(db)
-            refresh_snapshot = RefreshRunSnapshot(
-                run_id=run.id,
-                status=run.status,
-                records_processed=run.records_processed,
-                finished_at=run.finished_at,
-            )
-            db.commit()
-        _set_refresh_runtime_state(
-            refresh_status="idle",
-            refresh_reason="none",
-            last_successful_refresh_at=refresh_snapshot.finished_at or datetime.now(timezone.utc),
-            refresh_error_message=None,
-        )
-        schedule_event_refreshes()
-        return refresh_snapshot
-    except Exception as exc:
-        _set_refresh_runtime_state(
-            refresh_status="failed",
-            refresh_reason=reason,
-            refresh_error_message=summarize_refresh_error_message(str(exc).strip() or exc.__class__.__name__),
-        )
-        if raise_on_error:
-            raise
-        return None
-    finally:
-        _refresh_lock.release()
+def _queue_job(*, kind: str, scope: str, reason: str) -> bool:
+    with SessionLocal() as db:
+        _job, created = enqueue_refresh_job(db, kind=kind, scope=scope, reason=reason)
+        db.commit()
+        return created
 
 
-def _run_prop_refresh_cycle_guarded(
-    *,
-    reason: str,
-    only_if_due: bool = False,
-    raise_on_error: bool = False,
-) -> RefreshRunSnapshot | None:
-    if not _prop_refresh_lock.acquire(blocking=False):
-        return None
-    try:
-        _set_prop_refresh_runtime_state(
-            prop_refresh_status="running",
-            prop_refresh_reason=reason,
-            prop_refresh_error_message=None,
-        )
-        if only_if_due and not prop_refresh_needed():
-            _set_prop_refresh_runtime_state(prop_refresh_status="idle", prop_refresh_reason="none", prop_refresh_error_message=None)
-            return None
-        with SessionLocal() as db:
-            run = run_prop_refresh_cycle(db)
-            refresh_snapshot = RefreshRunSnapshot(
-                run_id=run.id,
-                status=run.status,
-                records_processed=run.records_processed,
-                finished_at=run.finished_at,
-            )
-            db.commit()
-        _set_prop_refresh_runtime_state(
-            prop_refresh_status="idle",
-            prop_refresh_reason="none",
-            last_prop_refresh_at=refresh_snapshot.finished_at or datetime.now(timezone.utc),
-            prop_refresh_error_message=None,
-        )
-        return refresh_snapshot
-    except Exception as exc:
-        _set_prop_refresh_runtime_state(
-            prop_refresh_status="failed",
-            prop_refresh_reason=reason,
-            prop_refresh_error_message=summarize_refresh_error_message(str(exc).strip() or exc.__class__.__name__),
-        )
-        if raise_on_error:
-            raise
-        return None
-    finally:
-        _prop_refresh_lock.release()
+def _queue_current_slate_refresh(reason: str) -> bool:
+    return _queue_job(kind="refresh", scope="current_slate", reason=reason)
 
 
-def _run_refresh_job() -> None:
-    _run_refresh_cycle_guarded(reason="interval")
+def _queue_maintenance_refresh(reason: str) -> bool:
+    return _queue_job(kind="prop_refresh", scope="maintenance", reason=reason)
 
 
-def _run_prop_refresh_job() -> None:
-    _run_prop_refresh_cycle_guarded(reason="interval", only_if_due=True)
-
-
-def _run_startup_refresh_job() -> None:
-    _run_refresh_cycle_guarded(reason="startup", only_if_stale=True)
-
-
-def _run_pregame_refresh_job() -> None:
-    _run_refresh_cycle_guarded(reason="pregame")
+def _queue_cleanup_job() -> bool:
+    return _queue_job(kind="cleanup", scope="retention", reason="interval")
 
 
 def queue_startup_refresh_if_stale() -> bool:
     if not startup_refresh_needed():
-        _set_refresh_runtime_state(refresh_status="idle", refresh_reason="none", refresh_error_message=None)
         return False
-    _set_refresh_runtime_state(
-        refresh_status="queued",
-        refresh_reason="startup",
-        refresh_error_message=None,
-    )
-    try:
-        scheduler.add_job(
-            _run_startup_refresh_job,
-            trigger=DateTrigger(run_date=datetime.now(timezone.utc)),
-            id="startup_refresh",
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-        )
-    except Exception as exc:
-        _set_refresh_runtime_state(
-            refresh_status="failed",
-            refresh_reason="startup",
-            refresh_error_message=str(exc).strip() or exc.__class__.__name__,
-        )
-        return False
-    return True
-
-
-def _queue_prop_refresh_thread(*, reason: str) -> None:
-    Thread(
-        target=_run_prop_refresh_cycle_guarded,
-        kwargs={"reason": reason, "raise_on_error": False},
-        daemon=True,
-    ).start()
+    return _queue_current_slate_refresh("startup")
 
 
 def queue_prop_refresh_if_due(*, reason: str = "manual") -> bool:
     if not prop_refresh_needed():
         return False
-    _set_prop_refresh_runtime_state(
-        prop_refresh_status="queued",
-        prop_refresh_reason=reason,
-        prop_refresh_error_message=None,
-    )
-    try:
-        if scheduler.running:
-            scheduler.add_job(
-                _run_prop_refresh_job if reason == "interval" else lambda: _run_prop_refresh_cycle_guarded(reason=reason),
-                trigger=DateTrigger(run_date=datetime.now(timezone.utc)),
-                id=f"{reason}_prop_refresh",
-                replace_existing=True,
-                coalesce=True,
-                max_instances=1,
-            )
-        else:
-            _queue_prop_refresh_thread(reason=reason)
-    except Exception as exc:
-        _set_prop_refresh_runtime_state(
-            prop_refresh_status="failed",
-            prop_refresh_reason=reason,
-            prop_refresh_error_message=str(exc).strip() or exc.__class__.__name__,
+    return _queue_maintenance_refresh(reason)
+
+
+def run_refresh_cycle_now(*, reason: str = "manual", current_slate_only: bool = False) -> RefreshRunSnapshot | None:
+    with SessionLocal() as db:
+        run = run_refresh_cycle(
+            db,
+            current_slate_only=current_slate_only,
+            sports=["NBA", "MLB"] if current_slate_only else None,
         )
-        return False
-    return True
-
-
-def run_refresh_cycle_now(*, reason: str = "manual") -> RefreshRunSnapshot | None:
-    return _run_refresh_cycle_guarded(reason=reason, raise_on_error=True)
+        snapshot = RefreshRunSnapshot(
+            run_id=run.id,
+            status=run.status,
+            records_processed=run.records_processed,
+            finished_at=run.finished_at,
+        )
+        db.commit()
+        return snapshot
 
 
 def _reconcile_job() -> None:
     with SessionLocal() as db:
         reconcile_demo_state(db)
         db.commit()
+
+
+def _process_refresh_queue_job() -> None:
+    result = process_refresh_job_queue_once()
+    if result and result.kind == "refresh" and result.status == "completed":
+        schedule_event_refreshes()
 
 
 def schedule_event_refreshes() -> None:
@@ -403,11 +256,10 @@ def schedule_event_refreshes() -> None:
             run_at = starts_at - timedelta(minutes=45)
             if run_at <= now:
                 continue
-            job_id = f"event_refresh_{event.id}"
             scheduler.add_job(
-                _run_pregame_refresh_job,
+                lambda: _queue_current_slate_refresh("pregame"),
                 trigger=DateTrigger(run_date=run_at),
-                id=job_id,
+                id=f"event_refresh_{event.id}",
                 replace_existing=True,
                 coalesce=True,
                 max_instances=1,
@@ -419,17 +271,33 @@ def start_scheduler() -> None:
     if not settings.scheduler_enabled or scheduler.running:
         return
     scheduler.add_job(
-        _run_refresh_job,
-        trigger=IntervalTrigger(minutes=settings.refresh_interval_minutes),
-        id="live_refresh",
+        _process_refresh_queue_job,
+        trigger=IntervalTrigger(seconds=settings.queue_poll_interval_seconds),
+        id="refresh_queue_processor",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
     )
     scheduler.add_job(
-        _run_prop_refresh_job,
+        lambda: _queue_current_slate_refresh("interval"),
+        trigger=IntervalTrigger(minutes=settings.refresh_interval_minutes),
+        id="live_refresh_enqueue",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        lambda: _queue_maintenance_refresh("interval"),
         trigger=IntervalTrigger(minutes=settings.prop_refresh_interval_minutes),
-        id="prop_refresh",
+        id="maintenance_refresh_enqueue",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _queue_cleanup_job,
+        trigger=IntervalTrigger(hours=settings.cleanup_interval_hours),
+        id="cleanup_enqueue",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
