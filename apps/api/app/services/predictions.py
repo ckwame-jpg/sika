@@ -63,10 +63,25 @@ def capture_prediction(
     run_id: int | None,
     event: Event,
     market: Market,
-    recommendation: Recommendation,
+    recommendation: Recommendation | None,
     signal: SignalSnapshot,
     metadata: dict[str, Any],
+    capture_scope: str = "recommendation",
 ) -> Prediction:
+    diagnostics = dict(recommendation.scoring_diagnostics or signal.scoring_diagnostics or {}) if recommendation else dict(signal.scoring_diagnostics or {})
+    selected_side = str(diagnostics.get("selected_side") or "yes")
+    suggested_price_value = diagnostics.get("suggested_price")
+    if suggested_price_value is None:
+        suggested_price_value = signal.fair_yes_price if selected_side == "yes" else signal.fair_no_price
+    suggested_price = recommendation.suggested_price if recommendation else float(suggested_price_value or 0.0)
+    action = recommendation.action if recommendation else "buy"
+    invalidation = recommendation.invalidation if recommendation else (diagnostics.get("invalidation") or None)
+    rationale = recommendation.rationale if recommendation else "; ".join(str(reason) for reason in list(signal.reasons or []))
+    edge = recommendation.edge if recommendation else signal.edge
+    confidence = recommendation.confidence if recommendation else signal.confidence
+    selection_score = recommendation.selection_score if recommendation else signal.selection_score
+    captured_at = recommendation.captured_at if recommendation else signal.captured_at
+
     if run_id is not None:
         existing = db.scalar(
             select(Prediction).where(
@@ -75,6 +90,25 @@ def capture_prediction(
             )
         )
         if existing is not None:
+            if recommendation is not None and existing.capture_scope != "recommendation":
+                existing.capture_scope = "recommendation"
+                existing.side = recommendation.side
+                existing.action = action
+                existing.suggested_price = suggested_price
+                existing.edge = edge
+                existing.confidence = confidence
+                existing.selection_score = selection_score
+                existing.invalidation = invalidation
+                existing.rationale = rationale
+                existing.reasons = list(signal.reasons or [])
+                existing.features = dict(signal.features or {})
+                existing.scoring_diagnostics = diagnostics
+                existing.model_name = signal.model_name or MODEL_NAME
+                existing.model_version = signal.model_version
+                existing.calibration_version = signal.calibration_version
+                existing.feature_set_version = signal.feature_set_version
+                existing.model_metadata = dict(signal.model_metadata or {})
+                existing.captured_at = captured_at
             return existing
 
     prediction = Prediction(
@@ -91,26 +125,27 @@ def capture_prediction(
         threshold=float(metadata.get("copilot_threshold")) if metadata.get("copilot_threshold") is not None else None,
         subject_name=str(metadata.get("copilot_subject_name") or "") or None,
         subject_team=str(metadata.get("copilot_subject_team") or "") or None,
-        side=recommendation.side,
-        action=recommendation.action,
-        suggested_price=recommendation.suggested_price,
+        capture_scope=capture_scope,
+        side=recommendation.side if recommendation else selected_side,
+        action=action,
+        suggested_price=suggested_price,
         fair_yes_price=signal.fair_yes_price,
         fair_no_price=signal.fair_no_price,
-        edge=recommendation.edge,
-        confidence=recommendation.confidence,
-        selection_score=recommendation.selection_score,
+        edge=edge,
+        confidence=confidence,
+        selection_score=selection_score,
         model_name=signal.model_name or MODEL_NAME,
         model_version=signal.model_version,
         calibration_version=signal.calibration_version,
         feature_set_version=signal.feature_set_version,
         model_metadata=dict(signal.model_metadata or {}),
-        invalidation=recommendation.invalidation,
-        rationale=recommendation.rationale,
+        invalidation=invalidation,
+        rationale=rationale,
         reasons=list(signal.reasons or []),
         features=dict(signal.features or {}),
-        scoring_diagnostics=dict(recommendation.scoring_diagnostics or signal.scoring_diagnostics or {}),
+        scoring_diagnostics=diagnostics,
         market_status_at_capture=market.status,
-        captured_at=recommendation.captured_at,
+        captured_at=captured_at,
     )
     db.add(prediction)
     return prediction

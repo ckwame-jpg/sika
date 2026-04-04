@@ -25,6 +25,7 @@ import type {
   SportRead,
   StatsQueryRead,
   WatchlistDiagnosticsRead,
+  WatchlistCoverageRowRead,
 } from "./types";
 
 const BASE = "/api";
@@ -59,6 +60,12 @@ export const fetchWatchlist = (sport?: string, limit = 50) => {
   const params = new URLSearchParams({ limit: String(limit) });
   if (sport) params.set("sport", sport);
   return request<RecommendationRead[]>(`/watchlist?${params}`);
+};
+
+export const fetchWatchlistCoverage = (sport?: string, limit = 250) => {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (sport) params.set("sport", sport);
+  return request<WatchlistCoverageRowRead[]>(`/watchlist/coverage?${params}`);
 };
 
 export const fetchWatchlistDiagnostics = () =>
@@ -216,6 +223,8 @@ export const keys = {
     `/events?sport=${sport ?? ""}&day=${day ?? ""}`,
   watchlist: (sport?: string, limit = 50) =>
     `/watchlist?sport=${sport ?? ""}&limit=${limit}`,
+  watchlistCoverage: (sport?: string, limit = 250) =>
+    `/watchlist/coverage?sport=${sport ?? ""}&limit=${limit}`,
   watchlistDiagnostics: "/watchlist/diagnostics",
   parlayWatchlist: (sportScope = "all", legCount?: number, limit = 50) =>
     `/parlays/watchlist?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,

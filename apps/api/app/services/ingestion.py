@@ -16,6 +16,7 @@ from app.services.ml import capture_shadow_artifacts
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import OPEN_MARKET_STATUSES, settle_predictions
 from app.services.scoring import PropStatsResolver, regenerate_watchlist, warm_prop_context_cache
+from app.services.watchlist_coverage import warm_current_watchlist_prop_context
 from app.sports.base import NormalizedEvent
 from app.sports.registry import ADAPTERS
 
@@ -31,6 +32,14 @@ SPORT_LABELS = {
 
 FREE_PROVIDER_SPORTS = {"SOCCER", "TENNIS", "UFC"}
 PUBLIC_MAJOR_SPORTS = {"NBA", "NFL", "MLB"}
+
+
+def _merge_numeric_detail_maps(*payloads: dict[str, int]) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for payload in payloads:
+        for key, value in payload.items():
+            merged[key] = merged.get(key, 0) + int(value or 0)
+    return merged
 
 
 def _prop_market_summary_counts(db: Session) -> tuple[int, dict[str, int], dict[str, int]]:
@@ -575,6 +584,8 @@ def run_refresh_cycle(
                 discover_combo_props=False,
             )
             mapped_count = map_markets_to_events(db)
+            current_watchlist_resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
+            current_watchlist_summary = warm_current_watchlist_prop_context(db, resolver=current_watchlist_resolver)
             resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=False)
             watchlist_summary = regenerate_watchlist(
                 db,
@@ -603,7 +614,7 @@ def run_refresh_cycle(
                 shadow_parlay_prediction_count=shadow_parlay_prediction_count,
                 single_settlement_summary=single_settlement_summary,
                 parlay_settlement_summary=parlay_settlement_summary,
-                extra_details=resolver.stats.as_dict(),
+                extra_details=_merge_numeric_detail_maps(current_watchlist_summary, resolver.stats.as_dict()),
             )
         run.status = "completed"
         run.records_processed = records

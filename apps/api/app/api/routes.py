@@ -53,6 +53,7 @@ from app.schemas import (
     StatsQueryRead,
     StatsQueryRequest,
     WatchlistDiagnosticsRead,
+    WatchlistCoverageRowRead,
 )
 from app.services.market_history import build_market_history
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
@@ -61,6 +62,12 @@ from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
 from app.services.scheduler import get_refresh_runtime_state, queue_prop_refresh_if_due, run_refresh_cycle_now
 from app.services.stats_query import StatsQueryService
+from app.services.watchlist_coverage import (
+    current_watchlist_markets,
+    latest_prediction_by_market_id,
+    latest_recommendation_by_market_id,
+    latest_snapshot_by_market_id,
+)
 
 router = APIRouter()
 
@@ -213,6 +220,7 @@ def _serialize_prediction(item: Prediction) -> PredictionRead:
         threshold=item.threshold,
         subject_name=item.subject_name,
         subject_team=item.subject_team,
+        capture_scope=item.capture_scope or "recommendation",
         side=item.side,
         action=item.action,
         suggested_price=item.suggested_price,
@@ -247,6 +255,46 @@ def _serialize_prediction(item: Prediction) -> PredictionRead:
         settlement_source=item.settlement_source,
         settlement_notes=item.settlement_notes,
         captured_at=item.captured_at,
+    )
+
+
+def _serialize_watchlist_coverage_row(
+    market: Market,
+    *,
+    latest_snapshot: MarketSnapshot | None,
+    latest_recommendation: Recommendation | None,
+    latest_prediction: Prediction | None,
+) -> WatchlistCoverageRowRead:
+    prediction_payload = _serialize_prediction(latest_prediction) if latest_prediction else None
+    recommendation_payload = (
+        _serialize_recommendation(
+            latest_recommendation,
+            market,
+            market.event.name if market.event else market.title,
+        )
+        if latest_recommendation and market.event
+        else None
+    )
+    return WatchlistCoverageRowRead(
+        ticker=market.ticker,
+        event_id=market.event_id,
+        event_name=market.event.name if market.event else None,
+        event_status=market.event.status if market.event else None,
+        starts_at=market.event.starts_at if market.event else None,
+        sport_key=market.sport_key,
+        market_title=market.title,
+        coverage_status=(
+            "recommendation"
+            if latest_recommendation is not None
+            else "prediction"
+            if latest_prediction is not None
+            else "market"
+        ),
+        prop_context_stale=bool((latest_prediction.features or {}).get("uses_stale_prop_context")) if latest_prediction else False,
+        latest_snapshot=MarketSnapshotRead.model_validate(latest_snapshot) if latest_snapshot else None,
+        latest_recommendation=recommendation_payload,
+        latest_prediction=prediction_payload,
+        **_market_metadata_fields(market),
     )
 
 
@@ -578,6 +626,30 @@ def get_watchlist(sport: str | None = None, limit: int = 25, db: Session = Depen
     return [
         _serialize_recommendation(item, item.market, item.event.name)
         for item in recommendations
+    ]
+
+
+@router.get("/watchlist/coverage", response_model=list[WatchlistCoverageRowRead])
+def get_watchlist_coverage(
+    sport: str | None = None,
+    limit: int = 250,
+    db: Session = Depends(get_db),
+) -> list[WatchlistCoverageRowRead]:
+    normalized_sport = sport.upper() if sport else None
+    markets = current_watchlist_markets(db, sport=normalized_sport)
+    limited_markets = markets[: max(limit, 1)]
+    market_ids = [market.id for market in limited_markets]
+    latest_snapshots = latest_snapshot_by_market_id(db, market_ids)
+    latest_recommendations = latest_recommendation_by_market_id(db, market_ids)
+    latest_predictions = latest_prediction_by_market_id(db, market_ids)
+    return [
+        _serialize_watchlist_coverage_row(
+            market,
+            latest_snapshot=latest_snapshots.get(market.id),
+            latest_recommendation=latest_recommendations.get(market.id),
+            latest_prediction=latest_predictions.get(market.id),
+        )
+        for market in limited_markets
     ]
 
 

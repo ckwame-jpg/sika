@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.api import routes
-from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Recommendation, Run
+from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, Recommendation, Run
 
 
 def test_watchlist_and_positions_endpoints(client, db_session):
@@ -106,6 +106,106 @@ def test_watchlist_diagnostics_endpoint_reports_no_refresh_runs(client):
     watchlist = client.get("/watchlist")
     assert watchlist.status_code == 200
     assert watchlist.json() == []
+
+
+def test_watchlist_coverage_endpoint_reports_prediction_only_rows(client, db_session):
+    now = datetime.now(timezone.utc)
+    home = Participant(external_id="coverage-home", sport_key="NBA", display_name="Miami Heat", short_name="Heat", participant_type="team")
+    away = Participant(external_id="coverage-away", sport_key="NBA", display_name="Washington Wizards", short_name="Wizards", participant_type="team")
+    db_session.add_all([home, away])
+    db_session.flush()
+
+    event = Event(
+        external_id="coverage-evt",
+        sport_key="NBA",
+        name="Washington Wizards at Miami Heat",
+        status="scheduled",
+        starts_at=now + timedelta(hours=1),
+    )
+    db_session.add(event)
+    db_session.flush()
+    db_session.add_all(
+        [
+            EventParticipant(event_id=event.id, participant_id=home.id, role="home", is_home=True),
+            EventParticipant(event_id=event.id, participant_id=away.id, role="away", is_home=False),
+        ]
+    )
+    market = Market(
+        ticker="KXNBAPTS-COVERAGE-1",
+        sport_key="NBA",
+        event_id=event.id,
+        title="Bam Adebayo: 15+ points?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_market_kind": "player_prop",
+            "copilot_stat_key": "points",
+            "copilot_threshold": 15.0,
+            "copilot_direction": "over",
+            "copilot_subject_name": "Bam Adebayo",
+            "copilot_subject_team": "MIA",
+        },
+    )
+    db_session.add(market)
+    db_session.flush()
+    db_session.add(
+        MarketSnapshot(
+            market_id=market.id,
+            captured_at=now,
+            yes_ask=0.47,
+            no_ask=0.56,
+            last_price=0.48,
+        )
+    )
+    db_session.add(
+        Prediction(
+            event_id=event.id,
+            market_id=market.id,
+            ticker=market.ticker,
+            sport_key="NBA",
+            event_name=event.name,
+            market_title=market.title,
+            market_family="player_prop",
+            market_kind="player_prop",
+            stat_key="points",
+            threshold=15.0,
+            subject_name="Bam Adebayo",
+            subject_team="MIA",
+            capture_scope="coverage",
+            side="yes",
+            action="buy",
+            suggested_price=0.47,
+            fair_yes_price=0.58,
+            fair_no_price=0.42,
+            edge=0.11,
+            confidence=0.67,
+            model_name="heuristic-v1",
+            invalidation="Pull if YES entry moves above 0.6200",
+            rationale="Coverage prediction for the current slate.",
+            reasons=["Using stale cached prop context while live ESPN refresh catches up."],
+            features={"uses_stale_prop_context": True},
+            scoring_diagnostics={
+                "selected_side_probability": 0.58,
+                "display_market_title": market.title,
+                "context_coverage_score": 0.82,
+                "quality_tier": "high",
+            },
+            market_status_at_capture="active",
+            settlement_status="pending",
+            prediction_outcome="pending",
+            captured_at=now,
+        )
+    )
+    db_session.commit()
+
+    response = client.get("/watchlist/coverage?sport=NBA")
+
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["ticker"] == market.ticker
+    assert row["coverage_status"] == "prediction"
+    assert row["prop_context_stale"] is True
+    assert row["latest_prediction"]["capture_scope"] == "coverage"
 
 
 def test_refresh_jobs_returns_prop_queue_flag(client, monkeypatch):

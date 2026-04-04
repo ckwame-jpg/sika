@@ -196,6 +196,28 @@ export interface MarketListRead {
   latest_recommendation: RecommendationRead | null;
 }
 
+export interface WatchlistCoverageRowRead {
+  ticker: string;
+  event_id: number | null;
+  event_name: string | null;
+  event_status: string | null;
+  starts_at: string | null;
+  sport_key: string | null;
+  market_title: string;
+  market_family: string | null;
+  market_kind: string | null;
+  stat_key: string | null;
+  threshold: number | null;
+  direction: string | null;
+  subject_name: string | null;
+  subject_team: string | null;
+  coverage_status: "recommendation" | "prediction" | "market";
+  prop_context_stale: boolean;
+  latest_snapshot: MarketSnapshotRead | null;
+  latest_recommendation: RecommendationRead | null;
+  latest_prediction: PredictionRead | null;
+}
+
 export interface MarketHistoryPointRead {
   timestamp: string;
   yes_bid: number | null;
@@ -444,6 +466,7 @@ export interface PredictionRead {
   threshold: number | null;
   subject_name: string | null;
   subject_team: string | null;
+  capture_scope: string;
   side: string;
   action: string;
   suggested_price: number;

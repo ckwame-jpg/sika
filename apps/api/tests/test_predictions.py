@@ -2,10 +2,11 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from app.models import EspnPlayerGamelogCache, EspnPlayerSearchCache, Event, EventParticipant, Market, Participant, Prediction
+from app.models import EspnPlayerGamelogCache, EspnPlayerSearchCache, Event, EventParticipant, Market, Participant, Prediction, SignalSnapshot
 from app.services.ingestion import refresh_kalshi_markets, run_refresh_cycle
-from app.services.predictions import settle_predictions
+from app.services.predictions import capture_prediction, settle_predictions
 from app.services.scoring import PropStatsResolver, warm_prop_context_cache
+from app.services.watchlist_coverage import warm_current_watchlist_prop_context
 
 
 def _seed_team_event(db_session, *, sport_key: str = "NBA", external_id: str = "evt-1"):
@@ -378,6 +379,64 @@ def test_prediction_model_persists_snapshot_fields(db_session):
     assert stored.prediction_outcome == "pending"
 
 
+def test_capture_prediction_supports_coverage_scope_without_recommendation(db_session):
+    event = _seed_team_event(db_session, sport_key="NBA", external_id="coverage-prediction")
+    market = Market(
+        ticker="KXNBA-COVERAGE-ONLY-1",
+        sport_key="NBA",
+        event_id=event.id,
+        title="Jalen Brunson: 30+ points?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_market_kind": "player_prop",
+            "copilot_stat_key": "points",
+            "copilot_threshold": 30.0,
+            "copilot_subject_name": "Jalen Brunson",
+            "copilot_subject_team": "NYK",
+        },
+    )
+    signal = SignalSnapshot(
+        event_id=event.id,
+        market_id=None,
+        model_name="heuristic-v1",
+        confidence=0.68,
+        fair_yes_price=0.59,
+        fair_no_price=0.41,
+        edge=0.12,
+        selection_score=0.14,
+        reasons=["Coverage prediction for the current slate."],
+        features={"uses_stale_prop_context": True},
+        scoring_diagnostics={
+            "selected_side": "yes",
+            "suggested_price": 0.47,
+            "invalidation": "Pull if YES entry moves above 0.6300",
+            "selected_side_probability": 0.59,
+        },
+    )
+    db_session.add_all([market, signal])
+    db_session.flush()
+
+    prediction = capture_prediction(
+        db_session,
+        run_id=12,
+        event=event,
+        market=market,
+        recommendation=None,
+        signal=signal,
+        metadata=market.raw_data or {},
+        capture_scope="coverage",
+    )
+    db_session.commit()
+
+    stored = db_session.scalar(select(Prediction).where(Prediction.id == prediction.id))
+    assert stored is not None
+    assert stored.capture_scope == "coverage"
+    assert stored.side == "yes"
+    assert stored.suggested_price == 0.47
+    assert stored.invalidation == "Pull if YES entry moves above 0.6300"
+
+
 def test_refresh_cycle_captures_durable_predictions(db_session):
     run = run_refresh_cycle(
         db_session,
@@ -495,6 +554,77 @@ def test_warm_prop_context_cache_resolves_unique_subjects_once(db_session):
     assert summary["player_search_cache_misses"] == 1
     assert summary["gamelog_cache_misses"] == 1
     assert len(espn_client.search_calls) == 1
+    assert len(espn_client.gamelog_calls) == 1
+
+
+def test_warm_current_watchlist_prop_context_only_warms_current_slate(db_session):
+    now = datetime.now(timezone.utc)
+    current_event = _seed_team_event(db_session, sport_key="NBA", external_id="current-slate")
+    current_event.starts_at = now + timedelta(hours=1)
+    future_event = _seed_team_event(db_session, sport_key="NBA", external_id="future-slate")
+    future_event.starts_at = now + timedelta(days=1)
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            Market(
+                ticker="KXNBAPTS-CURRENT-1",
+                sport_key="NBA",
+                event_id=current_event.id,
+                title="Jalen Brunson: 30+ points",
+                status="active",
+                raw_data={
+                    "copilot_market_family": "player_prop",
+                    "copilot_market_kind": "player_prop",
+                    "copilot_stat_key": "points",
+                    "copilot_threshold": 30.0,
+                    "copilot_subject_name": "Jalen Brunson",
+                    "copilot_subject_team": "NYK",
+                },
+            ),
+            Market(
+                ticker="KXNBAPTS-FUTURE-1",
+                sport_key="NBA",
+                event_id=future_event.id,
+                title="Bam Adebayo: 15+ points",
+                status="active",
+                raw_data={
+                    "copilot_market_family": "player_prop",
+                    "copilot_market_kind": "player_prop",
+                    "copilot_stat_key": "points",
+                    "copilot_threshold": 15.0,
+                    "copilot_subject_name": "Bam Adebayo",
+                    "copilot_subject_team": "MIA",
+                },
+            ),
+        ]
+    )
+    db_session.commit()
+
+    class SlateEspnClient:
+        def __init__(self):
+            self.search_calls: list[tuple[str, str]] = []
+            self.gamelog_calls: list[tuple[str, str, int]] = []
+
+        def search_player(self, query: str, sport_key: str = "NBA"):
+            self.search_calls.append((query, sport_key))
+            return {
+                "athlete_id": "athlete-current" if query == "Jalen Brunson" else "athlete-future",
+                "display_name": query,
+                "team_name": "Test Team",
+            }
+
+        def fetch_player_gamelog(self, sport_key: str, athlete_id: str, season: int):
+            self.gamelog_calls.append((sport_key, athlete_id, season))
+            return NBA_PROP_GAMELOG_PAYLOAD
+
+    espn_client = SlateEspnClient()
+    resolver = PropStatsResolver(db_session, espn_client=espn_client, allow_network=True, now=now)
+
+    summary = warm_current_watchlist_prop_context(db_session, resolver=resolver, now=now)
+
+    assert summary["prop_subjects_warmed"] == 1
+    assert espn_client.search_calls == [("Jalen Brunson", "NBA")]
     assert len(espn_client.gamelog_calls) == 1
 
 

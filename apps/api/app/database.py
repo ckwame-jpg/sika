@@ -50,6 +50,7 @@ SCHEMA_PATCHES: dict[str, dict[str, str]] = {
         "model_metadata": "JSON",
         "selection_score": "FLOAT",
         "scoring_diagnostics": "JSON",
+        "capture_scope": "VARCHAR",
     },
     "parlay_recommendations": {
         "model_name": "VARCHAR",

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
@@ -208,6 +210,28 @@ class MarketListRead(BaseModel):
     event_name: str | None = None
     latest_snapshot: MarketSnapshotRead | None = None
     latest_recommendation: RecommendationRead | None = None
+
+
+class WatchlistCoverageRowRead(BaseModel):
+    ticker: str
+    event_id: int | None = None
+    event_name: str | None = None
+    event_status: str | None = None
+    starts_at: UTCDateTime | None = None
+    sport_key: str | None = None
+    market_title: str
+    market_family: str | None = None
+    market_kind: str | None = None
+    stat_key: str | None = None
+    threshold: float | None = None
+    direction: str | None = None
+    subject_name: str | None = None
+    subject_team: str | None = None
+    coverage_status: Literal["recommendation", "prediction", "market"]
+    prop_context_stale: bool = False
+    latest_snapshot: MarketSnapshotRead | None = None
+    latest_recommendation: RecommendationRead | None = None
+    latest_prediction: PredictionRead | None = None
 
 
 class RunSummaryCounts(BaseModel):
@@ -466,6 +490,7 @@ class PredictionRead(BaseModel):
     threshold: float | None = None
     subject_name: str | None = None
     subject_team: str | None = None
+    capture_scope: str = "recommendation"
     side: str
     action: str
     suggested_price: float
@@ -519,6 +544,9 @@ class PredictionSummaryRead(BaseModel):
     by_sport: dict[str, int] = Field(default_factory=dict)
     by_market_family: dict[str, int] = Field(default_factory=dict)
     by_outcome: dict[str, int] = Field(default_factory=dict)
+
+
+WatchlistCoverageRowRead.model_rebuild()
 
 
 class ParlayPredictionLegRead(BaseModel):

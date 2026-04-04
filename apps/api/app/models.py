@@ -182,6 +182,7 @@ class Prediction(Base):
     threshold = Column(Float, nullable=True)
     subject_name = Column(String, nullable=True, index=True)
     subject_team = Column(String, nullable=True, index=True)
+    capture_scope = Column(String, nullable=False, default="recommendation", index=True)
     side = Column(String, nullable=False, index=True)
     action = Column(String, nullable=False, default="buy")
     suggested_price = Column(Float, nullable=False)

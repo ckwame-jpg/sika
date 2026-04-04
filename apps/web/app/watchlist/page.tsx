@@ -37,30 +37,33 @@ function WatchlistContent() {
               <span className="text-xs text-muted-foreground">Sport</span>
               <SportFilterSelect triggerClassName="h-8 w-[min(200px,60vw)] text-xs sm:w-[140px]" />
             </div>
-            <div className="flex items-center justify-between gap-2 sm:justify-start">
-              <span className="text-xs text-muted-foreground">Show</span>
-              <Select
-                value={String(limit)}
-                onValueChange={(value) => setLimit(Number(value))}
-              >
-                <SelectTrigger className="h-8 w-[min(200px,60vw)] text-xs sm:w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {LIMITS.map((value) => (
-                    <SelectItem key={value} value={String(value)}>
-                      {value} items
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {qualityMode !== "coverage" && (
+              <div className="flex items-center justify-between gap-2 sm:justify-start">
+                <span className="text-xs text-muted-foreground">Show</span>
+                <Select
+                  value={String(limit)}
+                  onValueChange={(value) => setLimit(Number(value))}
+                >
+                  <SelectTrigger className="h-8 w-[min(200px,60vw)] text-xs sm:w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LIMITS.map((value) => (
+                      <SelectItem key={value} value={String(value)}>
+                        {value} items
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="flex items-center justify-between gap-2 sm:justify-start">
               <span className="text-xs text-muted-foreground">Mode</span>
               <QualityFilterSelect
                 value={qualityMode}
                 onValueChange={setQualityMode}
                 triggerClassName="h-8 w-[min(200px,60vw)] text-xs sm:w-[130px]"
+                includeCoverage
               />
             </div>
           </div>
@@ -73,16 +76,26 @@ function WatchlistContent() {
           />
         )}
         <span className="hidden text-xs text-muted-foreground lg:ml-auto lg:inline">
-          {view === "singles" ? "Default sort: Edge · Click headers to sort" : "Top-ranked combinations"} · 30s refresh
+          {view === "singles"
+            ? qualityMode === "coverage"
+              ? "Current-slate order: Tip-off, then winners and props"
+              : "Default sort: Edge · Click headers to sort"
+            : "Top-ranked combinations"} · 30s refresh
         </span>
         <span className="text-xs text-muted-foreground lg:hidden">
-          {view === "singles" ? "Default sort: Edge" : "Top-ranked combinations"} · 30s refresh
+          {view === "singles"
+            ? qualityMode === "coverage"
+              ? "Current-slate order"
+              : "Default sort: Edge"
+            : "Top-ranked combinations"} · 30s refresh
         </span>
       </div>
 
       <div className="border-b border-border bg-surface px-3 py-2 text-xs text-muted-foreground sm:px-5">
         {view === "singles"
-          ? `${EDGE_EXPLANATION} Use Trade to route a single-market pick to paper or demo.`
+          ? qualityMode === "coverage"
+            ? "Coverage mode lists current NBA and MLB winner markets plus available player props for today's slate. Recommendation and prediction badges show which rows cleared thresholds versus which are coverage-only."
+            : `${EDGE_EXPLANATION} Use Trade to route a single-market pick to paper or demo.`
           : "Synthetic parlays combine the strongest current NBA and MLB single-pick edges. Filter by sport scope and preferred leg count to surface the combinations you actually want to scan."}
       </div>
 

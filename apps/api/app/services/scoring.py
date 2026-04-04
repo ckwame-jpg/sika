@@ -28,6 +28,7 @@ from app.services.model_families import single_family_key
 from app.services.parlays import ParlayCandidateInput, capture_parlay_artifacts, clear_active_parlay_watchlist
 from app.services.predictions import MODEL_NAME, OPEN_MARKET_STATUSES, capture_prediction
 from app.services.stats_query import _build_game_logs, default_season_for_sport
+from app.services.watchlist_coverage import is_current_watchlist_market
 from app.sports.base import alias_tokens
 
 
@@ -1466,6 +1467,8 @@ def _build_scored_recommendation(
         "source_market_title": source_market_title,
         "display_market_title": display_market_title,
         "source_badge_label": source_badge_label or None,
+        "suggested_price": round(suggested_price, 4),
+        "invalidation": invalidation,
     }
     selection_score, signal_diagnostics = _finalize_single_scoring_diagnostics(
         diagnostics=scoring_diagnostics,
@@ -1632,6 +1635,7 @@ def regenerate_watchlist(
     active_resolver = resolver or PropStatsResolver(db, allow_network=False)
     parlay_candidates: list[ParlayCandidateInput] = []
     pending_recommendations: list[tuple[Market, ScoredRecommendation]] = []
+    current_coverage_candidates: list[tuple[Market, ScoredRecommendation]] = []
     markets = db.scalars(
         select(Market)
         .options(joinedload(Market.event).selectinload(Event.participants).joinedload(EventParticipant.participant))
@@ -1646,6 +1650,8 @@ def regenerate_watchlist(
         scored = _build_scored_recommendation(db, market.event, market, latest_snapshot, resolver=active_resolver)
         if scored:
             db.add(scored.signal)
+            if is_current_watchlist_market(market):
+                current_coverage_candidates.append((market, scored))
             if scored.recommendation:
                 pending_recommendations.append((market, scored))
             else:
@@ -1661,8 +1667,10 @@ def regenerate_watchlist(
     summary.combo_prop_candidates_suppressed += combo_suppressed
 
     db.flush()
+    recommendation_market_ids: set[int] = set()
     for market, scored in deduped_recommendations:
         assert scored.recommendation is not None
+        recommendation_market_ids.add(market.id)
         diagnostics = dict(scored.recommendation.scoring_diagnostics or {})
         quality_tier = str(diagnostics.get("quality_tier") or "medium")
         summary.quality_tier_counts[quality_tier] = summary.quality_tier_counts.get(quality_tier, 0) + 1
@@ -1677,6 +1685,7 @@ def regenerate_watchlist(
             recommendation=scored.recommendation,
             signal=scored.signal,
             metadata=scored.metadata,
+            capture_scope="recommendation",
         )
         summary.recommendation_count += 1
         summary.prediction_count += 1
@@ -1690,6 +1699,20 @@ def regenerate_watchlist(
                 metadata=scored.metadata,
             )
         )
+    for market, scored in current_coverage_candidates:
+        if market.id in recommendation_market_ids:
+            continue
+        capture_prediction(
+            db,
+            run_id=run_id,
+            event=market.event,
+            market=market,
+            recommendation=None,
+            signal=scored.signal,
+            metadata=scored.metadata,
+            capture_scope="coverage",
+        )
+        summary.prediction_count += 1
     db.flush()
     parlay_recommendation_count, parlay_prediction_count = capture_parlay_artifacts(
         db,

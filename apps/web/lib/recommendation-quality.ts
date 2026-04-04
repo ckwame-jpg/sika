@@ -13,7 +13,7 @@ export function matchesRecommendationViewMode(
   item: QualityCandidate,
   mode: RecommendationViewMode,
 ): boolean {
-  if (mode === "balanced") {
+  if (mode === "balanced" || mode === "coverage") {
     return true;
   }
   const qualityTier = (item.quality_tier || "").toLowerCase();

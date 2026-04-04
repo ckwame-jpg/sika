@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR, { mutate } from "swr";
 import { ArrowRight, ArrowUpDown, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
-import { fetchWatchlist, fetchWatchlistDiagnostics, keys, triggerRefresh } from "@/lib/api";
-import type { RecommendationRead, WatchlistDiagnosticsRead } from "@/lib/types";
+import { fetchWatchlist, fetchWatchlistCoverage, fetchWatchlistDiagnostics, keys, triggerRefresh } from "@/lib/api";
+import type { PredictionRead, RecommendationRead, WatchlistCoverageRowRead, WatchlistDiagnosticsRead } from "@/lib/types";
 import type { RecommendationViewMode } from "@/components/filters/quality-filter-select";
 import {
   Table,
@@ -37,6 +37,13 @@ import { matchesRecommendationViewMode } from "@/lib/recommendation-quality";
 
 type SortKey = "market" | "sport" | "ticker" | "side" | "entry" | "edge" | "winProb" | "age";
 type SortDirection = "asc" | "desc";
+type TradeCandidate = {
+  ticker: string;
+  marketTitle: string;
+  side: string;
+  suggestedPrice: number;
+  rationale: string;
+};
 
 const DEFAULT_SORT: { key: SortKey; direction: SortDirection } = {
   key: "edge",
@@ -95,6 +102,33 @@ function compareRecommendations(
     comparison = right.id - left.id;
   }
   return direction === "asc" ? comparison : comparison * -1;
+}
+
+function coveragePrimary(row: WatchlistCoverageRowRead): RecommendationRead | PredictionRead | null {
+  return row.latest_recommendation ?? row.latest_prediction;
+}
+
+function coverageDisplayTitle(row: WatchlistCoverageRowRead): string {
+  const primary = coveragePrimary(row);
+  return primary?.display_market_title ?? row.market_title;
+}
+
+function coverageProbability(row: WatchlistCoverageRowRead): number | null {
+  const primary = coveragePrimary(row);
+  if (!primary) return null;
+  return primary.selected_side_probability ?? primary.confidence;
+}
+
+function coverageTradeCandidate(row: WatchlistCoverageRowRead): TradeCandidate | null {
+  const primary = coveragePrimary(row);
+  if (!primary) return null;
+  return {
+    ticker: row.ticker,
+    marketTitle: coverageDisplayTitle(row),
+    side: primary.side,
+    suggestedPrice: primary.suggested_price,
+    rationale: row.latest_recommendation?.rationale ?? row.latest_prediction?.rationale ?? "Coverage prediction for the current slate.",
+  };
 }
 
 function nextSortDirection(currentKey: SortKey, currentDirection: SortDirection, nextKey: SortKey): SortDirection {
@@ -354,6 +388,120 @@ function EmptyWatchlistState({
   );
 }
 
+function CoverageWatchlistEmptyState({
+  sport,
+  diagnostics,
+  refreshing,
+  onRefresh,
+}: {
+  sport?: string;
+  diagnostics?: WatchlistDiagnosticsRead;
+  refreshing: boolean;
+  onRefresh: () => Promise<void>;
+}) {
+  const latestRun = diagnostics?.latest_refresh_run;
+  const normalizedSport = (sport || "").toUpperCase();
+  const unsupportedSport = Boolean(normalizedSport && !["NBA", "MLB"].includes(normalizedSport));
+
+  let tone: "default" | "warning" | "negative" = "default";
+  let title = "No current NBA/MLB coverage";
+  let description = "No current-slate winner markets or player props are available yet.";
+
+  if (unsupportedSport) {
+    title = `${sportLabel(normalizedSport)} coverage is not available`;
+    description = "Coverage mode currently guarantees same-day NBA and MLB markets and props only.";
+  } else if (!diagnostics || !latestRun) {
+    tone = refreshing ? "warning" : "default";
+    title = refreshing ? "Coverage is warming" : "No refresh has completed yet";
+    description = refreshing
+      ? "The backend is refreshing the current slate and warming prop context now."
+      : "Coverage mode is waiting for the first refresh to finish.";
+  } else if (
+    refreshing
+    || diagnostics.refresh_status === "queued"
+    || diagnostics.refresh_status === "running"
+    || diagnostics.prop_refresh_status === "queued"
+    || diagnostics.prop_refresh_status === "running"
+  ) {
+    tone = "warning";
+    title = "Coverage is warming";
+    description = "Markets are refreshing and current-slate prop context is still catching up.";
+  } else if (latestRun.status === "failed") {
+    tone = "negative";
+    title = "Latest refresh failed";
+    description = diagnostics.refresh_error_message
+      ? `${diagnostics.refresh_error_message} See Runs for technical details.`
+      : "The latest refresh did not complete, so current-slate coverage could not be rebuilt.";
+  } else if (diagnostics.prop_data_stale) {
+    tone = "warning";
+    title = "Prop context is stale";
+    description = "Winner markets may be available, but player props can lag until current-slate prop context is warmed.";
+  } else {
+    description = "No open winner markets or player props were available upstream for the current NBA/MLB slate.";
+  }
+
+  return (
+    <Card className="border-dashed">
+      <CardContent className="space-y-4 px-4 py-4 sm:px-5 sm:py-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={tone}>{title}</Badge>
+              {latestRun && (
+                <span className="text-xs text-muted-foreground">
+                  Run #{latestRun.id} · {latestRun.status}
+                </span>
+              )}
+            </div>
+            <p className="max-w-2xl text-sm text-muted-foreground">{description}</p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              variant="secondary"
+              size="sm"
+              className="justify-center"
+              onClick={() => void onRefresh()}
+              disabled={refreshing}
+            >
+              <RefreshCw size={13} className={cn(refreshing && "animate-spin")} />
+              {refreshing ? "Refreshing" : "Run refresh"}
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/runs" className="justify-center">
+                Runs
+                <ArrowRight size={13} />
+              </Link>
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <EmptyStateStat
+            label="Supported Markets"
+            value={String(diagnostics?.latest_supported_markets_kept ?? 0)}
+            hint="Processed in the latest refresh"
+          />
+          <EmptyStateStat
+            label="Recommendations"
+            value={String(diagnostics?.latest_recommendations_emitted ?? 0)}
+            hint="Current recommendation subset"
+          />
+          <EmptyStateStat
+            label="Props"
+            value={diagnostics?.prop_data_stale ? "Stale" : "Ready"}
+            hint={diagnostics?.last_prop_refresh_at ? `Last prop refresh ${fmtRelative(diagnostics.last_prop_refresh_at)}` : "Awaiting first prop warmup"}
+          />
+          <EmptyStateStat
+            label="Coverage Scope"
+            value={sport && ["NBA", "MLB"].includes(normalizedSport) ? sportLabel(normalizedSport) : "NBA + MLB"}
+            hint="Current-slate mode"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function RecommendationRow({
   rec,
   onClick,
@@ -523,6 +671,242 @@ function RecommendationCard({
   );
 }
 
+function CoverageModeCallout({
+  rows,
+  diagnostics,
+}: {
+  rows: WatchlistCoverageRowRead[];
+  diagnostics?: WatchlistDiagnosticsRead;
+}) {
+  const playerPropCount = rows.filter((row) => row.market_family === "player_prop").length;
+  if (playerPropCount > 0) {
+    return null;
+  }
+
+  const title = diagnostics?.prop_data_stale
+    ? "Prop context is still warming"
+    : "No player props available for the current slate";
+  const description = diagnostics?.prop_data_stale
+    ? "Winner markets are available, but prop context is stale so player props may fill in on the next refresh."
+    : "Current-slate coverage found winner markets, but no NBA/MLB player props were available or scored for these games yet.";
+
+  return (
+    <Card className="border-dashed">
+      <CardContent className="px-4 py-4 sm:px-5 sm:py-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="warning">{title}</Badge>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CoverageRow({
+  row,
+  onClick,
+  onTrade,
+}: {
+  row: WatchlistCoverageRowRead;
+  onClick: () => void;
+  onTrade: () => void;
+}) {
+  const { formatPrice } = usePriceDisplay();
+  const primary = coveragePrimary(row);
+  const tradeCandidate = coverageTradeCandidate(row);
+  const displayTitle = coverageDisplayTitle(row);
+  const winProbability = coverageProbability(row);
+
+  return (
+    <TableRow className="cursor-pointer" onClick={onClick}>
+      <TableCell>
+        <div className="max-w-80 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate text-sm text-foreground">{displayTitle}</p>
+            {row.coverage_status === "recommendation" && <Badge variant="positive">Recommendation</Badge>}
+            {row.coverage_status === "prediction" && <Badge variant="outline">Prediction only</Badge>}
+            {row.coverage_status === "market" && <Badge variant="warning">Market only</Badge>}
+            {row.prop_context_stale && <Badge variant="warning">Prop context stale</Badge>}
+            {primary?.source_badge_label && <Badge variant="outline">{primary.source_badge_label}</Badge>}
+          </div>
+          <p className="truncate text-xs text-muted-foreground">{row.event_name ?? row.market_title}</p>
+          {row.subject_name && (
+            <p className="truncate text-xs text-muted-foreground">
+              {row.subject_name}
+              {row.subject_team && ` · ${row.subject_team}`}
+            </p>
+          )}
+        </div>
+      </TableCell>
+      <TableCell>{row.sport_key && <SportBadge sport={row.sport_key} />}</TableCell>
+      <TableCell>
+        <div className="font-mono text-xs text-foreground">{row.ticker}</div>
+      </TableCell>
+      <TableCell>
+        {primary ? (
+          <span className={cn("font-mono text-xs font-medium", sideClass(primary.side))}>
+            {primary.side.toUpperCase()}
+          </span>
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">--</span>
+        )}
+      </TableCell>
+      <TableCell>
+        {primary ? (
+          <span className="font-mono text-xs">{formatPrice(primary.suggested_price)}</span>
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">--</span>
+        )}
+      </TableCell>
+      <TableCell>
+        {primary ? (
+          <span className={cn("font-mono text-xs font-medium", edgeClass(primary.edge))}>
+            {fmtEdge(primary.edge)}
+          </span>
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">--</span>
+        )}
+      </TableCell>
+      <TableCell>
+        {winProbability != null && primary ? (
+          <div className="space-y-1">
+            <PercentBar value={winProbability} />
+            <p className="font-mono text-[11px] text-muted-foreground">
+              {RELIABILITY_LABEL} {fmtPercent(primary.confidence)}
+            </p>
+          </div>
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">No score yet</span>
+        )}
+      </TableCell>
+      <TableCell>
+        <Button
+          variant={tradeCandidate ? "secondary" : "ghost"}
+          size="xs"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (tradeCandidate) {
+              onTrade();
+              return;
+            }
+            onClick();
+          }}
+        >
+          {tradeCandidate ? "Trade" : "View"}
+        </Button>
+      </TableCell>
+      <TableCell>
+        <span className="font-mono text-xs text-muted-foreground">
+          {row.starts_at ? fmtRelative(row.starts_at) : "--"}
+        </span>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function CoverageCard({
+  row,
+  onClick,
+  onTrade,
+}: {
+  row: WatchlistCoverageRowRead;
+  onClick: () => void;
+  onTrade: () => void;
+}) {
+  const { formatPrice } = usePriceDisplay();
+  const primary = coveragePrimary(row);
+  const tradeCandidate = coverageTradeCandidate(row);
+  const winProbability = coverageProbability(row);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className="w-full rounded-xl border border-border bg-surface p-4 text-left transition-colors duration-[120ms] hover:border-border-bright hover:bg-surface-hover"
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+    >
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {row.sport_key && <SportBadge sport={row.sport_key} />}
+            {primary ? (
+              <Badge variant={primary.side.toLowerCase() === "yes" ? "positive" : "negative"}>
+                {primary.side.toUpperCase()}
+              </Badge>
+            ) : (
+              <Badge variant="outline">Open market</Badge>
+            )}
+            {row.coverage_status === "recommendation" && <Badge variant="positive">Recommendation</Badge>}
+            {row.coverage_status === "prediction" && <Badge variant="outline">Prediction only</Badge>}
+            {row.coverage_status === "market" && <Badge variant="warning">Market only</Badge>}
+            {row.prop_context_stale && <Badge variant="warning">Prop context stale</Badge>}
+          </div>
+          <div>
+            <p className="text-sm font-medium text-foreground">{coverageDisplayTitle(row)}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{row.event_name ?? row.market_title}</p>
+            {row.subject_name && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {row.subject_name}
+                {row.subject_team && ` · ${row.subject_team}`}
+              </p>
+            )}
+          </div>
+        </div>
+        <Button
+          variant={tradeCandidate ? "secondary" : "ghost"}
+          size="xs"
+          onClick={(event) => {
+            event.stopPropagation();
+            if (tradeCandidate) {
+              onTrade();
+              return;
+            }
+            onClick();
+          }}
+        >
+          {tradeCandidate ? "Trade" : "View"}
+        </Button>
+      </div>
+
+      <div className="mt-4 grid gap-3 grid-cols-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{ENTRY_LABEL}</p>
+          <p className="mt-1 font-mono text-sm text-foreground">
+            {primary ? formatPrice(primary.suggested_price) : "--"}
+          </p>
+        </div>
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Edge</p>
+          <p className={cn("mt-1 font-mono text-sm font-medium", primary ? edgeClass(primary.edge) : "text-muted-foreground")}>
+            {primary ? fmtEdge(primary.edge) : "--"}
+          </p>
+        </div>
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{WIN_PROB_LABEL}</p>
+          <div className="mt-1">
+            {winProbability != null && primary ? (
+              <>
+                <PercentBar value={winProbability} />
+                <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                  {RELIABILITY_LABEL} {fmtPercent(primary.confidence)}
+                </p>
+              </>
+            ) : (
+              <p className="font-mono text-[11px] text-muted-foreground">No score yet</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface WatchlistTableProps {
   sport?: string;
   limit?: number;
@@ -537,14 +921,21 @@ export function WatchlistTable({
   qualityMode = "balanced",
 }: WatchlistTableProps) {
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
-  const [tradeRec, setTradeRec] = useState<RecommendationRead | null>(null);
+  const [tradeCandidate, setTradeCandidate] = useState<TradeCandidate | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>(DEFAULT_SORT.key);
   const [sortDirection, setSortDirection] = useState<SortDirection>(DEFAULT_SORT.direction);
+  const coverageMode = qualityMode === "coverage";
+  const coverageLimit = coverageMode ? 250 : limit;
 
   const { data, isLoading, error } = useSWR<RecommendationRead[]>(
-    keys.watchlist(sport, limit),
+    coverageMode ? null : keys.watchlist(sport, limit),
     () => fetchWatchlist(sport, limit),
+    { refreshInterval: 30_000 },
+  );
+  const { data: coverageData, isLoading: coverageLoading, error: coverageError } = useSWR<WatchlistCoverageRowRead[]>(
+    coverageMode ? keys.watchlistCoverage(sport, coverageLimit) : null,
+    () => fetchWatchlistCoverage(sport, coverageLimit),
     { refreshInterval: 30_000 },
   );
   const { data: diagnostics } = useSWR<WatchlistDiagnosticsRead>(
@@ -553,7 +944,7 @@ export function WatchlistTable({
     { refreshInterval: 15_000 },
   );
 
-  if (error) {
+  if (error || coverageError) {
     return (
       <div className="flex h-24 items-center justify-center text-xs text-negative">
         Failed to load watchlist.
@@ -562,6 +953,7 @@ export function WatchlistTable({
   }
 
   const items = data ?? [];
+  const coverageRows = coverageData ?? [];
   const filteredItems = items.filter((item) => matchesRecommendationViewMode(item, qualityMode));
   const sortedItems = [...filteredItems].sort((left, right) =>
     compareRecommendations(left, right, sortKey, sortDirection),
@@ -608,7 +1000,108 @@ export function WatchlistTable({
 
   return (
     <>
-      {isLoading ? (
+      {coverageMode ? (
+        coverageLoading ? (
+          <>
+            <div className="space-y-3 lg:hidden">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="rounded-xl border border-border bg-surface p-4">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="mt-3 h-4 w-3/4" />
+                  <Skeleton className="mt-2 h-3 w-1/2" />
+                  <div className="mt-4 grid grid-cols-3 gap-3">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className={cn(wrapperClassName, "hidden lg:block")} style={wrapperStyle}>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Market</TableHead>
+                    <TableHead className="w-20">Sport</TableHead>
+                    <TableHead className="w-48">Ticker</TableHead>
+                    <TableHead className="w-14">Side</TableHead>
+                    <TableHead className="w-20">{ENTRY_LABEL}</TableHead>
+                    <TableHead className="w-20">Edge</TableHead>
+                    <TableHead className="w-32">{WIN_PROB_LABEL}</TableHead>
+                    <TableHead className="w-24">Action</TableHead>
+                    <TableHead className="w-24">Starts</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Array.from({ length: 8 }).map((_, index) => (
+                    <SkeletonRow key={index} cols={9} />
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        ) : coverageRows.length === 0 ? (
+          <CoverageWatchlistEmptyState
+            sport={sport}
+            diagnostics={diagnostics}
+            refreshing={
+              refreshing
+              || diagnostics?.refresh_status === "queued"
+              || diagnostics?.refresh_status === "running"
+              || diagnostics?.prop_refresh_status === "queued"
+              || diagnostics?.prop_refresh_status === "running"
+            }
+            onRefresh={handleRefresh}
+          />
+        ) : (
+          <>
+            <CoverageModeCallout rows={coverageRows} diagnostics={diagnostics} />
+            <div className="space-y-3 lg:hidden">
+              {coverageRows.map((row) => (
+                <CoverageCard
+                  key={row.ticker}
+                  row={row}
+                  onClick={() => setSelectedTicker(row.ticker)}
+                  onTrade={() => {
+                    const candidate = coverageTradeCandidate(row);
+                    if (candidate) setTradeCandidate(candidate);
+                  }}
+                />
+              ))}
+            </div>
+            <div className={cn(wrapperClassName, "hidden lg:block")} style={wrapperStyle}>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Market</TableHead>
+                    <TableHead className="w-20">Sport</TableHead>
+                    <TableHead className="w-48">Ticker</TableHead>
+                    <TableHead className="w-14">Side</TableHead>
+                    <TableHead className="w-20">{ENTRY_LABEL}</TableHead>
+                    <TableHead className="w-20">Edge</TableHead>
+                    <TableHead className="w-32">{WIN_PROB_LABEL}</TableHead>
+                    <TableHead className="w-24">Action</TableHead>
+                    <TableHead className="w-24">Starts</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {coverageRows.map((row) => (
+                    <CoverageRow
+                      key={row.ticker}
+                      row={row}
+                      onClick={() => setSelectedTicker(row.ticker)}
+                      onTrade={() => {
+                        const candidate = coverageTradeCandidate(row);
+                        if (candidate) setTradeCandidate(candidate);
+                      }}
+                    />
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )
+      ) : isLoading ? (
         <>
           <div className="space-y-3 lg:hidden">
             {Array.from({ length: 4 }).map((_, index) => (
@@ -730,12 +1223,20 @@ export function WatchlistTable({
           />
           <div className="space-y-3 lg:hidden">
             {sortedItems.map((rec) => (
-              <RecommendationCard
-                key={rec.id}
-                rec={rec}
-                onClick={() => setSelectedTicker(rec.ticker)}
-                onTrade={() => setTradeRec(rec)}
-              />
+                <RecommendationCard
+                  key={rec.id}
+                  rec={rec}
+                  onClick={() => setSelectedTicker(rec.ticker)}
+                  onTrade={() =>
+                    setTradeCandidate({
+                      ticker: rec.ticker,
+                      marketTitle: rec.market_title,
+                      side: rec.side,
+                      suggestedPrice: rec.suggested_price,
+                      rationale: rec.rationale,
+                    })
+                  }
+                />
             ))}
           </div>
           <div className={cn(wrapperClassName, "hidden lg:block")} style={wrapperStyle}>
@@ -814,7 +1315,15 @@ export function WatchlistTable({
                     key={rec.id}
                     rec={rec}
                     onClick={() => setSelectedTicker(rec.ticker)}
-                    onTrade={() => setTradeRec(rec)}
+                    onTrade={() =>
+                      setTradeCandidate({
+                        ticker: rec.ticker,
+                        marketTitle: rec.market_title,
+                        side: rec.side,
+                        suggestedPrice: rec.suggested_price,
+                        rationale: rec.rationale,
+                      })
+                    }
                   />
                 ))}
               </TableBody>
@@ -826,18 +1335,18 @@ export function WatchlistTable({
       <MarketDetailSheet ticker={selectedTicker} onClose={() => setSelectedTicker(null)} />
 
       <TradeDialog
-        open={tradeRec != null}
+        open={tradeCandidate != null}
         onOpenChange={(open) => {
-          if (!open) setTradeRec(null);
+          if (!open) setTradeCandidate(null);
         }}
-        defaults={tradeRec != null ? {
+        defaults={tradeCandidate != null ? {
           destination: "paper",
-          ticker: tradeRec.ticker,
-          side: tradeRec.side.toLowerCase(),
-          price: tradeRec.suggested_price,
+          ticker: tradeCandidate.ticker,
+          side: tradeCandidate.side.toLowerCase(),
+          price: tradeCandidate.suggestedPrice,
         } : undefined}
-        description={tradeRec != null
-          ? `Route ${tradeRec.market_title} to paper or demo.`
+        description={tradeCandidate != null
+          ? `Route ${tradeCandidate.marketTitle} to paper or demo.`
           : "Choose whether to route this trade to paper or demo."}
       />
     </>
