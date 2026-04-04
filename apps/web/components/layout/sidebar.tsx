@@ -1,29 +1,38 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard,
+  Activity,
   Calendar,
-  Star,
   CandlestickChart,
   BarChart3,
+  ChevronRight,
+  ClipboardList,
   DatabaseZap,
   FileText,
-  ClipboardList,
+  LayoutDashboard,
+  Menu,
   RefreshCw,
-  Activity,
-  ChevronRight,
-  Target,
   Settings2,
+  Star,
+  Target,
 } from "lucide-react";
+import { mutate } from "swr";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { triggerRefresh } from "@/lib/api";
+import { keys, triggerRefresh } from "@/lib/api";
 import { getSyncState, useHealthStatus } from "@/lib/health-status";
 import { SPORT_OPTIONS, cn, fmtRelative } from "@/lib/utils";
-import { useState } from "react";
-import { mutate } from "swr";
 import { useSportQueryParam } from "@/components/filters/sport-filter-select";
 
 const NAV = [
@@ -52,11 +61,13 @@ function NavItem({
   label,
   icon: Icon,
   exact = false,
+  onNavigate,
 }: {
   href: string;
   label: string;
   icon: React.ElementType;
   exact?: boolean;
+  onNavigate?: () => void;
 }) {
   const pathname = usePathname();
   const active = isActivePath(pathname, href, exact);
@@ -64,6 +75,7 @@ function NavItem({
   return (
     <Link
       href={href}
+      onClick={onNavigate}
       className={cn(
         "flex items-center gap-2.5 rounded px-2.5 py-1.5 text-sm",
         "transition-colors duration-[120ms]",
@@ -79,14 +91,19 @@ function NavItem({
   );
 }
 
-function SportFilter() {
+function SportFilter({ onNavigate }: { onNavigate?: () => void }) {
   const { sport, setSport } = useSportQueryParam();
   const currentSport = sport ?? "";
+
+  function handleSelect(nextSport: string) {
+    setSport(nextSport);
+    onNavigate?.();
+  }
 
   return (
     <div className="space-y-0.5">
       <button
-        onClick={() => setSport("")}
+        onClick={() => handleSelect("")}
         className={cn(
           "flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-sm",
           "transition-colors duration-[120ms]",
@@ -101,7 +118,7 @@ function SportFilter() {
       {SPORT_OPTIONS.map((option) => (
         <button
           key={option.value}
-          onClick={() => setSport(option.value)}
+          onClick={() => handleSelect(option.value)}
           className={cn(
             "flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-sm",
             "transition-colors duration-[120ms]",
@@ -145,18 +162,23 @@ function SyncStatusBadge() {
     : health.last_successful_refresh_at
       ? fmtRelative(health.last_successful_refresh_at)
       : "awaiting first refresh";
+  const propDetail = health.prop_refresh_status === "queued" || health.prop_refresh_status === "running"
+    ? "Props refreshing"
+    : health.last_prop_refresh_at
+      ? (health.prop_data_stale ? `Props stale ${fmtRelative(health.last_prop_refresh_at)}` : `Props synced ${fmtRelative(health.last_prop_refresh_at)}`)
+      : "Props awaiting first refresh";
 
   return (
     <div className="flex items-center gap-1.5 text-xs">
       <span className={cn("inline-block h-1.5 w-1.5 rounded-full", dotClass)} />
       <span className="truncate text-muted-foreground">
-        {label} {detail}
+        {label} {detail} · {propDetail}
       </span>
     </div>
   );
 }
 
-export function Sidebar() {
+function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
   const [refreshing, setRefreshing] = useState(false);
   const { data: health } = useHealthStatus();
   const syncState = getSyncState(health);
@@ -173,6 +195,7 @@ export function Sidebar() {
         mutate((key) => typeof key === "string" && key.startsWith("/positions")),
         mutate((key) => typeof key === "string" && key.startsWith("/predictions")),
         mutate((key) => typeof key === "string" && key.startsWith("/parlays")),
+        mutate(keys.watchlistDiagnostics),
         mutate("/health"),
       ]);
     } catch {
@@ -183,7 +206,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="flex h-full w-56 flex-col border-r border-border bg-surface">
+    <>
       <div className="flex items-center gap-2.5 border-b border-border px-4 py-4">
         <div className="flex h-6 w-6 items-center justify-center rounded border border-accent/25 bg-accent/15">
           <Activity size={12} className="text-accent" />
@@ -195,10 +218,10 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-4 px-2 py-3">
+      <div className="flex-1 space-y-4 overflow-y-auto px-2 py-3">
         <nav className="space-y-0.5">
           {NAV.map((item) => (
-            <NavItem key={item.href} {...item} />
+            <NavItem key={item.href} {...item} onNavigate={onNavigate} />
           ))}
         </nav>
 
@@ -208,7 +231,7 @@ export function Sidebar() {
           </p>
           <nav className="space-y-0.5">
             {POSITIONS_NAV.map((item) => (
-              <NavItem key={item.href} {...item} />
+              <NavItem key={item.href} {...item} onNavigate={onNavigate} />
             ))}
           </nav>
         </div>
@@ -217,7 +240,7 @@ export function Sidebar() {
           <p className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Sport
           </p>
-          <SportFilter />
+          <SportFilter onNavigate={onNavigate} />
         </div>
       </div>
 
@@ -246,6 +269,44 @@ export function Sidebar() {
           </TooltipContent>
         </Tooltip>
       </div>
+    </>
+  );
+}
+
+export function Sidebar() {
+  return (
+    <aside className="hidden h-full w-56 shrink-0 flex-col border-r border-border bg-surface lg:flex">
+      <SidebarBody />
     </aside>
+  );
+}
+
+export function MobileSidebarTrigger() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground lg:hidden"
+          aria-label="Open navigation"
+        >
+          <Menu size={16} />
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="left" className="w-[86vw] max-w-[320px] border-r border-l-0 p-0">
+        <SheetHeader className="sr-only">
+          <SheetTitle>Navigation menu</SheetTitle>
+          <SheetDescription>
+            Open the app navigation, switch sections, and trigger a refresh.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="flex h-full flex-col bg-surface">
+          <SidebarBody onNavigate={() => setOpen(false)} />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

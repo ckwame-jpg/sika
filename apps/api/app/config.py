@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,9 +29,17 @@ class Settings(BaseSettings):
     )
     scheduler_enabled: bool = True
     refresh_interval_minutes: int = 5
+    prop_refresh_interval_minutes: int = 20
     startup_refresh_stale_after_minutes: int = 15
+    espn_player_search_cache_hours: int = 168
+    nba_prop_gamelog_cache_minutes: int = 30
+    mlb_prop_gamelog_cache_minutes: int = 60
     watchlist_min_edge: float = 0.03
     watchlist_min_confidence: float = 0.35
+    watchlist_min_selected_prob_heuristic_winner: float = 0.20
+    ml_serving_mode: Literal["heuristic", "shadow", "ml"] = "heuristic"
+    ml_manifest_path: str = ""
+    ml_family_modes_json: str = ""
     parlay_min_legs: int = 2
     parlay_max_legs: int = 6
     parlay_candidate_pool_size: int = 10

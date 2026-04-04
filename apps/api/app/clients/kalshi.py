@@ -19,9 +19,16 @@ def parse_price_dollars(raw_value: Any) -> float | None:
 
 
 class KalshiPublicClient:
-    def __init__(self, base_url: str | None = None) -> None:
+    def __init__(self, base_url: str | None = None, http_client: httpx.Client | None = None) -> None:
         settings = get_settings()
         self.base_url = (base_url or settings.kalshi_public_base_url).rstrip("/")
+        self._http_client = http_client
+
+    def _get(self, path: str, **kwargs):
+        url = path if path.startswith("http") else f"{self.base_url}{path}"
+        if self._http_client is not None:
+            return self._http_client.get(url, **kwargs)
+        return httpx.get(url, **kwargs)
 
     def list_markets(
         self,
@@ -45,8 +52,8 @@ class KalshiPublicClient:
             if cursor:
                 params["cursor"] = cursor
 
-            response = httpx.get(
-                f"{self.base_url}/markets",
+            response = self._get(
+                "/markets",
                 params=params,
                 timeout=20,
             )
@@ -61,7 +68,7 @@ class KalshiPublicClient:
         return markets[:limit]
 
     def get_market(self, ticker: str) -> dict[str, Any]:
-        response = httpx.get(f"{self.base_url}/markets/{ticker}", timeout=20)
+        response = self._get(f"/markets/{ticker}", timeout=20)
         response.raise_for_status()
         return response.json().get("market") or {}
 
@@ -75,8 +82,8 @@ class KalshiPublicClient:
         period_interval: int,
         include_latest_before_start: bool = True,
     ) -> dict[str, Any]:
-        response = httpx.get(
-            f"{self.base_url}/series/{series_ticker}/markets/{ticker}/candlesticks",
+        response = self._get(
+            f"/series/{series_ticker}/markets/{ticker}/candlesticks",
             params={
                 "start_ts": start_ts,
                 "end_ts": end_ts,
@@ -96,8 +103,8 @@ class KalshiPublicClient:
         end_ts: int,
         period_interval: int,
     ) -> dict[str, Any]:
-        response = httpx.get(
-            f"{self.base_url}/historical/markets/{ticker}/candlesticks",
+        response = self._get(
+            f"/historical/markets/{ticker}/candlesticks",
             params={
                 "start_ts": start_ts,
                 "end_ts": end_ts,

@@ -26,20 +26,54 @@ export function getSyncState(health?: HealthResponse | null): SyncState | null {
   return "synced";
 }
 
+function getUserSafeRefreshErrorMessage(message?: string | null) {
+  if (!message) {
+    return null;
+  }
+
+  const trimmed = message.trim();
+  const looksTechnical = /(sqlalchemy|sqlite|traceback| at 0x|https?:\/\/|insert into|select |update |delete |database is locked)/i.test(trimmed);
+  if (looksTechnical) {
+    return null;
+  }
+
+  return trimmed.length > 140 ? `${trimmed.slice(0, 137)}...` : trimmed;
+}
+
 export function getFreshnessBanner(health?: HealthResponse | null) {
   if (!health) return null;
+  const refreshError = getUserSafeRefreshErrorMessage(health.refresh_error_message);
+  const propRefreshError = getUserSafeRefreshErrorMessage(health.prop_refresh_error_message);
+
   if (health.refresh_status === "queued" || health.refresh_status === "running") {
     return {
       tone: "neutral" as const,
-      message: "Refreshing data in background; cached data may be shown briefly.",
+      message:
+        health.prop_refresh_status === "queued" || health.prop_refresh_status === "running"
+          ? "Refreshing markets and props in background; cached data may be shown briefly."
+          : "Refreshing market data in background; cached data may be shown briefly.",
     };
   }
   if (health.refresh_status === "failed" && health.data_stale) {
     return {
       tone: "warning" as const,
-      message: health.refresh_error_message
-        ? `Refresh failed; cached data may be stale. ${health.refresh_error_message}`
-        : "Refresh failed; cached data may be stale until the next retry.",
+      message: refreshError
+        ? `Refresh failed; cached data may be stale. ${refreshError} See Runs for details.`
+        : "Refresh failed; cached data may be stale until the next retry. See Runs for details.",
+    };
+  }
+  if (health.prop_refresh_status === "queued" || health.prop_refresh_status === "running") {
+    return {
+      tone: "neutral" as const,
+      message: "Markets are synced; prop context is refreshing in background.",
+    };
+  }
+  if (health.prop_data_stale) {
+    return {
+      tone: "warning" as const,
+      message: propRefreshError
+        ? `Markets are synced, but prop context is stale. ${propRefreshError} See Runs for details.`
+        : "Markets are synced, but prop context is stale while the next prop refresh catches up.",
     };
   }
   return null;

@@ -47,9 +47,9 @@ export function SheetContent({
           "transition-all duration-[180ms] ease-out",
           "focus:outline-none",
           side === "right" &&
-            "right-0 top-0 h-full w-[480px] border-l data-[state=open]:animate-slide-in-right",
+            "right-0 top-0 h-full w-[88vw] max-w-[480px] border-l data-[state=open]:animate-slide-in-right sm:w-[480px]",
           side === "left" &&
-            "left-0 top-0 h-full w-[480px] border-r",
+            "left-0 top-0 h-full w-[88vw] max-w-[480px] border-r data-[state=open]:animate-slide-in-left sm:w-[480px]",
           className,
         )}
         {...props}

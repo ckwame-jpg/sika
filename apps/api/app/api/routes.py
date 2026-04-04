@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.config import get_settings
@@ -32,6 +32,8 @@ from app.schemas import (
     MarketHistoryRead,
     MarketListRead,
     MarketSnapshotRead,
+    ModelFamilyReadinessRead,
+    ModelReadinessSummaryRead,
     PaperPositionCreate,
     PaperPositionExit,
     PaperPositionRead,
@@ -50,12 +52,14 @@ from app.schemas import (
     SportRead,
     StatsQueryRead,
     StatsQueryRequest,
+    WatchlistDiagnosticsRead,
 )
 from app.services.market_history import build_market_history
+from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
-from app.services.scheduler import get_refresh_runtime_state, run_refresh_cycle_now
+from app.services.scheduler import get_refresh_runtime_state, queue_prop_refresh_if_due, run_refresh_cycle_now
 from app.services.stats_query import StatsQueryService
 
 router = APIRouter()
@@ -104,6 +108,7 @@ def _market_metadata_fields(market: Market | None) -> dict[str, str | float | No
 
 
 def _serialize_recommendation(item: Recommendation, market: Market, event_name: str) -> RecommendationRead:
+    diagnostics = dict(item.scoring_diagnostics or {})
     return RecommendationRead(
         id=item.id,
         ticker=market.ticker,
@@ -115,6 +120,18 @@ def _serialize_recommendation(item: Recommendation, market: Market, event_name: 
         suggested_price=item.suggested_price,
         edge=item.edge,
         confidence=item.confidence,
+        selected_side_probability=diagnostics.get("selected_side_probability"),
+        source_type=diagnostics.get("source_type") or (market.raw_data or {}).get("copilot_source_type"),
+        source_market_ticker=diagnostics.get("source_market_ticker") or (market.raw_data or {}).get("copilot_source_market_ticker"),
+        source_market_title=diagnostics.get("source_market_title") or (market.raw_data or {}).get("copilot_source_market_title"),
+        display_market_title=diagnostics.get("display_market_title") or (market.raw_data or {}).get("copilot_display_market_title") or market.title,
+        source_badge_label=diagnostics.get("source_badge_label") or (market.raw_data or {}).get("copilot_source_badge_label"),
+        context_coverage_score=diagnostics.get("context_coverage_score"),
+        quality_tier=diagnostics.get("quality_tier"),
+        model_name=item.model_name,
+        model_version=item.model_version,
+        calibration_version=item.calibration_version,
+        feature_set_version=item.feature_set_version,
         invalidation=item.invalidation,
         rationale=item.rationale,
         captured_at=item.captured_at,
@@ -141,10 +158,95 @@ def _run_summary_counts(details: dict | None) -> RunSummaryCounts:
         prediction_outcomes=payload.get("prediction_outcomes") or {},
         parlay_prediction_outcomes=payload.get("parlay_prediction_outcomes") or {},
         unsupported_prop_category_counts=payload.get("unsupported_prop_category_counts") or {},
+        heuristic_longshots_suppressed=int(payload.get("heuristic_longshots_suppressed") or 0),
+        inverse_winner_duplicates_collapsed=int(payload.get("inverse_winner_duplicates_collapsed") or 0),
+        combo_prop_candidates_emitted=int(payload.get("combo_prop_candidates_emitted") or 0),
+        combo_prop_candidates_suppressed=int(payload.get("combo_prop_candidates_suppressed") or 0),
+        critical_context_suppressed=int(payload.get("critical_context_suppressed") or 0),
+        quality_tier_counts=payload.get("quality_tier_counts") or {},
+        prop_subjects_warmed=int(payload.get("prop_subjects_warmed") or 0),
+        player_search_cache_hits=int(payload.get("player_search_cache_hits") or 0),
+        player_search_cache_misses=int(payload.get("player_search_cache_misses") or 0),
+        gamelog_cache_hits=int(payload.get("gamelog_cache_hits") or 0),
+        gamelog_cache_misses=int(payload.get("gamelog_cache_misses") or 0),
+        stale_gamelog_fallbacks=int(payload.get("stale_gamelog_fallbacks") or 0),
+        combo_prop_legs_discovered=int(payload.get("combo_prop_legs_discovered") or 0),
+        combo_prop_legs_refreshed=int(payload.get("combo_prop_legs_refreshed") or 0),
         watchlist_counts_by_sport=payload.get("watchlist_counts_by_sport") or {},
         watchlist_counts_by_prop_category=payload.get("watchlist_counts_by_prop_category") or {},
         parlay_watchlist_counts_by_scope=payload.get("parlay_watchlist_counts_by_scope") or {},
         parlay_watchlist_counts_by_leg_count=payload.get("parlay_watchlist_counts_by_leg_count") or {},
+    )
+
+
+def _serialize_signal(item: SignalSnapshot) -> SignalSnapshotRead:
+    return SignalSnapshotRead(
+        captured_at=item.captured_at,
+        model_name=item.model_name,
+        model_version=item.model_version,
+        calibration_version=item.calibration_version,
+        feature_set_version=item.feature_set_version,
+        confidence=item.confidence,
+        fair_yes_price=item.fair_yes_price,
+        fair_no_price=item.fair_no_price,
+        edge=item.edge,
+        reasons=list(item.reasons or []),
+        features=dict(item.features or {}),
+        scoring_diagnostics=dict(item.scoring_diagnostics or {}),
+    )
+
+
+def _serialize_prediction(item: Prediction) -> PredictionRead:
+    diagnostics = dict(item.scoring_diagnostics or {})
+    return PredictionRead(
+        id=item.id,
+        run_id=item.run_id,
+        event_id=item.event_id,
+        market_id=item.market_id,
+        ticker=item.ticker,
+        sport_key=item.sport_key,
+        event_name=item.event_name,
+        market_title=item.market_title,
+        market_family=item.market_family,
+        market_kind=item.market_kind,
+        stat_key=item.stat_key,
+        threshold=item.threshold,
+        subject_name=item.subject_name,
+        subject_team=item.subject_team,
+        side=item.side,
+        action=item.action,
+        suggested_price=item.suggested_price,
+        fair_yes_price=item.fair_yes_price,
+        fair_no_price=item.fair_no_price,
+        edge=item.edge,
+        confidence=item.confidence,
+        selected_side_probability=diagnostics.get("selected_side_probability"),
+        source_type=diagnostics.get("source_type"),
+        source_market_ticker=diagnostics.get("source_market_ticker"),
+        source_market_title=diagnostics.get("source_market_title"),
+        display_market_title=diagnostics.get("display_market_title") or item.market_title,
+        source_badge_label=diagnostics.get("source_badge_label"),
+        context_coverage_score=diagnostics.get("context_coverage_score"),
+        quality_tier=diagnostics.get("quality_tier"),
+        model_name=item.model_name,
+        model_version=item.model_version,
+        calibration_version=item.calibration_version,
+        feature_set_version=item.feature_set_version,
+        invalidation=item.invalidation,
+        rationale=item.rationale,
+        reasons=list(item.reasons or []),
+        features=dict(item.features or {}),
+        market_status_at_capture=item.market_status_at_capture,
+        settlement_status=item.settlement_status,
+        prediction_outcome=item.prediction_outcome,
+        market_result=item.market_result,
+        winning_side=item.winning_side,
+        settlement_value=item.settlement_value,
+        settled_at=item.settled_at,
+        realized_pnl=item.realized_pnl,
+        settlement_source=item.settlement_source,
+        settlement_notes=item.settlement_notes,
+        captured_at=item.captured_at,
     )
 
 
@@ -207,7 +309,12 @@ def _parlay_recommendation_stmt(*, sport_scope: str, leg_count: int | None):
     stmt = (
         select(ParlayRecommendation)
         .options(selectinload(ParlayRecommendation.legs))
-        .order_by(ParlayRecommendation.edge.desc(), ParlayRecommendation.confidence.desc(), ParlayRecommendation.captured_at.desc())
+        .order_by(
+            ParlayRecommendation.selection_score.desc().nullslast(),
+            ParlayRecommendation.edge.desc(),
+            ParlayRecommendation.confidence.desc(),
+            ParlayRecommendation.captured_at.desc(),
+        )
     )
     if sport_scope == "nba":
         stmt = stmt.where(ParlayRecommendation.sport_scope == "NBA")
@@ -385,6 +492,11 @@ def health() -> HealthResponse:
         last_successful_refresh_at=runtime["last_successful_refresh_at"],
         data_stale=bool(runtime["data_stale"]),
         refresh_error_message=runtime["refresh_error_message"],
+        prop_refresh_status=str(runtime["prop_refresh_status"]),
+        prop_refresh_reason=str(runtime["prop_refresh_reason"]),
+        last_prop_refresh_at=runtime["last_prop_refresh_at"],
+        prop_data_stale=bool(runtime["prop_data_stale"]),
+        prop_refresh_error_message=runtime["prop_refresh_error_message"],
     )
 
 
@@ -409,12 +521,55 @@ def list_events(
     return [_serialize_event(item) for item in db.scalars(stmt).all()]
 
 
+@router.get("/watchlist/diagnostics", response_model=WatchlistDiagnosticsRead)
+def get_watchlist_diagnostics(db: Session = Depends(get_db)) -> WatchlistDiagnosticsRead:
+    settings = get_settings()
+    runtime = get_refresh_runtime_state()
+    latest_refresh_run = db.scalar(
+        select(Run)
+        .where(Run.kind == "refresh")
+        .order_by(Run.started_at.desc(), Run.id.desc())
+        .limit(1)
+    )
+    serialized_run = _serialize_run(latest_refresh_run) if latest_refresh_run else None
+    summary_counts = serialized_run.summary_counts if serialized_run else None
+    current_recommendation_count = db.scalar(select(func.count()).select_from(Recommendation)) or 0
+
+    return WatchlistDiagnosticsRead(
+        status="ok",
+        environment=settings.environment,
+        scheduler_enabled=settings.scheduler_enabled,
+        refresh_status=str(runtime["refresh_status"]),
+        refresh_reason=str(runtime["refresh_reason"]),
+        last_successful_refresh_at=runtime["last_successful_refresh_at"],
+        data_stale=bool(runtime["data_stale"]),
+        refresh_error_message=runtime["refresh_error_message"],
+        prop_refresh_status=str(runtime["prop_refresh_status"]),
+        prop_refresh_reason=str(runtime["prop_refresh_reason"]),
+        last_prop_refresh_at=runtime["last_prop_refresh_at"],
+        prop_data_stale=bool(runtime["prop_data_stale"]),
+        prop_refresh_error_message=runtime["prop_refresh_error_message"],
+        latest_refresh_run=serialized_run,
+        latest_refresh_succeeded=(latest_refresh_run.status == "completed") if latest_refresh_run else None,
+        latest_supported_markets_kept=summary_counts.supported_markets_kept if summary_counts else 0,
+        latest_recommendations_emitted=summary_counts.recommendations_emitted if summary_counts else 0,
+        latest_watchlist_counts_by_sport=summary_counts.watchlist_counts_by_sport if summary_counts else {},
+        current_recommendation_count=int(current_recommendation_count),
+        watchlist_min_edge=settings.watchlist_min_edge,
+        watchlist_min_confidence=settings.watchlist_min_confidence,
+    )
+
+
 @router.get("/watchlist", response_model=list[RecommendationRead])
 def get_watchlist(sport: str | None = None, limit: int = 25, db: Session = Depends(get_db)) -> list[RecommendationRead]:
     stmt = (
         select(Recommendation)
         .options(joinedload(Recommendation.market), joinedload(Recommendation.event))
-        .order_by(Recommendation.edge.desc(), Recommendation.confidence.desc())
+        .order_by(
+            Recommendation.selection_score.desc().nullslast(),
+            Recommendation.edge.desc(),
+            Recommendation.confidence.desc(),
+        )
         .limit(limit)
     )
     if sport:
@@ -439,6 +594,19 @@ def get_parlay_watchlist(
     return [ParlayRecommendationRead.model_validate(item) for item in items]
 
 
+@router.get("/models/readiness", response_model=ModelReadinessSummaryRead)
+def model_readiness_summary(db: Session = Depends(get_db)) -> ModelReadinessSummaryRead:
+    return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
+
+
+@router.get("/models/readiness/{family_key}", response_model=ModelFamilyReadinessRead)
+def model_readiness_detail(family_key: str, db: Session = Depends(get_db)) -> ModelFamilyReadinessRead:
+    payload = build_model_readiness_detail(db, family_key)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Unknown model family")
+    return ModelFamilyReadinessRead.model_validate(payload)
+
+
 @router.get("/predictions", response_model=list[PredictionRead])
 def list_predictions(
     sport: str | None = None,
@@ -459,7 +627,7 @@ def list_predictions(
         captured_to=captured_to,
     ).limit(limit)
     predictions = db.scalars(stmt).all()
-    return [PredictionRead.model_validate(item) for item in predictions]
+    return [_serialize_prediction(item) for item in predictions]
 
 
 @router.get("/predictions/summary", response_model=PredictionSummaryRead)
@@ -630,7 +798,7 @@ def get_market_detail(ticker: str, db: Session = Depends(get_db)) -> MarketDetai
         close_time=market.close_time,
         event=event_payload,
         latest_snapshot=MarketSnapshotRead.model_validate(latest_snapshot) if latest_snapshot else None,
-        latest_signal=SignalSnapshotRead.model_validate(latest_signal) if latest_signal else None,
+        latest_signal=_serialize_signal(latest_signal) if latest_signal else None,
         recommendations=[
             _serialize_recommendation(item, market, event_payload.name if event_payload else market.title)
             for item in recommendations
@@ -708,7 +876,13 @@ def refresh_jobs() -> JobRefreshResponse:
     run = run_refresh_cycle_now(reason="manual")
     if run is None:
         raise HTTPException(status_code=409, detail="Refresh already in progress")
-    return JobRefreshResponse(run_id=run.id, status=run.status, records_processed=run.records_processed)
+    queued_prop_refresh = queue_prop_refresh_if_due(reason="manual")
+    return JobRefreshResponse(
+        run_id=run.run_id,
+        status=run.status,
+        records_processed=run.records_processed,
+        queued_prop_refresh=queued_prop_refresh,
+    )
 
 
 @router.post("/jobs/settle-predictions", response_model=PredictionSettlementResponse)

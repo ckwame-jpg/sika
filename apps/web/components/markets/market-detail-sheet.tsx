@@ -29,6 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import { TradeDialog } from "@/components/positions/trade-dialog";
 import { usePriceDisplay } from "@/lib/price-display";
+import { EDGE_EXPLANATION, ENTRY_LABEL, HEURISTIC_RELIABILITY_EXPLANATION, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
 
 interface StatRowProps {
   label: string;
@@ -79,7 +80,9 @@ function MarketDetailContent({ ticker }: { ticker: string }) {
 
   const snap = data.latest_snapshot;
   const signal = data.latest_signal;
+  const latestRecommendation = data.recommendations[0] ?? null;
   const isOpen = data.status === "open";
+  const confidenceSemantics = String(signal?.scoring_diagnostics?.confidence_semantics ?? "heuristic_reliability");
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -152,9 +155,20 @@ function MarketDetailContent({ ticker }: { ticker: string }) {
             <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Signal — {signal.model_name}
             </p>
+            {latestRecommendation?.source_badge_label && (
+              <div className="mb-2">
+                <Badge variant="outline">{latestRecommendation.source_badge_label}</Badge>
+              </div>
+            )}
             <div className="space-y-0.5">
               <StatRow label="Fair Yes" value={formatPrice(signal.fair_yes_price)} />
               <StatRow label="Fair No" value={formatPrice(signal.fair_no_price)} />
+              {latestRecommendation && (
+                <StatRow
+                  label={WIN_PROB_LABEL}
+                  value={<span>{fmtPercent(latestRecommendation.selected_side_probability)}</span>}
+                />
+              )}
               <StatRow
                 label="Edge"
                 value={
@@ -164,12 +178,16 @@ function MarketDetailContent({ ticker }: { ticker: string }) {
                 }
               />
               <StatRow
-                label="Confidence"
+                label={confidenceSemantics === "calibrated_probability" ? "Confidence" : "Heuristic reliability"}
                 value={
                   <span>{fmtPercent(signal.confidence)}</span>
                 }
               />
             </div>
+            <p className="mt-2 text-xs text-muted-foreground">{EDGE_EXPLANATION}</p>
+            {confidenceSemantics !== "calibrated_probability" && (
+              <p className="mt-2 text-xs text-muted-foreground">{HEURISTIC_RELIABILITY_EXPLANATION}</p>
+            )}
             {signal.reasons.length > 0 && (
               <ul className="mt-2 space-y-0.5">
                 {signal.reasons.map((r, i) => (
@@ -202,12 +220,17 @@ function MarketDetailContent({ ticker }: { ticker: string }) {
                     <span className={cn("font-mono font-medium", sideClass(rec.side))}>
                       {rec.side.toUpperCase()}
                     </span>
-                    <span className="text-muted-foreground">at</span>
+                    {rec.source_badge_label && <Badge variant="outline">{rec.source_badge_label}</Badge>}
+                    <span className="text-muted-foreground">{ENTRY_LABEL}</span>
                     <span className="font-mono">{formatPrice(rec.suggested_price)}</span>
                     <span className={cn("ml-auto font-medium", edgeClass(rec.edge))}>
                       {fmtEdge(rec.edge)} edge
                     </span>
                   </div>
+                  <p className="text-foreground">{rec.display_market_title ?? rec.market_title}</p>
+                  <p className="font-mono text-[11px] text-muted-foreground">
+                    {WIN_PROB_LABEL} {fmtPercent(rec.selected_side_probability)} · {RELIABILITY_LABEL} {fmtPercent(rec.confidence)}
+                  </p>
                   <p className="text-muted-foreground leading-relaxed">{rec.rationale}</p>
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs text-muted-foreground/60">

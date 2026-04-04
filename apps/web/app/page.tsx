@@ -144,7 +144,7 @@ function DashboardContent() {
   const watchlistHref = sport ? `/watchlist?sport=${sport}` : "/watchlist";
 
   return (
-    <div className="flex min-h-full flex-col gap-4 p-4">
+    <div className="flex min-h-full flex-col gap-4 p-3 sm:p-4">
       <DashboardStats />
 
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
@@ -156,8 +156,8 @@ function DashboardContent() {
                 {sport ? `${sportLabel(sport)} · live & upcoming · 30s refresh` : "All sports · live & upcoming · 30s refresh"}
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
-              <SportFilterSelect triggerClassName="h-7 w-[140px] text-xs" />
+            <div className="grid w-full gap-2 sm:flex sm:w-auto sm:items-center">
+              <SportFilterSelect triggerClassName="h-7 w-full text-xs sm:w-[140px]" />
               <Button variant="ghost" size="sm" asChild>
                 <Link href={eventsHref} className="flex items-center gap-1">
                   All events

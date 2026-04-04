@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+from app.api import routes
 from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Recommendation, Run
 
 
@@ -54,6 +55,16 @@ def test_watchlist_and_positions_endpoints(client, db_session):
             confidence=0.62,
             invalidation="Pull if YES entry moves above 0.5800",
             rationale="Recent form favors Boston",
+            scoring_diagnostics={
+                "selected_side_probability": 0.58,
+                "source_type": "combo_derived",
+                "source_market_ticker": "KXMVE-NBA-PROPS-TEST",
+                "source_market_title": "NBA prop combo",
+                "display_market_title": "Jalen Brunson: 30+ points?",
+                "source_badge_label": "Combo-derived",
+                "context_coverage_score": 0.81,
+                "quality_tier": "high",
+            },
         )
     )
     db_session.commit()
@@ -63,6 +74,9 @@ def test_watchlist_and_positions_endpoints(client, db_session):
     assert watchlist.json()[0]["ticker"] == "NBA-BOS-MIA"
     assert watchlist.json()[0]["market_family"] == "player_prop"
     assert watchlist.json()[0]["stat_key"] == "points"
+    assert watchlist.json()[0]["selected_side_probability"] == 0.58
+    assert watchlist.json()[0]["quality_tier"] == "high"
+    assert watchlist.json()[0]["source_badge_label"] == "Combo-derived"
 
     open_position = client.post(
         "/paper-positions",
@@ -73,6 +87,98 @@ def test_watchlist_and_positions_endpoints(client, db_session):
     positions = client.get("/positions")
     assert positions.status_code == 200
     assert len(positions.json()["paper_positions"]) == 1
+
+
+def test_watchlist_diagnostics_endpoint_reports_no_refresh_runs(client):
+    diagnostics = client.get("/watchlist/diagnostics")
+
+    assert diagnostics.status_code == 200
+    payload = diagnostics.json()
+    assert payload["latest_refresh_run"] is None
+    assert payload["latest_refresh_succeeded"] is None
+    assert payload["latest_recommendations_emitted"] == 0
+    assert payload["current_recommendation_count"] == 0
+    assert payload["watchlist_min_edge"] == 0.03
+    assert payload["watchlist_min_confidence"] == 0.35
+    assert payload["prop_refresh_status"] == "idle"
+    assert payload["prop_data_stale"] is True
+
+    watchlist = client.get("/watchlist")
+    assert watchlist.status_code == 200
+    assert watchlist.json() == []
+
+
+def test_refresh_jobs_returns_prop_queue_flag(client, monkeypatch):
+    monkeypatch.setattr(
+        routes,
+        "run_refresh_cycle_now",
+        lambda reason="manual": type("Snapshot", (), {"run_id": 44, "status": "completed", "records_processed": 77})(),
+    )
+    monkeypatch.setattr(routes, "queue_prop_refresh_if_due", lambda reason="manual": True)
+
+    response = client.post("/jobs/refresh")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "run_id": 44,
+        "status": "completed",
+        "records_processed": 77,
+        "queued_prop_refresh": True,
+    }
+
+
+def test_watchlist_diagnostics_endpoint_reports_zero_emission_refresh(client, db_session):
+    run = Run(
+        kind="refresh",
+        status="completed",
+        started_at=datetime(2026, 4, 3, 12, 0, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 4, 3, 12, 4, tzinfo=timezone.utc),
+        records_processed=128,
+        details={
+            "supported_markets_kept": 64,
+            "recommendations_emitted": 0,
+            "watchlist_counts_by_sport": {},
+        },
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    diagnostics = client.get("/watchlist/diagnostics")
+
+    assert diagnostics.status_code == 200
+    payload = diagnostics.json()
+    assert payload["latest_refresh_run"]["id"] == run.id
+    assert payload["latest_refresh_succeeded"] is True
+    assert payload["latest_supported_markets_kept"] == 64
+    assert payload["latest_recommendations_emitted"] == 0
+    assert payload["latest_watchlist_counts_by_sport"] == {}
+
+
+def test_watchlist_diagnostics_endpoint_reports_failed_refresh(client, db_session):
+    run = Run(
+        kind="refresh",
+        status="failed",
+        started_at=datetime(2026, 4, 3, 13, 0, tzinfo=timezone.utc),
+        finished_at=datetime(2026, 4, 3, 13, 2, tzinfo=timezone.utc),
+        records_processed=41,
+        error_message="ESPN upstream timeout",
+        details={
+            "supported_markets_kept": 17,
+            "recommendations_emitted": 0,
+            "watchlist_counts_by_sport": {},
+        },
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    diagnostics = client.get("/watchlist/diagnostics")
+
+    assert diagnostics.status_code == 200
+    payload = diagnostics.json()
+    assert payload["latest_refresh_run"]["id"] == run.id
+    assert payload["latest_refresh_run"]["status"] == "failed"
+    assert payload["latest_refresh_succeeded"] is False
+    assert payload["latest_refresh_run"]["error_message"] == "ESPN upstream timeout"
 
 
 def test_events_endpoint_serializes_naive_datetimes_as_utc(client, db_session):

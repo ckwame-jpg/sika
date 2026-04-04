@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge, SportBadge } from "@/components/ui/badge";
-import { SkeletonRow } from "@/components/ui/skeleton";
+import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
 import {
   eventStatusLabel,
   filterDashboardEvents,
@@ -79,6 +79,45 @@ function EventRow({ event }: { event: EventRead }) {
   );
 }
 
+function EventCard({ event }: { event: EventRead }) {
+  const home = event.participants.find((participant) => participant.is_home);
+  const away = event.participants.find((participant) => !participant.is_home);
+  const live = isLive(event.status);
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <SportBadge sport={event.sport_key} />
+        <Badge variant={live ? "positive" : "default"}>
+          {eventStatusLabel(event.status)}
+        </Badge>
+        <span className="font-mono text-xs text-muted-foreground">
+          {fmtTime(event.starts_at)}
+        </span>
+      </div>
+      <div className="mt-3 space-y-1">
+        <p className="text-sm font-medium text-foreground">{event.name}</p>
+        <p className="text-xs text-muted-foreground">
+          {away?.display_name} @ {home?.display_name}
+        </p>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="rounded-lg border border-border bg-surface-hover px-3 py-2.5">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Score</p>
+          <div className="mt-1">
+            <ParticipantScore home={home} away={away} />
+          </div>
+        </div>
+        <div className="rounded-lg border border-border bg-surface-hover px-3 py-2.5">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Starts</p>
+          <p className="mt-1 font-mono text-sm text-foreground">{fmtDate(event.starts_at)}</p>
+          <p className="font-mono text-xs text-muted-foreground">{fmtTime(event.starts_at)}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface EventsFeedProps {
   sport?: string;
   day?: string;
@@ -117,33 +156,57 @@ export function EventsFeed({
     : "No events matched the selected date.";
 
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-20">Sport</TableHead>
-            <TableHead>Event</TableHead>
-            <TableHead className="w-20">Score</TableHead>
-            <TableHead className="w-28">Status</TableHead>
-            <TableHead className="w-28">Starts</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {isLoading
-            ? Array.from({ length: compact ? 5 : 8 }).map((_, index) => (
-                <SkeletonRow key={index} cols={5} />
-              ))
-            : filtered.length === 0
-              ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-xs text-muted-foreground">
-                    {emptyMessage}
-                  </TableCell>
-                </TableRow>
-              )
-              : filtered.map((event) => <EventRow key={event.id} event={event} />)}
-        </TableBody>
-      </Table>
-    </div>
+    <>
+      <div className="space-y-3 lg:hidden">
+        {isLoading
+          ? Array.from({ length: compact ? 4 : 6 }).map((_, index) => (
+              <div key={index} className="rounded-xl border border-border bg-surface p-4">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="mt-3 h-4 w-3/4" />
+                <Skeleton className="mt-2 h-3 w-1/2" />
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-14 w-full" />
+                </div>
+              </div>
+            ))
+          : filtered.length === 0
+            ? (
+              <div className="rounded-xl border border-dashed border-border bg-surface px-4 py-8 text-center text-sm text-muted-foreground">
+                {emptyMessage}
+              </div>
+            )
+            : filtered.map((event) => <EventCard key={event.id} event={event} />)}
+      </div>
+
+      <div className="hidden lg:block overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-20">Sport</TableHead>
+              <TableHead>Event</TableHead>
+              <TableHead className="w-20">Score</TableHead>
+              <TableHead className="w-28">Status</TableHead>
+              <TableHead className="w-28">Starts</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading
+              ? Array.from({ length: compact ? 5 : 8 }).map((_, index) => (
+                  <SkeletonRow key={index} cols={5} />
+                ))
+              : filtered.length === 0
+                ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="py-8 text-center text-xs text-muted-foreground">
+                      {emptyMessage}
+                    </TableCell>
+                  </TableRow>
+                )
+                : filtered.map((event) => <EventRow key={event.id} event={event} />)}
+          </TableBody>
+        </Table>
+      </div>
+    </>
   );
 }

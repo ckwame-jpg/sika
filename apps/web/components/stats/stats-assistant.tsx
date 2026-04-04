@@ -18,11 +18,11 @@ export function StatsAssistant() {
 
   return (
     <>
-      <div className="pointer-events-none fixed bottom-5 right-5 z-40">
+      <div className="pointer-events-none fixed bottom-3 right-3 z-40 sm:bottom-5 sm:right-5">
         <Button
           variant="primary"
           size="md"
-          className="pointer-events-auto rounded-full px-4 shadow-elevated"
+          className="pointer-events-auto h-9 rounded-full px-3 text-xs shadow-elevated sm:h-8 sm:px-4 sm:text-sm"
           onClick={() => setOpen(true)}
         >
           <Bot size={14} />
@@ -31,7 +31,7 @@ export function StatsAssistant() {
       </div>
 
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="right" className="w-[min(720px,100vw)]">
+        <SheetContent side="right" className="w-screen sm:w-[min(720px,100vw)]">
           <SheetHeader>
             <SheetTitle>sika stats</SheetTitle>
             <SheetDescription>

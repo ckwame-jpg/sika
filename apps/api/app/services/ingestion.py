@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,9 +12,10 @@ from app.config import get_settings
 from app.models import Event, EventParticipant, League, Market, MarketSnapshot, ParlayRecommendation, Participant, Recommendation, Run, Sport
 from app.services.market_mapping import map_markets_to_events
 from app.services.market_support import classify_market_payload, infer_market_sport_key, infer_supported_market_kind
+from app.services.ml import capture_shadow_artifacts
 from app.services.parlays import settle_parlay_predictions
-from app.services.predictions import settle_predictions
-from app.services.scoring import regenerate_watchlist
+from app.services.predictions import OPEN_MARKET_STATUSES, settle_predictions
+from app.services.scoring import PropStatsResolver, regenerate_watchlist, warm_prop_context_cache
 from app.sports.base import NormalizedEvent
 from app.sports.registry import ADAPTERS
 
@@ -29,6 +31,45 @@ SPORT_LABELS = {
 
 FREE_PROVIDER_SPORTS = {"SOCCER", "TENNIS", "UFC"}
 PUBLIC_MAJOR_SPORTS = {"NBA", "NFL", "MLB"}
+
+
+def _prop_market_summary_counts(db: Session) -> tuple[int, dict[str, int], dict[str, int]]:
+    watchlist_by_sport: dict[str, int] = {}
+    watchlist_by_prop_category: dict[str, int] = {}
+
+    recommendations = db.scalars(select(Recommendation).join(Market, Recommendation.market_id == Market.id)).all()
+    for recommendation in recommendations:
+        market = db.scalar(select(Market).where(Market.id == recommendation.market_id))
+        if not market:
+            continue
+        sport_key = market.sport_key or "UNKNOWN"
+        watchlist_by_sport[sport_key] = watchlist_by_sport.get(sport_key, 0) + 1
+        raw_data = market.raw_data or {}
+        if raw_data.get("copilot_market_family") == "player_prop":
+            stat_key = str(raw_data.get("copilot_stat_key") or "unknown")
+            watchlist_by_prop_category[stat_key] = watchlist_by_prop_category.get(stat_key, 0) + 1
+
+    mapped_prop_markets = 0
+    prop_markets = db.scalars(select(Market).where(Market.raw_data.is_not(None))).all()
+    for market in prop_markets:
+        raw_data = market.raw_data or {}
+        if raw_data.get("copilot_market_family") != "player_prop":
+            continue
+        if market.event_id:
+            mapped_prop_markets += 1
+
+    return mapped_prop_markets, watchlist_by_sport, watchlist_by_prop_category
+
+
+def _parlay_watchlist_counts(db: Session) -> tuple[dict[str, int], dict[str, int]]:
+    parlay_watchlist_by_scope: dict[str, int] = {}
+    parlay_watchlist_by_leg_count: dict[str, int] = {}
+    parlay_recommendations = db.scalars(select(ParlayRecommendation)).all()
+    for parlay in parlay_recommendations:
+        parlay_watchlist_by_scope[parlay.sport_scope] = parlay_watchlist_by_scope.get(parlay.sport_scope, 0) + 1
+        leg_key = str(parlay.leg_count)
+        parlay_watchlist_by_leg_count[leg_key] = parlay_watchlist_by_leg_count.get(leg_key, 0) + 1
+    return parlay_watchlist_by_scope, parlay_watchlist_by_leg_count
 
 
 def is_supported_market_payload(payload: dict) -> bool:
@@ -221,35 +262,53 @@ def refresh_sports_data(
     }
 
 
-def refresh_kalshi_markets(db: Session, client: KalshiPublicClient | None = None) -> dict[str, object]:
+def refresh_kalshi_markets(
+    db: Session,
+    client: KalshiPublicClient | None = None,
+    *,
+    include_standalone: bool = True,
+    refresh_combo_prop_tickers: bool = True,
+    discover_combo_props: bool = True,
+) -> dict[str, object]:
     client = client or KalshiPublicClient()
     processed = 0
     total_seen = 0
     supported_nba_props = 0
     supported_mlb_props = 0
+    combo_prop_legs_discovered = 0
+    combo_prop_legs_refreshed = 0
     unsupported_prop_categories: dict[str, int] = {}
     open_market_tickers: set[str] = set()
-    for payload in client.list_markets(status="open", limit=1000, mve_filter="exclude"):
-        total_seen += 1
-        classification = classify_market_payload(payload)
+
+    def persist_market_payload(
+        payload: dict[str, Any],
+        *,
+        source_type: str = "standalone",
+        source_payload: dict[str, Any] | None = None,
+        classification_override: dict[str, Any] | None = None,
+    ) -> bool:
+        nonlocal processed, supported_nba_props, supported_mlb_props
+        classification = classification_override or classify_market_payload(payload)
         metadata = classification.get("metadata")
         if not classification.get("supported") or not metadata:
             if classification.get("reason") == "unsupported_prop_category" and classification.get("sport_key") in {"NBA", "MLB"}:
                 prop_category = str(classification.get("prop_category") or "unknown")
                 unsupported_prop_categories[prop_category] = unsupported_prop_categories.get(prop_category, 0) + 1
-            continue
+            return False
         market_kind = str(metadata.get("copilot_market_kind") or "")
-        market_sport_key = infer_market_sport_key(payload)
+        market_sport_key = str(classification.get("sport_key") or infer_market_sport_key(payload) or "")
         ticker = payload.get("ticker")
         if not ticker:
-            continue
-        open_market_tickers.add(ticker)
+            return False
         if metadata.get("copilot_market_family") == "player_prop":
             if market_sport_key == "NBA":
                 supported_nba_props += 1
             if market_sport_key == "MLB":
                 supported_mlb_props += 1
         market = db.scalar(select(Market).where(Market.ticker == ticker))
+        had_existing_market = market is not None
+        existing_raw = dict(market.raw_data or {}) if market else {}
+        existing_source_type = str(existing_raw.get("copilot_source_type") or "standalone")
         if not market:
             market = Market(ticker=ticker, title=payload.get("title") or ticker)
             db.add(market)
@@ -261,11 +320,95 @@ def refresh_kalshi_markets(db: Session, client: KalshiPublicClient | None = None
         market.subtitle = payload.get("subtitle")
         market.status = payload.get("status") or "open"
         market.close_time = datetime.fromisoformat(payload["close_time"].replace("Z", "+00:00")) if payload.get("close_time") else None
-        market.raw_data = {**payload, **metadata, "copilot_market_kind": market_kind}
+        raw_data = {
+            **payload,
+            **metadata,
+            "copilot_market_kind": market_kind,
+            "copilot_display_market_title": payload.get("title") or market.title,
+        }
+        preserve_standalone_metadata = had_existing_market and existing_source_type == "standalone" and source_type == "combo_derived"
+        if source_type == "combo_derived" and not preserve_standalone_metadata:
+            source_market_ticker = source_payload.get("ticker") if source_payload else existing_raw.get("copilot_source_market_ticker")
+            source_market_title = source_payload.get("title") if source_payload else existing_raw.get("copilot_source_market_title")
+            raw_data.update(
+                {
+                    "copilot_source_type": "combo_derived",
+                    "copilot_source_market_ticker": source_market_ticker,
+                    "copilot_source_market_title": source_market_title,
+                    "copilot_source_badge_label": "Combo-derived",
+                }
+            )
+        elif source_type != "combo_derived":
+            raw_data["copilot_source_type"] = "standalone"
+        else:
+            raw_data["copilot_source_type"] = existing_source_type
+        market.raw_data = raw_data
+        if market.status in OPEN_MARKET_STATUSES:
+            open_market_tickers.add(ticker)
 
         snapshot = snapshot_from_market_payload(payload)
         db.add(MarketSnapshot(market_id=market.id, raw_data=payload, **snapshot))
         processed += 1
+        return True
+
+    if include_standalone:
+        for payload in client.list_markets(status="open", limit=1000, mve_filter="exclude"):
+            total_seen += 1
+            persist_market_payload(payload, source_type="standalone")
+
+    if refresh_combo_prop_tickers:
+        tracked_combo_prop_markets = [
+            market
+            for market in db.scalars(select(Market).where(Market.status.in_(tuple(OPEN_MARKET_STATUSES)))).all()
+            if (market.raw_data or {}).get("copilot_market_family") == "player_prop"
+            and (market.raw_data or {}).get("copilot_source_type") == "combo_derived"
+        ]
+        for market in tracked_combo_prop_markets:
+            try:
+                payload = client.get_market(market.ticker)
+            except Exception:
+                continue
+            if not payload:
+                continue
+            if persist_market_payload(payload, source_type="combo_derived"):
+                combo_prop_legs_refreshed += 1
+
+    if discover_combo_props:
+        combo_leg_tickers_seen: set[str] = set()
+        for combo_payload in client.list_markets(status="open", limit=1000, mve_filter="include"):
+            if not (combo_payload.get("mve_collection_ticker") or combo_payload.get("mve_selected_legs")):
+                continue
+            for leg in combo_payload.get("mve_selected_legs") or []:
+                leg_ticker = str(leg.get("market_ticker") or "").strip()
+                if not leg_ticker or leg_ticker in combo_leg_tickers_seen:
+                    continue
+                combo_leg_tickers_seen.add(leg_ticker)
+                try:
+                    leg_payload = client.get_market(leg_ticker)
+                except Exception:
+                    continue
+                if not leg_payload:
+                    continue
+                leg_classification = classify_market_payload(leg_payload)
+                leg_metadata = leg_classification.get("metadata") or {}
+                if (
+                    not leg_classification.get("supported")
+                    or leg_metadata.get("copilot_market_family") != "player_prop"
+                ):
+                    continue
+                leg_payload = {
+                    **leg_payload,
+                    "mve_collection_ticker": None,
+                    "mve_selected_legs": None,
+                }
+                if persist_market_payload(
+                    leg_payload,
+                    source_type="combo_derived",
+                    source_payload=combo_payload,
+                    classification_override=leg_classification,
+                ):
+                    combo_prop_legs_discovered += 1
+
     db.flush()
     return {
         "processed": processed,
@@ -273,6 +416,8 @@ def refresh_kalshi_markets(db: Session, client: KalshiPublicClient | None = None
         "supported_nba_props_seen": supported_nba_props,
         "supported_mlb_props_seen": supported_mlb_props,
         "unsupported_prop_category_counts": unsupported_prop_categories,
+        "combo_prop_legs_discovered": combo_prop_legs_discovered,
+        "combo_prop_legs_refreshed": combo_prop_legs_refreshed,
         "open_market_tickers": open_market_tickers,
     }
 
@@ -296,6 +441,110 @@ def _merge_settlement_summaries(*summaries: dict[str, int]) -> dict[str, int]:
     return merged
 
 
+def _build_watchlist_run_details(
+    db: Session,
+    *,
+    sports: Iterable[str] | None,
+    sports_summary: dict[str, object] | None,
+    kalshi_summary: dict[str, object],
+    mapped_count: int,
+    watchlist_summary,
+    shadow_prediction_count: int = 0,
+    shadow_parlay_prediction_count: int = 0,
+    single_settlement_summary: dict[str, int] | None = None,
+    parlay_settlement_summary: dict[str, int] | None = None,
+    extra_details: dict[str, object] | None = None,
+) -> tuple[dict[str, object], int]:
+    single_settlement_summary = single_settlement_summary or {
+        "updated": 0,
+        "won": 0,
+        "lost": 0,
+        "push": 0,
+        "cancelled": 0,
+        "pending": 0,
+        "unresolved": 0,
+        "errors": 0,
+    }
+    parlay_settlement_summary = parlay_settlement_summary or {
+        "updated": 0,
+        "won": 0,
+        "lost": 0,
+        "push": 0,
+        "cancelled": 0,
+        "pending": 0,
+        "unresolved": 0,
+        "errors": 0,
+    }
+    mapped_prop_markets, watchlist_by_sport, watchlist_by_prop_category = _prop_market_summary_counts(db)
+    parlay_watchlist_by_scope, parlay_watchlist_by_leg_count = _parlay_watchlist_counts(db)
+    records = (
+        int((sports_summary or {}).get("processed") or 0)
+        + int(kalshi_summary.get("processed") or 0)
+        + mapped_count
+        + watchlist_summary.recommendation_count
+        + watchlist_summary.prediction_count
+        + watchlist_summary.parlay_recommendation_count
+        + watchlist_summary.parlay_prediction_count
+        + shadow_prediction_count
+        + shadow_parlay_prediction_count
+        + int(single_settlement_summary.get("updated") or 0)
+        + int(parlay_settlement_summary.get("updated") or 0)
+    )
+    details: dict[str, object] = {
+        "sports_requested": list(sports or get_settings().enabled_sports),
+        "sports_records_ingested": (sports_summary or {}).get("sports_records_ingested") or {},
+        "sports_fetch_errors": (sports_summary or {}).get("sports_fetch_errors") or {},
+        "total_kalshi_markets_seen": kalshi_summary.get("total_kalshi_markets_seen") or 0,
+        "supported_markets_kept": kalshi_summary.get("processed") or 0,
+        "supported_nba_props_seen": kalshi_summary.get("supported_nba_props_seen") or 0,
+        "supported_mlb_props_seen": kalshi_summary.get("supported_mlb_props_seen") or 0,
+        "unsupported_prop_category_counts": kalshi_summary.get("unsupported_prop_category_counts") or {},
+        "combo_prop_legs_discovered": kalshi_summary.get("combo_prop_legs_discovered") or 0,
+        "combo_prop_legs_refreshed": kalshi_summary.get("combo_prop_legs_refreshed") or 0,
+        "mapped_markets": mapped_count,
+        "mapped_prop_markets": mapped_prop_markets,
+        "recommendations_emitted": watchlist_summary.recommendation_count,
+        "predictions_captured": watchlist_summary.prediction_count,
+        "parlay_recommendations_emitted": watchlist_summary.parlay_recommendation_count,
+        "parlay_predictions_captured": watchlist_summary.parlay_prediction_count,
+        "heuristic_longshots_suppressed": watchlist_summary.heuristic_longshots_suppressed,
+        "inverse_winner_duplicates_collapsed": watchlist_summary.inverse_winner_duplicates_collapsed,
+        "combo_prop_candidates_emitted": watchlist_summary.combo_prop_candidates_emitted,
+        "combo_prop_candidates_suppressed": watchlist_summary.combo_prop_candidates_suppressed,
+        "critical_context_suppressed": watchlist_summary.critical_context_suppressed,
+        "quality_tier_counts": watchlist_summary.quality_tier_counts,
+        "shadow_predictions_captured": shadow_prediction_count,
+        "shadow_parlay_predictions_captured": shadow_parlay_prediction_count,
+        "prediction_settlement_updated": int(single_settlement_summary.get("updated") or 0),
+        "parlay_prediction_settlement_updated": int(parlay_settlement_summary.get("updated") or 0),
+        "prediction_outcomes": {
+            "won": int(single_settlement_summary.get("won") or 0),
+            "lost": int(single_settlement_summary.get("lost") or 0),
+            "push": int(single_settlement_summary.get("push") or 0),
+            "cancelled": int(single_settlement_summary.get("cancelled") or 0),
+            "pending": int(single_settlement_summary.get("pending") or 0),
+            "unresolved": int(single_settlement_summary.get("unresolved") or 0),
+            "errors": int(single_settlement_summary.get("errors") or 0),
+        },
+        "parlay_prediction_outcomes": {
+            "won": int(parlay_settlement_summary.get("won") or 0),
+            "lost": int(parlay_settlement_summary.get("lost") or 0),
+            "push": int(parlay_settlement_summary.get("push") or 0),
+            "cancelled": int(parlay_settlement_summary.get("cancelled") or 0),
+            "pending": int(parlay_settlement_summary.get("pending") or 0),
+            "unresolved": int(parlay_settlement_summary.get("unresolved") or 0),
+            "errors": int(parlay_settlement_summary.get("errors") or 0),
+        },
+        "watchlist_counts_by_sport": watchlist_by_sport,
+        "watchlist_counts_by_prop_category": watchlist_by_prop_category,
+        "parlay_watchlist_counts_by_scope": parlay_watchlist_by_scope,
+        "parlay_watchlist_counts_by_leg_count": parlay_watchlist_by_leg_count,
+    }
+    if extra_details:
+        details.update(extra_details)
+    return details, records
+
+
 def run_refresh_cycle(
     db: Session,
     provider: TheSportsDBClient | None = None,
@@ -308,107 +557,104 @@ def run_refresh_cycle(
     db.add(run)
     db.flush()
     try:
-        sports_summary = refresh_sports_data(
-            db,
-            provider=provider,
-            major_provider=major_provider,
-            niche_provider=niche_provider,
-            sports=sports,
-        )
-        kalshi_summary = refresh_kalshi_markets(db, client=public_client)
-        mapped_count = map_markets_to_events(db)
-        recommendation_count, prediction_count, parlay_recommendation_count, parlay_prediction_count = regenerate_watchlist(
-            db,
-            run_id=run.id,
-        )
-        single_settlement_summary = settle_predictions(
-            db,
-            client=public_client,
-            open_market_tickers=set(kalshi_summary.get("open_market_tickers") or set()),
-        )
-        parlay_settlement_summary = settle_parlay_predictions(db)
-        settlement_summary = _merge_settlement_summaries(single_settlement_summary, parlay_settlement_summary)
-        records = (
-            int(sports_summary["processed"])
-            + int(kalshi_summary["processed"])
-            + mapped_count
-            + recommendation_count
-            + prediction_count
-            + parlay_recommendation_count
-            + parlay_prediction_count
-            + int(settlement_summary["updated"])
-        )
-        watchlist_by_sport: dict[str, int] = {}
-        watchlist_by_prop_category: dict[str, int] = {}
-        parlay_watchlist_by_scope: dict[str, int] = {}
-        parlay_watchlist_by_leg_count: dict[str, int] = {}
-        mapped_prop_markets = 0
-        prop_markets = db.scalars(select(Market).where(Market.raw_data.is_not(None))).all()
-        for market in prop_markets:
-            raw_data = market.raw_data or {}
-            if raw_data.get("copilot_market_family") != "player_prop":
-                continue
-            if market.event_id:
-                mapped_prop_markets += 1
+        with httpx.Client(follow_redirects=True, timeout=20) as shared_http_client:
+            kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)
+            espn_client = major_provider or EspnPublicClient(http_client=shared_http_client)
+            sports_summary = refresh_sports_data(
+                db,
+                provider=provider,
+                major_provider=espn_client,
+                niche_provider=niche_provider,
+                sports=sports,
+            )
+            kalshi_summary = refresh_kalshi_markets(
+                db,
+                client=kalshi_client,
+                include_standalone=True,
+                refresh_combo_prop_tickers=True,
+                discover_combo_props=False,
+            )
+            mapped_count = map_markets_to_events(db)
+            resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=False)
+            watchlist_summary = regenerate_watchlist(
+                db,
+                run_id=run.id,
+                resolver=resolver,
+            )
+            shadow_prediction_count, shadow_parlay_prediction_count = capture_shadow_artifacts(
+                db,
+                run_id=run.id,
+                candidates=[],
+            )
+            single_settlement_summary = settle_predictions(
+                db,
+                client=kalshi_client,
+                open_market_tickers=set(kalshi_summary.get("open_market_tickers") or set()),
+            )
+            parlay_settlement_summary = settle_parlay_predictions(db)
+            run.details, records = _build_watchlist_run_details(
+                db,
+                sports=sports,
+                sports_summary=sports_summary,
+                kalshi_summary=kalshi_summary,
+                mapped_count=mapped_count,
+                watchlist_summary=watchlist_summary,
+                shadow_prediction_count=shadow_prediction_count,
+                shadow_parlay_prediction_count=shadow_parlay_prediction_count,
+                single_settlement_summary=single_settlement_summary,
+                parlay_settlement_summary=parlay_settlement_summary,
+                extra_details=resolver.stats.as_dict(),
+            )
+        run.status = "completed"
+        run.records_processed = records
+        run.finished_at = datetime.now(timezone.utc)
+        db.flush()
+        return run
+    except Exception as exc:
+        run.status = "failed"
+        run.error_message = str(exc)
+        run.finished_at = datetime.now(timezone.utc)
+        db.flush()
+        raise
 
-        recommendations = db.scalars(select(Recommendation).join(Market, Recommendation.market_id == Market.id)).all()
-        for recommendation in recommendations:
-            market = db.scalar(select(Market).where(Market.id == recommendation.market_id))
-            if not market:
-                continue
-            sport_key = market.sport_key or "UNKNOWN"
-            watchlist_by_sport[sport_key] = watchlist_by_sport.get(sport_key, 0) + 1
-            raw_data = market.raw_data or {}
-            if raw_data.get("copilot_market_family") == "player_prop":
-                stat_key = str(raw_data.get("copilot_stat_key") or "unknown")
-                watchlist_by_prop_category[stat_key] = watchlist_by_prop_category.get(stat_key, 0) + 1
 
-        parlay_recommendations = db.scalars(select(ParlayRecommendation)).all()
-        for parlay in parlay_recommendations:
-            parlay_watchlist_by_scope[parlay.sport_scope] = parlay_watchlist_by_scope.get(parlay.sport_scope, 0) + 1
-            leg_key = str(parlay.leg_count)
-            parlay_watchlist_by_leg_count[leg_key] = parlay_watchlist_by_leg_count.get(leg_key, 0) + 1
-
-        run.details = {
-            "sports_requested": list(sports or get_settings().enabled_sports),
-            "sports_records_ingested": sports_summary["sports_records_ingested"],
-            "sports_fetch_errors": sports_summary["sports_fetch_errors"],
-            "total_kalshi_markets_seen": kalshi_summary["total_kalshi_markets_seen"],
-            "supported_markets_kept": kalshi_summary["processed"],
-            "supported_nba_props_seen": kalshi_summary["supported_nba_props_seen"],
-            "supported_mlb_props_seen": kalshi_summary["supported_mlb_props_seen"],
-            "unsupported_prop_category_counts": kalshi_summary["unsupported_prop_category_counts"],
-            "mapped_markets": mapped_count,
-            "mapped_prop_markets": mapped_prop_markets,
-            "recommendations_emitted": recommendation_count,
-            "predictions_captured": prediction_count,
-            "parlay_recommendations_emitted": parlay_recommendation_count,
-            "parlay_predictions_captured": parlay_prediction_count,
-            "prediction_settlement_updated": single_settlement_summary["updated"],
-            "parlay_prediction_settlement_updated": parlay_settlement_summary["updated"],
-            "prediction_outcomes": {
-                "won": single_settlement_summary["won"],
-                "lost": single_settlement_summary["lost"],
-                "push": single_settlement_summary["push"],
-                "cancelled": single_settlement_summary["cancelled"],
-                "pending": single_settlement_summary["pending"],
-                "unresolved": single_settlement_summary["unresolved"],
-                "errors": single_settlement_summary["errors"],
-            },
-            "parlay_prediction_outcomes": {
-                "won": parlay_settlement_summary["won"],
-                "lost": parlay_settlement_summary["lost"],
-                "push": parlay_settlement_summary["push"],
-                "cancelled": parlay_settlement_summary["cancelled"],
-                "pending": parlay_settlement_summary["pending"],
-                "unresolved": parlay_settlement_summary["unresolved"],
-                "errors": parlay_settlement_summary["errors"],
-            },
-            "watchlist_counts_by_sport": watchlist_by_sport,
-            "watchlist_counts_by_prop_category": watchlist_by_prop_category,
-            "parlay_watchlist_counts_by_scope": parlay_watchlist_by_scope,
-            "parlay_watchlist_counts_by_leg_count": parlay_watchlist_by_leg_count,
-        }
+def run_prop_refresh_cycle(
+    db: Session,
+    major_provider: EspnPublicClient | None = None,
+    public_client: KalshiPublicClient | None = None,
+    sports: Iterable[str] | None = None,
+) -> Run:
+    run = Run(kind="prop_refresh", status="running", details={"sports": list(sports or get_settings().enabled_sports)})
+    db.add(run)
+    db.flush()
+    try:
+        with httpx.Client(follow_redirects=True, timeout=20) as shared_http_client:
+            kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)
+            espn_client = major_provider or EspnPublicClient(http_client=shared_http_client)
+            kalshi_summary = refresh_kalshi_markets(
+                db,
+                client=kalshi_client,
+                include_standalone=False,
+                refresh_combo_prop_tickers=False,
+                discover_combo_props=True,
+            )
+            mapped_count = map_markets_to_events(db)
+            resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
+            warm_summary = warm_prop_context_cache(db, resolver=resolver)
+            watchlist_summary = regenerate_watchlist(
+                db,
+                run_id=run.id,
+                resolver=resolver,
+            )
+            run.details, records = _build_watchlist_run_details(
+                db,
+                sports=sports,
+                sports_summary=None,
+                kalshi_summary=kalshi_summary,
+                mapped_count=mapped_count,
+                watchlist_summary=watchlist_summary,
+                extra_details=warm_summary,
+            )
         run.status = "completed"
         run.records_processed = records
         run.finished_at = datetime.now(timezone.utc)

@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import get_settings
@@ -25,6 +25,56 @@ engine = create_engine(resolved_database_url, future=True, connect_args=connect_
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
 Base = declarative_base()
 
+SCHEMA_PATCHES: dict[str, dict[str, str]] = {
+    "signal_snapshots": {
+        "model_version": "VARCHAR",
+        "calibration_version": "VARCHAR",
+        "feature_set_version": "VARCHAR",
+        "model_metadata": "JSON",
+        "selection_score": "FLOAT",
+        "scoring_diagnostics": "JSON",
+    },
+    "recommendations": {
+        "model_name": "VARCHAR",
+        "model_version": "VARCHAR",
+        "calibration_version": "VARCHAR",
+        "feature_set_version": "VARCHAR",
+        "model_metadata": "JSON",
+        "selection_score": "FLOAT",
+        "scoring_diagnostics": "JSON",
+    },
+    "predictions": {
+        "model_version": "VARCHAR",
+        "calibration_version": "VARCHAR",
+        "feature_set_version": "VARCHAR",
+        "model_metadata": "JSON",
+        "selection_score": "FLOAT",
+        "scoring_diagnostics": "JSON",
+    },
+    "parlay_recommendations": {
+        "model_name": "VARCHAR",
+        "model_version": "VARCHAR",
+        "calibration_version": "VARCHAR",
+        "feature_set_version": "VARCHAR",
+        "model_metadata": "JSON",
+        "selection_score": "FLOAT",
+        "scoring_diagnostics": "JSON",
+    },
+    "parlay_predictions": {
+        "model_name": "VARCHAR",
+        "model_version": "VARCHAR",
+        "calibration_version": "VARCHAR",
+        "feature_set_version": "VARCHAR",
+        "model_metadata": "JSON",
+        "selection_score": "FLOAT",
+        "scoring_diagnostics": "JSON",
+    },
+    "model_family_runtime_health": {
+        "last_error_at": "DATETIME",
+        "degraded_until": "DATETIME",
+    },
+}
+
 
 if is_sqlite:
     @event.listens_for(engine, "connect")
@@ -48,3 +98,18 @@ def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _ensure_runtime_schema()
+
+
+def _ensure_runtime_schema() -> None:
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        table_names = set(inspector.get_table_names())
+        for table_name, patches in SCHEMA_PATCHES.items():
+            if table_name not in table_names:
+                continue
+            existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name, ddl in patches.items():
+                if column_name in existing_columns:
+                    continue
+                conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}"))

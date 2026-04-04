@@ -74,7 +74,9 @@ export function RunsDesk() {
                       )}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-medium text-foreground">Run #{run.id}</p>
+                        <p className="text-sm font-medium text-foreground">
+                          {run.kind === "prop_refresh" ? "Prop Refresh" : "Refresh"} #{run.id}
+                        </p>
                         <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
@@ -84,6 +86,9 @@ export function RunsDesk() {
                         <span>{run.records_processed} records</span>
                         <span>{run.summary_counts.supported_markets_kept} markets</span>
                         <span>{run.summary_counts.recommendations_emitted} recs</span>
+                        {run.kind === "prop_refresh" && (
+                          <span>{run.summary_counts.prop_subjects_warmed} props warmed</span>
+                        )}
                         {run.summary_counts.predictions_captured > 0 && (
                           <span>{run.summary_counts.predictions_captured} preds</span>
                         )}
@@ -131,20 +136,38 @@ export function RunsDesk() {
                 </Card>
                 <Card className="bg-surface-hover shadow-none">
                   <CardContent className="px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Recommendations</p>
-                    <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.recommendations_emitted}</p>
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                      {detail.kind === "prop_refresh" ? "Props Warmed" : "Recommendations"}
+                    </p>
+                    <p className="mt-1 font-mono text-lg text-foreground">
+                      {detail.kind === "prop_refresh"
+                        ? detail.summary_counts.prop_subjects_warmed
+                        : detail.summary_counts.recommendations_emitted}
+                    </p>
                   </CardContent>
                 </Card>
                 <Card className="bg-surface-hover shadow-none">
                   <CardContent className="px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Predictions Captured</p>
-                    <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.predictions_captured}</p>
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                      {detail.kind === "prop_refresh" ? "Search Cache" : "Predictions Captured"}
+                    </p>
+                    <p className="mt-1 font-mono text-lg text-foreground">
+                      {detail.kind === "prop_refresh"
+                        ? `${detail.summary_counts.player_search_cache_hits}/${detail.summary_counts.player_search_cache_misses}`
+                        : detail.summary_counts.predictions_captured}
+                    </p>
                   </CardContent>
                 </Card>
                 <Card className="bg-surface-hover shadow-none">
                   <CardContent className="px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Settlements Updated</p>
-                    <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.prediction_settlement_updated}</p>
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                      {detail.kind === "prop_refresh" ? "Gamelog Cache" : "Settlements Updated"}
+                    </p>
+                    <p className="mt-1 font-mono text-lg text-foreground">
+                      {detail.kind === "prop_refresh"
+                        ? `${detail.summary_counts.gamelog_cache_hits}/${detail.summary_counts.gamelog_cache_misses}`
+                        : detail.summary_counts.prediction_settlement_updated}
+                    </p>
                   </CardContent>
                 </Card>
               </div>

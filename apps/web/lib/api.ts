@@ -3,9 +3,12 @@ import type {
   DemoOrderRead,
   EventRead,
   HealthResponse,
+  JobRefreshResponse,
   MarketDetailRead,
   MarketHistoryRead,
   MarketListRead,
+  ModelFamilyReadinessRead,
+  ModelReadinessSummaryRead,
   PaperPositionCreate,
   PaperPositionExit,
   PaperPositionRead,
@@ -21,6 +24,7 @@ import type {
   RunRead,
   SportRead,
   StatsQueryRead,
+  WatchlistDiagnosticsRead,
 } from "./types";
 
 const BASE = "/api";
@@ -56,6 +60,9 @@ export const fetchWatchlist = (sport?: string, limit = 50) => {
   if (sport) params.set("sport", sport);
   return request<RecommendationRead[]>(`/watchlist?${params}`);
 };
+
+export const fetchWatchlistDiagnostics = () =>
+  request<WatchlistDiagnosticsRead>("/watchlist/diagnostics");
 
 export const fetchParlayWatchlist = (sportScope = "all", legCount?: number, limit = 50) => {
   const params = new URLSearchParams({ sport_scope: sportScope, limit: String(limit) });
@@ -120,7 +127,7 @@ export const fetchRun = (id: number) =>
   request<RunDetailRead>(`/runs/${id}`);
 
 export const triggerRefresh = () =>
-  request<{ run_id: number; status: string; records_processed: number }>(
+  request<JobRefreshResponse>(
     "/jobs/refresh",
     { method: "POST" },
   );
@@ -169,6 +176,12 @@ export const fetchPredictionSummary = (
   return request<PredictionSummaryRead>(`/predictions/summary${qs ? `?${qs}` : ""}`);
 };
 
+export const fetchModelReadinessSummary = () =>
+  request<ModelReadinessSummaryRead>("/models/readiness");
+
+export const fetchModelReadinessDetail = (familyKey: string) =>
+  request<ModelFamilyReadinessRead>(`/models/readiness/${encodeURIComponent(familyKey)}`);
+
 export const fetchParlayPredictions = (sportScope = "all", legCount?: number, limit = 100) => {
   const params = new URLSearchParams({ sport_scope: sportScope, limit: String(limit) });
   if (legCount != null) params.set("leg_count", String(legCount));
@@ -203,6 +216,7 @@ export const keys = {
     `/events?sport=${sport ?? ""}&day=${day ?? ""}`,
   watchlist: (sport?: string, limit = 50) =>
     `/watchlist?sport=${sport ?? ""}&limit=${limit}`,
+  watchlistDiagnostics: "/watchlist/diagnostics",
   parlayWatchlist: (sportScope = "all", legCount?: number, limit = 50) =>
     `/parlays/watchlist?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,
   positions: "/positions",
@@ -229,6 +243,8 @@ export const keys = {
         value == null || value === "" ? [] : [[key, String(value)]],
       ),
     ).toString()}`,
+  modelReadinessSummary: "/models/readiness",
+  modelReadinessDetail: (familyKey: string) => `/models/readiness/${familyKey}`,
   parlayPredictions: (sportScope = "all", legCount?: number, limit = 100) =>
     `/parlays/predictions?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,
   parlayPredictionSummary: (sportScope = "all", legCount?: number) =>

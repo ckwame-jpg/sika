@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.clients.kalshi import KalshiPublicClient, parse_price_dollars
 from app.models import Event, Market, Prediction, Recommendation, SignalSnapshot
+from app.services.ml.lineage import HEURISTIC_SINGLE_MODEL
 from app.services.market_support import parse_market_datetime
 
-MODEL_NAME = "heuristic-v1"
+MODEL_NAME = HEURISTIC_SINGLE_MODEL.model_name
 OPEN_MARKET_STATUSES = {"open", "active", "paused", "initialized"}
 
 
@@ -97,11 +98,17 @@ def capture_prediction(
         fair_no_price=signal.fair_no_price,
         edge=recommendation.edge,
         confidence=recommendation.confidence,
+        selection_score=recommendation.selection_score,
         model_name=signal.model_name or MODEL_NAME,
+        model_version=signal.model_version,
+        calibration_version=signal.calibration_version,
+        feature_set_version=signal.feature_set_version,
+        model_metadata=dict(signal.model_metadata or {}),
         invalidation=recommendation.invalidation,
         rationale=recommendation.rationale,
         reasons=list(signal.reasons or []),
         features=dict(signal.features or {}),
+        scoring_diagnostics=dict(recommendation.scoring_diagnostics or signal.scoring_diagnostics or {}),
         market_status_at_capture=market.status,
         captured_at=recommendation.captured_at,
     )

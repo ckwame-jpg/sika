@@ -27,7 +27,7 @@ export default function PaperPositionsPage() {
           </Button>
         }
       />
-      <main className="flex-1 overflow-y-auto p-4">
+      <main className="flex-1 overflow-y-auto p-3 sm:p-4">
         <PaperPositionsTable />
       </main>
 

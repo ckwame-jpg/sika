@@ -41,12 +41,20 @@ logger = logging.getLogger(__name__)
 
 
 class EspnPublicClient:
+    def __init__(self, http_client: httpx.Client | None = None) -> None:
+        self._http_client = http_client
+
+    def _get(self, url: str, **kwargs):
+        if self._http_client is not None:
+            return self._http_client.get(url, **kwargs)
+        return httpx.get(url, **kwargs)
+
     def search_player(self, query: str, sport_key: str = "NBA") -> dict[str, Any]:
         normalized_sport = sport_key.upper()
         if normalized_sport not in ESPN_SEARCH_SLUGS:
             raise ValueError(f"ESPN player search is not configured for {sport_key}")
 
-        response = httpx.get(ESPN_SEARCH_URL, params={"query": query}, timeout=20)
+        response = self._get(ESPN_SEARCH_URL, params={"query": query}, timeout=20)
         response.raise_for_status()
         payload = response.json()
         for result in payload.get("results") or []:
@@ -75,7 +83,7 @@ class EspnPublicClient:
         if sport_key.upper() not in ESPN_GAMELOG_URLS:
             raise ValueError(f"ESPN game log is not configured for {sport_key}")
 
-        response = httpx.get(
+        response = self._get(
             ESPN_GAMELOG_URLS[sport_key.upper()].format(athlete_id=athlete_id),
             params={"season": season},
             timeout=20,
@@ -102,12 +110,12 @@ class EspnPublicClient:
 
     def fetch_json_ref(self, ref_url: str) -> dict[str, Any]:
         normalized_url = ref_url.replace("http://", "https://")
-        response = httpx.get(normalized_url, timeout=20)
+        response = self._get(normalized_url, timeout=20)
         response.raise_for_status()
         return response.json()
 
     def _fetch_fitt_page(self, url: str, error_message: str) -> dict[str, Any]:
-        response = httpx.get(url, timeout=20)
+        response = self._get(url, timeout=20)
         response.raise_for_status()
         match = _ESPN_FITT_STATE_RE.search(response.text)
         if not match:
@@ -116,7 +124,7 @@ class EspnPublicClient:
 
     def fetch_events_for_day(self, sport_key: str, target_day: date) -> list[dict[str, Any]]:
         base_url = ESPN_SCOREBOARD_URLS[sport_key]
-        response = httpx.get(
+        response = self._get(
             base_url,
             params={"dates": target_day.strftime("%Y%m%d")},
             timeout=20,

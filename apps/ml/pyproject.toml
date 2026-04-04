@@ -1,0 +1,8 @@
+[project]
+name = "sika-ml"
+version = "0.1.0"
+description = "Offline model training workspace for sika"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = ["ml"]

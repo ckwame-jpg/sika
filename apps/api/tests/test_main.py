@@ -31,6 +31,7 @@ def test_lifespan_starts_without_blocking_on_startup_refresh(monkeypatch):
     monkeypatch.setattr(app_main, "init_db", lambda: calls.append("init_db"))
     monkeypatch.setattr(app_main, "SessionLocal", _session_local)
     monkeypatch.setattr(app_main, "seed_sports", lambda db: calls.append("seed_sports"))
+    monkeypatch.setattr(app_main, "sync_family_runtime_health", lambda db: calls.append("sync_runtime"))
     monkeypatch.setattr(app_main, "sync_refresh_runtime_state_from_db", lambda: calls.append("sync"))
     monkeypatch.setattr(app_main, "start_scheduler", lambda: calls.append("start_scheduler"))
     monkeypatch.setattr(app_main, "queue_startup_refresh_if_stale", lambda: calls.append("queue"))
@@ -45,6 +46,7 @@ def test_lifespan_starts_without_blocking_on_startup_refresh(monkeypatch):
     assert calls == [
         "init_db",
         "seed_sports",
+        "sync_runtime",
         "sync",
         "start_scheduler",
         "queue",
@@ -59,6 +61,7 @@ def test_lifespan_swallows_startup_refresh_queue_errors(monkeypatch):
     monkeypatch.setattr(app_main, "init_db", lambda: calls.append("init_db"))
     monkeypatch.setattr(app_main, "SessionLocal", _session_local)
     monkeypatch.setattr(app_main, "seed_sports", lambda db: calls.append("seed_sports"))
+    monkeypatch.setattr(app_main, "sync_family_runtime_health", lambda db: calls.append("sync_runtime"))
     monkeypatch.setattr(app_main, "sync_refresh_runtime_state_from_db", lambda: calls.append("sync"))
     monkeypatch.setattr(app_main, "start_scheduler", lambda: calls.append("start_scheduler"))
     monkeypatch.setattr(
@@ -77,6 +80,7 @@ def test_lifespan_swallows_startup_refresh_queue_errors(monkeypatch):
     assert calls == [
         "init_db",
         "seed_sports",
+        "sync_runtime",
         "sync",
         "start_scheduler",
         "stop_scheduler",

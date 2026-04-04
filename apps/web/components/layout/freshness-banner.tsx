@@ -14,7 +14,7 @@ export function FreshnessBanner() {
   return (
     <div
       className={cn(
-        "border-b px-5 py-2 text-xs",
+        "border-b px-3 py-2 text-xs sm:px-5",
         banner.tone === "warning"
           ? "border-warning/20 bg-warning/10 text-warning"
           : "border-border bg-surface text-muted-foreground",

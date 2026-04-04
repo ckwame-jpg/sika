@@ -9,11 +9,13 @@ import {
 } from "@/lib/api";
 import type { PredictionRead, PredictionSummaryRead } from "@/lib/types";
 import { ViewSwitch, useViewQueryParam } from "@/components/filters/view-switch";
+import { QualityFilterSelect, type RecommendationViewMode } from "@/components/filters/quality-filter-select";
 import { ParlayFilterControls } from "@/components/parlays/parlay-filter-controls";
 import { ParlayPredictionsSection } from "@/components/parlays/parlay-predictions-section";
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -37,10 +39,12 @@ import { Badge, SportBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
+import { EDGE_EXPLANATION, ENTRY_LABEL, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
 import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { SportFilterSelect, useSportQueryParam } from "@/components/filters/sport-filter-select";
 import { usePriceDisplay } from "@/lib/price-display";
+import { matchesRecommendationViewMode } from "@/lib/recommendation-quality";
 
 function outcomeVariant(
   outcome: string,
@@ -133,9 +137,11 @@ function SummaryCards({ summary }: { summary: PredictionSummaryRead }) {
 
 function PredictionRow({ row }: { row: PredictionRead }) {
   const { formatPrice } = usePriceDisplay();
+  const displayTitle = row.display_market_title ?? row.market_title;
+  const winProbability = row.selected_side_probability ?? row.confidence;
   const label = row.subject_name
     ? `${row.subject_name}${row.stat_key ? ` · ${row.stat_key}` : ""}${row.threshold != null ? ` ${row.threshold}` : ""}`
-    : row.market_title;
+    : displayTitle;
 
   return (
     <TableRow>
@@ -145,9 +151,12 @@ function PredictionRow({ row }: { row: PredictionRead }) {
       <TableCell>
         <div className="max-w-[280px]">
           <p className="truncate text-sm text-foreground">{label}</p>
-          {row.subject_name && (
-            <p className="truncate text-xs text-muted-foreground">{row.market_title}</p>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {row.subject_name && (
+              <p className="truncate text-xs text-muted-foreground">{displayTitle}</p>
+            )}
+            {row.source_badge_label && <Badge variant="outline">{row.source_badge_label}</Badge>}
+          </div>
         </div>
       </TableCell>
       <TableCell>
@@ -172,7 +181,10 @@ function PredictionRow({ row }: { row: PredictionRead }) {
         {fmtEdge(row.edge)}
       </TableCell>
       <TableCell className="font-mono text-xs text-muted-foreground">
-        {fmtPercent(row.confidence)}
+        <div className="space-y-1">
+          <p>{fmtPercent(winProbability)}</p>
+          <p className="text-[11px]">{RELIABILITY_LABEL} {fmtPercent(row.confidence)}</p>
+        </div>
       </TableCell>
       <TableCell>
         <Badge variant={settlementVariant(row.settlement_status)}>
@@ -191,6 +203,76 @@ function PredictionRow({ row }: { row: PredictionRead }) {
   );
 }
 
+function PredictionCard({ row }: { row: PredictionRead }) {
+  const { formatPrice } = usePriceDisplay();
+  const displayTitle = row.display_market_title ?? row.market_title;
+  const winProbability = row.selected_side_probability ?? row.confidence;
+  const label = row.subject_name
+    ? `${row.subject_name}${row.stat_key ? ` · ${row.stat_key}` : ""}${row.threshold != null ? ` ${row.threshold}` : ""}`
+    : displayTitle;
+
+  return (
+    <Card className="bg-surface-hover shadow-none">
+      <CardContent className="space-y-3 px-4 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm text-foreground">{label}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {row.subject_name && (
+                <p className="text-xs text-muted-foreground">{displayTitle}</p>
+              )}
+              {row.source_badge_label && <Badge variant="outline">{row.source_badge_label}</Badge>}
+              {row.sport_key && <SportBadge sport={row.sport_key} />}
+            </div>
+          </div>
+          <p className="shrink-0 font-mono text-[11px] text-muted-foreground">
+            {fmtDatetime(row.captured_at)}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <div>
+            <p className="text-muted-foreground">Side</p>
+            <p className={cn(
+              "mt-1 font-mono font-medium",
+              row.side.toLowerCase() === "yes" ? "text-positive" : "text-negative",
+            )}>
+              {row.side.toUpperCase()}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">{ENTRY_LABEL}</p>
+            <p className="mt-1 font-mono text-foreground">{formatPrice(row.suggested_price)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Edge</p>
+            <p className="mt-1 font-mono text-foreground">{fmtEdge(row.edge)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">{WIN_PROB_LABEL}</p>
+            <p className="mt-1 font-mono text-foreground">{fmtPercent(winProbability)}</p>
+            <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+              {RELIABILITY_LABEL} {fmtPercent(row.confidence)}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={settlementVariant(row.settlement_status)}>
+            {row.settlement_status}
+          </Badge>
+          <Badge variant={outcomeVariant(row.prediction_outcome)}>
+            {row.prediction_outcome}
+          </Badge>
+          <span className="text-xs text-muted-foreground">
+            Settled {fmtDatetime(row.settled_at)}
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function PredictionsDesk() {
   const { sport } = useSportQueryParam();
   const { view, setView } = useViewQueryParam();
@@ -199,6 +281,7 @@ export function PredictionsDesk() {
   const [outcome, setOutcome] = useState("all");
   const [capturedFrom, setCapturedFrom] = useState("");
   const [capturedTo, setCapturedTo] = useState("");
+  const [qualityMode, setQualityMode] = useState<RecommendationViewMode>("balanced");
   const [settling, setSettling] = useState(false);
   const [parlaySportScope, setParlaySportScope] = useState("all");
   const [parlayLegCount, setParlayLegCount] = useState("all");
@@ -252,17 +335,19 @@ export function PredictionsDesk() {
   const predictionErrorMessage = predsError instanceof Error
     ? predsError.message
     : "Unknown error";
+  const filteredPredictions = (predictions ?? []).filter((item) => matchesRecommendationViewMode(item, qualityMode));
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3">
+      <div className="rounded-xl border border-border bg-surface px-3 py-3 sm:px-4">
+        <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
         <ViewSwitch view={view} onChange={setView} />
         {view === "singles" ? (
           <>
-            <SportFilterSelect triggerClassName="h-8 w-[140px]" />
+            <SportFilterSelect triggerClassName="h-8 w-full text-xs sm:w-[140px]" />
 
             <Select value={family} onValueChange={setFamily}>
-              <SelectTrigger className="h-8 w-[160px]">
+              <SelectTrigger className="h-8 w-full sm:w-[160px]">
                 <SelectValue placeholder="All families" />
               </SelectTrigger>
               <SelectContent>
@@ -276,11 +361,11 @@ export function PredictionsDesk() {
               value={statKey}
               onChange={(event) => setStatKey(event.target.value)}
               placeholder="Stat key (e.g. points)"
-              className="h-8 w-[180px]"
+              className="h-8 w-full sm:w-[180px]"
             />
 
             <Select value={outcome} onValueChange={setOutcome}>
-              <SelectTrigger className="h-8 w-[140px]">
+              <SelectTrigger className="h-8 w-full sm:w-[140px]">
                 <SelectValue placeholder="All outcomes" />
               </SelectTrigger>
               <SelectContent>
@@ -297,15 +382,20 @@ export function PredictionsDesk() {
               type="date"
               value={capturedFrom}
               onChange={(event) => setCapturedFrom(event.target.value)}
-              className="h-8 w-[150px]"
+              className="h-8 w-full sm:w-[150px]"
               title="Captured from"
             />
             <Input
               type="date"
               value={capturedTo}
               onChange={(event) => setCapturedTo(event.target.value)}
-              className="h-8 w-[150px]"
+              className="h-8 w-full sm:w-[150px]"
               title="Captured to"
+            />
+            <QualityFilterSelect
+              value={qualityMode}
+              onValueChange={setQualityMode}
+              triggerClassName="h-8 w-full text-xs sm:w-[130px]"
             />
           </>
         ) : (
@@ -317,20 +407,21 @@ export function PredictionsDesk() {
           />
         )}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="flex flex-col gap-2 pt-1 sm:ml-auto sm:flex-row sm:items-center sm:pt-0">
           <span className="text-xs text-muted-foreground">
-            {view === "singles" && predictions != null ? `${predictions.length} predictions · ` : ""}30s refresh
+            {view === "singles" && predictions != null ? `${filteredPredictions.length} predictions · ` : ""}30s refresh
           </span>
           <Button
             variant="ghost"
             size="sm"
-            className="gap-2 text-muted-foreground"
+            className="gap-2 justify-start text-muted-foreground sm:justify-center"
             onClick={handleSettle}
             disabled={settling}
           >
             <RefreshCw size={13} className={cn(settling && "animate-spin")} />
             Settle predictions
           </Button>
+        </div>
         </div>
       </div>
 
@@ -349,6 +440,7 @@ export function PredictionsDesk() {
           <Card>
             <CardHeader className="flex-col items-start gap-1 border-none">
               <CardTitle>Prediction Ledger</CardTitle>
+              <CardDescription>{EDGE_EXPLANATION}</CardDescription>
             </CardHeader>
             <CardContent className="pb-0">
               {predsError ? (
@@ -356,45 +448,75 @@ export function PredictionsDesk() {
                   Failed to load predictions: {predictionErrorMessage}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-32">Captured</TableHead>
-                        <TableHead>Market / Subject</TableHead>
-                        <TableHead className="w-20">Sport</TableHead>
-                        <TableHead className="w-24">Side / Price</TableHead>
-                        <TableHead className="w-20">Edge</TableHead>
-                        <TableHead className="w-24">Confidence</TableHead>
-                        <TableHead className="w-28">Settlement</TableHead>
-                        <TableHead className="w-24">Outcome</TableHead>
-                        <TableHead className="w-32">Settled At</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {predsLoading
-                        ? Array.from({ length: 8 }).map((_, index) => (
-                            <SkeletonRow key={index} cols={9} />
-                          ))
-                        : (predictions ?? []).length === 0
-                          ? (
-                            <TableRow>
-                              <TableCell
-                                colSpan={9}
-                                className="py-10 text-center text-xs text-muted-foreground"
-                              >
-                                {hasFilters
-                                  ? "No predictions matched the current filters."
-                                  : "No predictions yet. Run a refresh to emit picks."}
-                              </TableCell>
-                            </TableRow>
-                          )
-                          : (predictions ?? []).map((row) => (
-                              <PredictionRow key={row.id} row={row} />
-                            ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                <>
+                  <div className="space-y-3 lg:hidden">
+                    {predsLoading
+                      ? Array.from({ length: 4 }).map((_, index) => (
+                          <Card key={index} className="bg-surface-hover shadow-none">
+                            <CardContent className="space-y-3 px-4 py-4">
+                              <Skeleton className="h-4 w-40" />
+                              <div className="grid grid-cols-2 gap-3">
+                                <Skeleton className="h-10 w-full" />
+                                <Skeleton className="h-10 w-full" />
+                                <Skeleton className="h-10 w-full" />
+                                <Skeleton className="h-10 w-full" />
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))
+                      : filteredPredictions.length === 0
+                        ? (
+                          <div className="flex h-24 items-center justify-center rounded-xl border border-border bg-surface text-center text-xs text-muted-foreground">
+                            {hasFilters
+                              ? "No predictions matched the current filters."
+                              : "No predictions matched the current view yet."}
+                          </div>
+                        )
+                        : filteredPredictions.map((row) => (
+                            <PredictionCard key={row.id} row={row} />
+                          ))}
+                  </div>
+
+                  <div className="hidden lg:block overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-32">Captured</TableHead>
+                          <TableHead>Market / Subject</TableHead>
+                          <TableHead className="w-20">Sport</TableHead>
+                          <TableHead className="w-24">Side / {ENTRY_LABEL}</TableHead>
+                          <TableHead className="w-20">Edge</TableHead>
+                          <TableHead className="w-24">{WIN_PROB_LABEL}</TableHead>
+                          <TableHead className="w-28">Settlement</TableHead>
+                          <TableHead className="w-24">Outcome</TableHead>
+                          <TableHead className="w-32">Settled At</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {predsLoading
+                          ? Array.from({ length: 8 }).map((_, index) => (
+                              <SkeletonRow key={index} cols={9} />
+                            ))
+                          : filteredPredictions.length === 0
+                            ? (
+                              <TableRow>
+                                <TableCell
+                                  colSpan={9}
+                                  className="py-10 text-center text-xs text-muted-foreground"
+                                >
+                                  {hasFilters
+                                    ? "No predictions matched the current filters."
+                                    : "No predictions matched the current view yet."}
+                                </TableCell>
+                              </TableRow>
+                            )
+                            : filteredPredictions.map((row) => (
+                                <PredictionRow key={row.id} row={row} />
+                              ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>

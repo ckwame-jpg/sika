@@ -22,6 +22,11 @@ class HealthResponse(BaseModel):
     last_successful_refresh_at: UTCDateTime | None = None
     data_stale: bool
     refresh_error_message: str | None = None
+    prop_refresh_status: Literal["idle", "queued", "running", "failed"]
+    prop_refresh_reason: Literal["none", "startup", "interval", "manual"]
+    last_prop_refresh_at: UTCDateTime | None = None
+    prop_data_stale: bool
+    prop_refresh_error_message: str | None = None
 
 
 class SportRead(BaseModel):
@@ -72,6 +77,18 @@ class RecommendationRead(BaseModel):
     suggested_price: float
     edge: float
     confidence: float
+    selected_side_probability: float | None = None
+    source_type: str | None = None
+    source_market_ticker: str | None = None
+    source_market_title: str | None = None
+    display_market_title: str | None = None
+    source_badge_label: str | None = None
+    context_coverage_score: float | None = None
+    quality_tier: str | None = None
+    model_name: str | None = None
+    model_version: str | None = None
+    calibration_version: str | None = None
+    feature_set_version: str | None = None
     invalidation: str
     rationale: str
     captured_at: UTCDateTime
@@ -114,6 +131,10 @@ class ParlayRecommendationRead(BaseModel):
     american_odds: str
     edge: float
     confidence: float
+    model_name: str | None = None
+    model_version: str | None = None
+    calibration_version: str | None = None
+    feature_set_version: str | None = None
     invalidation: str
     rationale: str
     captured_at: UTCDateTime
@@ -138,12 +159,16 @@ class SignalSnapshotRead(BaseModel):
 
     captured_at: UTCDateTime
     model_name: str
+    model_version: str | None = None
+    calibration_version: str | None = None
+    feature_set_version: str | None = None
     confidence: float
     fair_yes_price: float
     fair_no_price: float
     edge: float
     reasons: list[str]
     features: dict[str, Any]
+    scoring_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class MarketDetailRead(BaseModel):
@@ -202,6 +227,20 @@ class RunSummaryCounts(BaseModel):
     prediction_outcomes: dict[str, int] = Field(default_factory=dict)
     parlay_prediction_outcomes: dict[str, int] = Field(default_factory=dict)
     unsupported_prop_category_counts: dict[str, int] = Field(default_factory=dict)
+    heuristic_longshots_suppressed: int = 0
+    inverse_winner_duplicates_collapsed: int = 0
+    combo_prop_candidates_emitted: int = 0
+    combo_prop_candidates_suppressed: int = 0
+    critical_context_suppressed: int = 0
+    quality_tier_counts: dict[str, int] = Field(default_factory=dict)
+    prop_subjects_warmed: int = 0
+    player_search_cache_hits: int = 0
+    player_search_cache_misses: int = 0
+    gamelog_cache_hits: int = 0
+    gamelog_cache_misses: int = 0
+    stale_gamelog_fallbacks: int = 0
+    combo_prop_legs_discovered: int = 0
+    combo_prop_legs_refreshed: int = 0
     watchlist_counts_by_sport: dict[str, int] = Field(default_factory=dict)
     watchlist_counts_by_prop_category: dict[str, int] = Field(default_factory=dict)
     parlay_watchlist_counts_by_scope: dict[str, int] = Field(default_factory=dict)
@@ -221,6 +260,108 @@ class RunRead(BaseModel):
 
 class RunDetailRead(RunRead):
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class WatchlistDiagnosticsRead(BaseModel):
+    status: str
+    environment: str
+    scheduler_enabled: bool
+    refresh_status: Literal["idle", "queued", "running", "failed"]
+    refresh_reason: Literal["none", "startup", "interval", "manual", "pregame"]
+    last_successful_refresh_at: UTCDateTime | None = None
+    data_stale: bool
+    refresh_error_message: str | None = None
+    prop_refresh_status: Literal["idle", "queued", "running", "failed"]
+    prop_refresh_reason: Literal["none", "startup", "interval", "manual"]
+    last_prop_refresh_at: UTCDateTime | None = None
+    prop_data_stale: bool
+    prop_refresh_error_message: str | None = None
+    latest_refresh_run: RunRead | None = None
+    latest_refresh_succeeded: bool | None = None
+    latest_supported_markets_kept: int = 0
+    latest_recommendations_emitted: int = 0
+    latest_watchlist_counts_by_sport: dict[str, int] = Field(default_factory=dict)
+    current_recommendation_count: int = 0
+    watchlist_min_edge: float
+    watchlist_min_confidence: float
+
+
+ReadinessStatus = Literal[
+    "heuristic_only",
+    "insufficient_history",
+    "shadow_not_started",
+    "shadowing",
+    "ready_for_review",
+    "serving",
+]
+
+RuntimeHealthStatus = Literal["healthy", "degraded", "unavailable"]
+
+
+class ReadinessBucketRead(BaseModel):
+    label: str
+    total_count: int
+    won_count: int
+    lost_count: int
+    push_count: int
+    cancelled_count: int
+    win_rate: float | None = None
+    average_realized_pnl: float | None = None
+
+
+class ModelFamilyRuntimeHealthRead(BaseModel):
+    family_key: str
+    desired_mode: Literal["heuristic", "shadow", "ml"]
+    effective_mode: Literal["heuristic", "shadow", "ml"]
+    runtime_health: RuntimeHealthStatus
+    fallback_active: bool
+    consecutive_failures: int
+    last_check_at: UTCDateTime | None = None
+    last_success_at: UTCDateTime | None = None
+    last_error: str | None = None
+    last_error_at: UTCDateTime | None = None
+    artifact_path: str | None = None
+    model_name: str | None = None
+    model_version: str | None = None
+    calibration_version: str | None = None
+    feature_set_version: str | None = None
+    model_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelFamilyReadinessRead(BaseModel):
+    family_key: str
+    label: str
+    scope: str
+    sport_scope: str
+    leg_count: int | None = None
+    readiness_status: ReadinessStatus
+    why_not_ready: str
+    runtime: ModelFamilyRuntimeHealthRead
+    total_predictions: int
+    settled_predictions: int
+    pending_predictions: int
+    shadow_predictions: int
+    shadow_coverage_ratio: float
+    won_predictions: int
+    lost_predictions: int
+    push_predictions: int
+    cancelled_predictions: int
+    average_edge: float | None = None
+    average_confidence: float | None = None
+    average_realized_pnl: float | None = None
+    last_settled_at: UTCDateTime | None = None
+    confidence_buckets: list[ReadinessBucketRead] = Field(default_factory=list)
+    edge_buckets: list[ReadinessBucketRead] = Field(default_factory=list)
+    feature_coverage_rates: dict[str, float] = Field(default_factory=dict)
+    missing_context_rates: dict[str, float] = Field(default_factory=dict)
+    top_failure_reasons: dict[str, int] = Field(default_factory=dict)
+    last_validation_failure: str | None = None
+    last_fallback_event_at: UTCDateTime | None = None
+
+
+class ModelReadinessSummaryRead(BaseModel):
+    generated_at: UTCDateTime
+    families: list[ModelFamilyReadinessRead] = Field(default_factory=list)
 
 
 class MarketHistoryPointRead(BaseModel):
@@ -305,6 +446,7 @@ class JobRefreshResponse(BaseModel):
     run_id: int
     status: str
     records_processed: int
+    queued_prop_refresh: bool = False
 
 
 class PredictionRead(BaseModel):
@@ -331,7 +473,18 @@ class PredictionRead(BaseModel):
     fair_no_price: float | None = None
     edge: float
     confidence: float
+    selected_side_probability: float | None = None
+    source_type: str | None = None
+    source_market_ticker: str | None = None
+    source_market_title: str | None = None
+    display_market_title: str | None = None
+    source_badge_label: str | None = None
+    context_coverage_score: float | None = None
+    quality_tier: str | None = None
     model_name: str
+    model_version: str | None = None
+    calibration_version: str | None = None
+    feature_set_version: str | None = None
     invalidation: str | None = None
     rationale: str
     reasons: list[str] = Field(default_factory=list)
@@ -404,6 +557,10 @@ class ParlayPredictionRead(BaseModel):
     american_odds: str
     edge: float
     confidence: float
+    model_name: str | None = None
+    model_version: str | None = None
+    calibration_version: str | None = None
+    feature_set_version: str | None = None
     rationale: str
     invalidation: str | None = None
     settlement_status: str

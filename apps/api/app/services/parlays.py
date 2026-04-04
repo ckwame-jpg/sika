@@ -21,6 +21,9 @@ from app.models import (
     Recommendation,
     SignalSnapshot,
 )
+from app.services.ml.lineage import HEURISTIC_PARLAY_MODEL
+from app.services.ml.runtime import run_serving_inference
+from app.services.model_families import parlay_family_key
 from app.services.predictions import OPEN_MARKET_STATUSES
 
 
@@ -58,8 +61,15 @@ class GeneratedParlay:
     american_odds: str
     edge: float
     confidence: float
+    selection_score: float
     invalidation: str
     rationale: str
+    scoring_diagnostics: dict[str, Any]
+    model_name: str
+    model_version: str | None
+    calibration_version: str | None
+    feature_set_version: str | None
+    model_metadata: dict[str, Any]
 
 
 def _selected_model_probability(candidate: ParlayCandidateInput) -> float:
@@ -78,6 +88,10 @@ def clear_active_parlay_watchlist(db: Session) -> None:
     db.query(ParlayRecommendationLeg).delete()
     db.query(ParlayRecommendation).delete()
     db.flush()
+
+
+def _candidate_selection_score(candidate: ParlayCandidateInput) -> float:
+    return float(candidate.recommendation.selection_score or candidate.recommendation.edge)
 
 
 def _eligible_candidates(candidates: list[ParlayCandidateInput]) -> list[ParlayCandidateInput]:
@@ -101,7 +115,7 @@ def _eligible_candidates(candidates: list[ParlayCandidateInput]) -> list[ParlayC
         eligible.append(candidate)
 
     eligible.sort(
-        key=lambda item: (item.recommendation.edge, item.recommendation.confidence, item.recommendation.captured_at),
+        key=lambda item: (_candidate_selection_score(item), item.recommendation.confidence, item.recommendation.captured_at),
         reverse=True,
     )
     return eligible[: settings.parlay_candidate_pool_size]
@@ -113,7 +127,91 @@ def _combo_is_valid(combo: tuple[ParlayCandidateInput, ...]) -> bool:
     return len(tickers) == len(combo) and len(event_ids) == len(combo)
 
 
-def _build_generated_parlays(candidates: list[ParlayCandidateInput]) -> list[GeneratedParlay]:
+def _candidate_team_key(candidate: ParlayCandidateInput) -> str | None:
+    return str(candidate.metadata.get("copilot_subject_team") or "").upper() or None
+
+
+def _candidate_subject_key(candidate: ParlayCandidateInput) -> str | None:
+    return str(candidate.metadata.get("copilot_subject_name") or "").strip().lower() or None
+
+
+def _candidate_opponent_key(candidate: ParlayCandidateInput) -> str | None:
+    team_key = _candidate_team_key(candidate)
+    if not team_key:
+        return None
+    for participant in candidate.event.participants:
+        participant_name = str(participant.participant.display_name or "").upper()
+        participant_short = str(participant.participant.short_name or "").upper()
+        if team_key and team_key in {participant_name, participant_short}:
+            continue
+        return participant_short or participant_name or None
+    return None
+
+
+def _parlay_diagnostics_for_combo(
+    combo: tuple[ParlayCandidateInput, ...],
+    *,
+    leg_count: int,
+    sport_scope: str,
+) -> tuple[float, dict[str, Any]]:
+    confidences = [float(candidate.recommendation.confidence) for candidate in combo]
+    teams = [_candidate_team_key(candidate) for candidate in combo]
+    subjects = [_candidate_subject_key(candidate) for candidate in combo]
+    opponents = [_candidate_opponent_key(candidate) for candidate in combo]
+    same_team_pairs = 0
+    shared_subject_pairs = 0
+    shared_opponent_pairs = 0
+    for left in range(len(combo)):
+        for right in range(left + 1, len(combo)):
+            if teams[left] and teams[left] == teams[right]:
+                same_team_pairs += 1
+            if subjects[left] and subjects[left] == subjects[right]:
+                shared_subject_pairs += 1
+            if opponents[left] and opponents[left] == opponents[right]:
+                shared_opponent_pairs += 1
+
+    same_sport_penalty = 0.01 if sport_scope != "MIXED" and leg_count <= 3 else 0.0
+    same_team_penalty = round(same_team_pairs * 0.04, 4)
+    shared_subject_penalty = round(shared_subject_pairs * 0.05, 4)
+    shared_opponent_penalty = round(shared_opponent_pairs * 0.03, 4)
+    leg_count_penalty = round(max(0, leg_count - 2) * (0.04 if leg_count <= 3 else 0.06), 4)
+    total_penalty = round(
+        same_sport_penalty + same_team_penalty + shared_subject_penalty + shared_opponent_penalty + leg_count_penalty,
+        4,
+    )
+    base_confidence = min(confidences) if leg_count >= 4 else sum(confidences) / max(len(confidences), 1)
+    confidence_cap = 0.82 if leg_count >= 4 else 0.92
+    confidence = max(min(round(base_confidence - total_penalty, 4), confidence_cap), 0.2)
+    diagnostics = {
+        "family_key": parlay_family_key(leg_count, [candidate.market.sport_key or candidate.event.sport_key or "UNKNOWN" for candidate in combo]),
+        "confidence_semantics": "heuristic_reliability",
+        "base_confidence": round(base_confidence, 4),
+        "adjusted_confidence": confidence,
+        "same_team_pairs": same_team_pairs,
+        "shared_subject_pairs": shared_subject_pairs,
+        "shared_opponent_pairs": shared_opponent_pairs,
+        "penalties": {
+            "same_sport": round(same_sport_penalty, 4),
+            "same_team": same_team_penalty,
+            "shared_subject": shared_subject_penalty,
+            "shared_opponent": shared_opponent_penalty,
+            "leg_count": leg_count_penalty,
+        },
+        "feature_flags": {
+            "mixed_scope": sport_scope == "MIXED",
+            "all_leg_scores_available": True,
+        },
+        "missing_context": [],
+    }
+    return confidence, diagnostics
+
+
+def _parlay_selection_score(edge: float, confidence: float, diagnostics: dict[str, Any]) -> float:
+    total_penalty = sum(float(value or 0.0) for value in dict(diagnostics.get("penalties") or {}).values())
+    return round(max((edge * 0.7) + (confidence * 0.22) - (total_penalty * 0.55), 0.0), 4)
+
+
+def _build_generated_parlays(db: Session, candidates: list[ParlayCandidateInput]) -> list[GeneratedParlay]:
     settings = get_settings()
     eligible = _eligible_candidates(candidates)
     if len(eligible) < settings.parlay_min_legs:
@@ -128,37 +226,93 @@ def _build_generated_parlays(candidates: list[ParlayCandidateInput]) -> list[Gen
 
             combined_market_price = round(prod(candidate.recommendation.suggested_price for candidate in combo), 4)
             combined_model_probability = round(prod(_selected_model_probability(candidate) for candidate in combo), 4)
+            participating_sports = sorted({(candidate.market.sport_key or candidate.event.sport_key or "UNKNOWN").upper() for candidate in combo})
+            sport_scope = _sport_scope(participating_sports)
+            confidence, diagnostics = _parlay_diagnostics_for_combo(
+                combo,
+                leg_count=leg_count,
+                sport_scope=sport_scope,
+            )
+            active_lineage = HEURISTIC_PARLAY_MODEL
+            runtime_decision = None
+            ml_result, runtime_decision = run_serving_inference(
+                db,
+                family_key=str(diagnostics.get("family_key") or parlay_family_key(leg_count, participating_sports)),
+                scope="parlay",
+            )
+            if ml_result is not None:
+                combined_model_probability = round(ml_result.probability, 4)
+                confidence = round(ml_result.confidence, 4)
+                active_lineage = ml_result.lineage
+                diagnostics = {
+                    **diagnostics,
+                    "confidence_semantics": "calibrated_probability",
+                    "base_confidence": confidence,
+                    "adjusted_confidence": confidence,
+                    "penalties": {
+                        "same_sport": 0.0,
+                        "same_team": 0.0,
+                        "shared_subject": 0.0,
+                        "shared_opponent": 0.0,
+                        "leg_count": 0.0,
+                    },
+                    "serving_mode": "ml",
+                    "artifact_path": ml_result.artifact_path,
+                }
+            elif runtime_decision and runtime_decision.fallback_active and runtime_decision.last_error:
+                diagnostics["fallback_reason"] = runtime_decision.last_error
+                diagnostics["serving_mode"] = "heuristic_fallback"
+            else:
+                diagnostics["serving_mode"] = "heuristic"
+
             edge = round(combined_model_probability - combined_market_price, 4)
             if edge <= 0:
                 continue
 
-            participating_sports = sorted({(candidate.market.sport_key or candidate.event.sport_key or "UNKNOWN").upper() for candidate in combo})
-            confidence = round(min(candidate.recommendation.confidence for candidate in combo), 4)
+            selection_score = _parlay_selection_score(edge, confidence, diagnostics)
             american_odds = american_odds_from_probability(combined_market_price)
             rationale = " + ".join(
                 f"{candidate.market.title} ({candidate.recommendation.side.upper()} {american_odds_from_probability(candidate.recommendation.suggested_price)})"
                 for candidate in combo
             )
+            if ml_result is not None:
+                rationale = f"{rationale}; served by {ml_result.lineage.model_name}"
             invalidation = (
                 "Cancel if any leg closes, is suspended, or the captured entry meaningfully drifts before execution."
+            )
+            model_metadata = dict(active_lineage.model_metadata or {})
+            model_metadata.update(
+                {
+                    "family_key": diagnostics.get("family_key"),
+                    "desired_mode": runtime_decision.desired_mode if runtime_decision else "heuristic",
+                    "effective_mode": "ml" if ml_result is not None else "heuristic",
+                    "runtime_health": runtime_decision.runtime_health if runtime_decision else "healthy",
+                }
             )
             generated.append(
                 GeneratedParlay(
                     candidates=combo,
                     leg_count=leg_count,
-                    sport_scope=_sport_scope(participating_sports),
+                    sport_scope=sport_scope,
                     participating_sports=participating_sports,
                     combined_market_price=combined_market_price,
                     combined_model_probability=combined_model_probability,
                     american_odds=american_odds,
                     edge=edge,
                     confidence=confidence,
+                    selection_score=selection_score,
                     invalidation=invalidation,
                     rationale=rationale,
+                    scoring_diagnostics={**diagnostics, "selection_score": selection_score},
+                    model_name=active_lineage.model_name,
+                    model_version=active_lineage.model_version,
+                    calibration_version=active_lineage.calibration_version,
+                    feature_set_version=active_lineage.feature_set_version,
+                    model_metadata=model_metadata,
                 )
             )
 
-    generated.sort(key=lambda item: (-item.edge, -item.confidence, item.leg_count))
+    generated.sort(key=lambda item: (-item.selection_score, -item.edge, -item.confidence, item.leg_count))
     return generated[: settings.parlay_max_output]
 
 
@@ -231,7 +385,7 @@ def capture_parlay_artifacts(
     run_id: int | None,
     candidates: list[ParlayCandidateInput],
 ) -> tuple[int, int]:
-    generated = _build_generated_parlays(candidates)
+    generated = _build_generated_parlays(db, candidates)
     if not generated:
         return 0, 0
 
@@ -250,8 +404,15 @@ def capture_parlay_artifacts(
             american_odds=item.american_odds,
             edge=item.edge,
             confidence=item.confidence,
+            selection_score=item.selection_score,
+            model_name=item.model_name,
+            model_version=item.model_version,
+            calibration_version=item.calibration_version,
+            feature_set_version=item.feature_set_version,
+            model_metadata=dict(item.model_metadata or {}),
             invalidation=item.invalidation,
             rationale=item.rationale,
+            scoring_diagnostics=dict(item.scoring_diagnostics or {}),
             captured_at=captured_at,
         )
         db.add(recommendation)
@@ -270,8 +431,15 @@ def capture_parlay_artifacts(
             american_odds=item.american_odds,
             edge=item.edge,
             confidence=item.confidence,
+            selection_score=item.selection_score,
+            model_name=item.model_name,
+            model_version=item.model_version,
+            calibration_version=item.calibration_version,
+            feature_set_version=item.feature_set_version,
+            model_metadata=dict(item.model_metadata or {}),
             rationale=item.rationale,
             invalidation=item.invalidation,
+            scoring_diagnostics=dict(item.scoring_diagnostics or {}),
             captured_at=captured_at,
         )
         db.add(prediction)

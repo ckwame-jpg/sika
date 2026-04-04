@@ -58,6 +58,23 @@ def test_market_filter_accepts_supported_nba_and_mlb_player_props():
     assert market_metadata(mlb_prop)["copilot_stat_key"] == "hits_runs_rbis"
 
 
+def test_market_filter_accepts_player_prop_without_trailing_question_mark():
+    payload = {
+        "ticker": "KXNBAPTS-26APR04WASMIA-MIABADEBAYO13-15",
+        "event_ticker": "KXNBAPTS-26APR04WASMIA",
+        "title": "Bam Adebayo: 15+ points",
+        "yes_sub_title": "Bam Adebayo: 15+",
+        "rules_primary": "If Bam Adebayo records 15+ Points in the Washington at Miami professional basketball game, then the market resolves to Yes.",
+        "primary_participant_key": "basketball_player",
+    }
+
+    classification = classify_market_payload(payload)
+
+    assert classification["supported"] is True
+    assert classification["metadata"]["copilot_market_family"] == "player_prop"
+    assert classification["metadata"]["copilot_stat_key"] == "points"
+
+
 def test_market_filter_rejects_split_winner_and_unsupported_pitcher_props():
     split_market = {
         "ticker": "KXNBA2HWINNER-26MAR31NYKHOU-NYK",

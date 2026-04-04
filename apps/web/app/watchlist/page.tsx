@@ -2,10 +2,12 @@
 
 import { Suspense, useState } from "react";
 import { ViewSwitch, useViewQueryParam } from "@/components/filters/view-switch";
+import { QualityFilterSelect, type RecommendationViewMode } from "@/components/filters/quality-filter-select";
 import { Header } from "@/components/layout/header";
 import { ParlayFilterControls } from "@/components/parlays/parlay-filter-controls";
 import { ParlayWatchlistSection } from "@/components/parlays/parlay-watchlist-section";
 import { WatchlistTable } from "@/components/watchlist/watchlist-table";
+import { EDGE_EXPLANATION } from "@/lib/market-copy";
 import {
   Select,
   SelectContent,
@@ -21,26 +23,27 @@ function WatchlistContent() {
   const { sport } = useSportQueryParam();
   const { view, setView } = useViewQueryParam();
   const [limit, setLimit] = useState(50);
+  const [qualityMode, setQualityMode] = useState<RecommendationViewMode>("balanced");
   const [parlaySportScope, setParlaySportScope] = useState("all");
   const [parlayLegCount, setParlayLegCount] = useState("all");
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-border bg-surface px-5 py-3">
-        <ViewSwitch view={view} onChange={setView} />
+      <div className="flex flex-col gap-2 border-b border-border bg-surface px-3 py-3 sm:px-5">
+        <ViewSwitch view={view} onChange={setView} className="w-fit" />
         {view === "singles" ? (
-          <>
-            <div className="flex items-center gap-2">
+          <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center">
+            <div className="flex items-center justify-between gap-2 sm:justify-start">
               <span className="text-xs text-muted-foreground">Sport</span>
-              <SportFilterSelect triggerClassName="h-7 w-[140px] text-xs" />
+              <SportFilterSelect triggerClassName="h-8 w-[min(200px,60vw)] text-xs sm:w-[140px]" />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-2 sm:justify-start">
               <span className="text-xs text-muted-foreground">Show</span>
               <Select
                 value={String(limit)}
                 onValueChange={(value) => setLimit(Number(value))}
               >
-                <SelectTrigger className="h-7 w-24 text-xs">
+                <SelectTrigger className="h-8 w-[min(200px,60vw)] text-xs sm:w-24">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -52,7 +55,15 @@ function WatchlistContent() {
                 </SelectContent>
               </Select>
             </div>
-          </>
+            <div className="flex items-center justify-between gap-2 sm:justify-start">
+              <span className="text-xs text-muted-foreground">Mode</span>
+              <QualityFilterSelect
+                value={qualityMode}
+                onValueChange={setQualityMode}
+                triggerClassName="h-8 w-[min(200px,60vw)] text-xs sm:w-[130px]"
+              />
+            </div>
+          </div>
         ) : (
           <ParlayFilterControls
             sportScope={parlaySportScope}
@@ -61,20 +72,23 @@ function WatchlistContent() {
             onLegCountChange={setParlayLegCount}
           />
         )}
-        <span className="ml-auto text-xs text-muted-foreground">
-          {view === "singles" ? "Sorted by edge" : "Top-ranked combinations"} · 30s refresh
+        <span className="hidden text-xs text-muted-foreground lg:ml-auto lg:inline">
+          {view === "singles" ? "Default sort: Edge · Click headers to sort" : "Top-ranked combinations"} · 30s refresh
+        </span>
+        <span className="text-xs text-muted-foreground lg:hidden">
+          {view === "singles" ? "Default sort: Edge" : "Top-ranked combinations"} · 30s refresh
         </span>
       </div>
 
-      <div className="border-b border-border bg-surface px-5 py-2 text-xs text-muted-foreground">
+      <div className="border-b border-border bg-surface px-3 py-2 text-xs text-muted-foreground sm:px-5">
         {view === "singles"
-          ? "Edge = model fair price minus current suggested market price. Positive edge means the model thinks the price is favorable. Use Trade to route a single-market pick to paper or demo."
+          ? `${EDGE_EXPLANATION} Use Trade to route a single-market pick to paper or demo.`
           : "Synthetic parlays combine the strongest current NBA and MLB single-pick edges. Filter by sport scope and preferred leg count to surface the combinations you actually want to scan."}
       </div>
 
-      <div className="space-y-4 p-4">
+      <div className="space-y-4 p-3 sm:p-4">
         {view === "singles" ? (
-          <WatchlistTable sport={sport} limit={limit} />
+          <WatchlistTable sport={sport} limit={limit} qualityMode={qualityMode} />
         ) : (
           <ParlayWatchlistSection
             sportScope={parlaySportScope}

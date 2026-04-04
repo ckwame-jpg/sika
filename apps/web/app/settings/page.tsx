@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import { Header } from "@/components/layout/header";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { PriceDisplayMode, formatMarketPrice, usePriceDisplay } from "@/lib/price-display";
@@ -76,6 +79,23 @@ export default function SettingsPage() {
                 );
               })}
             </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle>Models</CardTitle>
+                <CardDescription>
+                  Review ML family readiness, runtime health, shadow coverage, and fallback state.
+                </CardDescription>
+              </div>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/settings/models" className="flex items-center gap-1">
+                  Open
+                  <ArrowRight size={12} />
+                </Link>
+              </Button>
+            </CardHeader>
           </Card>
         </div>
       </main>

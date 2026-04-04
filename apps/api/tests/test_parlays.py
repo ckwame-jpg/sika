@@ -17,6 +17,7 @@ def _make_candidate(
     fair_no_price: float,
     edge: float,
     confidence: float,
+    metadata: dict | None = None,
 ) -> ParlayCandidateInput:
     event = Event(
         external_id=f"{ticker}-event",
@@ -37,6 +38,7 @@ def _make_candidate(
         raw_data={
             "copilot_market_family": "winner",
             "copilot_market_kind": "game_winner",
+            **(metadata or {}),
         },
     )
     db_session.add(market)
@@ -51,9 +53,11 @@ def _make_candidate(
         suggested_price=suggested_price,
         edge=edge,
         confidence=confidence,
+        selection_score=edge + confidence,
         invalidation="Test invalidation",
         rationale="Test rationale",
         captured_at=datetime(2026, 4, 2, 23, 0, tzinfo=timezone.utc),
+        scoring_diagnostics={},
     )
     signal = SignalSnapshot(
         event_id=event.id,
@@ -86,6 +90,8 @@ def _make_candidate(
         model_name="heuristic-v1",
         rationale="Test rationale",
         market_status_at_capture="active",
+        selection_score=edge + confidence,
+        scoring_diagnostics={},
         captured_at=datetime(2026, 4, 2, 23, 0, tzinfo=timezone.utc),
     )
     db_session.add_all([recommendation, signal, prediction])
@@ -219,3 +225,64 @@ def test_parlay_routes_filter_scope_and_leg_count(client, db_session):
     payload = summary.json()
     assert payload["total_predictions"] >= 1
     assert payload["by_leg_count"]["2"] == payload["total_predictions"]
+
+
+def test_parlay_dependence_penalties_reduce_confidence_and_selection_score(db_session):
+    independent_a = _make_candidate(
+        db_session,
+        sport_key="NBA",
+        ticker="INDEP-A",
+        side="yes",
+        suggested_price=0.42,
+        fair_yes_price=0.58,
+        fair_no_price=0.42,
+        edge=0.16,
+        confidence=0.74,
+        metadata={"copilot_subject_team": "BOS", "copilot_subject_name": "Player A"},
+    )
+    independent_b = _make_candidate(
+        db_session,
+        sport_key="MLB",
+        ticker="INDEP-B",
+        side="yes",
+        suggested_price=0.36,
+        fair_yes_price=0.52,
+        fair_no_price=0.48,
+        edge=0.16,
+        confidence=0.74,
+        metadata={"copilot_subject_team": "NYY", "copilot_subject_name": "Player B"},
+    )
+    dependent_a = _make_candidate(
+        db_session,
+        sport_key="NBA",
+        ticker="DEP-A",
+        side="yes",
+        suggested_price=0.42,
+        fair_yes_price=0.58,
+        fair_no_price=0.42,
+        edge=0.16,
+        confidence=0.74,
+        metadata={"copilot_subject_team": "BOS", "copilot_subject_name": "Jayson Tatum"},
+    )
+    dependent_b = _make_candidate(
+        db_session,
+        sport_key="NBA",
+        ticker="DEP-B",
+        side="yes",
+        suggested_price=0.36,
+        fair_yes_price=0.52,
+        fair_no_price=0.48,
+        edge=0.16,
+        confidence=0.74,
+        metadata={"copilot_subject_team": "BOS", "copilot_subject_name": "Jayson Tatum"},
+    )
+
+    capture_parlay_artifacts(db_session, run_id=31, candidates=[independent_a, independent_b])
+    capture_parlay_artifacts(db_session, run_id=32, candidates=[dependent_a, dependent_b])
+    db_session.commit()
+
+    independent = db_session.scalars(select(ParlayPrediction).where(ParlayPrediction.run_id == 31)).one()
+    dependent = db_session.scalars(select(ParlayPrediction).where(ParlayPrediction.run_id == 32)).one()
+
+    assert dependent.confidence < independent.confidence
+    assert dependent.selection_score < independent.selection_score

@@ -24,7 +24,10 @@ SUPPORTED_SPORT_HINTS = {
     "UFC": ("UFC",),
 }
 
-PLAYER_PROP_TITLE_RE = re.compile(r"^(?P<subject>.+?):\s*(?P<threshold>\d+(?:\.\d+)?)\+\s+(?P<phrase>.+?)\?$", re.IGNORECASE)
+PLAYER_PROP_TITLE_RE = re.compile(
+    r"^(?P<subject>.+?):\s*(?P<threshold>\d+(?:\.\d+)?)\+\s+(?P<phrase>.+?)(?:\?)?$",
+    re.IGNORECASE,
+)
 TICKER_TEAM_HINT_RE = re.compile(r"-(?P<segment>[A-Z0-9']+)-\d+(?:\.\d+)?$")
 NBA_PROP_ALIASES = {
     "points": "points",

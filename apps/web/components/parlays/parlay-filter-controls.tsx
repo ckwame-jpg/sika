@@ -40,10 +40,10 @@ export function ParlayFilterControls({
 }) {
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2 sm:justify-start">
         <span className="text-xs text-muted-foreground">Parlay sport</span>
         <Select value={sportScope} onValueChange={onSportScopeChange}>
-          <SelectTrigger className="h-8 w-[120px] text-xs">
+          <SelectTrigger className="h-8 w-[min(200px,60vw)] text-xs sm:w-[120px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -56,10 +56,10 @@ export function ParlayFilterControls({
         </Select>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2 sm:justify-start">
         <span className="text-xs text-muted-foreground">Parlay size</span>
         <Select value={legCount} onValueChange={onLegCountChange}>
-          <SelectTrigger className="h-8 w-[120px] text-xs">
+          <SelectTrigger className="h-8 w-[min(200px,60vw)] text-xs sm:w-[120px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

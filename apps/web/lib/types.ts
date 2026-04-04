@@ -20,6 +20,11 @@ export interface HealthResponse {
   last_successful_refresh_at: string | null;
   data_stale: boolean;
   refresh_error_message: string | null;
+  prop_refresh_status: "idle" | "queued" | "running" | "failed";
+  prop_refresh_reason: "none" | "startup" | "interval" | "manual";
+  last_prop_refresh_at: string | null;
+  prop_data_stale: boolean;
+  prop_refresh_error_message: string | null;
 }
 
 export interface SportRead {
@@ -66,6 +71,18 @@ export interface RecommendationRead {
   suggested_price: number;
   edge: number;
   confidence: number;
+  selected_side_probability: number | null;
+  source_type: string | null;
+  source_market_ticker: string | null;
+  source_market_title: string | null;
+  display_market_title: string | null;
+  source_badge_label: string | null;
+  context_coverage_score: number | null;
+  quality_tier: string | null;
+  model_name: string | null;
+  model_version: string | null;
+  calibration_version: string | null;
+  feature_set_version: string | null;
   invalidation: string;
   rationale: string;
   captured_at: string;
@@ -104,6 +121,10 @@ export interface ParlayRecommendationRead {
   american_odds: string;
   edge: number;
   confidence: number;
+  model_name: string | null;
+  model_version: string | null;
+  calibration_version: string | null;
+  feature_set_version: string | null;
   invalidation: string;
   rationale: string;
   captured_at: string;
@@ -124,12 +145,16 @@ export interface MarketSnapshotRead {
 export interface SignalSnapshotRead {
   captured_at: string;
   model_name: string;
+  model_version: string | null;
+  calibration_version: string | null;
+  feature_set_version: string | null;
   confidence: number;
   fair_yes_price: number;
   fair_no_price: number;
   edge: number;
   reasons: string[];
   features: Record<string, unknown>;
+  scoring_diagnostics: Record<string, unknown>;
 }
 
 export interface MarketDetailRead {
@@ -206,6 +231,20 @@ export interface RunSummaryCounts {
   prediction_outcomes: Record<string, number>;
   parlay_prediction_outcomes: Record<string, number>;
   unsupported_prop_category_counts: Record<string, number>;
+  heuristic_longshots_suppressed: number;
+  inverse_winner_duplicates_collapsed: number;
+  combo_prop_candidates_emitted: number;
+  combo_prop_candidates_suppressed: number;
+  critical_context_suppressed: number;
+  quality_tier_counts: Record<string, number>;
+  prop_subjects_warmed: number;
+  player_search_cache_hits: number;
+  player_search_cache_misses: number;
+  gamelog_cache_hits: number;
+  gamelog_cache_misses: number;
+  stale_gamelog_fallbacks: number;
+  combo_prop_legs_discovered: number;
+  combo_prop_legs_refreshed: number;
   watchlist_counts_by_sport: Record<string, number>;
   watchlist_counts_by_prop_category: Record<string, number>;
   parlay_watchlist_counts_by_scope: Record<string, number>;
@@ -225,6 +264,113 @@ export interface RunRead {
 
 export interface RunDetailRead extends RunRead {
   details: Record<string, unknown>;
+}
+
+export interface WatchlistDiagnosticsRead {
+  status: string;
+  environment: string;
+  scheduler_enabled: boolean;
+  refresh_status: "idle" | "queued" | "running" | "failed";
+  refresh_reason: "none" | "startup" | "interval" | "manual" | "pregame";
+  last_successful_refresh_at: string | null;
+  data_stale: boolean;
+  refresh_error_message: string | null;
+  prop_refresh_status: "idle" | "queued" | "running" | "failed";
+  prop_refresh_reason: "none" | "startup" | "interval" | "manual";
+  last_prop_refresh_at: string | null;
+  prop_data_stale: boolean;
+  prop_refresh_error_message: string | null;
+  latest_refresh_run: RunRead | null;
+  latest_refresh_succeeded: boolean | null;
+  latest_supported_markets_kept: number;
+  latest_recommendations_emitted: number;
+  latest_watchlist_counts_by_sport: Record<string, number>;
+  current_recommendation_count: number;
+  watchlist_min_edge: number;
+  watchlist_min_confidence: number;
+}
+
+export interface JobRefreshResponse {
+  run_id: number;
+  status: string;
+  records_processed: number;
+  queued_prop_refresh: boolean;
+}
+
+export type ReadinessStatus =
+  | "heuristic_only"
+  | "insufficient_history"
+  | "shadow_not_started"
+  | "shadowing"
+  | "ready_for_review"
+  | "serving";
+
+export type RuntimeHealthStatus = "healthy" | "degraded" | "unavailable";
+
+export interface ReadinessBucketRead {
+  label: string;
+  total_count: number;
+  won_count: number;
+  lost_count: number;
+  push_count: number;
+  cancelled_count: number;
+  win_rate: number | null;
+  average_realized_pnl: number | null;
+}
+
+export interface ModelFamilyRuntimeHealthRead {
+  family_key: string;
+  desired_mode: "heuristic" | "shadow" | "ml";
+  effective_mode: "heuristic" | "shadow" | "ml";
+  runtime_health: RuntimeHealthStatus;
+  fallback_active: boolean;
+  consecutive_failures: number;
+  last_check_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  artifact_path: string | null;
+  model_name: string | null;
+  model_version: string | null;
+  calibration_version: string | null;
+  feature_set_version: string | null;
+  model_metadata: Record<string, unknown>;
+}
+
+export interface ModelFamilyReadinessRead {
+  family_key: string;
+  label: string;
+  scope: string;
+  sport_scope: string;
+  leg_count: number | null;
+  readiness_status: ReadinessStatus;
+  why_not_ready: string;
+  runtime: ModelFamilyRuntimeHealthRead;
+  total_predictions: number;
+  settled_predictions: number;
+  pending_predictions: number;
+  shadow_predictions: number;
+  shadow_coverage_ratio: number;
+  won_predictions: number;
+  lost_predictions: number;
+  push_predictions: number;
+  cancelled_predictions: number;
+  average_edge: number | null;
+  average_confidence: number | null;
+  average_realized_pnl: number | null;
+  last_settled_at: string | null;
+  confidence_buckets: ReadinessBucketRead[];
+  edge_buckets: ReadinessBucketRead[];
+  feature_coverage_rates: Record<string, number>;
+  missing_context_rates: Record<string, number>;
+  top_failure_reasons: Record<string, number>;
+  last_validation_failure: string | null;
+  last_fallback_event_at: string | null;
+}
+
+export interface ModelReadinessSummaryRead {
+  generated_at: string;
+  families: ModelFamilyReadinessRead[];
 }
 
 export interface PaperPositionRead {
@@ -305,7 +451,18 @@ export interface PredictionRead {
   fair_no_price: number | null;
   edge: number;
   confidence: number;
+  selected_side_probability: number | null;
+  source_type: string | null;
+  source_market_ticker: string | null;
+  source_market_title: string | null;
+  display_market_title: string | null;
+  source_badge_label: string | null;
+  context_coverage_score: number | null;
+  quality_tier: string | null;
   model_name: string;
+  model_version: string | null;
+  calibration_version: string | null;
+  feature_set_version: string | null;
   invalidation: string | null;
   rationale: string;
   reasons: string[];
@@ -374,6 +531,10 @@ export interface ParlayPredictionRead {
   american_odds: string;
   edge: number;
   confidence: number;
+  model_name: string | null;
+  model_version: string | null;
+  calibration_version: string | null;
+  feature_set_version: string | null;
   rationale: string;
   invalidation: string | null;
   settlement_status: string;

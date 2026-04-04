@@ -1,0 +1,22 @@
+{
+  "version": "2026-04-03-public-shadow-example",
+  "serving_mode": "shadow",
+  "metadata": {
+    "notes": "Example manifest for the public-data ML rollout."
+  },
+  "families": [
+    {
+      "family_key": "nba_singles_v1",
+      "model_name": "nba_singles_v1",
+      "model_version": "2026-04-03",
+      "calibration_version": "2026-04-03",
+      "feature_set_version": "public-feature-set-v1",
+      "artifact_path": "artifacts/nba_singles_v1/model.joblib",
+      "mode": "shadow",
+      "metadata": {
+        "sport": "NBA",
+        "scope": "single"
+      }
+    }
+  ]
+}
