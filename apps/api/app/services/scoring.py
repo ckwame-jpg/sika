@@ -1655,27 +1655,30 @@ def _enforce_prop_monotonicity(
         # Sort by threshold ascending
         group.sort(key=lambda pair: float(pair[1].metadata.get("copilot_threshold", 0) if pair[1].metadata else 0))
 
-        # Enforce monotonic decreasing: walk from highest to lowest threshold
-        # If fair_yes_price[i] (lower threshold) < fair_yes_price[i+1] (higher threshold),
-        # set [i] = [i+1] because P(lower) must be >= P(higher).
-        for i in range(len(group) - 2, -1, -1):
+        # Enforce monotonic decreasing: walk forward from lowest to highest threshold.
+        # If fair_yes_price[i] (higher threshold) > fair_yes_price[i-1] (lower threshold),
+        # clamp [i] DOWN to [i-1] because P(higher) must be <= P(lower).
+        # This preserves the lower threshold estimate (usually more accurate) and
+        # prevents inflated probabilities on harder thresholds.
+        for i in range(1, len(group)):
+            prev_prob = group[i - 1][1].signal.fair_yes_price
             curr_prob = group[i][1].signal.fair_yes_price
-            next_prob = group[i + 1][1].signal.fair_yes_price
-            if curr_prob < next_prob:
-                # Current (lower threshold) should have >= probability than next (higher threshold)
-                group[i][1].signal.fair_yes_price = round(next_prob, 4)
-                group[i][1].signal.fair_no_price = round(1 - next_prob, 4)
+            if curr_prob > prev_prob:
+                # Current (higher threshold) must have <= probability than previous (lower threshold)
+                clamped = round(prev_prob, 4)
+                group[i][1].signal.fair_yes_price = clamped
+                group[i][1].signal.fair_no_price = round(1 - prev_prob, 4)
                 # Recompute edge on recommendation if present
                 rec = group[i][1].recommendation
                 if rec is not None:
                     if rec.side == "yes":
-                        rec.edge = round(next_prob - rec.suggested_price, 4)
+                        rec.edge = round(clamped - rec.suggested_price, 4)
                     else:
-                        rec.edge = round((1 - next_prob) - rec.suggested_price, 4)
+                        rec.edge = round((1 - clamped) - rec.suggested_price, 4)
                     # Update selected_side_probability in scoring_diagnostics
                     diag = dict(rec.scoring_diagnostics or {})
                     diag["selected_side_probability"] = round(
-                        next_prob if rec.side == "yes" else 1 - next_prob, 4
+                        clamped if rec.side == "yes" else 1 - clamped, 4
                     )
                     diag["monotonicity_adjusted"] = True
                     rec.scoring_diagnostics = diag
