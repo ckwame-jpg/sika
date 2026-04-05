@@ -85,6 +85,7 @@ class RecommendationRead(BaseModel):
     sport_key: str | None
     market_title: str
     event_name: str
+    starts_at: UTCDateTime | None = None
     market_family: str | None = None
     market_kind: str | None = None
     stat_key: str | None = None

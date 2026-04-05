@@ -77,6 +77,7 @@ export interface RecommendationRead {
   sport_key: string | null;
   market_title: string;
   event_name: string;
+  starts_at: string | null;
   market_family: string | null;
   market_kind: string | null;
   stat_key: string | null;

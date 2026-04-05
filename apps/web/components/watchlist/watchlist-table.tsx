@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
-import { ArrowRight, ArrowUpDown, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { ArrowRight, ArrowUpDown, ChevronDown, ChevronUp, Info, RefreshCw } from "lucide-react";
 import { fetchWatchlist, fetchWatchlistCoverage, fetchWatchlistDiagnostics, keys } from "@/lib/api";
 import type { PredictionRead, RecommendationRead, WatchlistCoverageRowRead, WatchlistDiagnosticsRead } from "@/lib/types";
 import type { RecommendationViewMode } from "@/components/filters/quality-filter-select";
@@ -27,7 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { fmtEdge, fmtPercent, fmtRelative, edgeClass, sideClass, sportLabel } from "@/lib/utils";
+import { fmtEdge, fmtPercent, fmtRelative, fmtStartsAt, edgeClass, sideClass, sportLabel } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { ENTRY_LABEL, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -148,6 +148,7 @@ function SortableTableHead({
   direction,
   onSort,
   className,
+  description,
 }: {
   label: string;
   sortKey: SortKey;
@@ -155,6 +156,7 @@ function SortableTableHead({
   direction: SortDirection;
   onSort: (key: SortKey) => void;
   className?: string;
+  description?: string;
 }) {
   const isActive = activeKey === sortKey;
 
@@ -170,6 +172,19 @@ function SortableTableHead({
         onClick={() => onSort(sortKey)}
       >
         <span>{label}</span>
+        {description && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="inline-flex items-center text-muted-foreground/70"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <Info size={12} />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{description}</TooltipContent>
+          </Tooltip>
+        )}
         {isActive ? (
           direction === "asc" ? <ChevronUp size={14} /> : <ChevronDown size={14} />
         ) : (
@@ -581,6 +596,11 @@ function RecommendationRow({
       </TableCell>
       <TableCell>
         <span className="font-mono text-xs text-muted-foreground">
+          {fmtStartsAt(rec.starts_at)}
+        </span>
+      </TableCell>
+      <TableCell>
+        <span className="font-mono text-xs text-muted-foreground">
           {fmtRelative(rec.captured_at)}
         </span>
       </TableCell>
@@ -622,9 +642,6 @@ function RecommendationCard({
               {rec.side.toUpperCase()}
             </Badge>
             {rec.source_badge_label && <Badge variant="outline">{rec.source_badge_label}</Badge>}
-            <span className="font-mono text-xs text-muted-foreground">
-              {fmtRelative(rec.captured_at)}
-            </span>
           </div>
           <div>
             <p className="text-sm font-medium text-foreground">{displayTitle}</p>
@@ -635,6 +652,16 @@ function RecommendationCard({
                 {rec.subject_team && ` · ${rec.subject_team}`}
               </p>
             )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Starts</p>
+              <p className="mt-1 font-mono text-xs text-foreground">{fmtStartsAt(rec.starts_at)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Age</p>
+              <p className="mt-1 font-mono text-xs text-foreground">{fmtRelative(rec.captured_at)}</p>
+            </div>
           </div>
         </div>
         <Button
@@ -798,7 +825,7 @@ function CoverageRow({
       </TableCell>
       <TableCell>
         <span className="font-mono text-xs text-muted-foreground">
-          {row.starts_at ? fmtRelative(row.starts_at) : "--"}
+          {fmtStartsAt(row.starts_at)}
         </span>
       </TableCell>
     </TableRow>
@@ -857,6 +884,10 @@ function CoverageCard({
                 {row.subject_team && ` · ${row.subject_team}`}
               </p>
             )}
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Starts</p>
+            <p className="mt-1 font-mono text-xs text-foreground">{fmtStartsAt(row.starts_at)}</p>
           </div>
         </div>
         <Button
@@ -1019,7 +1050,7 @@ export function WatchlistTable({
                     <TableHead className="w-20">Edge</TableHead>
                     <TableHead className="w-32">{WIN_PROB_LABEL}</TableHead>
                     <TableHead className="w-24">Action</TableHead>
-                    <TableHead className="w-24">Starts</TableHead>
+                    <TableHead className="w-28">Starts</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1167,6 +1198,7 @@ export function WatchlistTable({
                     className="w-32"
                   />
                   <TableHead className="w-24">Action</TableHead>
+                  <TableHead className="w-28">Starts</TableHead>
                   <SortableTableHead
                     label="Age"
                     sortKey="age"
@@ -1174,12 +1206,13 @@ export function WatchlistTable({
                     direction={sortDirection}
                     onSort={handleSort}
                     className="w-24"
+                    description="Age shows when this recommendation was captured."
                   />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {Array.from({ length: 8 }).map((_, index) => (
-                  <SkeletonRow key={index} cols={9} />
+                  <SkeletonRow key={index} cols={10} />
                 ))}
               </TableBody>
             </Table>
@@ -1289,6 +1322,7 @@ export function WatchlistTable({
                     className="w-32"
                   />
                   <TableHead className="w-24">Action</TableHead>
+                  <TableHead className="w-28">Starts</TableHead>
                   <SortableTableHead
                     label="Age"
                     sortKey="age"
@@ -1296,6 +1330,7 @@ export function WatchlistTable({
                     direction={sortDirection}
                     onSort={handleSort}
                     className="w-24"
+                    description="Age shows when this recommendation was captured."
                   />
                 </TableRow>
               </TableHeader>

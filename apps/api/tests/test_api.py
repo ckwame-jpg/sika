@@ -76,6 +76,7 @@ def test_watchlist_and_positions_endpoints(client, db_session):
     assert watchlist.json()[0]["selected_side_probability"] == 0.58
     assert watchlist.json()[0]["quality_tier"] == "high"
     assert watchlist.json()[0]["source_badge_label"] == "Combo-derived"
+    assert watchlist.json()[0]["starts_at"] == "2026-03-30T22:00:00Z"
 
     open_position = client.post(
         "/paper-positions",

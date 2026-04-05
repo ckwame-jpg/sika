@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { compareAsc, format, formatDistanceToNowStrict, parseISO } from "date-fns";
+import { compareAsc, format, formatDistanceToNowStrict, isSameDay, parseISO } from "date-fns";
 import type { EventRead } from "./types";
 
 export function cn(...inputs: ClassValue[]) {
@@ -58,6 +58,16 @@ export function fmtTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   try {
     return format(parseISO(iso), "h:mm a");
+  } catch {
+    return iso;
+  }
+}
+
+export function fmtStartsAt(iso: string | null | undefined, now = new Date()): string {
+  if (!iso) return "—";
+  try {
+    const parsed = parseISO(iso);
+    return format(parsed, isSameDay(parsed, now) ? "h:mm a" : "MMM d, h:mm a");
   } catch {
     return iso;
   }

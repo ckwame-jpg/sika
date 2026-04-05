@@ -135,14 +135,16 @@ def _market_metadata_fields(market: Market | None) -> dict[str, str | float | No
     }
 
 
-def _serialize_recommendation(item: Recommendation, market: Market, event_name: str) -> RecommendationRead:
+def _serialize_recommendation(item: Recommendation, market: Market) -> RecommendationRead:
     diagnostics = dict(item.scoring_diagnostics or {})
+    event = item.event
     return RecommendationRead(
         id=item.id,
         ticker=market.ticker,
         sport_key=market.sport_key,
         market_title=market.title,
-        event_name=event_name,
+        event_name=event.name if event else market.title,
+        starts_at=event.starts_at if event else None,
         side=item.side,
         action=item.action,
         suggested_price=item.suggested_price,
@@ -795,7 +797,7 @@ def get_watchlist(sport: str | None = None, limit: int = 25, db: Session = Depen
         stmt = stmt.join(Market, Recommendation.market_id == Market.id).where(Market.sport_key == sport.upper())
     recommendations = db.scalars(stmt).all()
     return [
-        _serialize_recommendation(item, item.market, item.event.name)
+        _serialize_recommendation(item, item.market)
         for item in recommendations
     ]
 
