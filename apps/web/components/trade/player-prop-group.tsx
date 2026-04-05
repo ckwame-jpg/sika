@@ -123,10 +123,8 @@ export function PlayerPropGroup({
                         className={cn(
                           "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                           isSelected
-                            ? "border-accent bg-accent/15 text-accent"
-                            : threshold.is_best
-                              ? "border-positive/40 bg-positive/10 text-positive"
-                              : "border-border bg-surface-hover text-muted-foreground hover:text-foreground",
+                            ? "border-positive/40 bg-positive/10 text-positive"
+                            : "border-border bg-surface-hover text-muted-foreground hover:text-foreground",
                         )}
                       >
                         <span>{threshold.threshold}+</span>

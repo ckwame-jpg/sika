@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.api import routes
 from app.models import RefreshJob
-from app.services import scheduler
+from app.services import refresh_jobs, scheduler
 
 
 class _DetachedRun:
@@ -50,6 +50,17 @@ class _SessionContext:
 
     def commit(self):
         return None
+
+
+class _DbSessionContext:
+    def __init__(self, session):
+        self.session = session
+
+    def __enter__(self):
+        return self.session
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 def test_run_refresh_cycle_now_returns_snapshot_before_session_detaches(monkeypatch):
@@ -125,6 +136,78 @@ def test_reconcile_stale_jobs_marks_old_active_jobs_failed(db_session):
     db_session.refresh(stale_job)
     db_session.refresh(fresh_job)
     assert stale_job.status == "failed"
-    assert stale_job.error_message == "stalled - reconciled on startup"
+    assert stale_job.error_message == refresh_jobs.STALE_REFRESH_JOB_ERROR
     assert stale_job.finished_at is not None
     assert fresh_job.status == "queued"
+
+
+def test_reconcile_stale_jobs_keeps_expected_long_running_refreshes_active(db_session):
+    running_job = RefreshJob(
+        kind="refresh",
+        scope="current_slate",
+        reason="interval",
+        status="running",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=45),
+        started_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    db_session.add(running_job)
+    db_session.commit()
+
+    reconciled = scheduler.reconcile_stale_jobs(db_session)
+    db_session.commit()
+
+    assert reconciled == 0
+    db_session.refresh(running_job)
+    assert running_job.status == "running"
+    assert running_job.error_message is None
+
+
+def test_enqueue_refresh_job_reconciles_stale_active_job_before_coalescing(db_session):
+    stale_job = RefreshJob(
+        kind="refresh",
+        scope="current_slate",
+        reason="interval",
+        status="running",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=45),
+    )
+    db_session.add(stale_job)
+    db_session.commit()
+
+    job, created = refresh_jobs.enqueue_refresh_job(
+        db_session,
+        kind="refresh",
+        scope="current_slate",
+        reason="manual",
+    )
+    db_session.commit()
+
+    assert created is True
+    db_session.refresh(stale_job)
+    db_session.refresh(job)
+    assert stale_job.status == "failed"
+    assert stale_job.error_message == refresh_jobs.STALE_REFRESH_JOB_ERROR
+    assert job.id != stale_job.id
+    assert job.status == "queued"
+
+
+def test_get_refresh_runtime_state_reconciles_stale_jobs_without_restart(db_session, monkeypatch):
+    stale_job = RefreshJob(
+        kind="refresh",
+        scope="current_slate",
+        reason="manual",
+        status="running",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=45),
+    )
+    db_session.add(stale_job)
+    db_session.commit()
+
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+
+    runtime = scheduler.get_refresh_runtime_state()
+
+    db_session.refresh(stale_job)
+    assert stale_job.status == "failed"
+    assert runtime["refresh_status"] == "failed"
+    assert runtime["active_refresh_job"] is None
+    assert runtime["latest_refresh_job"]["status"] == "failed"
+    assert runtime["refresh_error_message"] == "The latest refresh stalled and was reset automatically."

@@ -145,6 +145,37 @@ def _market_metadata_fields(market: Market | None) -> dict[str, str | float | No
 
 
 TERMINAL_EVENT_STATUSES = frozenset({"completed", "cancelled"})
+KALSHI_SPORT_CATEGORY_ROOTS = {
+    "NBA": "https://kalshi.com/category/sports/basketball/pro-basketball-m",
+    "MLB": "https://kalshi.com/category/sports/baseball/pro-baseball",
+    "NFL": "https://kalshi.com/category/sports/football/pro-football",
+    "SOCCER": "https://kalshi.com/category/sports/soccer",
+    "TENNIS": "https://kalshi.com/category/sports/tennis",
+}
+KALSHI_EVENT_SERIES = {
+    "NBA": ("kxnbagame", "professional-basketball-game"),
+    "MLB": ("kxmlbgame", "professional-baseball-game"),
+}
+KALSHI_PROP_CATEGORY_SLUGS = {
+    "NBA": {
+        "points": "player-points",
+        "rebounds": "player-rebounds",
+        "assists": "player-assists",
+        "made_threes": "player-threes",
+        "steals": "player-steals",
+        "blocks": "player-blocks",
+        "turnovers": "player-turnovers",
+    },
+    "MLB": {
+        "hits": "hits",
+        "runs": "runs",
+        "home_runs": "home-runs",
+        "rbis": "rbis",
+        "strikeouts": "strikeouts",
+        "walks": "walks",
+        "total_bases": "total-bases",
+    },
+}
 
 
 def _visible_sports() -> list[str]:
@@ -241,8 +272,34 @@ def _trade_desk_market_matches_event(market: Market) -> bool:
     return participant_matches >= 2
 
 
-def _kalshi_market_url(ticker: str) -> str:
-    return f"https://kalshi.com/markets/{ticker}"
+def _kalshi_event_url(market: Market) -> str | None:
+    sport_key = str(market.sport_key or "").upper()
+    series = KALSHI_EVENT_SERIES.get(sport_key)
+    event_ticker = str(market.event_ticker or (market.raw_data or {}).get("event_ticker") or market.ticker or "").strip()
+    _, separator, suffix = event_ticker.partition("-")
+    if not series or not separator or not suffix:
+        return None
+
+    series_ticker, series_slug = series
+    return f"https://kalshi.com/markets/{series_ticker}/{series_slug}/{series_ticker}-{suffix.lower()}"
+
+
+def _kalshi_market_url(market: Market) -> str:
+    event_url = _kalshi_event_url(market)
+    if event_url:
+        return event_url
+
+    sport_key = str(market.sport_key or "").upper()
+    category_root = KALSHI_SPORT_CATEGORY_ROOTS.get(sport_key)
+    if not category_root:
+        return "https://kalshi.com/markets"
+
+    raw_data = market.raw_data or {}
+    stat_key = str(raw_data.get("copilot_stat_key") or "").strip()
+    stat_slug = KALSHI_PROP_CATEGORY_SLUGS.get(sport_key, {}).get(stat_key)
+    if stat_slug:
+        return f"{category_root}/{stat_slug}"
+    return category_root
 
 
 def _game_line_projected_label(market: Market, recommendation: Recommendation) -> str | None:
@@ -968,7 +1025,7 @@ def _build_trade_desk_response(db: Session, sport: str | None = None) -> TradeDe
                     entry_price=recommendation.suggested_price,
                     edge=recommendation.edge,
                     confidence=recommendation.confidence,
-                    kalshi_url=_kalshi_market_url(market.ticker),
+                    kalshi_url=_kalshi_market_url(market),
                 )
             )
             continue
@@ -994,7 +1051,7 @@ def _build_trade_desk_response(db: Session, sport: str | None = None) -> TradeDe
                 entry_price=recommendation.suggested_price,
                 edge=recommendation.edge,
                 confidence=recommendation.confidence,
-                kalshi_url=_kalshi_market_url(market.ticker),
+                kalshi_url=_kalshi_market_url(market),
             )
         )
 

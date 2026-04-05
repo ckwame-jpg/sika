@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import SessionLocal
 from app.models import RefreshJob
 from app.services.ingestion import run_prop_refresh_cycle, run_refresh_cycle
@@ -14,6 +15,7 @@ from app.services.maintenance import prune_runtime_artifacts
 
 REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "cleanup"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
+STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +51,12 @@ def _snapshot(job: RefreshJob | None) -> RefreshJobSnapshot | None:
     )
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def get_refresh_job(db: Session, job_id: int) -> RefreshJob | None:
     return db.get(RefreshJob, job_id)
 
@@ -71,6 +79,26 @@ def active_job_for_kind(db: Session, kind: str) -> RefreshJob | None:
     )
 
 
+def reconcile_stale_jobs(db: Session, *, now: datetime | None = None) -> int:
+    settings = get_settings()
+    reference_now = now or datetime.now(timezone.utc)
+    stale_jobs = []
+    for job in db.scalars(
+        select(RefreshJob).where(RefreshJob.status.in_(tuple(ACTIVE_JOB_STATUSES)))
+    ).all():
+        anchor = job.started_at if job.status == "running" and job.started_at is not None else job.queued_at
+        age_minutes = (reference_now - _as_utc(anchor)).total_seconds() / 60
+        if age_minutes > settings.refresh_job_stale_minutes:
+            stale_jobs.append(job)
+    for job in stale_jobs:
+        job.status = "failed"
+        job.error_message = STALE_REFRESH_JOB_ERROR
+        job.finished_at = reference_now
+    if stale_jobs:
+        db.flush()
+    return len(stale_jobs)
+
+
 def enqueue_refresh_job(
     db: Session,
     *,
@@ -81,6 +109,8 @@ def enqueue_refresh_job(
 ) -> tuple[RefreshJob, bool]:
     if kind not in REFRESH_JOB_KINDS:
         raise ValueError(f"Unsupported refresh job kind: {kind}")
+
+    reconcile_stale_jobs(db)
 
     if coalesce:
         existing = db.scalar(
@@ -134,8 +164,11 @@ def _claim_next_job(db: Session) -> RefreshJob | None:
 
 def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
     with SessionLocal() as db:
+        reconciled = reconcile_stale_jobs(db)
         claimed = _claim_next_job(db)
         if claimed is None:
+            if reconciled:
+                db.commit()
             return None
         job_id = claimed.id
         db.commit()

@@ -21,7 +21,7 @@ export function useHealthStatus() {
 }
 
 function isAnyJobStalled(health: HealthResponse): boolean {
-  const stalledMs = 10 * 60 * 1000;
+  const stalledMs = 30 * 60 * 1000;
   const now = Date.now();
   return [health.active_refresh_job, health.active_prop_refresh_job].some((job) => {
     if (!job?.started_at) {
@@ -190,7 +190,7 @@ export function getFreshnessBanner(health?: HealthResponse | null) {
   if (isAnyJobStalled(health)) {
     return {
       tone: "warning" as const,
-      message: "A refresh job appears stalled (running over 10 minutes). Cached data may be outdated. See Runs for details.",
+      message: "A refresh job appears stalled (running over 30 minutes). Cached data may be outdated. See Runs for details.",
     };
   }
   const refreshError = getUserSafeRefreshErrorMessage(health.refresh_error_message);

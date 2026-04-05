@@ -11,7 +11,7 @@ from sqlalchemy import desc, func, select
 
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import EspnPlayerGamelogCache, Event, RefreshJob, Run
+from app.models import EspnPlayerGamelogCache, Event, Run
 from app.services.ingestion import run_refresh_cycle
 from app.services.orders import reconcile_demo_state
 from app.services.refresh_jobs import (
@@ -19,6 +19,7 @@ from app.services.refresh_jobs import (
     enqueue_refresh_job,
     latest_job_for_kind,
     process_refresh_job_queue_once,
+    reconcile_stale_jobs as reconcile_stale_refresh_jobs,
 )
 
 
@@ -43,28 +44,10 @@ def _as_utc(value: datetime | None) -> datetime | None:
 
 
 def reconcile_stale_jobs(db) -> int:
-    settings = get_settings()
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.refresh_job_stale_minutes)
-    stale_jobs = db.scalars(
-        select(RefreshJob)
-        .where(
-            RefreshJob.status.in_(["queued", "running"]),
-            RefreshJob.queued_at < cutoff,
-        )
-    ).all()
-    finished_at = datetime.now(timezone.utc)
-    for job in stale_jobs:
-        logger.warning(
-            "Reconciling stale refresh job id=%s kind=%s status=%s queued_at=%s",
-            job.id,
-            job.kind,
-            job.status,
-            job.queued_at,
-        )
-        job.status = "failed"
-        job.error_message = "stalled - reconciled on startup"
-        job.finished_at = finished_at
-    return len(stale_jobs)
+    reconciled = reconcile_stale_refresh_jobs(db)
+    if reconciled:
+        logger.warning("Reconciled %s stale refresh job(s)", reconciled)
+    return reconciled
 
 
 def summarize_refresh_error_message(error_message: str | None) -> str | None:
@@ -75,6 +58,8 @@ def summarize_refresh_error_message(error_message: str | None) -> str | None:
     lowered = raw.lower()
     if "not bound to a session" in lowered or "refresh operation cannot proceed" in lowered:
         return "The latest refresh hit a temporary database session issue."
+    if "stalled - reconciled automatically" in lowered:
+        return "The latest refresh stalled and was reset automatically."
 
     cleaned = re.sub(r"\(background on this error:.*$", "", raw, flags=re.IGNORECASE).strip()
     cleaned = re.sub(r"https?://\S+", "", cleaned).strip()
@@ -157,6 +142,9 @@ def _serialize_job(job) -> dict[str, object] | None:
 
 def get_refresh_runtime_state() -> dict[str, object | None]:
     with SessionLocal() as db:
+        reconciled = reconcile_stale_jobs(db)
+        if reconciled:
+            db.commit()
         active_refresh = active_job_for_kind(db, "refresh")
         latest_refresh = latest_job_for_kind(db, "refresh")
         active_prop_refresh = active_job_for_kind(db, "prop_refresh")

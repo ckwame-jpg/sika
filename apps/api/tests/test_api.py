@@ -619,6 +619,7 @@ def test_trade_desk_groups_game_lines_props_and_research_rows(client, db_session
     assert [line["market_kind"] for line in event["game_lines"]] == ["game_winner", "spread", "total"]
     assert event["game_lines"][0]["display_label"] == "Boston Celtics to win"
     assert event["game_lines"][0]["projected_side_label"] == "Boston Celtics"
+    assert event["game_lines"][0]["kalshi_url"] == "https://kalshi.com/markets/kxnbagame/professional-basketball-game/kxnbagame-trade"
     assert event["game_lines"][1]["projected_side_label"] == "Boston Celtics -4.5"
     assert event["game_lines"][2]["projected_side_label"] == "Over 220.5"
 
@@ -627,6 +628,7 @@ def test_trade_desk_groups_game_lines_props_and_research_rows(client, db_session
     assert player_prop["subject_name"] == "Jayson Tatum"
     thresholds = player_prop["stat_groups"][0]["thresholds"]
     assert [item["threshold"] for item in thresholds] == [25.0, 30.0]
+    assert thresholds[0]["kalshi_url"] == "https://kalshi.com/markets/kxnbagame/professional-basketball-game/kxnbagame-trade"
     assert thresholds[1]["is_best"] is True
 
     research_rows = {row["sport_key"]: row for row in payload["research_sports"]}
