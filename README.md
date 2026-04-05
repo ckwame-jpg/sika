@@ -116,6 +116,8 @@ The external API host used by Vercel must:
 - keep the scheduler enabled
 - use persistent storage for the database and any local runtime assumptions
 
+The current Render production topology can be a single Docker web service plus Postgres. In that setup, keep `SCHEDULER_ENABLED=true` on the web service so the API process also owns the refresh scheduler, and keep `render.yaml` aligned with the actual Render dashboard resources if you use Blueprint sync.
+
 Use Vercel preview deployments for branch work. Promote to production only after the external API URL is stable and healthy.
 
 ## Troubleshooting
@@ -129,6 +131,9 @@ Use Vercel preview deployments for branch work. Promote to production only after
 - The frontend is pointed at the wrong backend:
   - confirm `SIKA_API_BASE_URL`
   - make sure the Vercel env var targets the persistent FastAPI host, not localhost
+- Production Postgres storage keeps growing:
+  - run `cd apps/api && python -m app.runtime_cleanup`
+  - this prunes retained runtime history and then runs `VACUUM` / `ANALYZE`
 
 ## Notes
 

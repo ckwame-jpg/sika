@@ -28,10 +28,11 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { getSyncState, useHealthStatus } from "@/lib/health-status";
+import { getMarketSyncBadge, getPropSyncBadge, getSyncState, useHealthStatus } from "@/lib/health-status";
 import { triggerRefreshAndRevalidate } from "@/lib/refresh";
-import { SPORT_OPTIONS, cn, fmtRelative } from "@/lib/utils";
+import { SPORT_OPTIONS, cn } from "@/lib/utils";
 import { useSportQueryParam } from "@/components/filters/sport-filter-select";
 
 const NAV = [
@@ -139,46 +140,20 @@ function SportFilter({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function SyncStatusBadge() {
+function SyncStatusBadges() {
   const { data: health } = useHealthStatus();
-  const syncState = getSyncState(health);
-  if (!health || !syncState) return null;
-
-  const label = syncState === "refreshing"
-    ? "Refreshing"
-    : syncState === "failed"
-      ? "Failed"
-      : syncState === "stale"
-        ? "Stale"
-        : "Synced";
-  const dotClass = syncState === "synced"
-    ? "bg-positive"
-    : syncState === "failed"
-      ? "bg-negative"
-      : "bg-warning";
-  const detail = syncState === "refreshing"
-    ? (
-      health.active_refresh_job?.scope === "current_slate"
-        ? "current slate refresh queued"
-        : health.last_successful_refresh_at
-          ? `last success ${fmtRelative(health.last_successful_refresh_at)}`
-          : "background refresh in progress"
-    )
-    : health.last_successful_refresh_at
-      ? fmtRelative(health.last_successful_refresh_at)
-      : "awaiting first refresh";
-  const propDetail = health.prop_refresh_status === "queued" || health.prop_refresh_status === "running"
-    ? "Props refreshing"
-    : health.last_prop_refresh_at
-      ? (health.prop_data_stale ? `Props stale ${fmtRelative(health.last_prop_refresh_at)}` : `Props synced ${fmtRelative(health.last_prop_refresh_at)}`)
-      : "Props awaiting first refresh";
+  const marketBadge = getMarketSyncBadge(health);
+  const propBadge = getPropSyncBadge(health);
+  if (!marketBadge || !propBadge) return null;
 
   return (
-    <div className="flex items-center gap-1.5 text-xs">
-      <span className={cn("inline-block h-1.5 w-1.5 rounded-full", dotClass)} />
-      <span className="truncate text-muted-foreground">
-        {label} {detail} · {propDetail}
-      </span>
+    <div className="flex flex-col gap-1.5">
+      <Badge variant={marketBadge.variant} className="max-w-full" title={marketBadge.title}>
+        {marketBadge.text}
+      </Badge>
+      <Badge variant={propBadge.variant} className="max-w-full" title={propBadge.title}>
+        {propBadge.text}
+      </Badge>
     </div>
   );
 }
@@ -239,7 +214,7 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <div className="space-y-2 border-t border-border px-3 py-3">
-        <SyncStatusBadge />
+        <SyncStatusBadges />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

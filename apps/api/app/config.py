@@ -54,10 +54,12 @@ class Settings(BaseSettings):
     lookahead_days: int = 2
     free_provider_lookback_days: int = 5
     free_provider_lookahead_days: int = 2
-    market_snapshot_retention_days: int = 14
-    signal_snapshot_retention_days: int = 14
-    shadow_inference_retention_days: int = 14
-    run_retention_days: int = 30
+    market_snapshot_retention_days: int = 7
+    signal_snapshot_retention_days: int = 7
+    shadow_inference_retention_days: int = 7
+    run_retention_days: int = 14
+    refresh_job_retention_days: int = 14
+    prediction_retention_days: int = 30
     enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "SOCCER", "TENNIS", "UFC"])
     soccer_leagues: list[str] = Field(
         default_factory=lambda: [

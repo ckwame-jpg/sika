@@ -118,7 +118,7 @@ def test_watchlist_coverage_endpoint_reports_prediction_only_rows(client, db_ses
         external_id="coverage-evt",
         sport_key="NBA",
         name="Washington Wizards at Miami Heat",
-        status="scheduled",
+        status="in_progress",
         starts_at=now + timedelta(hours=1),
     )
     db_session.add(event)

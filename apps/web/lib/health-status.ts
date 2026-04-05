@@ -3,8 +3,16 @@
 import useSWR from "swr";
 import { fetchHealth, keys } from "@/lib/api";
 import type { HealthResponse } from "@/lib/types";
+import { fmtRelative } from "@/lib/utils";
 
 export type SyncState = "refreshing" | "failed" | "stale" | "synced";
+export type SyncBadgeVariant = "positive" | "warning" | "negative";
+
+export interface SyncBadge {
+  text: string;
+  title: string;
+  variant: SyncBadgeVariant;
+}
 
 export function useHealthStatus() {
   return useSWR<HealthResponse>(keys.health, fetchHealth, {
@@ -24,6 +32,123 @@ export function getSyncState(health?: HealthResponse | null): SyncState | null {
     return "stale";
   }
   return "synced";
+}
+
+function fmtRelativeCompact(iso: string | null | undefined): string {
+  const formatted = fmtRelative(iso);
+  return formatted
+    .replace(/^about /, "")
+    .replace(/ seconds? ago$/, "s ago")
+    .replace(/ minutes? ago$/, "m ago")
+    .replace(/ hours? ago$/, "h ago")
+    .replace(/ days? ago$/, "d ago")
+    .replace(/ months? ago$/, "mo ago")
+    .replace(/ years? ago$/, "y ago")
+    .replace(/^in (\d+) seconds?$/, "in $1s")
+    .replace(/^in (\d+) minutes?$/, "in $1m")
+    .replace(/^in (\d+) hours?$/, "in $1h")
+    .replace(/^in (\d+) days?$/, "in $1d")
+    .replace(/^in (\d+) months?$/, "in $1mo")
+    .replace(/^in (\d+) years?$/, "in $1y");
+}
+
+export function getMarketSyncBadge(health?: HealthResponse | null): SyncBadge | null {
+  if (!health) return null;
+
+  if (health.refresh_status === "queued" || health.refresh_status === "running") {
+    return {
+      text: health.active_refresh_job?.scope === "current_slate" ? "Market refreshing slate" : "Market refreshing",
+      title:
+        health.active_refresh_job?.scope === "current_slate"
+          ? "Current-slate market refresh is queued or running."
+          : "Market refresh is queued or running.",
+      variant: "warning",
+    };
+  }
+
+  if (health.refresh_status === "failed" && health.data_stale) {
+    const relative = health.last_successful_refresh_at ? fmtRelativeCompact(health.last_successful_refresh_at) : null;
+    return {
+      text: relative ? `Market failed ${relative}` : "Market failed",
+      title: health.last_successful_refresh_at
+        ? `Market refresh failed; last success ${fmtRelative(health.last_successful_refresh_at)}.`
+        : "Market refresh failed before the first successful sync.",
+      variant: "negative",
+    };
+  }
+
+  if (health.data_stale) {
+    const relative = health.last_successful_refresh_at ? fmtRelativeCompact(health.last_successful_refresh_at) : null;
+    return {
+      text: relative ? `Market stale ${relative}` : "Market stale",
+      title: health.last_successful_refresh_at
+        ? `Market data is stale; last success ${fmtRelative(health.last_successful_refresh_at)}.`
+        : "Market data is stale and awaiting the first successful refresh.",
+      variant: "warning",
+    };
+  }
+
+  if (health.last_successful_refresh_at) {
+    return {
+      text: `Market synced ${fmtRelativeCompact(health.last_successful_refresh_at)}`,
+      title: `Market data last synced ${fmtRelative(health.last_successful_refresh_at)}.`,
+      variant: "positive",
+    };
+  }
+
+  return {
+    text: "Market awaiting refresh",
+    title: "Market data is waiting for the first successful refresh.",
+    variant: "warning",
+  };
+}
+
+export function getPropSyncBadge(health?: HealthResponse | null): SyncBadge | null {
+  if (!health) return null;
+
+  if (health.prop_refresh_status === "queued" || health.prop_refresh_status === "running") {
+    return {
+      text: "Props refreshing",
+      title: "Prop refresh is queued or running.",
+      variant: "warning",
+    };
+  }
+
+  if (health.prop_refresh_status === "failed" && health.prop_data_stale) {
+    const relative = health.last_prop_refresh_at ? fmtRelativeCompact(health.last_prop_refresh_at) : null;
+    return {
+      text: relative ? `Props failed ${relative}` : "Props failed",
+      title: health.last_prop_refresh_at
+        ? `Prop refresh failed; last success ${fmtRelative(health.last_prop_refresh_at)}.`
+        : "Prop refresh failed before the first successful sync.",
+      variant: "negative",
+    };
+  }
+
+  if (health.prop_data_stale) {
+    const relative = health.last_prop_refresh_at ? fmtRelativeCompact(health.last_prop_refresh_at) : null;
+    return {
+      text: relative ? `Props stale ${relative}` : "Props stale",
+      title: health.last_prop_refresh_at
+        ? `Prop data is stale; last success ${fmtRelative(health.last_prop_refresh_at)}.`
+        : "Prop data is stale and awaiting the first successful refresh.",
+      variant: "warning",
+    };
+  }
+
+  if (health.last_prop_refresh_at) {
+    return {
+      text: `Props synced ${fmtRelativeCompact(health.last_prop_refresh_at)}`,
+      title: `Prop data last synced ${fmtRelative(health.last_prop_refresh_at)}.`,
+      variant: "positive",
+    };
+  }
+
+  return {
+    text: "Props awaiting refresh",
+    title: "Prop data is waiting for the first successful refresh.",
+    variant: "warning",
+  };
 }
 
 function getUserSafeRefreshErrorMessage(message?: string | null) {
