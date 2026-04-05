@@ -1408,7 +1408,56 @@ def _build_scored_recommendation(
             metadata=metadata,
         )
 
-    if yes_edge >= no_edge:
+    force_yes_prop = market_family == "player_prop" and settings.prefer_yes_side_props
+    if force_yes_prop:
+        side = "yes"
+        edge = yes_edge
+        suggested_price = yes_entry if yes_entry is not None else fair_yes_price
+        invalidation = f"Pull if YES entry moves above {min(fair_yes_price + 0.04, 0.99):.4f}"
+        scoring_diagnostics["yes_side_forced"] = True
+        if yes_edge < 0:
+            scoring_diagnostics["suppression_reasons"] = [
+                *list(scoring_diagnostics.get("suppression_reasons") or []),
+                "yes_side_negative_edge",
+            ]
+            selection_score, signal_diagnostics = _finalize_single_scoring_diagnostics(
+                diagnostics=scoring_diagnostics,
+                selected_side_probability=_selected_side_probability(probability_yes, "yes"),
+                selected_edge=yes_edge,
+                adjusted_confidence=confidence,
+            )
+            heuristic_metadata = dict(active_lineage.model_metadata or {})
+            heuristic_metadata.update(
+                {
+                    "family_key": family_key,
+                    "desired_mode": runtime_decision.desired_mode if runtime_decision else "heuristic",
+                    "effective_mode": served_mode,
+                    "runtime_health": runtime_decision.runtime_health if runtime_decision else "healthy",
+                }
+            )
+            signal = SignalSnapshot(
+                event_id=event.id,
+                market_id=market.id if market else None,
+                model_name=active_lineage.model_name if active_lineage.model_name else MODEL_NAME,
+                model_version=active_lineage.model_version,
+                calibration_version=active_lineage.calibration_version,
+                feature_set_version=active_lineage.feature_set_version,
+                model_metadata=heuristic_metadata,
+                confidence=confidence,
+                fair_yes_price=fair_yes_price,
+                fair_no_price=fair_no_price,
+                edge=max(yes_edge, no_edge),
+                selection_score=selection_score,
+                reasons=reasons,
+                features=features,
+                scoring_diagnostics=signal_diagnostics,
+            )
+            return ScoredRecommendation(
+                recommendation=None,
+                signal=signal,
+                metadata=metadata,
+            )
+    elif yes_edge >= no_edge:
         side = "yes"
         edge = yes_edge
         suggested_price = yes_entry if yes_entry is not None else fair_yes_price
@@ -1572,6 +1621,70 @@ def _quality_tier_rank(value: str | None) -> int:
     return {"high": 2, "medium": 1, "low": 0}.get((value or "").lower(), -1)
 
 
+def _enforce_prop_monotonicity(
+    scored_recommendations: list[tuple[Market, ScoredRecommendation]],
+) -> None:
+    """Enforce that probability_yes decreases as threshold increases for same player/stat.
+
+    For the same (subject_name, stat_key) group of player props, it's mathematically
+    impossible for a higher threshold to have higher probability than a lower threshold.
+    E.g., P(25+ points) cannot exceed P(20+ points).
+
+    Uses isotonic regression: walk thresholds ascending, enforce monotonic decreasing.
+    Mutates the ScoredRecommendation objects in place.
+    """
+    from collections import defaultdict
+
+    # Group by (subject_name, stat_key) for player props only
+    groups: dict[tuple[str, str], list[tuple[Market, ScoredRecommendation]]] = defaultdict(list)
+    for market, sr in scored_recommendations:
+        md = sr.metadata or {}
+        family = md.get("copilot_market_family") or ""
+        subject = md.get("copilot_subject_name") or ""
+        stat = md.get("copilot_stat_key") or ""
+        threshold = md.get("copilot_threshold")
+
+        if family != "player_prop" or not subject or not stat or threshold is None:
+            continue
+        groups[(subject, stat)].append((market, sr))
+
+    for key, group in groups.items():
+        if len(group) < 2:
+            continue
+
+        # Sort by threshold ascending
+        group.sort(key=lambda pair: float(pair[1].metadata.get("copilot_threshold", 0) if pair[1].metadata else 0))
+
+        # Enforce monotonic decreasing: walk from highest to lowest threshold
+        # If fair_yes_price[i] (lower threshold) < fair_yes_price[i+1] (higher threshold),
+        # set [i] = [i+1] because P(lower) must be >= P(higher).
+        for i in range(len(group) - 2, -1, -1):
+            curr_prob = group[i][1].signal.fair_yes_price
+            next_prob = group[i + 1][1].signal.fair_yes_price
+            if curr_prob < next_prob:
+                # Current (lower threshold) should have >= probability than next (higher threshold)
+                group[i][1].signal.fair_yes_price = round(next_prob, 4)
+                group[i][1].signal.fair_no_price = round(1 - next_prob, 4)
+                # Recompute edge on recommendation if present
+                rec = group[i][1].recommendation
+                if rec is not None:
+                    if rec.side == "yes":
+                        rec.edge = round(next_prob - rec.suggested_price, 4)
+                    else:
+                        rec.edge = round((1 - next_prob) - rec.suggested_price, 4)
+                    # Update selected_side_probability in scoring_diagnostics
+                    diag = dict(rec.scoring_diagnostics or {})
+                    diag["selected_side_probability"] = round(
+                        next_prob if rec.side == "yes" else 1 - next_prob, 4
+                    )
+                    diag["monotonicity_adjusted"] = True
+                    rec.scoring_diagnostics = diag
+                # Also update signal scoring_diagnostics
+                sig_diag = dict(group[i][1].signal.scoring_diagnostics or {})
+                sig_diag["monotonicity_adjusted"] = True
+                group[i][1].signal.scoring_diagnostics = sig_diag
+
+
 def _dedupe_winner_recommendations(
     scored_recommendations: list[tuple[Market, ScoredRecommendation]],
 ) -> tuple[list[tuple[Market, ScoredRecommendation]], int, int]:
@@ -1674,6 +1787,7 @@ def regenerate_watchlist(
                 if "critical_market_snapshot_missing" in suppression_reasons:
                     summary.critical_context_suppressed += 1
 
+    _enforce_prop_monotonicity(pending_recommendations)
     deduped_recommendations, collapsed_count, combo_suppressed = _dedupe_winner_recommendations(pending_recommendations)
     summary.inverse_winner_duplicates_collapsed = collapsed_count
     summary.combo_prop_candidates_suppressed += combo_suppressed

@@ -23,9 +23,6 @@ const badgeVariants = cva(
         nba: "bg-sport-nba/10 border-sport-nba/25 text-sport-nba",
         nfl: "bg-sport-nfl/10 border-sport-nfl/25 text-sport-nfl",
         mlb: "bg-sport-mlb/10 border-sport-mlb/25 text-sport-mlb",
-        soccer: "bg-sport-soccer/10 border-sport-soccer/25 text-sport-soccer",
-        tennis: "bg-sport-tennis/10 border-sport-tennis/25 text-sport-tennis",
-        ufc: "bg-sport-ufc/10 border-sport-ufc/25 text-sport-ufc",
       },
     },
     defaultVariants: {

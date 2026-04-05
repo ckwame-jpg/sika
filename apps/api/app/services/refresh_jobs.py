@@ -10,9 +10,10 @@ from app.database import SessionLocal
 from app.models import RefreshJob
 from app.services.ingestion import run_prop_refresh_cycle, run_refresh_cycle
 from app.services.maintenance import prune_runtime_artifacts
+from app.services.research import run_research_cycle
 
 
-REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "cleanup"})
+REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "cleanup", "research"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 
 
@@ -157,6 +158,9 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                 job.run_id = run.id
             elif job.kind == "cleanup":
                 job.details = prune_runtime_artifacts(db)
+            elif job.kind == "research":
+                run = run_research_cycle(db)
+                job.run_id = run.id
             else:  # pragma: no cover - guarded above
                 raise ValueError(f"Unsupported refresh job kind: {job.kind}")
 

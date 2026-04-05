@@ -60,16 +60,12 @@ class Settings(BaseSettings):
     run_retention_days: int = 14
     refresh_job_retention_days: int = 14
     prediction_retention_days: int = 30
-    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "SOCCER", "TENNIS", "UFC"])
-    soccer_leagues: list[str] = Field(
-        default_factory=lambda: [
-            "English Premier League",
-            "UEFA Champions League",
-            "Major League Soccer",
-            "FIFA World Cup",
-            "UEFA European Championship",
-        ]
-    )
+    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB"])
+    refresh_job_stale_minutes: int = 10
+    prefer_yes_side_props: bool = True
+    research_mode_enabled: bool = True
+    research_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB"])
+    historical_seasons_to_collect: int = 2
 
 
 @lru_cache

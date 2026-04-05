@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.config import get_settings
@@ -51,6 +51,7 @@ from app.schemas import (
     RunRead,
     RunSummaryCounts,
     SignalSnapshotRead,
+    SportAvailabilityRead,
     SportRead,
     StatsQueryRead,
     StatsQueryRequest,
@@ -722,6 +723,54 @@ def list_sports(db: Session = Depends(get_db)) -> list[SportRead]:
     return [SportRead.model_validate(item) for item in db.scalars(select(Sport).order_by(Sport.key)).all()]
 
 
+_LIVE_SPORTS = {"NBA", "MLB"}
+_RESEARCH_ONLY_SPORTS = {"NFL"}
+
+
+@router.get("/sports/availability", response_model=list[SportAvailabilityRead])
+def list_sport_availability(db: Session = Depends(get_db)) -> list[SportAvailabilityRead]:
+    sport_keys = sorted(_LIVE_SPORTS | _RESEARCH_ONLY_SPORTS)
+
+    event_counts: dict[str, int] = {}
+    for sport_key, count in db.execute(
+        select(Event.sport_key, func.count(Event.id))
+        .where(Event.sport_key.in_(sport_keys))
+        .group_by(Event.sport_key)
+    ):
+        event_counts[sport_key] = count
+
+    rec_counts: dict[str, int] = {}
+    for sport_key, count in db.execute(
+        select(Event.sport_key, func.count(Recommendation.id))
+        .join(Event, Recommendation.event_id == Event.id)
+        .where(Event.sport_key.in_(sport_keys))
+        .group_by(Event.sport_key)
+    ):
+        rec_counts[sport_key] = count
+
+    last_refresh_at = db.execute(
+        select(Run.finished_at)
+        .where(Run.kind == "refresh", Run.status == "completed", Run.finished_at.is_not(None))
+        .order_by(desc(Run.finished_at))
+        .limit(1)
+    ).scalar()
+
+    result: list[SportAvailabilityRead] = []
+    for sport_key in sport_keys:
+        mode = "live" if sport_key in _LIVE_SPORTS else "research_only"
+        result.append(
+            SportAvailabilityRead(
+                sport_key=sport_key,
+                availability_mode=mode,
+                events_count=event_counts.get(sport_key, 0),
+                recommendations_count=rec_counts.get(sport_key, 0),
+                last_refresh_at=last_refresh_at,
+            )
+        )
+
+    return result
+
+
 @router.get("/events", response_model=list[EventRead])
 def list_events(
     sport: str | None = None,
@@ -943,7 +992,7 @@ def list_markets(
         select(Market)
         .options(joinedload(Market.event))
         .order_by(Market.close_time.desc().nullslast(), Market.id.desc())
-        .limit(max(limit * 6, limit))
+        .limit(max(limit * 2, limit))
     )
     if sport:
         stmt = stmt.where(Market.sport_key == sport.upper())

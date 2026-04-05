@@ -586,6 +586,9 @@ def run_refresh_cycle(
                 lookback_days=settings.current_slate_lookback_days if current_slate_only else None,
                 lookahead_days=settings.current_slate_lookahead_days if current_slate_only else None,
             )
+            # Commit after sports data to release write lock for API reads
+            db.commit()
+
             kalshi_summary = refresh_kalshi_markets(
                 db,
                 client=kalshi_client,
@@ -594,6 +597,8 @@ def run_refresh_cycle(
                 discover_combo_props=False,
             )
             mapped_count = map_markets_to_events(db)
+            # Commit after market ingestion to release write lock again
+            db.commit()
             current_watchlist_resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
             current_watchlist_summary = warm_current_watchlist_prop_context(db, resolver=current_watchlist_resolver)
             target_market_ids = {market.id for market in current_watchlist_markets(db)} if current_slate_only else None
@@ -606,6 +611,9 @@ def run_refresh_cycle(
                 replace_all=not current_slate_only,
                 capture_parlays=not current_slate_only,
             )
+            # Commit after watchlist/recommendations — the heaviest write phase
+            db.commit()
+
             if current_slate_only:
                 shadow_prediction_count, shadow_parlay_prediction_count = 0, 0
             else:

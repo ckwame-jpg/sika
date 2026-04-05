@@ -10,6 +10,7 @@ from app.services.ingestion import seed_sports
 from app.services.ml import sync_family_runtime_health
 from app.services.scheduler import (
     queue_startup_refresh_if_stale,
+    reconcile_stale_jobs,
     start_scheduler,
     stop_scheduler,
     sync_refresh_runtime_state_from_db,
@@ -22,6 +23,7 @@ async def lifespan(_: FastAPI):
     with SessionLocal() as db:
         seed_sports(db)
         sync_family_runtime_health(db)
+        reconcile_stale_jobs(db)
         db.commit()
     sync_refresh_runtime_state_from_db()
     if settings.scheduler_enabled:

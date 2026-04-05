@@ -23,9 +23,6 @@
   --color-sport-nba: var(--sport-nba);
   --color-sport-nfl: var(--sport-nfl);
   --color-sport-mlb: var(--sport-mlb);
-  --color-sport-soccer: var(--sport-soccer);
-  --color-sport-tennis: var(--sport-tennis);
-  --color-sport-ufc: var(--sport-ufc);
 
   /* Fonts */
   --font-sans: var(--font-geist-sans), system-ui, sans-serif;
@@ -91,9 +88,6 @@
   --sport-nba: hsl(25 95% 53%);
   --sport-nfl: hsl(218 75% 45%);
   --sport-mlb: hsl(0 75% 50%);
-  --sport-soccer: hsl(142 71% 38%);
-  --sport-tennis: hsl(78 80% 42%);
-  --sport-ufc: hsl(0 90% 52%);
 }
 
 /* ── Dark mode CSS variables ── */
@@ -118,9 +112,6 @@
   --sport-nba: hsl(25 95% 58%);
   --sport-nfl: hsl(210 80% 62%);
   --sport-mlb: hsl(0 80% 62%);
-  --sport-soccer: hsl(142 65% 50%);
-  --sport-tennis: hsl(78 75% 55%);
-  --sport-ufc: hsl(0 90% 60%);
 }
 
 @layer base {

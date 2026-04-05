@@ -25,26 +25,61 @@ import type {
   RunRead,
   SportRead,
   StatsQueryRead,
+  TradeDeskResponse,
   WatchlistDiagnosticsRead,
   WatchlistCoverageRowRead,
 } from "./types";
 
 const BASE = "/api";
 
+/** Retry-capable fetch with exponential backoff. */
 async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
-    ...init,
-  });
-  if (!res.ok) {
-    const raw = await res.text().catch(() => res.statusText);
-    const text = raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
-    throw new Error(`${res.status} ${text}`);
+  const maxAttempts = init?.method && init.method !== "GET" ? 1 : 3;
+  const delays = [1000, 2000, 4000];
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      const res = await fetch(`${BASE}${path}`, {
+        headers: { "Content-Type": "application/json", ...init?.headers },
+        ...init,
+        signal: init?.signal ?? controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const raw = await res.text().catch(() => res.statusText);
+        const text = raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
+        const err = new Error(`${res.status} ${text}`) as Error & { status: number };
+        err.status = res.status;
+        // Only retry on 5xx
+        if (res.status >= 500 && attempt < maxAttempts - 1) {
+          lastError = err;
+          await new Promise((r) => setTimeout(r, delays[attempt]));
+          continue;
+        }
+        throw err;
+      }
+      return res.json() as Promise<T>;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const isNetworkError =
+        lastError.name === "AbortError" ||
+        lastError.name === "TypeError" ||
+        lastError.message.includes("fetch");
+      if (isNetworkError && attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, delays[attempt]));
+        continue;
+      }
+      throw lastError;
+    }
   }
-  return res.json() as Promise<T>;
+  throw lastError ?? new Error("Request failed");
 }
 
 export const fetchHealth = () => request<HealthResponse>("/health");
@@ -221,9 +256,18 @@ export const queryStats = (body: {
     body: JSON.stringify(body),
   });
 
+export const fetchTradeDesk = (sport?: string) => {
+  const params = new URLSearchParams();
+  if (sport) params.set("sport", sport);
+  const qs = params.toString();
+  return request<TradeDeskResponse>(`/trade-desk${qs ? `?${qs}` : ""}`);
+};
+
 export const keys = {
   health: "/health",
   sports: "/sports",
+  tradeDesk: (sport?: string) =>
+    `/trade-desk?sport=${sport ?? ""}`,
   events: (sport?: string, day?: string) =>
     `/events?sport=${sport ?? ""}&day=${day ?? ""}`,
   watchlist: (sport?: string, limit = 50) =>

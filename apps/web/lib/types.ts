@@ -1,14 +1,11 @@
 /* ─── Mapped directly from apps/api/app/schemas.py ─── */
 
-export type SportKey = "NBA" | "NFL" | "MLB" | "SOCCER" | "TENNIS" | "UFC";
+export type SportKey = "NBA" | "NFL" | "MLB";
 
 export const SPORT_LABELS: Record<SportKey, string> = {
   NBA: "NBA",
   NFL: "NFL",
   MLB: "MLB",
-  SOCCER: "Soccer",
-  TENNIS: "Tennis",
-  UFC: "UFC",
 };
 
 export interface HealthResponse {
@@ -666,4 +663,50 @@ export interface PredictionSettlementResponse {
   pending: number;
   unresolved: number;
   errors: number;
+}
+
+/* ─── Trade Desk ─── */
+
+export interface TradeDeskThreshold {
+  threshold: number;
+  probability_yes: number;
+  edge: number;
+  entry_price: number | null;
+  ticker: string;
+  confidence: number;
+  selected_side_probability: number | null;
+  is_best: boolean;
+}
+
+export interface TradeDeskStatGroup {
+  stat_key: string;
+  thresholds: TradeDeskThreshold[];
+}
+
+export interface TradeDeskPlayerProp {
+  subject_name: string;
+  subject_team: string | null;
+  stat_groups: TradeDeskStatGroup[];
+  best_edge: number;
+  best_win_prob: number | null;
+}
+
+export interface TradeDeskEvent {
+  event_name: string;
+  starts_at: string | null;
+  sport_key: string;
+  game_lines: RecommendationRead[];
+  player_props: TradeDeskPlayerProp[];
+}
+
+export interface TradeDeskResearchSport {
+  sport_key: string;
+  availability_mode: "live" | "research_only";
+  events_count: number;
+  last_refresh_at: string | null;
+}
+
+export interface TradeDeskResponse {
+  events: TradeDeskEvent[];
+  research_sports: TradeDeskResearchSport[];
 }

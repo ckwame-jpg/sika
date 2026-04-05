@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
@@ -137,42 +137,64 @@ def warm_current_watchlist_prop_context(
 
 
 def latest_snapshot_by_market_id(db: Session, market_ids: list[int]) -> dict[int, MarketSnapshot]:
+    """Fetch only the single latest snapshot per market using a correlated
+    subquery, instead of fetching *all* snapshots and deduplicating in Python.
+    With the composite index on (market_id, captured_at DESC), the subquery
+    is an index-only lookup per market — orders of magnitude faster under
+    concurrent write load."""
     if not market_ids:
         return {}
+    max_id_per_market = (
+        select(
+            MarketSnapshot.market_id,
+            func.max(MarketSnapshot.id).label("max_id"),
+        )
+        .where(MarketSnapshot.market_id.in_(market_ids))
+        .group_by(MarketSnapshot.market_id)
+        .subquery()
+    )
     rows = db.scalars(
         select(MarketSnapshot)
-        .where(MarketSnapshot.market_id.in_(market_ids))
-        .order_by(MarketSnapshot.market_id.asc(), MarketSnapshot.captured_at.desc(), MarketSnapshot.id.desc())
+        .join(max_id_per_market, MarketSnapshot.id == max_id_per_market.c.max_id)
     ).all()
-    latest: dict[int, MarketSnapshot] = {}
-    for row in rows:
-        latest.setdefault(row.market_id, row)
-    return latest
+    return {row.market_id: row for row in rows}
 
 
 def latest_recommendation_by_market_id(db: Session, market_ids: list[int]) -> dict[int, Recommendation]:
+    """Fetch only the single latest recommendation per market."""
     if not market_ids:
         return {}
+    max_id_per_market = (
+        select(
+            Recommendation.market_id,
+            func.max(Recommendation.id).label("max_id"),
+        )
+        .where(Recommendation.market_id.in_(market_ids))
+        .group_by(Recommendation.market_id)
+        .subquery()
+    )
     rows = db.scalars(
         select(Recommendation)
-        .where(Recommendation.market_id.in_(market_ids))
-        .order_by(Recommendation.market_id.asc(), Recommendation.captured_at.desc(), Recommendation.id.desc())
+        .join(max_id_per_market, Recommendation.id == max_id_per_market.c.max_id)
     ).all()
-    latest: dict[int, Recommendation] = {}
-    for row in rows:
-        latest.setdefault(row.market_id, row)
-    return latest
+    return {row.market_id: row for row in rows}
 
 
 def latest_prediction_by_market_id(db: Session, market_ids: list[int]) -> dict[int, Prediction]:
+    """Fetch only the single latest prediction per market."""
     if not market_ids:
         return {}
+    max_id_per_market = (
+        select(
+            Prediction.market_id,
+            func.max(Prediction.id).label("max_id"),
+        )
+        .where(Prediction.market_id.in_(market_ids))
+        .group_by(Prediction.market_id)
+        .subquery()
+    )
     rows = db.scalars(
         select(Prediction)
-        .where(Prediction.market_id.in_(market_ids))
-        .order_by(Prediction.market_id.asc(), Prediction.captured_at.desc(), Prediction.id.desc())
+        .join(max_id_per_market, Prediction.id == max_id_per_market.c.max_id)
     ).all()
-    latest: dict[int, Prediction] = {}
-    for row in rows:
-        latest.setdefault(row.market_id, row)
-    return latest
+    return {row.market_id: row for row in rows}

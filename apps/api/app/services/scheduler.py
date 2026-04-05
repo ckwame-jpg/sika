@@ -1,3 +1,4 @@
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -10,7 +11,7 @@ from sqlalchemy import desc, func, select
 
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import EspnPlayerGamelogCache, Event, Run
+from app.models import EspnPlayerGamelogCache, Event, RefreshJob, Run
 from app.services.ingestion import run_refresh_cycle
 from app.services.orders import reconcile_demo_state
 from app.services.refresh_jobs import (
@@ -19,6 +20,8 @@ from app.services.refresh_jobs import (
     latest_job_for_kind,
     process_refresh_job_queue_once,
 )
+
+logger = logging.getLogger(__name__)
 
 
 scheduler = BackgroundScheduler(timezone=get_settings().default_timezone)
@@ -38,6 +41,32 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def reconcile_stale_jobs(db) -> int:
+    """Mark orphaned queued/running refresh jobs as failed on startup."""
+    settings = get_settings()
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.refresh_job_stale_minutes)
+    stale_jobs = db.scalars(
+        select(RefreshJob)
+        .where(
+            RefreshJob.status.in_(["queued", "running"]),
+            RefreshJob.queued_at < cutoff,
+        )
+    ).all()
+    now = datetime.now(timezone.utc)
+    for job in stale_jobs:
+        logger.warning(
+            "Reconciling stale %s job id=%d (status=%s, queued_at=%s)",
+            job.kind,
+            job.id,
+            job.status,
+            job.queued_at,
+        )
+        job.status = "failed"
+        job.error_message = "stalled — reconciled on startup"
+        job.finished_at = now
+    return len(stale_jobs)
 
 
 def summarize_refresh_error_message(error_message: str | None) -> str | None:
@@ -204,6 +233,13 @@ def _queue_cleanup_job() -> bool:
     return _queue_job(kind="cleanup", scope="retention", reason="interval")
 
 
+def _queue_research_job() -> bool:
+    settings = get_settings()
+    if not settings.research_mode_enabled:
+        return False
+    return _queue_job(kind="research", scope="historical", reason="scheduled")
+
+
 def queue_startup_refresh_if_stale() -> bool:
     if not startup_refresh_needed():
         return False
@@ -308,6 +344,15 @@ def start_scheduler() -> None:
         id="demo_reconcile",
         replace_existing=True,
     )
+    if settings.research_mode_enabled:
+        scheduler.add_job(
+            _queue_research_job,
+            trigger=CronTrigger(hour=2, minute=0),
+            id="research_enqueue",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
     scheduler.start()
     schedule_event_refreshes()
 

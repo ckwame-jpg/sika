@@ -85,12 +85,17 @@ if is_sqlite:
     def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout = 30000")
+        cursor.execute("PRAGMA busy_timeout = 60000")
         cursor.execute("PRAGMA synchronous = NORMAL")
         cursor.close()
 
 
 def get_db() -> Generator:
+    """Yield a session for API request handlers (reads).
+
+    Uses `BEGIN DEFERRED` so read-only queries never acquire a write lock
+    and can proceed concurrently with the background refresh writer.
+    """
     db = SessionLocal()
     try:
         yield db
@@ -103,6 +108,24 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _ensure_runtime_schema()
+    _ensure_performance_indexes()
+
+
+_PERFORMANCE_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS ix_market_snapshot_market_captured ON market_snapshots(market_id, captured_at DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_recommendation_market_captured ON recommendations(market_id, captured_at DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_prediction_market_captured ON predictions(market_id, captured_at DESC)",
+]
+
+
+def _ensure_performance_indexes() -> None:
+    """Create composite indexes that speed up the hot lookup paths for
+    latest-snapshot / latest-recommendation queries used by /markets and
+    /watchlist.  These dramatically reduce read latency during concurrent
+    refresh writes."""
+    with engine.begin() as conn:
+        for ddl in _PERFORMANCE_INDEXES:
+            conn.execute(text(ddl))
 
 
 def _ensure_runtime_schema() -> None:

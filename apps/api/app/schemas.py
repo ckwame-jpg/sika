@@ -56,6 +56,14 @@ class SportRead(BaseModel):
     name: str
 
 
+class SportAvailabilityRead(BaseModel):
+    sport_key: str
+    availability_mode: str  # "live" or "research_only"
+    events_count: int = 0
+    recommendations_count: int = 0
+    last_refresh_at: UTCDateTime | None = None
+
+
 class EventParticipantRead(BaseModel):
     participant_id: int
     display_name: str

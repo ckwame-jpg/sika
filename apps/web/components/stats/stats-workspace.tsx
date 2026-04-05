@@ -22,9 +22,6 @@ const EXAMPLES: Record<SportKey, string[]> = {
   NBA: ["Jalen Brunson last 10 games", "Jayson Tatum this season"],
   NFL: ["Patrick Mahomes this season", "Josh Allen last 5 games"],
   MLB: ["Aaron Judge this season", "Mookie Betts last 10 games"],
-  SOCCER: ["Lionel Messi last 5 matches", "Kylian Mbappe this season"],
-  TENNIS: ["Novak Djokovic last 5 matches", "Carlos Alcaraz this season"],
-  UFC: ["Alex Pereira last 5 fights", "Islam Makhachev this season"],
 };
 
 function SummaryMetric({

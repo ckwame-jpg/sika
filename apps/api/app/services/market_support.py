@@ -19,9 +19,6 @@ SUPPORTED_SPORT_HINTS = {
     "NBA": ("NBA",),
     "NFL": ("NFL",),
     "MLB": ("MLB",),
-    "SOCCER": ("SOCCER", "MLS", "EPL", "UEFA", "UCL", "FIFA", "EURO", "LALIGA", "SERIEA", "BUNDESLIGA", "LIGUE1"),
-    "TENNIS": ("TENNIS", "ATP", "WTA", "ITF", "CHALLENGER"),
-    "UFC": ("UFC",),
 }
 
 PLAYER_PROP_TITLE_RE = re.compile(
