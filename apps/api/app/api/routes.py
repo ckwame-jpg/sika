@@ -51,9 +51,16 @@ from app.schemas import (
     RunRead,
     RunSummaryCounts,
     SignalSnapshotRead,
+    SportAvailabilityRead,
     SportRead,
     StatsQueryRead,
     StatsQueryRequest,
+    TradeDeskEventRead,
+    TradeDeskGameLineRead,
+    TradeDeskPlayerPropRead,
+    TradeDeskResponse,
+    TradeDeskStatGroupRead,
+    TradeDeskThresholdRead,
     WatchlistDiagnosticsRead,
     WatchlistCoverageRowRead,
 )
@@ -66,11 +73,13 @@ from app.services.refresh_jobs import enqueue_refresh_job, get_refresh_job
 from app.services.scheduler import get_refresh_runtime_state
 from app.services.stats_query import StatsQueryService
 from app.services.watchlist_coverage import (
+    CURRENT_WATCHLIST_SPORTS,
     current_watchlist_markets,
     latest_prediction_by_market_id,
     latest_recommendation_by_market_id,
     latest_snapshot_by_market_id,
 )
+from app.sports.base import alias_tokens
 
 router = APIRouter()
 
@@ -135,7 +144,163 @@ def _market_metadata_fields(market: Market | None) -> dict[str, str | float | No
     }
 
 
-def _serialize_recommendation(item: Recommendation, market: Market) -> RecommendationRead:
+TERMINAL_EVENT_STATUSES = frozenset({"completed", "cancelled"})
+
+
+def _visible_sports() -> list[str]:
+    return [sport.upper() for sport in get_settings().enabled_sports if sport.upper() != "UFC"]
+
+
+def _sport_order(sport_key: str | None) -> int:
+    sport_map = {sport: index for index, sport in enumerate(_visible_sports())}
+    return sport_map.get((sport_key or "").upper(), len(sport_map))
+
+
+def _latest_successful_refresh_at(db: Session) -> datetime | None:
+    return db.scalar(
+        select(Run.finished_at)
+        .where(Run.kind == "refresh", Run.status == "completed", Run.finished_at.is_not(None))
+        .order_by(Run.finished_at.desc(), Run.id.desc())
+        .limit(1)
+    )
+
+
+def _sport_availability_rows(db: Session) -> list[SportAvailabilityRead]:
+    visible_sports = _visible_sports()
+    now = datetime.now(timezone.utc)
+    recent_window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    event_counts = {
+        sport_key: int(count or 0)
+        for sport_key, count in db.execute(
+            select(Event.sport_key, func.count(Event.id))
+            .where(
+                Event.sport_key.in_(tuple(visible_sports)),
+                Event.status.notin_(tuple(TERMINAL_EVENT_STATUSES)),
+                Event.starts_at >= recent_window_start,
+            )
+            .group_by(Event.sport_key)
+        ).all()
+    }
+    recommendation_counts = {
+        sport_key: int(count or 0)
+        for sport_key, count in db.execute(
+            select(Market.sport_key, func.count(Recommendation.id))
+            .join(Market, Recommendation.market_id == Market.id)
+            .where(Market.sport_key.in_(tuple(visible_sports)))
+            .group_by(Market.sport_key)
+        ).all()
+    }
+    last_refresh_at = _latest_successful_refresh_at(db)
+    rows: list[SportAvailabilityRead] = []
+    for sport_key in visible_sports:
+        rows.append(
+            SportAvailabilityRead(
+                sport_key=sport_key,
+                availability_mode="live" if sport_key in CURRENT_WATCHLIST_SPORTS else "research_only",
+                events_count=event_counts.get(sport_key, 0),
+                recommendations_count=recommendation_counts.get(sport_key, 0),
+                last_refresh_at=last_refresh_at,
+            )
+        )
+    return rows
+
+
+def _participant_token_score(lookup_text: str, display_name: str, short_name: str | None = None) -> float:
+    left_tokens = alias_tokens(lookup_text)
+    right_tokens = alias_tokens(display_name, short_name)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    shared = left_tokens & right_tokens
+    if not shared:
+        return 0.0
+    strong_shared = [token for token in shared if len(token) >= 4]
+    return min(1.0, (len(shared) * 0.15) + (len(strong_shared) * 0.2))
+
+
+def _trade_desk_market_matches_event(market: Market) -> bool:
+    if market.event is None:
+        return False
+    raw_data = market.raw_data or {}
+    if str(raw_data.get("copilot_market_family") or "") == "player_prop":
+        return True
+    lookup_text = " ".join(
+        part
+        for part in [
+            market.title,
+            market.subtitle or "",
+            str(raw_data.get("copilot_source_market_title") or ""),
+            market.event_ticker or "",
+        ]
+        if part
+    )
+    participant_matches = 0
+    for entry in market.event.participants:
+        participant = entry.participant
+        if _participant_token_score(lookup_text, participant.display_name, participant.short_name) >= 0.15:
+            participant_matches += 1
+    return participant_matches >= 2
+
+
+def _kalshi_market_url(ticker: str) -> str:
+    return f"https://kalshi.com/markets/{ticker}"
+
+
+def _game_line_projected_label(market: Market, recommendation: Recommendation) -> str | None:
+    raw_data = market.raw_data or {}
+    diagnostics = dict(recommendation.scoring_diagnostics or {})
+    market_kind = str(raw_data.get("copilot_market_kind") or "")
+    threshold = raw_data.get("copilot_threshold")
+    direction = str(raw_data.get("copilot_direction") or "over").lower()
+    subject_name = str(raw_data.get("copilot_subject_name") or "").strip()
+    selected_side = recommendation.side.lower()
+
+    if market_kind in {"game_winner", "first_five_winner"}:
+        return str(diagnostics.get("selected_subject_name") or subject_name or "").strip() or None
+    if market_kind == "spread":
+        if not subject_name:
+            return None
+        if threshold is None:
+            return subject_name
+        if selected_side == "yes":
+            return f"{subject_name} -{float(threshold):g}"
+        return f"{subject_name} +{float(threshold):g}"
+    if market_kind == "total":
+        selected_direction = direction if selected_side == "yes" else ("under" if direction == "over" else "over")
+        if threshold is None:
+            return selected_direction.title()
+        return f"{selected_direction.title()} {float(threshold):g}"
+    return str(diagnostics.get("selected_subject_name") or "").strip() or None
+
+
+def _game_line_display_label(market: Market, recommendation: Recommendation) -> str:
+    raw_data = market.raw_data or {}
+    market_kind = str(raw_data.get("copilot_market_kind") or "")
+    if market_kind in {"game_winner", "first_five_winner"}:
+        projected = _game_line_projected_label(market, recommendation)
+        if projected:
+            return f"{projected} to win"
+    return str(
+        dict(recommendation.scoring_diagnostics or {}).get("display_market_title")
+        or raw_data.get("copilot_display_market_title")
+        or market.title
+    )
+
+
+def _thresholds_are_monotonic(thresholds: list[TradeDeskThresholdRead]) -> bool:
+    previous_probability: float | None = None
+    for threshold in sorted(thresholds, key=lambda item: item.threshold):
+        probability = float(threshold.probability_yes)
+        if previous_probability is not None and probability > previous_probability + 1e-9:
+            return False
+        previous_probability = probability
+    return True
+
+
+def _serialize_recommendation(
+    item: Recommendation,
+    market: Market,
+    event_name: str | None = None,
+) -> RecommendationRead:
     diagnostics = dict(item.scoring_diagnostics or {})
     event = item.event
     return RecommendationRead(
@@ -143,7 +308,7 @@ def _serialize_recommendation(item: Recommendation, market: Market) -> Recommend
         ticker=market.ticker,
         sport_key=market.sport_key,
         market_title=market.title,
-        event_name=event.name if event else market.title,
+        event_name=event_name or (event.name if event else market.title),
         starts_at=event.starts_at if event else None,
         side=item.side,
         action=item.action,
@@ -719,7 +884,10 @@ def health() -> HealthResponse:
 
 @router.get("/sports", response_model=list[SportRead])
 def list_sports(db: Session = Depends(get_db)) -> list[SportRead]:
-    return [SportRead.model_validate(item) for item in db.scalars(select(Sport).order_by(Sport.key)).all()]
+    visible = _visible_sports()
+    items = db.scalars(select(Sport).where(Sport.key.in_(tuple(visible)))).all()
+    by_key = {item.key: item for item in items}
+    return [SportRead.model_validate(by_key[key]) for key in visible if key in by_key]
 
 
 @router.get("/events", response_model=list[EventRead])
@@ -736,6 +904,193 @@ def list_events(
         end = datetime.combine(day, datetime.max.time(), tzinfo=timezone.utc)
         stmt = stmt.where(Event.starts_at >= start, Event.starts_at <= end)
     return [_serialize_event(item) for item in db.scalars(stmt).all()]
+
+
+def _build_trade_desk_response(db: Session, sport: str | None = None) -> TradeDeskResponse:
+    normalized_sport = sport.upper() if sport else None
+    availability_rows = sorted(_sport_availability_rows(db), key=lambda item: _sport_order(item.sport_key))
+    if normalized_sport and normalized_sport not in CURRENT_WATCHLIST_SPORTS:
+        research_rows = [
+            row for row in availability_rows if row.sport_key == normalized_sport and row.availability_mode == "research_only"
+        ]
+        return TradeDeskResponse(events=[], research_sports=research_rows)
+
+    markets = current_watchlist_markets(db, sport=normalized_sport if normalized_sport in CURRENT_WATCHLIST_SPORTS else None)
+    market_ids = [market.id for market in markets]
+    latest_recommendations = latest_recommendation_by_market_id(db, market_ids)
+
+    event_buckets: dict[int, dict[str, object]] = {}
+    for market in markets:
+        recommendation = latest_recommendations.get(market.id)
+        if recommendation is None or market.event is None:
+            continue
+        if recommendation.edge <= 0:
+            continue
+        if not _trade_desk_market_matches_event(market):
+            continue
+
+        raw_data = market.raw_data or {}
+        family = str(raw_data.get("copilot_market_family") or "")
+        bucket = event_buckets.setdefault(
+            market.event.id,
+            {
+                "event": market.event,
+                "game_lines": [],
+                "props": {},
+            },
+        )
+
+        if family == "player_prop":
+            if recommendation.side.lower() != "yes":
+                continue
+            subject_name = str(raw_data.get("copilot_subject_name") or "").strip()
+            subject_team = str(raw_data.get("copilot_subject_team") or "").strip() or None
+            stat_key = str(raw_data.get("copilot_stat_key") or "").strip()
+            threshold = raw_data.get("copilot_threshold")
+            selected_probability = dict(recommendation.scoring_diagnostics or {}).get("selected_side_probability")
+            if not subject_name or not stat_key or threshold is None or selected_probability is None:
+                continue
+
+            player_map = bucket["props"]
+            assert isinstance(player_map, dict)
+            player_key = (subject_name, subject_team)
+            stat_map = player_map.setdefault(player_key, {})
+            assert isinstance(stat_map, dict)
+            thresholds = stat_map.setdefault(stat_key, [])
+            assert isinstance(thresholds, list)
+            thresholds.append(
+                TradeDeskThresholdRead(
+                    ticker=market.ticker,
+                    threshold=float(threshold),
+                    probability_yes=float(selected_probability),
+                    selected_side=recommendation.side,
+                    selected_side_probability=float(selected_probability),
+                    entry_price=recommendation.suggested_price,
+                    edge=recommendation.edge,
+                    confidence=recommendation.confidence,
+                    kalshi_url=_kalshi_market_url(market.ticker),
+                )
+            )
+            continue
+
+        if family not in {"winner", "game_line"}:
+            continue
+
+        selected_probability = dict(recommendation.scoring_diagnostics or {}).get("selected_side_probability")
+        if selected_probability is None:
+            continue
+        game_lines = bucket["game_lines"]
+        assert isinstance(game_lines, list)
+        game_lines.append(
+            TradeDeskGameLineRead(
+                ticker=market.ticker,
+                market_title=market.title,
+                display_label=_game_line_display_label(market, recommendation),
+                sport_key=market.sport_key,
+                market_kind=str(raw_data.get("copilot_market_kind") or ""),
+                selected_side=recommendation.side,
+                projected_side_label=_game_line_projected_label(market, recommendation),
+                selected_side_probability=float(selected_probability),
+                entry_price=recommendation.suggested_price,
+                edge=recommendation.edge,
+                confidence=recommendation.confidence,
+                kalshi_url=_kalshi_market_url(market.ticker),
+            )
+        )
+
+    events: list[TradeDeskEventRead] = []
+    game_line_order = {"game_winner": 0, "first_five_winner": 0, "spread": 1, "total": 2}
+    for bucket in event_buckets.values():
+        event = bucket["event"]
+        game_lines = bucket["game_lines"]
+        props = bucket["props"]
+        assert isinstance(event, Event)
+        assert isinstance(game_lines, list)
+        assert isinstance(props, dict)
+
+        player_props: list[TradeDeskPlayerPropRead] = []
+        for (subject_name, subject_team), stat_map in props.items():
+            assert isinstance(stat_map, dict)
+            stat_groups: list[TradeDeskStatGroupRead] = []
+            best_edge = 0.0
+            best_win_prob: float | None = None
+            for stat_key, thresholds in stat_map.items():
+                assert isinstance(thresholds, list)
+                thresholds.sort(key=lambda item: item.threshold)
+                if not _thresholds_are_monotonic(thresholds):
+                    continue
+                best_index = max(range(len(thresholds)), key=lambda index: thresholds[index].edge)
+                thresholds[best_index].is_best = True
+                best_edge = max(best_edge, thresholds[best_index].edge)
+                group_win_prob = max((threshold.probability_yes for threshold in thresholds), default=0.0)
+                best_win_prob = group_win_prob if best_win_prob is None else max(best_win_prob, group_win_prob)
+                stat_groups.append(
+                    TradeDeskStatGroupRead(
+                        stat_key=str(stat_key),
+                        thresholds=thresholds,
+                    )
+                )
+            if stat_groups:
+                player_props.append(
+                    TradeDeskPlayerPropRead(
+                        subject_name=str(subject_name),
+                        subject_team=subject_team,
+                        stat_groups=stat_groups,
+                        best_edge=best_edge,
+                        best_win_prob=best_win_prob,
+                    )
+                )
+
+        player_props.sort(key=lambda item: (-item.best_edge, item.subject_name.lower()))
+        sorted_game_lines = sorted(
+            game_lines,
+            key=lambda item: (
+                game_line_order.get(item.market_kind, 99),
+                -item.edge,
+                item.display_label.lower(),
+            ),
+        )
+        if not sorted_game_lines and not player_props:
+            continue
+        events.append(
+            TradeDeskEventRead(
+                event_id=event.id,
+                event_name=event.name,
+                event_status=event.status,
+                starts_at=event.starts_at,
+                sport_key=event.sport_key,
+                game_lines=sorted_game_lines,
+                player_props=player_props,
+            )
+        )
+
+    events.sort(
+        key=lambda item: (
+            _sport_order(item.sport_key),
+            item.starts_at or datetime.max.replace(tzinfo=timezone.utc),
+            item.event_name.lower(),
+        )
+    )
+
+    research_sports = [
+        row
+        for row in availability_rows
+        if row.availability_mode == "research_only" and (normalized_sport is None or row.sport_key == normalized_sport)
+    ]
+    return TradeDeskResponse(events=events, research_sports=research_sports)
+
+
+@router.get("/sports/availability", response_model=list[SportAvailabilityRead])
+def list_sport_availability(db: Session = Depends(get_db)) -> list[SportAvailabilityRead]:
+    return sorted(_sport_availability_rows(db), key=lambda item: _sport_order(item.sport_key))
+
+
+@router.get("/trade-desk", response_model=TradeDeskResponse)
+def get_trade_desk(
+    sport: str | None = None,
+    db: Session = Depends(get_db),
+) -> TradeDeskResponse:
+    return _build_trade_desk_response(db, sport=sport)
 
 
 @router.get("/watchlist/diagnostics", response_model=WatchlistDiagnosticsRead)

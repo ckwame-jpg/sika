@@ -253,6 +253,73 @@ class WatchlistCoverageRowRead(BaseModel):
     latest_prediction: PredictionRead | None = None
 
 
+AvailabilityMode = Literal["live", "research_only"]
+
+
+class SportAvailabilityRead(BaseModel):
+    sport_key: str
+    availability_mode: AvailabilityMode
+    events_count: int = 0
+    recommendations_count: int = 0
+    last_refresh_at: UTCDateTime | None = None
+
+
+class TradeDeskGameLineRead(BaseModel):
+    ticker: str
+    market_title: str
+    display_label: str
+    sport_key: str | None = None
+    market_kind: str
+    selected_side: str
+    projected_side_label: str | None = None
+    selected_side_probability: float | None = None
+    entry_price: float | None = None
+    edge: float
+    confidence: float
+    kalshi_url: str | None = None
+
+
+class TradeDeskThresholdRead(BaseModel):
+    ticker: str
+    threshold: float
+    probability_yes: float
+    selected_side: str
+    selected_side_probability: float | None = None
+    entry_price: float | None = None
+    edge: float
+    confidence: float
+    is_best: bool = False
+    kalshi_url: str | None = None
+
+
+class TradeDeskStatGroupRead(BaseModel):
+    stat_key: str
+    thresholds: list[TradeDeskThresholdRead] = Field(default_factory=list)
+
+
+class TradeDeskPlayerPropRead(BaseModel):
+    subject_name: str
+    subject_team: str | None = None
+    stat_groups: list[TradeDeskStatGroupRead] = Field(default_factory=list)
+    best_edge: float
+    best_win_prob: float | None = None
+
+
+class TradeDeskEventRead(BaseModel):
+    event_id: int
+    event_name: str
+    event_status: str
+    starts_at: UTCDateTime | None = None
+    sport_key: str
+    game_lines: list[TradeDeskGameLineRead] = Field(default_factory=list)
+    player_props: list[TradeDeskPlayerPropRead] = Field(default_factory=list)
+
+
+class TradeDeskResponse(BaseModel):
+    events: list[TradeDeskEventRead] = Field(default_factory=list)
+    research_sports: list[SportAvailabilityRead] = Field(default_factory=list)
+
+
 class RunSummaryCounts(BaseModel):
     sports_records_ingested: dict[str, int] = Field(default_factory=dict)
     total_kalshi_markets_seen: int = 0

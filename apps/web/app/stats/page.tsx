@@ -8,7 +8,7 @@ export default function StatsPage() {
     <>
       <Header
         title="Stats"
-        description="Global player query desk across NBA, MLB, NFL, Soccer, Tennis, and UFC"
+        description="Global player query desk across NBA, MLB, NFL, Soccer, and Tennis"
       />
       <main className="flex-1 overflow-hidden p-4">
         <StatsWorkspace />

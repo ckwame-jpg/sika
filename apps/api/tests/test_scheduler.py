@@ -1,6 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.api import routes
+from app.models import RefreshJob
 from app.services import scheduler
 
 
@@ -97,3 +98,33 @@ def test_health_endpoint_uses_sanitized_refresh_error_message(client, monkeypatc
     assert "sqlalche.me" not in payload["refresh_error_message"]
     assert payload["prop_refresh_status"] == "running"
     assert payload["prop_refresh_reason"] == "interval"
+
+
+def test_reconcile_stale_jobs_marks_old_active_jobs_failed(db_session):
+    stale_job = RefreshJob(
+        kind="refresh",
+        scope="current_slate",
+        reason="manual",
+        status="running",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=45),
+    )
+    fresh_job = RefreshJob(
+        kind="refresh",
+        scope="current_slate",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+    )
+    db_session.add_all([stale_job, fresh_job])
+    db_session.commit()
+
+    reconciled = scheduler.reconcile_stale_jobs(db_session)
+    db_session.commit()
+
+    assert reconciled == 1
+    db_session.refresh(stale_job)
+    db_session.refresh(fresh_job)
+    assert stale_job.status == "failed"
+    assert stale_job.error_message == "stalled - reconciled on startup"
+    assert stale_job.finished_at is not None
+    assert fresh_job.status == "queued"

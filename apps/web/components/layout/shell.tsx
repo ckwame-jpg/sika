@@ -3,8 +3,8 @@
 import { Sidebar } from "./sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Suspense } from "react";
-import { StatsAssistant } from "@/components/stats/stats-assistant";
 import { FreshnessBanner } from "@/components/layout/freshness-banner";
+import { ApiBoundary } from "@/components/shell/api-boundary";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -14,10 +14,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Sidebar />
         </Suspense>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <FreshnessBanner />
-          {children}
+          <ApiBoundary>
+            <FreshnessBanner />
+            {children}
+          </ApiBoundary>
         </div>
-        <StatsAssistant />
       </div>
     </TooltipProvider>
   );

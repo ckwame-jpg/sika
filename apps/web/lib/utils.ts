@@ -88,7 +88,6 @@ export const SPORT_OPTIONS = [
   { value: "MLB", label: "MLB", colorClass: "text-sport-mlb" },
   { value: "SOCCER", label: "Soccer", colorClass: "text-sport-soccer" },
   { value: "TENNIS", label: "Tennis", colorClass: "text-sport-tennis" },
-  { value: "UFC", label: "UFC", colorClass: "text-sport-ufc" },
 ] as const;
 
 export const SPORT_COLOR: Record<string, string> = {
@@ -97,7 +96,6 @@ export const SPORT_COLOR: Record<string, string> = {
   MLB: "sport-mlb",
   SOCCER: "sport-soccer",
   TENNIS: "sport-tennis",
-  UFC: "sport-ufc",
 };
 
 export function sportColorClass(sportKey: string | null | undefined): string {

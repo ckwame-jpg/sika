@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.config import get_settings
-from app.models import Event, Market, MarketSnapshot, Prediction, Recommendation
+from app.models import Event, EventParticipant, Market, MarketSnapshot, Prediction, Recommendation
 from app.services.predictions import OPEN_MARKET_STATUSES
 
 if TYPE_CHECKING:
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 CURRENT_WATCHLIST_SPORTS = frozenset({"NBA", "MLB"})
-CURRENT_WATCHLIST_MARKET_FAMILIES = frozenset({"winner", "player_prop"})
+CURRENT_WATCHLIST_MARKET_FAMILIES = frozenset({"winner", "game_line", "player_prop"})
 TERMINAL_EVENT_STATUSES = frozenset({"completed", "cancelled"})
 
 
@@ -78,11 +78,16 @@ def current_watchlist_markets(
     allowed_sports = {sport.upper()} if sport else set(CURRENT_WATCHLIST_SPORTS)
     markets = db.scalars(
         select(Market)
-        .options(joinedload(Market.event))
+        .options(
+            joinedload(Market.event)
+            .selectinload(Event.participants)
+            .joinedload(EventParticipant.participant)
+        )
         .where(Market.event_id.is_not(None), Market.status.in_(tuple(OPEN_MARKET_STATUSES)), Market.sport_key.in_(tuple(allowed_sports)))
     ).all()
 
     winners: dict[tuple[int, str], Market] = {}
+    game_lines: list[Market] = []
     props: list[Market] = []
     for market in markets:
         if not is_current_watchlist_market(market, now=now):
@@ -93,10 +98,12 @@ def current_watchlist_markets(
             existing = winners.get(winner_key)
             if existing is None or _winner_source_priority(market) < _winner_source_priority(existing):
                 winners[winner_key] = market
+        elif family == "game_line":
+            game_lines.append(market)
         elif family == "player_prop":
             props.append(market)
 
-    selected = [*winners.values(), *props]
+    selected = [*winners.values(), *game_lines, *props]
     selected.sort(key=_coverage_market_sort_key)
     return selected
 
@@ -139,40 +146,55 @@ def warm_current_watchlist_prop_context(
 def latest_snapshot_by_market_id(db: Session, market_ids: list[int]) -> dict[int, MarketSnapshot]:
     if not market_ids:
         return {}
+    max_id_per_market = (
+        select(
+            MarketSnapshot.market_id,
+            func.max(MarketSnapshot.id).label("max_id"),
+        )
+        .where(MarketSnapshot.market_id.in_(market_ids))
+        .group_by(MarketSnapshot.market_id)
+        .subquery()
+    )
     rows = db.scalars(
         select(MarketSnapshot)
-        .where(MarketSnapshot.market_id.in_(market_ids))
-        .order_by(MarketSnapshot.market_id.asc(), MarketSnapshot.captured_at.desc(), MarketSnapshot.id.desc())
+        .join(max_id_per_market, MarketSnapshot.id == max_id_per_market.c.max_id)
     ).all()
-    latest: dict[int, MarketSnapshot] = {}
-    for row in rows:
-        latest.setdefault(row.market_id, row)
-    return latest
+    return {row.market_id: row for row in rows}
 
 
 def latest_recommendation_by_market_id(db: Session, market_ids: list[int]) -> dict[int, Recommendation]:
     if not market_ids:
         return {}
+    max_id_per_market = (
+        select(
+            Recommendation.market_id,
+            func.max(Recommendation.id).label("max_id"),
+        )
+        .where(Recommendation.market_id.in_(market_ids))
+        .group_by(Recommendation.market_id)
+        .subquery()
+    )
     rows = db.scalars(
         select(Recommendation)
-        .where(Recommendation.market_id.in_(market_ids))
-        .order_by(Recommendation.market_id.asc(), Recommendation.captured_at.desc(), Recommendation.id.desc())
+        .join(max_id_per_market, Recommendation.id == max_id_per_market.c.max_id)
     ).all()
-    latest: dict[int, Recommendation] = {}
-    for row in rows:
-        latest.setdefault(row.market_id, row)
-    return latest
+    return {row.market_id: row for row in rows}
 
 
 def latest_prediction_by_market_id(db: Session, market_ids: list[int]) -> dict[int, Prediction]:
     if not market_ids:
         return {}
+    max_id_per_market = (
+        select(
+            Prediction.market_id,
+            func.max(Prediction.id).label("max_id"),
+        )
+        .where(Prediction.market_id.in_(market_ids))
+        .group_by(Prediction.market_id)
+        .subquery()
+    )
     rows = db.scalars(
         select(Prediction)
-        .where(Prediction.market_id.in_(market_ids))
-        .order_by(Prediction.market_id.asc(), Prediction.captured_at.desc(), Prediction.id.desc())
+        .join(max_id_per_market, Prediction.id == max_id_per_market.c.max_id)
     ).all()
-    latest: dict[int, Prediction] = {}
-    for row in rows:
-        latest.setdefault(row.market_id, row)
-    return latest
+    return {row.market_id: row for row in rows}

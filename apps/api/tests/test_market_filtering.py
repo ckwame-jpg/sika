@@ -106,3 +106,33 @@ def test_market_filter_rejects_unsupported_leagues_even_if_they_are_winner_marke
     }
 
     assert is_supported_market_payload(payload) is False
+
+
+def test_market_filter_accepts_supported_spread_and_total_game_lines():
+    spread_payload = {
+        "ticker": "KXNBASPREAD-26APR05MIABOS-BOS-4_5",
+        "event_ticker": "KXNBAGAME-26APR05MIABOS",
+        "title": "Boston wins by over 4.5 points",
+        "yes_sub_title": "Boston wins by over 4.5 points",
+    }
+    total_payload = {
+        "ticker": "KXNBATOTAL-26APR05MIABOS-220_5",
+        "event_ticker": "KXNBAGAME-26APR05MIABOS",
+        "title": "Over 220.5 points scored",
+        "yes_sub_title": "Over 220.5 points scored",
+    }
+
+    spread = classify_market_payload(spread_payload)
+    total = classify_market_payload(total_payload)
+
+    assert spread["supported"] is True
+    assert spread["metadata"]["copilot_market_family"] == "game_line"
+    assert spread["metadata"]["copilot_market_kind"] == "spread"
+    assert spread["metadata"]["copilot_subject_name"] == "Boston"
+    assert spread["metadata"]["copilot_threshold"] == 4.5
+
+    assert total["supported"] is True
+    assert total["metadata"]["copilot_market_family"] == "game_line"
+    assert total["metadata"]["copilot_market_kind"] == "total"
+    assert total["metadata"]["copilot_direction"] == "over"
+    assert total["metadata"]["copilot_threshold"] == 220.5

@@ -1,6 +1,6 @@
 /* ─── Mapped directly from apps/api/app/schemas.py ─── */
 
-export type SportKey = "NBA" | "NFL" | "MLB" | "SOCCER" | "TENNIS" | "UFC";
+export type SportKey = "NBA" | "NFL" | "MLB" | "SOCCER" | "TENNIS";
 
 export const SPORT_LABELS: Record<SportKey, string> = {
   NBA: "NBA",
@@ -8,7 +8,6 @@ export const SPORT_LABELS: Record<SportKey, string> = {
   MLB: "MLB",
   SOCCER: "Soccer",
   TENNIS: "Tennis",
-  UFC: "UFC",
 };
 
 export interface HealthResponse {
@@ -235,6 +234,70 @@ export interface WatchlistCoverageRowRead {
   latest_snapshot: MarketSnapshotRead | null;
   latest_recommendation: RecommendationRead | null;
   latest_prediction: PredictionRead | null;
+}
+
+export interface SportAvailabilityRead {
+  sport_key: string;
+  availability_mode: "live" | "research_only";
+  events_count: number;
+  recommendations_count: number;
+  last_refresh_at: string | null;
+}
+
+export interface TradeDeskGameLine {
+  ticker: string;
+  market_title: string;
+  display_label: string;
+  sport_key: string | null;
+  market_kind: string;
+  selected_side: string;
+  projected_side_label: string | null;
+  selected_side_probability: number | null;
+  entry_price: number | null;
+  edge: number;
+  confidence: number;
+  kalshi_url: string | null;
+}
+
+export interface TradeDeskThreshold {
+  ticker: string;
+  threshold: number;
+  probability_yes: number;
+  selected_side: string;
+  selected_side_probability: number | null;
+  entry_price: number | null;
+  edge: number;
+  confidence: number;
+  is_best: boolean;
+  kalshi_url: string | null;
+}
+
+export interface TradeDeskStatGroup {
+  stat_key: string;
+  thresholds: TradeDeskThreshold[];
+}
+
+export interface TradeDeskPlayerProp {
+  subject_name: string;
+  subject_team: string | null;
+  stat_groups: TradeDeskStatGroup[];
+  best_edge: number;
+  best_win_prob: number | null;
+}
+
+export interface TradeDeskEvent {
+  event_id: number;
+  event_name: string;
+  event_status: string;
+  starts_at: string | null;
+  sport_key: string;
+  game_lines: TradeDeskGameLine[];
+  player_props: TradeDeskPlayerProp[];
+}
+
+export interface TradeDeskResponse {
+  events: TradeDeskEvent[];
+  research_sports: SportAvailabilityRead[];
 }
 
 export interface MarketHistoryPointRead {

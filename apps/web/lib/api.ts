@@ -24,7 +24,9 @@ import type {
   RunDetailRead,
   RunRead,
   SportRead,
+  SportAvailabilityRead,
   StatsQueryRead,
+  TradeDeskResponse,
   WatchlistDiagnosticsRead,
   WatchlistCoverageRowRead,
 } from "./types";
@@ -35,20 +37,60 @@ async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
-    ...init,
-  });
-  if (!res.ok) {
-    const raw = await res.text().catch(() => res.statusText);
-    const text = raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
-    throw new Error(`${res.status} ${text}`);
+  const maxAttempts = init?.method && init.method !== "GET" ? 1 : 3;
+  const delays = [1000, 2000, 4000];
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      const res = await fetch(`${BASE}${path}`, {
+        headers: { "Content-Type": "application/json", ...init?.headers },
+        ...init,
+        signal: init?.signal ?? controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const raw = await res.text().catch(() => res.statusText);
+        const text = raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
+        const err = new Error(`${res.status} ${text}`) as Error & { status?: number };
+        err.status = res.status;
+        if (res.status >= 500 && attempt < maxAttempts - 1) {
+          lastError = err;
+          await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+          continue;
+        }
+        throw err;
+      }
+      return res.json() as Promise<T>;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const isNetworkError =
+        lastError.name === "AbortError" ||
+        lastError.name === "TypeError" ||
+        lastError.message.includes("fetch");
+      if (isNetworkError && attempt < maxAttempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+        continue;
+      }
+      throw lastError;
+    }
   }
-  return res.json() as Promise<T>;
+
+  throw lastError ?? new Error("Request failed");
 }
 
 export const fetchHealth = () => request<HealthResponse>("/health");
 export const fetchSports = () => request<SportRead[]>("/sports");
+export const fetchSportAvailability = () => request<SportAvailabilityRead[]>("/sports/availability");
+export const fetchTradeDesk = (sport?: string) => {
+  const params = new URLSearchParams();
+  if (sport) params.set("sport", sport);
+  const qs = params.toString();
+  return request<TradeDeskResponse>(`/trade-desk${qs ? `?${qs}` : ""}`);
+};
 
 export const fetchEvents = (sport?: string, day?: string) => {
   const params = new URLSearchParams();
@@ -224,6 +266,9 @@ export const queryStats = (body: {
 export const keys = {
   health: "/health",
   sports: "/sports",
+  sportAvailability: "/sports/availability",
+  tradeDesk: (sport?: string) =>
+    `/trade-desk?sport=${sport ?? ""}`,
   events: (sport?: string, day?: string) =>
     `/events?sport=${sport ?? ""}&day=${day ?? ""}`,
   watchlist: (sport?: string, limit = 50) =>

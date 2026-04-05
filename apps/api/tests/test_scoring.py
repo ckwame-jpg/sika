@@ -4,7 +4,13 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Recommendation, SignalSnapshot
-from app.services.scoring import ResolvedPropSubject, regenerate_watchlist, score_event
+from app.services.scoring import (
+    ResolvedPropSubject,
+    ScoredRecommendation,
+    _enforce_prop_monotonicity,
+    regenerate_watchlist,
+    score_event,
+)
 
 
 def test_score_event_aligns_yes_price_to_market_target(db_session):
@@ -329,6 +335,109 @@ def test_regenerate_watchlist_collapses_inverse_winner_duplicates(db_session):
         assert recommendations[0].scoring_diagnostics["selected_subject_name"] == "Utah Jazz"
     finally:
         settings.watchlist_min_selected_prob_heuristic_winner = original_floor
+
+
+def test_enforce_prop_monotonicity_suppresses_invalid_higher_threshold_recommendations():
+    lower_market = Market(
+        ticker="KXNBAREB-LOWER",
+        sport_key="NBA",
+        event_id=7,
+        title="Scottie Barnes: 8+ rebounds?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_market_kind": "player_prop",
+            "copilot_stat_key": "rebounds",
+            "copilot_threshold": 8.0,
+            "copilot_direction": "over",
+            "copilot_subject_name": "Scottie Barnes",
+            "copilot_subject_team": "TOR",
+        },
+    )
+    higher_market = Market(
+        ticker="KXNBAREB-HIGHER",
+        sport_key="NBA",
+        event_id=7,
+        title="Scottie Barnes: 10+ rebounds?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_market_kind": "player_prop",
+            "copilot_stat_key": "rebounds",
+            "copilot_threshold": 10.0,
+            "copilot_direction": "over",
+            "copilot_subject_name": "Scottie Barnes",
+            "copilot_subject_team": "TOR",
+        },
+    )
+
+    lower_scored = ScoredRecommendation(
+        recommendation=Recommendation(
+            event_id=7,
+            market_id=1,
+            side="yes",
+            action="buy",
+            status="active",
+            suggested_price=0.61,
+            edge=0.127,
+            confidence=0.71,
+            invalidation="Pull if YES entry moves above 0.6500",
+            rationale="Lower ladder rung remains favored.",
+            scoring_diagnostics={"selected_side_probability": 0.737},
+        ),
+        signal=SignalSnapshot(
+            event_id=7,
+            market_id=1,
+            confidence=0.71,
+            fair_yes_price=0.737,
+            fair_no_price=0.263,
+            edge=0.127,
+            reasons=[],
+            features={},
+            scoring_diagnostics={},
+        ),
+        metadata=lower_market.raw_data or {},
+    )
+    higher_scored = ScoredRecommendation(
+        recommendation=Recommendation(
+            event_id=7,
+            market_id=2,
+            side="yes",
+            action="buy",
+            status="active",
+            suggested_price=0.80,
+            edge=0.112,
+            confidence=0.69,
+            invalidation="Pull if YES entry moves above 0.8400",
+            rationale="Higher ladder rung is too aggressive here.",
+            scoring_diagnostics={"selected_side_probability": 0.912},
+        ),
+        signal=SignalSnapshot(
+            event_id=7,
+            market_id=2,
+            confidence=0.69,
+            fair_yes_price=0.912,
+            fair_no_price=0.088,
+            edge=0.112,
+            reasons=[],
+            features={},
+            scoring_diagnostics={},
+        ),
+        metadata=higher_market.raw_data or {},
+    )
+
+    scored_recommendations = [
+        (lower_market, lower_scored),
+        (higher_market, higher_scored),
+    ]
+
+    _enforce_prop_monotonicity(scored_recommendations)
+
+    assert higher_scored.signal.fair_yes_price == 0.737
+    assert higher_scored.signal.fair_no_price == 0.263
+    assert higher_scored.recommendation is None
+    assert higher_scored.signal.scoring_diagnostics["monotonicity_adjusted"] is True
+    assert "monotonicity_below_min_edge" in higher_scored.signal.scoring_diagnostics["suppression_reasons"]
 
 
 def _mlb_raw_event(home_name, away_name, home_abbr, away_abbr, home_lines, away_lines, home_era, away_era):

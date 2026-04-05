@@ -5,7 +5,7 @@ import { fetchHealth, keys } from "@/lib/api";
 import type { HealthResponse } from "@/lib/types";
 import { fmtRelative } from "@/lib/utils";
 
-export type SyncState = "refreshing" | "failed" | "stale" | "synced";
+export type SyncState = "refreshing" | "stalled" | "failed" | "stale" | "synced";
 export type SyncBadgeVariant = "positive" | "warning" | "negative";
 
 export interface SyncBadge {
@@ -20,15 +20,35 @@ export function useHealthStatus() {
   });
 }
 
+function isAnyJobStalled(health: HealthResponse): boolean {
+  const stalledMs = 10 * 60 * 1000;
+  const now = Date.now();
+  return [health.active_refresh_job, health.active_prop_refresh_job].some((job) => {
+    if (!job?.started_at) {
+      return false;
+    }
+    return now - new Date(job.started_at).getTime() > stalledMs;
+  });
+}
+
 export function getSyncState(health?: HealthResponse | null): SyncState | null {
   if (!health) return null;
-  if (health.refresh_status === "queued" || health.refresh_status === "running") {
-    return "refreshing";
+  const isRefreshing =
+    health.refresh_status === "queued" ||
+    health.refresh_status === "running" ||
+    health.prop_refresh_status === "queued" ||
+    health.prop_refresh_status === "running";
+
+  if (isRefreshing) {
+    return isAnyJobStalled(health) ? "stalled" : "refreshing";
   }
-  if (health.refresh_status === "failed" && health.data_stale) {
+  if (
+    (health.refresh_status === "failed" && health.data_stale) ||
+    (health.prop_refresh_status === "failed" && health.prop_data_stale)
+  ) {
     return "failed";
   }
-  if (health.data_stale) {
+  if (health.data_stale || health.prop_data_stale) {
     return "stale";
   }
   return "synced";
@@ -167,6 +187,12 @@ function getUserSafeRefreshErrorMessage(message?: string | null) {
 
 export function getFreshnessBanner(health?: HealthResponse | null) {
   if (!health) return null;
+  if (isAnyJobStalled(health)) {
+    return {
+      tone: "warning" as const,
+      message: "A refresh job appears stalled (running over 10 minutes). Cached data may be outdated. See Runs for details.",
+    };
+  }
   const refreshError = getUserSafeRefreshErrorMessage(health.refresh_error_message);
   const propRefreshError = getUserSafeRefreshErrorMessage(health.prop_refresh_error_message);
   const activeRefreshScope = health.active_refresh_job?.scope;

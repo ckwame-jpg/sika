@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from math import exp, tanh
-from statistics import pstdev
+from statistics import NormalDist, pstdev
 from typing import Any
 
 from sqlalchemy import desc, func, select
@@ -589,6 +589,18 @@ def _selected_subject_name(
     market_family = str(metadata.get("copilot_market_family") or "")
     if market_family == "player_prop":
         return str(metadata.get("copilot_subject_name") or default_subject_name or "").strip() or default_subject_name
+    if market_family == "game_line":
+        market_kind = str(metadata.get("copilot_market_kind") or "")
+        threshold = float(metadata.get("copilot_threshold") or 0.0)
+        if market_kind == "spread":
+            subject_name = str(metadata.get("copilot_subject_name") or default_subject_name or "").strip()
+            if side == "yes":
+                return subject_name or default_subject_name
+            return f"{subject_name} +{threshold:g}" if subject_name else default_subject_name
+        if market_kind == "total":
+            direction = str(metadata.get("copilot_direction") or "over").lower()
+            selected_direction = direction if side == "yes" else ("under" if direction == "over" else "over")
+            return f"{selected_direction.title()} {threshold:g}"
     if market is None:
         return default_subject_name
     yes_entry = _market_yes_entry(event, market)
@@ -817,6 +829,138 @@ def _score_team_winner(
         "right_sample_size": len(right_results),
     }
     return left_win_probability, confidence, reasons, features
+
+
+def _recent_score_pairs(
+    db: Session,
+    participant_id: int,
+    before: datetime,
+    limit: int = 10,
+) -> list[tuple[float, float]]:
+    events = db.scalars(
+        select(Event)
+        .join(EventParticipant, Event.id == EventParticipant.event_id)
+        .where(
+            EventParticipant.participant_id == participant_id,
+            Event.starts_at < before,
+            Event.status == "completed",
+        )
+        .order_by(desc(Event.starts_at))
+        .limit(limit)
+    ).all()
+    pairs: list[tuple[float, float]] = []
+    for past_event in events:
+        own_entry = next((entry for entry in past_event.participants if entry.participant_id == participant_id), None)
+        opp_entry = next((entry for entry in past_event.participants if entry.participant_id != participant_id), None)
+        if own_entry is None or opp_entry is None:
+            continue
+        if own_entry.score is None or opp_entry.score is None:
+            continue
+        pairs.append((float(own_entry.score), float(opp_entry.score)))
+    return pairs
+
+
+def _avg_points_for(pairs: list[tuple[float, float]]) -> float:
+    if not pairs:
+        return 0.0
+    return sum(points_for for points_for, _ in pairs) / len(pairs)
+
+
+def _avg_points_allowed(pairs: list[tuple[float, float]]) -> float:
+    if not pairs:
+        return 0.0
+    return sum(points_against for _, points_against in pairs) / len(pairs)
+
+
+def _avg_margin_from_pairs(pairs: list[tuple[float, float]]) -> float:
+    if not pairs:
+        return 0.0
+    return sum(points_for - points_against for points_for, points_against in pairs) / len(pairs)
+
+
+def _avg_total_from_pairs(pairs: list[tuple[float, float]]) -> float:
+    if not pairs:
+        return 0.0
+    return sum(points_for + points_against for points_for, points_against in pairs) / len(pairs)
+
+
+def _score_game_line(
+    db: Session,
+    event: Event,
+    market: Market,
+    left: EventParticipant,
+    right: EventParticipant,
+) -> tuple[float, float, list[str], dict[str, Any]] | None:
+    metadata = _market_metadata(market)
+    market_kind = str(metadata.get("copilot_market_kind") or "")
+    threshold = float(metadata.get("copilot_threshold") or 0.0)
+    direction = str(metadata.get("copilot_direction") or "over").lower()
+    left_pairs = _recent_score_pairs(db, left.participant_id, event.starts_at)
+    right_pairs = _recent_score_pairs(db, right.participant_id, event.starts_at)
+    sample_size = min(len(left_pairs), 10) + min(len(right_pairs), 10)
+
+    if market_kind == "spread":
+        yes_entry_target = _market_yes_entry(event, market)
+        if yes_entry_target is None:
+            return None
+
+        expected_left_score = (
+            _avg_points_for(left_pairs) + _avg_points_allowed(right_pairs)
+        ) / 2
+        expected_right_score = (
+            _avg_points_for(right_pairs) + _avg_points_allowed(left_pairs)
+        ) / 2
+        if left.is_home:
+            expected_left_score += 1.5
+        elif right.is_home:
+            expected_right_score += 1.5
+
+        expected_margin = expected_left_score - expected_right_score
+        if yes_entry_target.participant_id != left.participant_id:
+            expected_margin *= -1
+
+        sigma = max(4.5, 10.5 - min(sample_size, 10) * 0.25)
+        probability_yes = clamp(1 - NormalDist(mu=expected_margin, sigma=sigma).cdf(threshold), 0.05, 0.95)
+        confidence = clamp(0.28 + (sample_size / 20.0) + abs(probability_yes - 0.5) * 0.35, 0.25, 0.9)
+        reasons = [
+            f"Projected margin for {yes_entry_target.participant.display_name}: {expected_margin:.1f}",
+            f"Market line asks for over {threshold:.1f}",
+        ]
+        features = {
+            "expected_margin": round(expected_margin, 4),
+            "line_threshold": threshold,
+            "distribution_sigma": round(sigma, 4),
+            "left_average_margin": round(_avg_margin_from_pairs(left_pairs), 4),
+            "right_average_margin": round(_avg_margin_from_pairs(right_pairs), 4),
+            "sample_size": sample_size,
+            "left_sample_size": len(left_pairs),
+            "right_sample_size": len(right_pairs),
+        }
+        return probability_yes, confidence, reasons, features
+
+    if market_kind == "total":
+        expected_total = (_avg_total_from_pairs(left_pairs) + _avg_total_from_pairs(right_pairs)) / 2
+        sigma = max(7.5, 15.0 - min(sample_size, 10) * 0.35)
+        over_probability = clamp(1 - NormalDist(mu=expected_total, sigma=sigma).cdf(threshold), 0.05, 0.95)
+        probability_yes = over_probability if direction == "over" else round(1 - over_probability, 4)
+        confidence = clamp(0.26 + (sample_size / 20.0) + abs(probability_yes - 0.5) * 0.35, 0.24, 0.88)
+        reasons = [
+            f"Projected combined total: {expected_total:.1f}",
+            f"Market line: {direction.title()} {threshold:.1f}",
+        ]
+        features = {
+            "expected_total": round(expected_total, 4),
+            "line_threshold": threshold,
+            "distribution_sigma": round(sigma, 4),
+            "left_average_total": round(_avg_total_from_pairs(left_pairs), 4),
+            "right_average_total": round(_avg_total_from_pairs(right_pairs), 4),
+            "sample_size": sample_size,
+            "left_sample_size": len(left_pairs),
+            "right_sample_size": len(right_pairs),
+        }
+        return probability_yes, confidence, reasons, features
+
+    return None
 
 
 def _prop_value_from_raw(sport_key: str, stat_key: str, raw: dict[str, float]) -> float:
@@ -1286,6 +1430,14 @@ def _build_scored_recommendation(
             return None
         probability_yes, confidence, reasons, features = prop_score
         probability_subject = str(metadata.get("copilot_subject_name") or "Player")
+    elif market and market_family == "game_line":
+        if not left or not right:
+            return None
+        game_line_score = _score_game_line(db, event, market, left, right)
+        if game_line_score is None:
+            return None
+        probability_yes, confidence, reasons, features = game_line_score
+        probability_subject = str(metadata.get("copilot_subject_name") or metadata.get("copilot_display_line_label") or market.title)
     else:
         if not left or not right:
             return None
@@ -1364,7 +1516,14 @@ def _build_scored_recommendation(
     yes_edge = fair_yes_price - yes_entry if yes_entry is not None else 0.0
     no_edge = fair_no_price - no_entry if no_entry is not None else 0.0
 
-    probability_label = "Model win probability" if market_family != "player_prop" else "Model YES probability"
+    if market_family == "player_prop":
+        probability_label = "Model YES probability"
+    elif market_kind == "spread":
+        probability_label = "Model cover probability"
+    elif market_kind == "total":
+        probability_label = "Model total-side probability"
+    else:
+        probability_label = "Model win probability"
     reasons = [*reasons, f"{probability_label} for {probability_subject}: {probability_yes:.0%}"]
 
     if not market:
@@ -1408,7 +1567,58 @@ def _build_scored_recommendation(
             metadata=metadata,
         )
 
-    if yes_edge >= no_edge:
+    force_yes_prop = market_family == "player_prop" and settings.prefer_yes_side_props
+    if force_yes_prop:
+        side = "yes"
+        edge = yes_edge
+        suggested_price = yes_entry if yes_entry is not None else fair_yes_price
+        invalidation = f"Pull if YES entry moves above {min(fair_yes_price + 0.04, 0.99):.4f}"
+        scoring_diagnostics["yes_side_forced"] = True
+        if yes_edge < 0:
+            selection_score, signal_diagnostics = _finalize_single_scoring_diagnostics(
+                diagnostics={
+                    **scoring_diagnostics,
+                    "suppression_reasons": [
+                        *list(scoring_diagnostics.get("suppression_reasons") or []),
+                        "yes_side_negative_edge",
+                    ],
+                },
+                selected_side_probability=_selected_side_probability(probability_yes, "yes"),
+                selected_edge=yes_edge,
+                adjusted_confidence=confidence,
+            )
+            heuristic_metadata = dict(active_lineage.model_metadata or {})
+            heuristic_metadata.update(
+                {
+                    "family_key": family_key,
+                    "desired_mode": runtime_decision.desired_mode if runtime_decision else "heuristic",
+                    "effective_mode": served_mode,
+                    "runtime_health": runtime_decision.runtime_health if runtime_decision else "healthy",
+                }
+            )
+            signal = SignalSnapshot(
+                event_id=event.id,
+                market_id=market.id if market else None,
+                model_name=active_lineage.model_name if active_lineage.model_name else MODEL_NAME,
+                model_version=active_lineage.model_version,
+                calibration_version=active_lineage.calibration_version,
+                feature_set_version=active_lineage.feature_set_version,
+                model_metadata=heuristic_metadata,
+                confidence=confidence,
+                fair_yes_price=fair_yes_price,
+                fair_no_price=fair_no_price,
+                edge=max(yes_edge, no_edge),
+                selection_score=selection_score,
+                reasons=reasons,
+                features=features,
+                scoring_diagnostics=signal_diagnostics,
+            )
+            return ScoredRecommendation(
+                recommendation=None,
+                signal=signal,
+                metadata=metadata,
+            )
+    elif yes_edge >= no_edge:
         side = "yes"
         edge = yes_edge
         suggested_price = yes_entry if yes_entry is not None else fair_yes_price
@@ -1572,6 +1782,67 @@ def _quality_tier_rank(value: str | None) -> int:
     return {"high": 2, "medium": 1, "low": 0}.get((value or "").lower(), -1)
 
 
+def _enforce_prop_monotonicity(
+    scored_recommendations: list[tuple[Market, ScoredRecommendation]],
+) -> None:
+    from collections import defaultdict
+
+    settings = get_settings()
+    grouped: dict[tuple[int, str, str], list[tuple[Market, ScoredRecommendation]]] = defaultdict(list)
+    for market, scored in scored_recommendations:
+        metadata = scored.metadata or {}
+        if str(metadata.get("copilot_market_family") or "") != "player_prop":
+            continue
+        subject_name = str(metadata.get("copilot_subject_name") or "").strip()
+        stat_key = str(metadata.get("copilot_stat_key") or "").strip()
+        threshold = metadata.get("copilot_threshold")
+        if not subject_name or not stat_key or threshold is None or market.event_id is None:
+            continue
+        grouped[(market.event_id, subject_name.lower(), stat_key)].append((market, scored))
+
+    for group in grouped.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda item: float((item[1].metadata or {}).get("copilot_threshold") or 0.0))
+        for index in range(1, len(group)):
+            previous_scored = group[index - 1][1]
+            current_scored = group[index][1]
+            previous_probability = float(previous_scored.signal.fair_yes_price or 0.0)
+            current_probability = float(current_scored.signal.fair_yes_price or 0.0)
+            if current_probability <= previous_probability:
+                continue
+
+            clamped_probability = round(previous_probability, 4)
+            current_scored.signal.fair_yes_price = clamped_probability
+            current_scored.signal.fair_no_price = round(1 - clamped_probability, 4)
+
+            signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
+            signal_diagnostics["monotonicity_adjusted"] = True
+            current_scored.signal.scoring_diagnostics = signal_diagnostics
+
+            recommendation = current_scored.recommendation
+            if recommendation is None:
+                continue
+
+            recommendation.edge = round(clamped_probability - recommendation.suggested_price, 4)
+            recommendation.scoring_diagnostics = {
+                **dict(recommendation.scoring_diagnostics or {}),
+                "selected_side_probability": clamped_probability,
+                "monotonicity_adjusted": True,
+            }
+
+            if recommendation.edge < settings.watchlist_min_edge:
+                suppression_reasons = [
+                    *list(current_scored.signal.scoring_diagnostics.get("suppression_reasons") or []),
+                    "monotonicity_below_min_edge",
+                ]
+                current_scored.signal.scoring_diagnostics = {
+                    **dict(current_scored.signal.scoring_diagnostics or {}),
+                    "suppression_reasons": suppression_reasons,
+                }
+                current_scored.recommendation = None
+
+
 def _dedupe_winner_recommendations(
     scored_recommendations: list[tuple[Market, ScoredRecommendation]],
 ) -> tuple[list[tuple[Market, ScoredRecommendation]], int, int]:
@@ -1674,6 +1945,7 @@ def regenerate_watchlist(
                 if "critical_market_snapshot_missing" in suppression_reasons:
                     summary.critical_context_suppressed += 1
 
+    _enforce_prop_monotonicity(pending_recommendations)
     deduped_recommendations, collapsed_count, combo_suppressed = _dedupe_winner_recommendations(pending_recommendations)
     summary.inverse_winner_duplicates_collapsed = collapsed_count
     summary.combo_prop_candidates_suppressed += combo_suppressed

@@ -21,11 +21,18 @@ SUPPORTED_SPORT_HINTS = {
     "MLB": ("MLB",),
     "SOCCER": ("SOCCER", "MLS", "EPL", "UEFA", "UCL", "FIFA", "EURO", "LALIGA", "SERIEA", "BUNDESLIGA", "LIGUE1"),
     "TENNIS": ("TENNIS", "ATP", "WTA", "ITF", "CHALLENGER"),
-    "UFC": ("UFC",),
 }
 
 PLAYER_PROP_TITLE_RE = re.compile(
     r"^(?P<subject>.+?):\s*(?P<threshold>\d+(?:\.\d+)?)\+\s+(?P<phrase>.+?)(?:\?)?$",
+    re.IGNORECASE,
+)
+GAME_SPREAD_TITLE_RE = re.compile(
+    r"^(?P<subject>.+?)\s+wins\s+by\s+over\s+(?P<threshold>\d+(?:\.\d+)?)\s+(?P<unit>points|runs)(?:\?)?$",
+    re.IGNORECASE,
+)
+GAME_TOTAL_TITLE_RE = re.compile(
+    r"^(?P<direction>over|under)\s+(?P<threshold>\d+(?:\.\d+)?)\s+(?P<unit>points|runs)\s+scored(?:\?)?$",
     re.IGNORECASE,
 )
 TICKER_TEAM_HINT_RE = re.compile(r"-(?P<segment>[A-Z0-9']+)-\d+(?:\.\d+)?$")
@@ -170,6 +177,12 @@ def classify_market_payload(payload: dict[str, Any]) -> dict[str, Any]:
         result["metadata"] = winner_metadata
         return result
 
+    game_line_metadata = _game_line_metadata(payload, sport_key)
+    if game_line_metadata:
+        result["supported"] = True
+        result["metadata"] = game_line_metadata
+        return result
+
     prop_result = _player_prop_metadata(payload, sport_key)
     if prop_result:
         if prop_result.get("unsupported_reason"):
@@ -227,6 +240,47 @@ def _winner_market_metadata(payload: dict[str, Any], sport_key: str, lowered_tit
             "copilot_market_kind": "game_winner",
             "copilot_direction": "yes",
             "copilot_subject_name": yes_label,
+        }
+
+    return None
+
+
+def _game_line_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, Any] | None:
+    if sport_key not in {"NBA", "NFL", "MLB", "SOCCER"}:
+        return None
+
+    title = str(payload.get("title") or "").strip()
+    spread_match = GAME_SPREAD_TITLE_RE.match(title)
+    if spread_match:
+        threshold = float(spread_match.group("threshold"))
+        subject_name = spread_match.group("subject").strip()
+        unit = spread_match.group("unit").lower()
+        return {
+            "copilot_market_family": "game_line",
+            "copilot_market_kind": "spread",
+            "copilot_stat_key": f"margin_{unit}",
+            "copilot_threshold": threshold,
+            "copilot_direction": "over",
+            "copilot_subject_name": subject_name,
+            "copilot_unit": unit,
+            "copilot_display_market_title": f"{subject_name} wins by over {threshold:g} {unit}",
+            "copilot_display_line_label": f"{subject_name} -{threshold:g}",
+        }
+
+    total_match = GAME_TOTAL_TITLE_RE.match(title)
+    if total_match:
+        threshold = float(total_match.group("threshold"))
+        direction = total_match.group("direction").lower()
+        unit = total_match.group("unit").lower()
+        return {
+            "copilot_market_family": "game_line",
+            "copilot_market_kind": "total",
+            "copilot_stat_key": f"total_{unit}",
+            "copilot_threshold": threshold,
+            "copilot_direction": direction,
+            "copilot_unit": unit,
+            "copilot_display_market_title": f"{direction.title()} {threshold:g} {unit} scored",
+            "copilot_display_line_label": f"{direction.title()} {threshold:g}",
         }
 
     return None

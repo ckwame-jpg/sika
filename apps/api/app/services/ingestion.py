@@ -27,10 +27,9 @@ SPORT_LABELS = {
     "MLB": "MLB",
     "SOCCER": "Soccer",
     "TENNIS": "TENNIS",
-    "UFC": "UFC",
 }
 
-FREE_PROVIDER_SPORTS = {"SOCCER", "TENNIS", "UFC"}
+FREE_PROVIDER_SPORTS = {"SOCCER", "TENNIS"}
 PUBLIC_MAJOR_SPORTS = {"NBA", "NFL", "MLB"}
 
 
@@ -86,7 +85,10 @@ def is_supported_market_payload(payload: dict) -> bool:
 
 
 def seed_sports(db: Session) -> None:
+    enabled_sports = {sport.upper() for sport in get_settings().enabled_sports}
     for key, name in SPORT_LABELS.items():
+        if key not in enabled_sports:
+            continue
         existing = db.scalar(select(Sport).where(Sport.key == key))
         if not existing:
             db.add(Sport(key=key, name=name))
@@ -586,6 +588,7 @@ def run_refresh_cycle(
                 lookback_days=settings.current_slate_lookback_days if current_slate_only else None,
                 lookahead_days=settings.current_slate_lookahead_days if current_slate_only else None,
             )
+            db.commit()
             kalshi_summary = refresh_kalshi_markets(
                 db,
                 client=kalshi_client,
@@ -594,6 +597,7 @@ def run_refresh_cycle(
                 discover_combo_props=False,
             )
             mapped_count = map_markets_to_events(db)
+            db.commit()
             current_watchlist_resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
             current_watchlist_summary = warm_current_watchlist_prop_context(db, resolver=current_watchlist_resolver)
             target_market_ids = {market.id for market in current_watchlist_markets(db)} if current_slate_only else None
@@ -606,6 +610,7 @@ def run_refresh_cycle(
                 replace_all=not current_slate_only,
                 capture_parlays=not current_slate_only,
             )
+            db.commit()
             if current_slate_only:
                 shadow_prediction_count, shadow_parlay_prediction_count = 0, 0
             else:
@@ -680,6 +685,7 @@ def run_prop_refresh_cycle(
                 discover_combo_props=True,
             )
             mapped_count = map_markets_to_events(db)
+            db.commit()
             resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
             warm_summary = warm_prop_context_cache(db, resolver=resolver)
             watchlist_summary = regenerate_watchlist(
@@ -687,6 +693,7 @@ def run_prop_refresh_cycle(
                 run_id=run.id,
                 resolver=resolver,
             )
+            db.commit()
             run.details, records = _build_watchlist_run_details(
                 db,
                 sports=sports,

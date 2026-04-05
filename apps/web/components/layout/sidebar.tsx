@@ -5,18 +5,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
-  Calendar,
   CandlestickChart,
   BarChart3,
   ChevronRight,
-  ClipboardList,
   DatabaseZap,
   FileText,
-  LayoutDashboard,
   Menu,
   RefreshCw,
   Settings2,
-  Star,
   Target,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,19 +32,12 @@ import { SPORT_OPTIONS, cn } from "@/lib/utils";
 import { useSportQueryParam } from "@/components/filters/sport-filter-select";
 
 const NAV = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
-  { href: "/watchlist", label: "Watchlist", icon: Star },
-  { href: "/markets", label: "Markets", icon: CandlestickChart },
+  { href: "/trade", label: "Trade", icon: CandlestickChart },
   { href: "/stats", label: "Stats", icon: BarChart3 },
-  { href: "/runs", label: "Runs", icon: DatabaseZap },
   { href: "/predictions", label: "Predictions", icon: Target },
-  { href: "/events", label: "Events", icon: Calendar },
+  { href: "/positions", label: "Portfolio", icon: FileText },
+  { href: "/runs", label: "Runs", icon: DatabaseZap },
   { href: "/settings", label: "Settings", icon: Settings2 },
-];
-
-const POSITIONS_NAV = [
-  { href: "/positions", label: "Paper", icon: FileText, exact: true },
-  { href: "/positions/demo", label: "Demo Orders", icon: ClipboardList, exact: true },
 ];
 
 function isActivePath(pathname: string, href: string, exact: boolean) {
@@ -142,19 +131,38 @@ function SportFilter({ onNavigate }: { onNavigate?: () => void }) {
 
 function SyncStatusBadges() {
   const { data: health } = useHealthStatus();
+  const syncState = getSyncState(health);
   const marketBadge = getMarketSyncBadge(health);
   const propBadge = getPropSyncBadge(health);
-  if (!marketBadge || !propBadge) return null;
+  if (!marketBadge && !propBadge) return null;
+
+  const variants = [marketBadge?.variant, propBadge?.variant].filter(Boolean);
+  const variant = variants.includes("negative")
+    ? "negative"
+    : variants.includes("warning")
+      ? "warning"
+      : "positive";
+
+  let label = "Live";
+  if (syncState === "stalled") {
+    label = "Refresh stalled";
+  } else if (syncState === "refreshing") {
+    label = "Refreshing...";
+  } else if (variant === "negative") {
+    label = marketBadge?.variant === "negative" ? marketBadge.text : (propBadge?.text ?? "Failed");
+  } else if (variant === "warning") {
+    const staleItems: string[] = [];
+    if (marketBadge?.variant === "warning") staleItems.push("Markets");
+    if (propBadge?.variant === "warning") staleItems.push("Props");
+    label = staleItems.length > 0 ? `${staleItems.join(" & ")} stale` : (marketBadge?.text ?? "Stale");
+  }
+
+  const title = [marketBadge?.title, propBadge?.title].filter(Boolean).join(" ");
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <Badge variant={marketBadge.variant} className="max-w-full" title={marketBadge.title}>
-        {marketBadge.text}
-      </Badge>
-      <Badge variant={propBadge.variant} className="max-w-full" title={propBadge.title}>
-        {propBadge.text}
-      </Badge>
-    </div>
+    <Badge variant={variant} className="max-w-full" title={title}>
+      {label}
+    </Badge>
   );
 }
 
@@ -193,17 +201,6 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
             <NavItem key={item.href} {...item} onNavigate={onNavigate} />
           ))}
         </nav>
-
-        <div>
-          <p className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Positions
-          </p>
-          <nav className="space-y-0.5">
-            {POSITIONS_NAV.map((item) => (
-              <NavItem key={item.href} {...item} onNavigate={onNavigate} />
-            ))}
-          </nav>
-        </div>
 
         <div>
           <p className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
