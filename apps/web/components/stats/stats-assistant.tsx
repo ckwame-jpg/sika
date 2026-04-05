@@ -35,7 +35,7 @@ export function StatsAssistant() {
           <SheetHeader>
             <SheetTitle>sika stats</SheetTitle>
             <SheetDescription>
-              Global assistant for NBA, MLB, NFL, Soccer, Tennis, and UFC queries.
+              Player stats assistant for NBA, NFL, and MLB.
             </SheetDescription>
           </SheetHeader>
           <SheetBody className="overflow-hidden">
