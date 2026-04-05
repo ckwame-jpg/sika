@@ -16,6 +16,8 @@ import type {
 } from "@/lib/types";
 import { cn, fmtPercent, sportLabel } from "@/lib/utils";
 
+type MarketFilter = "all" | "player_props" | "game_lines";
+
 interface SelectedThreshold {
   subjectName: string;
   subjectTeam: string | null;
@@ -163,7 +165,9 @@ function groupWatchlistForTradeDesk(
 
   return {
     events: Array.from(eventMap.values()).sort((a, b) => {
-      if (!a.starts_at || !b.starts_at) return 0;
+      if (!a.starts_at && !b.starts_at) return 0;
+      if (!a.starts_at) return 1;
+      if (!b.starts_at) return -1;
       return new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime();
     }),
     research_sports: [],
@@ -172,6 +176,7 @@ function groupWatchlistForTradeDesk(
 
 export function TradeDesk({ sport }: { sport?: string }) {
   const [selected, setSelected] = useState<SelectedThreshold | null>(null);
+  const [marketFilter, setMarketFilter] = useState<MarketFilter>("all");
 
   // Try the trade-desk endpoint first, fall back to watchlist
   const { data: tradeDeskData, error: tradeDeskError } = useSWR<TradeDeskResponse>(
@@ -198,6 +203,21 @@ export function TradeDesk({ sport }: { sport?: string }) {
     );
   }
 
+  // Toggle: clicking the already-selected threshold deselects it
+  function handleSelectThreshold(
+    subjectName: string,
+    subjectTeam: string | null,
+    statKey: string,
+    threshold: TradeDeskThreshold,
+    eventName: string,
+  ) {
+    if (selected?.threshold.ticker === threshold.ticker) {
+      setSelected(null);
+    } else {
+      setSelected({ subjectName, subjectTeam, statKey, threshold, eventName });
+    }
+  }
+
   if (data.events.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
@@ -211,97 +231,138 @@ export function TradeDesk({ sport }: { sport?: string }) {
     );
   }
 
+  const hasGameLines = data.events.some((e) => e.game_lines.length > 0);
+  const hasPlayerProps = data.events.some((e) => e.player_props.length > 0);
+  const showFilterTabs = hasGameLines && hasPlayerProps;
+
   return (
-    <div className="flex gap-6">
-      {/* Left pane: event/prop ladders */}
-      <div className="flex min-w-0 flex-1 flex-col gap-6">
-        {data.events.map((event) => (
-          <div key={event.event_name} className="space-y-3">
-            <EventSection event={event} />
+    <div className="space-y-4">
+      {/* Market type filter tabs */}
+      {showFilterTabs && (
+        <div className="flex gap-1 rounded-lg border border-border bg-surface p-1">
+          {(
+            [
+              { value: "all", label: "All" },
+              { value: "player_props", label: "Player Props" },
+              { value: "game_lines", label: "Game Lines" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => setMarketFilter(tab.value)}
+              className={cn(
+                "flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                marketFilter === tab.value
+                  ? "bg-accent/15 text-accent"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
-            {/* Game lines */}
-            {event.game_lines.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Game Lines
-                </p>
-                {event.game_lines.map((gl) => (
-                  <GameLineRow key={gl.id} rec={gl} />
-                ))}
+      <div className="flex gap-6">
+        {/* Left pane: event/prop ladders */}
+        <div className="flex min-w-0 flex-1 flex-col gap-6">
+          {data.events.map((event) => {
+            const showGL =
+              marketFilter !== "player_props" && event.game_lines.length > 0;
+            const showPP =
+              marketFilter !== "game_lines" && event.player_props.length > 0;
+
+            if (!showGL && !showPP) return null;
+
+            return (
+              <div key={event.event_name} className="space-y-3">
+                <EventSection event={event} />
+
+                {/* Game lines */}
+                {showGL && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      Game Lines
+                    </p>
+                    {event.game_lines.map((gl) => (
+                      <GameLineRow key={gl.id} rec={gl} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Player props */}
+                {showPP && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      Player Props
+                    </p>
+                    {event.player_props.map((player) => (
+                      <PlayerPropGroup
+                        key={player.subject_name}
+                        player={player}
+                        selectedTicker={selected?.threshold.ticker}
+                        onSelectThreshold={(name, team, statKey, threshold) =>
+                          handleSelectThreshold(
+                            name,
+                            team,
+                            statKey,
+                            threshold,
+                            event.event_name,
+                          )
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
+            );
+          })}
 
-            {/* Player props */}
-            {event.player_props.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Player Props
-                </p>
-                {event.player_props.map((player) => (
-                  <PlayerPropGroup
-                    key={player.subject_name}
-                    player={player}
-                    selectedTicker={selected?.threshold.ticker}
-                    onSelectThreshold={(name, team, statKey, threshold) =>
-                      setSelected({
-                        subjectName: name,
-                        subjectTeam: team,
-                        statKey,
-                        threshold,
-                        eventName: event.event_name,
-                      })
-                    }
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* Research sports */}
-        {data.research_sports.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Research
-            </p>
-            {data.research_sports.map((rs) => (
-              <div
-                key={rs.sport_key}
-                className="flex items-center justify-between rounded-lg border border-border/60 bg-surface/50 px-4 py-3"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-foreground">
-                    {sportLabel(rs.sport_key)}
-                  </span>
-                  <Badge variant="outline" className="text-[10px]">
-                    Research
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <span>{rs.events_count} events</span>
-                  {rs.last_refresh_at && (
-                    <span>
-                      Last refresh:{" "}
-                      {new Date(rs.last_refresh_at).toLocaleDateString()}
+          {/* Research sports */}
+          {data.research_sports.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Research
+              </p>
+              {data.research_sports.map((rs) => (
+                <div
+                  key={rs.sport_key}
+                  className="flex items-center justify-between rounded-lg border border-border/60 bg-surface/50 px-4 py-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-foreground">
+                      {sportLabel(rs.sport_key)}
                     </span>
-                  )}
+                    <Badge variant="outline" className="text-[10px]">
+                      Research
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                    <span>{rs.events_count} events</span>
+                    {rs.last_refresh_at && (
+                      <span>
+                        Last refresh:{" "}
+                        {new Date(rs.last_refresh_at).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </div>
 
-      {/* Right pane: sticky trade ticket (desktop only) */}
-      <div className="sticky top-4 hidden w-72 shrink-0 self-start lg:block">
-        <TradeTicket
-          marketTitle={selected?.eventName ?? ""}
-          subjectName={selected?.subjectName}
-          subjectTeam={selected?.subjectTeam}
-          statKey={selected?.statKey}
-          threshold={selected?.threshold}
-          ticker={selected?.threshold.ticker}
-        />
+        {/* Right pane: sticky trade ticket (desktop only) */}
+        <div className="sticky top-4 hidden w-72 shrink-0 self-start lg:block">
+          <TradeTicket
+            marketTitle={selected?.eventName ?? ""}
+            subjectName={selected?.subjectName}
+            subjectTeam={selected?.subjectTeam}
+            statKey={selected?.statKey}
+            threshold={selected?.threshold}
+            ticker={selected?.threshold?.ticker}
+          />
+        </div>
       </div>
 
       {/* Mobile bottom sheet — backdrop */}

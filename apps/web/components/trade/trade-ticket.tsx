@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { ExternalLink } from "lucide-react";
 import { cn, fmtPercent, fmtPrice } from "@/lib/utils";
 import type { TradeDeskThreshold } from "@/lib/types";
 
@@ -15,16 +14,21 @@ interface TradeTicketProps {
   onClose?: () => void;
 }
 
+function kalshiUrl(ticker?: string) {
+  if (!ticker) return null;
+  // Kalshi event tickers are the prefix before the last hyphen segment
+  return `https://kalshi.com/markets/${ticker}`;
+}
+
 export function TradeTicket({
   marketTitle,
   subjectName,
   subjectTeam,
   statKey,
   threshold,
+  ticker,
   onClose,
 }: TradeTicketProps) {
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
   if (!threshold) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-border bg-surface p-6 text-center">
@@ -34,6 +38,8 @@ export function TradeTicket({
       </div>
     );
   }
+
+  const url = kalshiUrl(ticker ?? threshold.ticker);
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
@@ -56,20 +62,20 @@ export function TradeTicket({
         )}
       </div>
 
-      <div className="flex items-center gap-2">
-        <Button size="sm" className="flex-1 bg-positive/90 hover:bg-positive text-positive-foreground">
-          Buy Yes
-        </Button>
-        {showAdvanced && (
-          <Button
-            size="sm"
-            variant="secondary"
-            className="flex-1 border-negative/40 text-negative hover:bg-negative/10"
-          >
-            Buy No
-          </Button>
-        )}
-      </div>
+      {url && (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
+            "bg-positive/90 text-positive-foreground hover:bg-positive",
+          )}
+        >
+          Trade on Kalshi
+          <ExternalLink size={13} />
+        </a>
+      )}
 
       <div className="grid grid-cols-2 gap-3 text-center">
         <div className="rounded bg-positive/10 px-3 py-2">
@@ -94,12 +100,16 @@ export function TradeTicket({
             {(threshold.edge * 100).toFixed(1)}%
           </span>
         </span>
-        <button
-          className="text-xs text-muted-foreground underline hover:text-foreground"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-        >
-          {showAdvanced ? "Simple" : "Advanced"}
-        </button>
+        {url && (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-muted-foreground underline hover:text-foreground"
+          >
+            View on Kalshi
+          </a>
+        )}
       </div>
     </div>
   );
