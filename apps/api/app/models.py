@@ -360,6 +360,7 @@ class ShadowInference(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     run_id = Column(Integer, ForeignKey("runs.id"), nullable=True, index=True)
+    source_prediction_id = Column(Integer, ForeignKey("predictions.id"), nullable=True, index=True)
     event_id = Column(Integer, ForeignKey("events.id"), nullable=True, index=True)
     market_id = Column(Integer, ForeignKey("markets.id"), nullable=True, index=True)
     ticker = Column(String, nullable=False, index=True)
@@ -390,6 +391,7 @@ class ShadowInference(Base):
     captured_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
 
     run = relationship("Run")
+    source_prediction = relationship("Prediction")
     event = relationship("Event")
     market = relationship("Market")
 
@@ -399,6 +401,7 @@ class ShadowParlayInference(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     run_id = Column(Integer, ForeignKey("runs.id"), nullable=True, index=True)
+    source_parlay_prediction_id = Column(Integer, ForeignKey("parlay_predictions.id"), nullable=True, index=True)
     leg_count = Column(Integer, nullable=False, index=True)
     sport_scope = Column(String, nullable=False, default="MIXED", index=True)
     participating_sports = Column(JSON, default=list)
@@ -417,6 +420,7 @@ class ShadowParlayInference(Base):
     captured_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
 
     run = relationship("Run")
+    source_parlay_prediction = relationship("ParlayPrediction")
 
 
 class EspnPlayerSearchCache(Base):

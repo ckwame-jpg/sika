@@ -4,14 +4,19 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
-from app.services.ml.runtime import read_family_runtime
+from app.services.ml.runtime import read_family_runtime, shadow_capture_blocker
+from app.services.ml.study_progress import (
+    MIN_SETTLED_FOR_REVIEW,
+    MIN_SHADOW_COVERAGE,
+    history_ready_for_shadow,
+    retained_study_cutoff,
+    shadow_coverage_ratio,
+    shadow_coverage_ready,
+)
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition, parlay_family_key, single_family_key
-
-MIN_SETTLED_FOR_REVIEW = 40
-MIN_SHADOW_COVERAGE = 0.75
 
 
 def _now_utc() -> datetime:
@@ -38,6 +43,52 @@ def _shadow_parlay_family_key(item: ShadowParlayInference) -> str:
     if metadata.get("family_key"):
         return str(metadata["family_key"])
     return parlay_family_key(item.leg_count, item.participating_sports or [item.sport_scope])
+
+
+def _single_shadow_fallback_key(run_id: int | None, market_id: int | None, ticker: str) -> tuple[int | None, int | None, str]:
+    return run_id, market_id, ticker
+
+
+def _parlay_shadow_fallback_key(run_id: int | None, leg_count: int, leg_tickers: list[str] | tuple[str, ...]) -> tuple[int | None, int, tuple[str, ...]]:
+    return run_id, leg_count, tuple(str(ticker) for ticker in leg_tickers)
+
+
+def _single_shadow_coverage_count(predictions: list[Prediction], shadows: list[ShadowInference]) -> tuple[int, int]:
+    linked_prediction_ids = {int(item.source_prediction_id) for item in shadows if item.source_prediction_id is not None}
+    fallback_keys = {
+        _single_shadow_fallback_key(item.run_id, item.market_id, item.ticker)
+        for item in shadows
+        if item.source_prediction_id is None
+    }
+    covered = 0
+    backlog = 0
+    for prediction in predictions:
+        if prediction.id in linked_prediction_ids or _single_shadow_fallback_key(prediction.run_id, prediction.market_id, prediction.ticker) in fallback_keys:
+            covered += 1
+        else:
+            backlog += 1
+    return covered, backlog
+
+
+def _parlay_shadow_coverage_count(predictions: list[ParlayPrediction], shadows: list[ShadowParlayInference]) -> tuple[int, int]:
+    linked_prediction_ids = {int(item.source_parlay_prediction_id) for item in shadows if item.source_parlay_prediction_id is not None}
+    fallback_keys = {
+        _parlay_shadow_fallback_key(item.run_id, item.leg_count, item.leg_tickers or [])
+        for item in shadows
+        if item.source_parlay_prediction_id is None
+    }
+    covered = 0
+    backlog = 0
+    for prediction in predictions:
+        if prediction.id in linked_prediction_ids or _parlay_shadow_fallback_key(
+            prediction.run_id,
+            prediction.leg_count,
+            [leg.ticker for leg in prediction.legs],
+        ) in fallback_keys:
+            covered += 1
+        else:
+            backlog += 1
+    return covered, backlog
 
 
 def _bucket_rows(rows: list[Any], *, value_getter, buckets: list[tuple[str, float, float | None]]) -> list[dict[str, Any]]:
@@ -128,6 +179,8 @@ def _rates_from_diagnostics(rows: list[Any]) -> tuple[dict[str, float], dict[str
 
 def _readiness_status(
     *,
+    family_key: str,
+    scope: str,
     study_track: str,
     desired_mode: str,
     settled_predictions: int,
@@ -138,16 +191,23 @@ def _readiness_status(
         return "heuristic_only", "This family is not in the active ML study track and stays on the heuristic path."
     if desired_mode == "ml":
         return "serving", "This family is configured to serve ML. Runtime health below shows whether it is currently falling back."
-    if settled_predictions < MIN_SETTLED_FOR_REVIEW:
+    if not history_ready_for_shadow(settled_predictions):
         return "insufficient_history", (
             f"This family is in the active ML study track. Only {settled_predictions} settled predictions are available; "
             f"need {MIN_SETTLED_FOR_REVIEW} before review."
         )
     if shadow_predictions == 0:
-        return "shadow_not_started", "This family is in the active ML study track, but shadow capture has not started yet."
-    if shadow_coverage_ratio < MIN_SHADOW_COVERAGE:
+        blocker = shadow_capture_blocker(family_key, scope=scope)
+        if blocker:
+            return "shadow_not_started", blocker
+        return "shadow_not_started", (
+            "This family has enough settled history and is shadow-eligible, but no shadow samples have been recorded yet."
+        )
+    if not shadow_coverage_ready(shadow_coverage_ratio):
         return "shadowing", f"Shadow coverage is {shadow_coverage_ratio:.0%}; need at least {MIN_SHADOW_COVERAGE:.0%} before review."
-    return "ready_for_review", "Settled history and shadow coverage are high enough for a promotion review."
+    return "ready_for_review", (
+        "Settled history and shadow coverage are high enough for a promotion review. This does not enable live ML serving until desired mode is set to ml."
+    )
 
 
 def _summary_for_family(
@@ -166,9 +226,13 @@ def _summary_for_family(
     if scope == "single":
         coverage_predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") == "coverage"]
         predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") != "coverage"]
+        covered_shadow_predictions, shadow_backlog_predictions = _single_shadow_coverage_count(predictions, shadow_singles)
+        shadow_backlog_parlays = 0
     else:
         coverage_predictions = []
         predictions = all_predictions
+        covered_shadow_predictions, shadow_backlog_parlays = _parlay_shadow_coverage_count(predictions, shadow_parlays)
+        shadow_backlog_predictions = 0
     total_predictions = len(predictions)
     settled = [row for row in predictions if getattr(row, "prediction_outcome", None) in {"won", "lost", "push", "cancelled"}]
     pending = [row for row in predictions if getattr(row, "prediction_outcome", None) == "pending"]
@@ -183,16 +247,19 @@ def _summary_for_family(
     edges = [float(getattr(row, "edge", 0.0)) for row in predictions]
     confidences = [float(getattr(row, "confidence", 0.0)) for row in predictions]
     pnls = [float(row.realized_pnl) for row in predictions if getattr(row, "realized_pnl", None) is not None]
-    shadow_coverage_ratio = round(min(len(shadows) / total_predictions, 1.0), 4) if total_predictions else 0.0
+    shadow_ratio = shadow_coverage_ratio(total_predictions=total_predictions, shadow_predictions=covered_shadow_predictions)
     readiness_status, why_not_ready = _readiness_status(
+        family_key=family_key,
+        scope=scope,
         study_track=definition.study_track,
         desired_mode=runtime.desired_mode,
         settled_predictions=len(settled),
-        shadow_predictions=len(shadows),
-        shadow_coverage_ratio=shadow_coverage_ratio,
+        shadow_predictions=covered_shadow_predictions,
+        shadow_coverage_ratio=shadow_ratio,
     )
     feature_rates, missing_rates, top_failures = _rates_from_diagnostics(predictions)
     last_settled_at = max((row.settled_at for row in settled if row.settled_at is not None), default=None)
+    last_shadow_capture_at = max((row.captured_at for row in shadows if row.captured_at is not None), default=None)
 
     return {
         "family_key": family_key,
@@ -227,8 +294,11 @@ def _summary_for_family(
         "coverage_predictions": len(coverage_predictions),
         "coverage_settled_predictions": len(coverage_settled),
         "coverage_pending_predictions": len(coverage_pending),
-        "shadow_predictions": len(shadows),
-        "shadow_coverage_ratio": shadow_coverage_ratio,
+        "shadow_predictions": covered_shadow_predictions,
+        "shadow_coverage_ratio": shadow_ratio,
+        "shadow_backlog_predictions": shadow_backlog_predictions,
+        "shadow_backlog_parlays": shadow_backlog_parlays,
+        "last_shadow_capture_at": last_shadow_capture_at,
         "won_predictions": wins,
         "lost_predictions": losses,
         "push_predictions": pushes,
@@ -248,10 +318,15 @@ def _summary_for_family(
 
 
 def build_model_readiness_summary(db: Session) -> dict[str, Any]:
-    single_predictions = db.scalars(select(Prediction)).all()
-    parlay_predictions = db.scalars(select(ParlayPrediction)).all()
-    shadow_singles = db.scalars(select(ShadowInference)).all()
-    shadow_parlays = db.scalars(select(ShadowParlayInference)).all()
+    cutoff = retained_study_cutoff()
+    single_predictions = db.scalars(select(Prediction).where(Prediction.captured_at >= cutoff)).all()
+    parlay_predictions = db.scalars(
+        select(ParlayPrediction)
+        .options(selectinload(ParlayPrediction.legs))
+        .where(ParlayPrediction.captured_at >= cutoff)
+    ).all()
+    shadow_singles = db.scalars(select(ShadowInference).where(ShadowInference.captured_at >= cutoff)).all()
+    shadow_parlays = db.scalars(select(ShadowParlayInference).where(ShadowParlayInference.captured_at >= cutoff)).all()
 
     singles_by_family: dict[str, list[Prediction]] = {}
     for prediction in single_predictions:
@@ -292,16 +367,17 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
     definition = family_definition(family_key)
     if definition.key != family_key:
         return None
+    cutoff = retained_study_cutoff()
 
     if definition.scope == "single":
         single_predictions = [
             prediction
-            for prediction in db.scalars(select(Prediction)).all()
+            for prediction in db.scalars(select(Prediction).where(Prediction.captured_at >= cutoff)).all()
             if _single_prediction_family_key(prediction) == family_key
         ]
         shadow_singles = [
             item
-            for item in db.scalars(select(ShadowInference)).all()
+            for item in db.scalars(select(ShadowInference).where(ShadowInference.captured_at >= cutoff)).all()
             if _shadow_single_family_key(item) == family_key
         ]
         return _summary_for_family(
@@ -315,12 +391,16 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
 
     parlay_predictions = [
         prediction
-        for prediction in db.scalars(select(ParlayPrediction)).all()
+        for prediction in db.scalars(
+            select(ParlayPrediction)
+            .options(selectinload(ParlayPrediction.legs))
+            .where(ParlayPrediction.captured_at >= cutoff)
+        ).all()
         if _parlay_prediction_family_key(prediction) == family_key
     ]
     shadow_parlays = [
         item
-        for item in db.scalars(select(ShadowParlayInference)).all()
+        for item in db.scalars(select(ShadowParlayInference).where(ShadowParlayInference.captured_at >= cutoff)).all()
         if _shadow_parlay_family_key(item) == family_key
     ]
     return _summary_for_family(

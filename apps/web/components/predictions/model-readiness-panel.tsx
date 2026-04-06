@@ -14,7 +14,15 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn, fmtContractPnl, fmtEdge, fmtPercent } from "@/lib/utils";
+import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
+
+const STUDY_LADDER = [
+  "insufficient history",
+  "shadow not started",
+  "shadowing",
+  "ready for review",
+  "serving",
+] as const;
 
 function readinessVariant(status: ReadinessStatus): "positive" | "warning" | "negative" | "default" {
   if (status === "serving" || status === "ready_for_review") return "positive";
@@ -34,6 +42,17 @@ function studyTrackVariant(studyTrack: ModelFamilyReadinessRead["study_track"]):
 
 function studyTrackLabel(studyTrack: ModelFamilyReadinessRead["study_track"]): string {
   return studyTrack === "active" ? "active study" : "heuristic lane";
+}
+
+function shadowBacklogCount(family: ModelFamilyReadinessRead): number {
+  return family.shadow_backlog_predictions + family.shadow_backlog_parlays;
+}
+
+function shadowBacklogLabel(family: ModelFamilyReadinessRead): string {
+  const backlog = shadowBacklogCount(family);
+  if (backlog <= 0) return "backlog clear";
+  const unit = family.scope === "parlay" ? "parlays" : "predictions";
+  return `${backlog} ${unit} pending`;
 }
 
 function FamilyCard({
@@ -206,9 +225,14 @@ export function ModelReadinessPanel() {
               Refresh
             </Button>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Heuristic confidence is heuristic reliability, not calibrated probability. Active study families can still show heuristic runtime while history and shadow coverage are building. Only families with effective mode <span className="font-mono">ml</span> are serving calibrated probabilities.
-          </p>
+          <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+            <p>
+              Study ladder: {STUDY_LADDER.join(" -> ")}.
+            </p>
+            <p>
+              Runtime stays separate: <span className="font-mono">desired -&gt; effective</span> shows what is configured versus what is actually serving live. Only families with effective mode <span className="font-mono">ml</span> are serving calibrated probabilities.
+            </p>
+          </div>
         </CardHeader>
         <CardContent className="px-4 py-4">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -247,10 +271,11 @@ export function ModelReadinessPanel() {
           <CardContent className="flex flex-col gap-4 px-4 py-4">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
               <div className="rounded-xl border border-border bg-surface px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Serving</p>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Runtime</p>
                 <p className="mt-1 font-mono text-sm text-foreground">
                   {selected.runtime.desired_mode}{" -> "}{selected.runtime.effective_mode}
                 </p>
+                <p className="text-xs text-muted-foreground">Configured versus actually serving</p>
               </div>
               <div className="rounded-xl border border-border bg-surface px-3 py-3">
                 <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Settled Recs</p>
@@ -264,7 +289,12 @@ export function ModelReadinessPanel() {
               <div className="rounded-xl border border-border bg-surface px-3 py-3">
                 <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Shadow</p>
                 <p className="mt-1 font-mono text-sm text-foreground">{selected.shadow_predictions}</p>
-                <p className="text-xs text-muted-foreground">{fmtPercent(selected.shadow_coverage_ratio)} coverage</p>
+                <p className="text-xs text-muted-foreground">
+                  {fmtPercent(selected.shadow_coverage_ratio)} coverage · {shadowBacklogLabel(selected)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {selected.last_shadow_capture_at ? `Last capture ${fmtDatetime(selected.last_shadow_capture_at)}` : "No shadow capture recorded yet"}
+                </p>
               </div>
               <div className="rounded-xl border border-border bg-surface px-3 py-3">
                 <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Avg Edge</p>

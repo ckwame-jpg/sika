@@ -464,6 +464,9 @@ export interface ModelFamilyReadinessRead {
   coverage_pending_predictions: number;
   shadow_predictions: number;
   shadow_coverage_ratio: number;
+  shadow_backlog_predictions: number;
+  shadow_backlog_parlays: number;
+  last_shadow_capture_at: string | null;
   won_predictions: number;
   lost_predictions: number;
   push_predictions: number;

@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from sqlalchemy import select
+
 from app.models import (
     EspnPlayerGamelogCache,
     EspnPlayerSearchCache,
@@ -205,6 +207,7 @@ def test_prune_runtime_artifacts_cleans_old_runtime_rows(db_session, monkeypatch
             ),
             ShadowInference(
                 run_id=old_run.id,
+                source_prediction_id=old_prediction.id,
                 market_id=market.id,
                 ticker=market.ticker,
                 confidence=0.58,
@@ -213,6 +216,7 @@ def test_prune_runtime_artifacts_cleans_old_runtime_rows(db_session, monkeypatch
             ),
             ShadowInference(
                 run_id=recent_run.id,
+                source_prediction_id=old_prediction.id,
                 market_id=market.id,
                 ticker=f"{market.ticker}-RECENT",
                 confidence=0.61,
@@ -221,6 +225,7 @@ def test_prune_runtime_artifacts_cleans_old_runtime_rows(db_session, monkeypatch
             ),
             ShadowParlayInference(
                 run_id=old_run.id,
+                source_parlay_prediction_id=old_parlay_prediction.id,
                 leg_count=2,
                 combined_model_probability=0.33,
                 confidence=0.54,
@@ -229,6 +234,7 @@ def test_prune_runtime_artifacts_cleans_old_runtime_rows(db_session, monkeypatch
             ),
             ShadowParlayInference(
                 run_id=recent_run.id,
+                source_parlay_prediction_id=old_parlay_prediction.id,
                 leg_count=2,
                 combined_model_probability=0.35,
                 confidence=0.56,
@@ -307,6 +313,10 @@ def test_prune_runtime_artifacts_cleans_old_runtime_rows(db_session, monkeypatch
     old_parlay_recommendation_id = old_parlay_recommendation.id
     old_run_id = old_run.id
     recent_run_id = recent_run.id
+    recent_shadow_id = db_session.scalars(select(ShadowInference.id).where(ShadowInference.run_id == recent_run.id)).one()
+    recent_shadow_parlay_id = db_session.scalars(
+        select(ShadowParlayInference.id).where(ShadowParlayInference.run_id == recent_run.id)
+    ).one()
 
     summary = maintenance.prune_runtime_artifacts(db_session)
     db_session.commit()
@@ -314,6 +324,8 @@ def test_prune_runtime_artifacts_cleans_old_runtime_rows(db_session, monkeypatch
 
     recent_leg = db_session.get(ParlayPredictionLeg, recent_parlay_leg_id)
     recent_recommendation = db_session.get(ParlayRecommendation, old_parlay_recommendation_id)
+    recent_shadow = db_session.get(ShadowInference, recent_shadow_id)
+    recent_shadow_parlay = db_session.get(ShadowParlayInference, recent_shadow_parlay_id)
 
     assert summary == {
         "market_snapshots_deleted": 1,
@@ -324,6 +336,8 @@ def test_prune_runtime_artifacts_cleans_old_runtime_rows(db_session, monkeypatch
         "parlay_prediction_legs_deleted": 1,
         "parlay_predictions_deleted": 1,
         "parlay_prediction_source_links_cleared": 1,
+        "shadow_prediction_source_links_cleared": 1,
+        "shadow_parlay_source_links_cleared": 1,
         "predictions_deleted": 1,
         "player_search_cache_deleted": 1,
         "player_gamelog_cache_deleted": 1,
@@ -336,6 +350,10 @@ def test_prune_runtime_artifacts_cleans_old_runtime_rows(db_session, monkeypatch
     assert db_session.get(ParlayPrediction, recent_parlay_prediction_id) is not None
     assert recent_leg is not None
     assert recent_leg.source_prediction_id is None
+    assert recent_shadow is not None
+    assert recent_shadow.source_prediction_id is None
+    assert recent_shadow_parlay is not None
+    assert recent_shadow_parlay.source_parlay_prediction_id is None
     assert db_session.get(Run, old_run_id) is None
     assert db_session.get(Run, recent_run_id) is not None
     assert recent_recommendation is not None

@@ -24,6 +24,12 @@ function countEntries(details: Record<string, unknown>, key: string) {
   return Object.entries(value as Record<string, unknown>);
 }
 
+function runKindLabel(kind: string): string {
+  if (kind === "prop_refresh") return "Maintenance Refresh";
+  if (kind === "shadow_capture") return "Shadow Capture";
+  return "Refresh";
+}
+
 export function RunsDesk() {
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const { data: health } = useHealthStatus();
@@ -49,6 +55,10 @@ export function RunsDesk() {
   const predictionOutcomes = detail
     ? Object.entries(detail.summary_counts.prediction_outcomes ?? {})
     : [];
+  const shadowScope = String(detail?.details.shadow_capture_scope ?? "");
+  const shadowPredictionsCaptured = Number(detail?.details.shadow_predictions_captured ?? 0);
+  const shadowParlaysCaptured = Number(detail?.details.shadow_parlay_predictions_captured ?? 0);
+  const shadowSourceRunId = detail?.details.source_run_id != null ? String(detail.details.source_run_id) : null;
 
   return (
     <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
@@ -90,7 +100,7 @@ export function RunsDesk() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-medium text-foreground">
-                          {run.kind === "prop_refresh" ? "Maintenance Refresh" : "Refresh"} #{run.id}
+                          {runKindLabel(run.kind)} #{run.id}
                         </p>
                         <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
                       </div>
@@ -99,8 +109,14 @@ export function RunsDesk() {
                       </p>
                       <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
                         <span>{run.records_processed} records</span>
-                        <span>{run.summary_counts.supported_markets_kept} markets</span>
-                        <span>{run.summary_counts.recommendations_emitted} recs</span>
+                        {run.kind === "shadow_capture" ? (
+                          <span>{String((run as RunRead).records_processed)} shadow captures</span>
+                        ) : (
+                          <>
+                            <span>{run.summary_counts.supported_markets_kept} markets</span>
+                            <span>{run.summary_counts.recommendations_emitted} recs</span>
+                          </>
+                        )}
                         {run.kind === "prop_refresh" && (
                           <span>{run.summary_counts.prop_subjects_warmed} props warmed</span>
                         )}
@@ -117,7 +133,7 @@ export function RunsDesk() {
 
       <Card className="min-h-0">
         <CardHeader className="flex-col items-start gap-1 border-none">
-          <CardTitle>{detail ? `Run #${detail.id}` : "Run Detail"}</CardTitle>
+          <CardTitle>{detail ? `${runKindLabel(detail.kind)} #${detail.id}` : "Run Detail"}</CardTitle>
           <CardDescription>
             {detail ? `${fmtDatetime(detail.started_at)} · ${detail.records_processed} processed` : "Select a run to inspect details"}
           </CardDescription>
@@ -130,62 +146,91 @@ export function RunsDesk() {
             </div>
           ) : (
             <div className="grid gap-4">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                <Card className="bg-surface-hover shadow-none">
-                  <CardContent className="px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Markets Seen</p>
-                    <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.total_kalshi_markets_seen}</p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-surface-hover shadow-none">
-                  <CardContent className="px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Supported Kept</p>
-                    <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.supported_markets_kept}</p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-surface-hover shadow-none">
-                  <CardContent className="px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Mapped Props</p>
-                    <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.mapped_prop_markets}</p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-surface-hover shadow-none">
-                  <CardContent className="px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                      {detail.kind === "prop_refresh" ? "Props Warmed" : "Recommendations"}
-                    </p>
-                    <p className="mt-1 font-mono text-lg text-foreground">
-                      {detail.kind === "prop_refresh"
-                        ? detail.summary_counts.prop_subjects_warmed
-                        : detail.summary_counts.recommendations_emitted}
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-surface-hover shadow-none">
-                  <CardContent className="px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                      {detail.kind === "prop_refresh" ? "Search Cache" : "Predictions Captured"}
-                    </p>
-                    <p className="mt-1 font-mono text-lg text-foreground">
-                      {detail.kind === "prop_refresh"
-                        ? `${detail.summary_counts.player_search_cache_hits}/${detail.summary_counts.player_search_cache_misses}`
-                        : detail.summary_counts.predictions_captured}
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-surface-hover shadow-none">
-                  <CardContent className="px-3 py-3">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                      {detail.kind === "prop_refresh" ? "Gamelog Cache" : "Settlements Updated"}
-                    </p>
-                    <p className="mt-1 font-mono text-lg text-foreground">
-                      {detail.kind === "prop_refresh"
-                        ? `${detail.summary_counts.gamelog_cache_hits}/${detail.summary_counts.gamelog_cache_misses}`
-                        : detail.summary_counts.prediction_settlement_updated}
-                    </p>
-                  </CardContent>
-                </Card>
-              </div>
+              {detail.kind === "shadow_capture" ? (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Scope</p>
+                      <p className="mt-1 font-mono text-lg text-foreground">{shadowScope || "shadow_capture"}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Shadow Singles</p>
+                      <p className="mt-1 font-mono text-lg text-foreground">{shadowPredictionsCaptured}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Shadow Parlays</p>
+                      <p className="mt-1 font-mono text-lg text-foreground">{shadowParlaysCaptured}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Source Run</p>
+                      <p className="mt-1 font-mono text-lg text-foreground">{shadowSourceRunId ?? "backfill"}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Markets Seen</p>
+                      <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.total_kalshi_markets_seen}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Supported Kept</p>
+                      <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.supported_markets_kept}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Mapped Props</p>
+                      <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.mapped_prop_markets}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                        {detail.kind === "prop_refresh" ? "Props Warmed" : "Recommendations"}
+                      </p>
+                      <p className="mt-1 font-mono text-lg text-foreground">
+                        {detail.kind === "prop_refresh"
+                          ? detail.summary_counts.prop_subjects_warmed
+                          : detail.summary_counts.recommendations_emitted}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                        {detail.kind === "prop_refresh" ? "Search Cache" : "Predictions Captured"}
+                      </p>
+                      <p className="mt-1 font-mono text-lg text-foreground">
+                        {detail.kind === "prop_refresh"
+                          ? `${detail.summary_counts.player_search_cache_hits}/${detail.summary_counts.player_search_cache_misses}`
+                          : detail.summary_counts.predictions_captured}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-surface-hover shadow-none">
+                    <CardContent className="px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                        {detail.kind === "prop_refresh" ? "Gamelog Cache" : "Settlements Updated"}
+                      </p>
+                      <p className="mt-1 font-mono text-lg text-foreground">
+                        {detail.kind === "prop_refresh"
+                          ? `${detail.summary_counts.gamelog_cache_hits}/${detail.summary_counts.gamelog_cache_misses}`
+                          : detail.summary_counts.prediction_settlement_updated}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
 
               <div className="grid gap-4 xl:grid-cols-3">
                 <Card className="bg-surface-hover shadow-none">

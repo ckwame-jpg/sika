@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import RefreshJob
-from app.services.ingestion import run_prop_refresh_cycle, run_refresh_cycle
+from app.services.ingestion import run_prop_refresh_cycle, run_refresh_cycle, run_shadow_capture_cycle
 from app.services.maintenance import prune_runtime_artifacts
 
 
-REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "cleanup"})
+REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "cleanup"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
 
@@ -137,6 +137,44 @@ def enqueue_refresh_job(
     return job, True
 
 
+def enqueue_shadow_capture_job(
+    db: Session,
+    *,
+    scope: str,
+    source_run_id: int | None = None,
+    source_refresh_job_id: int | None = None,
+    source_prop_refresh_job_id: int | None = None,
+) -> tuple[RefreshJob, bool]:
+    if scope not in {"current_slate", "backfill"}:
+        raise ValueError(f"Unsupported shadow capture scope: {scope}")
+    if scope == "current_slate" and (source_run_id or 0) <= 0:
+        raise ValueError("A source refresh run is required for current-slate shadow capture.")
+    job, created = enqueue_refresh_job(
+        db,
+        kind="shadow_capture",
+        scope=scope,
+        reason="follow_up" if scope == "current_slate" else "maintenance_follow_up",
+    )
+    if created or job.status == "queued":
+        details = dict(job.details or {})
+        details["shadow_capture_scope"] = scope
+        if source_run_id is not None:
+            details["source_run_id"] = source_run_id
+        else:
+            details.pop("source_run_id", None)
+        if source_refresh_job_id is not None:
+            details["source_refresh_job_id"] = source_refresh_job_id
+        elif scope == "backfill":
+            details.pop("source_refresh_job_id", None)
+        if source_prop_refresh_job_id is not None:
+            details["source_prop_refresh_job_id"] = source_prop_refresh_job_id
+        elif scope == "current_slate":
+            details.pop("source_prop_refresh_job_id", None)
+        job.details = details
+        db.flush()
+    return job, created
+
+
 def _claim_next_job(db: Session) -> RefreshJob | None:
     running = db.scalar(
         select(RefreshJob)
@@ -185,8 +223,32 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                     current_slate_only=(job.scope == "current_slate"),
                 )
                 job.run_id = run.id
+                if job.scope == "current_slate":
+                    shadow_job, _created = enqueue_shadow_capture_job(
+                        db,
+                        scope="current_slate",
+                        source_run_id=run.id,
+                        source_refresh_job_id=job.id,
+                    )
+                    details = dict(job.details or {})
+                    details["shadow_follow_up_job_id"] = shadow_job.id
+                    details["shadow_follow_up_scope"] = shadow_job.scope
+                    job.details = details
             elif job.kind == "prop_refresh":
                 run = run_prop_refresh_cycle(db)
+                job.run_id = run.id
+                shadow_job, _created = enqueue_shadow_capture_job(
+                    db,
+                    scope="backfill",
+                    source_prop_refresh_job_id=job.id,
+                )
+                details = dict(job.details or {})
+                details["shadow_backfill_job_id"] = shadow_job.id
+                details["shadow_backfill_scope"] = shadow_job.scope
+                job.details = details
+            elif job.kind == "shadow_capture":
+                source_run_id = int((job.details or {}).get("source_run_id") or 0) or None
+                run = run_shadow_capture_cycle(db, scope=job.scope, source_run_id=source_run_id)
                 job.run_id = run.id
             elif job.kind == "cleanup":
                 job.details = prune_runtime_artifacts(db)

@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     free_provider_lookahead_days: int = 2
     market_snapshot_retention_days: int = 7
     signal_snapshot_retention_days: int = 7
-    shadow_inference_retention_days: int = 7
+    shadow_inference_retention_days: int = 30
     run_retention_days: int = 14
     refresh_job_retention_days: int = 14
     prediction_retention_days: int = 30

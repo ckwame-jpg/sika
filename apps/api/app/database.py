@@ -74,6 +74,12 @@ SCHEMA_PATCHES: dict[str, dict[str, str]] = {
         "last_error_at": "DATETIME",
         "degraded_until": "DATETIME",
     },
+    "shadow_inferences": {
+        "source_prediction_id": "INTEGER",
+    },
+    "shadow_parlay_inferences": {
+        "source_parlay_prediction_id": "INTEGER",
+    },
     "refresh_jobs": {
         "details": "JSON",
     },
@@ -117,6 +123,8 @@ _PERFORMANCE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS ix_prediction_market_captured ON predictions(market_id, captured_at DESC)",
     "CREATE INDEX IF NOT EXISTS ix_prediction_unsettled_lookup ON predictions(settlement_status, sport_key, capture_scope, ticker, captured_at DESC)",
     "CREATE INDEX IF NOT EXISTS ix_prediction_coverage_daily_lookup ON predictions(market_id, capture_scope, captured_at DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_shadow_inference_source_prediction ON shadow_inferences(source_prediction_id)",
+    "CREATE INDEX IF NOT EXISTS ix_shadow_parlay_inference_source_prediction ON shadow_parlay_inferences(source_parlay_prediction_id)",
 ]
 
 

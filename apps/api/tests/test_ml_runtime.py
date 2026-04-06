@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.config import get_settings
-from app.models import ModelFamilyRuntimeHealth
+from app.models import ModelFamilyRuntimeHealth, Prediction
 from app.services.ml.runtime import resolve_family_runtime, run_serving_inference, run_shadow_inference
 
 
@@ -76,6 +76,53 @@ def _write_manifest(
     return manifest_path
 
 
+def _seed_nba_single_predictions(db_session, *, total: int, settled: int):
+    for index in range(total):
+        outcome = "pending"
+        settlement_status = "pending"
+        settled_at = None
+        realized_pnl = None
+        if index < settled:
+            outcome = "won" if index % 2 == 0 else "lost"
+            settlement_status = "settled"
+            settled_at = datetime(2026, 4, 3, 12, 0, tzinfo=timezone.utc)
+            realized_pnl = 0.18 if outcome == "won" else -0.42
+
+        db_session.add(
+            Prediction(
+                run_id=1,
+                event_id=None,
+                market_id=index + 1,
+                ticker=f"NBA-RUNTIME-{index}",
+                sport_key="NBA",
+                event_name="Runtime test game",
+                market_title="Runtime test market",
+                market_family="winner",
+                market_kind="game_winner",
+                side="yes",
+                action="buy",
+                suggested_price=0.45,
+                fair_yes_price=0.58,
+                fair_no_price=0.42,
+                edge=0.13,
+                confidence=0.68,
+                selection_score=0.17,
+                model_name="heuristic-v1",
+                rationale="Runtime rationale",
+                reasons=["runtime"],
+                features={"family_key": "nba_singles"},
+                scoring_diagnostics={},
+                market_status_at_capture="active",
+                settlement_status=settlement_status,
+                prediction_outcome=outcome,
+                settled_at=settled_at,
+                realized_pnl=realized_pnl,
+                captured_at=datetime(2026, 4, 3, 10, 0, tzinfo=timezone.utc),
+            )
+        )
+    db_session.flush()
+
+
 def test_resolve_family_runtime_global_heuristic_overrides_family_modes(db_session, monkeypatch, tmp_path):
     artifact_path = _write_artifact(tmp_path, family_key="nba_singles", scope="single")
     manifest_path = _write_manifest(tmp_path, family_key="nba_singles", artifact_path=str(artifact_path), mode="ml")
@@ -101,6 +148,64 @@ def test_ml_family_modes_override_manifest_mode(db_session, monkeypatch, tmp_pat
 
     assert decision.desired_mode == "ml"
     assert decision.effective_mode == "ml"
+    assert decision.runtime_health == "healthy"
+
+
+def test_active_study_family_auto_promotes_to_shadow_when_history_and_artifact_are_ready(db_session, monkeypatch, tmp_path):
+    artifact_path = _write_artifact(tmp_path, family_key="nba_singles", scope="single")
+    manifest_path = _write_manifest(tmp_path, family_key="nba_singles", artifact_path=str(artifact_path), mode="heuristic")
+    monkeypatch.setenv("ML_SERVING_MODE", "shadow")
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(manifest_path))
+    monkeypatch.delenv("ML_FAMILY_MODES_JSON", raising=False)
+    _seed_nba_single_predictions(db_session, total=40, settled=40)
+
+    decision = resolve_family_runtime(db_session, "nba_singles", scope="single")
+
+    assert decision.desired_mode == "shadow"
+    assert decision.effective_mode == "shadow"
+    assert decision.runtime_health == "healthy"
+
+
+def test_manual_ml_override_still_wins_over_auto_shadow(db_session, monkeypatch, tmp_path):
+    artifact_path = _write_artifact(tmp_path, family_key="nba_singles", scope="single")
+    manifest_path = _write_manifest(tmp_path, family_key="nba_singles", artifact_path=str(artifact_path), mode="heuristic")
+    monkeypatch.setenv("ML_SERVING_MODE", "ml")
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(manifest_path))
+    monkeypatch.setenv("ML_FAMILY_MODES_JSON", json.dumps({"nba_singles": "ml"}))
+    _seed_nba_single_predictions(db_session, total=40, settled=40)
+
+    decision = resolve_family_runtime(db_session, "nba_singles", scope="single")
+
+    assert decision.desired_mode == "ml"
+    assert decision.effective_mode == "ml"
+    assert decision.runtime_health == "healthy"
+
+
+def test_global_heuristic_mode_keeps_auto_shadow_off(db_session, monkeypatch, tmp_path):
+    artifact_path = _write_artifact(tmp_path, family_key="nba_singles", scope="single")
+    manifest_path = _write_manifest(tmp_path, family_key="nba_singles", artifact_path=str(artifact_path), mode="heuristic")
+    monkeypatch.setenv("ML_SERVING_MODE", "heuristic")
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(manifest_path))
+    monkeypatch.delenv("ML_FAMILY_MODES_JSON", raising=False)
+    _seed_nba_single_predictions(db_session, total=40, settled=40)
+
+    decision = resolve_family_runtime(db_session, "nba_singles", scope="single")
+
+    assert decision.desired_mode == "heuristic"
+    assert decision.effective_mode == "heuristic"
+    assert decision.fallback_active is False
+
+
+def test_auto_shadow_stays_heuristic_when_no_manifest_is_available(db_session, monkeypatch):
+    monkeypatch.setenv("ML_SERVING_MODE", "shadow")
+    monkeypatch.delenv("ML_MANIFEST_PATH", raising=False)
+    monkeypatch.delenv("ML_FAMILY_MODES_JSON", raising=False)
+    _seed_nba_single_predictions(db_session, total=40, settled=40)
+
+    decision = resolve_family_runtime(db_session, "nba_singles", scope="single")
+
+    assert decision.desired_mode == "heuristic"
+    assert decision.effective_mode == "heuristic"
     assert decision.runtime_health == "healthy"
 
 

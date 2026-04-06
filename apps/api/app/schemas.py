@@ -461,6 +461,9 @@ class ModelFamilyReadinessRead(BaseModel):
     coverage_pending_predictions: int = 0
     shadow_predictions: int
     shadow_coverage_ratio: float
+    shadow_backlog_predictions: int = 0
+    shadow_backlog_parlays: int = 0
+    last_shadow_capture_at: UTCDateTime | None = None
     won_predictions: int
     lost_predictions: int
     push_predictions: int

@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.models import ModelFamilyRuntimeHealth
 from app.services.ml.lineage import HEURISTIC_PARLAY_MODEL, HEURISTIC_SINGLE_MODEL, ModelLineage
 from app.services.ml.registry import ModelManifest, ModelManifestFamily, load_model_manifest
+from app.services.ml.study_progress import history_ready_for_shadow, is_active_study_family, settled_prediction_count_for_family
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition
 
 RuntimeMode = Literal["heuristic", "shadow", "ml"]
@@ -79,18 +80,41 @@ def _manifest_family_map(manifest: ModelManifest | None) -> dict[str, ModelManif
     }
 
 
+def _manual_requested_mode(family_key: str, *, manifest_family: ModelManifestFamily | None) -> RuntimeMode | None:
+    override_mode = _safe_modes_mapping().get(family_key)
+    if override_mode in {"shadow", "ml"}:
+        return override_mode
+    manifest_mode = str(manifest_family.mode or "").strip().lower() if manifest_family else ""
+    if manifest_mode in {"shadow", "ml"}:
+        return manifest_mode  # type: ignore[return-value]
+    return None
+
+
+def _auto_shadow_requested_mode(
+    db: Session,
+    family_key: str,
+    *,
+    manifest_family: ModelManifestFamily | None,
+) -> RuntimeMode | None:
+    if manifest_family is None or not is_active_study_family(family_key):
+        return None
+    settled_predictions = settled_prediction_count_for_family(db, family_key)
+    if not history_ready_for_shadow(settled_predictions):
+        return None
+    return "shadow"
+
+
 def _resolve_requested_mode(
+    db: Session,
     family_key: str,
     *,
     manifest_family: ModelManifestFamily | None,
 ) -> RuntimeMode:
     settings = get_settings()
     global_mode = settings.ml_serving_mode
-    override_mode = _safe_modes_mapping().get(family_key)
-    family_mode = (override_mode or (manifest_family.mode if manifest_family else None) or "heuristic").lower()
-    resolved: RuntimeMode = "heuristic"
-    if family_mode in {"heuristic", "shadow", "ml"}:
-        resolved = family_mode  # type: ignore[assignment]
+    resolved = _manual_requested_mode(family_key, manifest_family=manifest_family)
+    if resolved is None:
+        resolved = _auto_shadow_requested_mode(db, family_key, manifest_family=manifest_family) or "heuristic"
 
     if global_mode == "heuristic":
         return "heuristic"
@@ -108,6 +132,36 @@ def _resolve_artifact_path(manifest: ModelManifest | None, family: ModelManifest
     if manifest and manifest.source_path:
         return str((Path(manifest.source_path).parent / path).resolve())
     return str((Path.cwd() / path).resolve())
+
+
+def shadow_capture_blocker(
+    family_key: str,
+    *,
+    scope: str,
+) -> str | None:
+    settings = get_settings()
+    if settings.ml_serving_mode == "heuristic":
+        return "This family has enough settled history, but global ML mode is locked to heuristic, so shadow capture will not start automatically."
+
+    manifest = load_model_manifest()
+    manifest_family = _manifest_family_map(manifest).get(family_key)
+    if manifest_family is None:
+        return "This family has enough settled history, but no shadow artifact manifest entry is configured for it yet."
+
+    artifact_path = _resolve_artifact_path(manifest, manifest_family)
+    if not artifact_path:
+        return "This family has enough settled history, but no shadow artifact is configured for it yet."
+
+    lineage = _lineage_from_manifest_family(manifest_family, scope)
+    _payload, error = _validate_artifact_payload(
+        family_key,
+        scope,
+        artifact_path,
+        artifact_family_key=str(lineage.model_metadata.get("artifact_family_key") or family_key),
+    )
+    if error is not None:
+        return f"This family has enough settled history, but shadow runtime is unavailable: {error}"
+    return None
 
 
 def _runtime_row(db: Session, family_key: str) -> ModelFamilyRuntimeHealth:
@@ -258,7 +312,7 @@ def resolve_family_runtime(
 ) -> FamilyRuntimeDecision:
     manifest = load_model_manifest()
     manifest_family = _manifest_family_map(manifest).get(family_key)
-    desired_mode = _resolve_requested_mode(family_key, manifest_family=manifest_family)
+    desired_mode = _resolve_requested_mode(db, family_key, manifest_family=manifest_family)
     row = _runtime_row(db, family_key)
     artifact_path = _resolve_artifact_path(manifest, manifest_family)
     lineage = _lineage_from_manifest_family(manifest_family, scope)

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.models import Event, EventParticipant, Market, MarketSnapshot, Prediction, Recommendation

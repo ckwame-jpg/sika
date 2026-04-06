@@ -13,7 +13,7 @@ from app.config import get_settings
 from app.models import Event, EventParticipant, League, Market, MarketSnapshot, ParlayRecommendation, Participant, Recommendation, Run, Sport
 from app.services.market_mapping import map_markets_to_events
 from app.services.market_support import classify_market_payload, infer_market_sport_key, infer_supported_market_kind
-from app.services.ml import capture_shadow_artifacts
+from app.services.ml import capture_shadow_artifacts, sync_family_runtime_health
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import OPEN_MARKET_STATUSES, settle_predictions
 from app.services.scoring import PropStatsResolver, regenerate_watchlist, warm_prop_context_cache
@@ -721,7 +721,6 @@ def run_refresh_cycle(
                 shadow_prediction_count, shadow_parlay_prediction_count = capture_shadow_artifacts(
                     db,
                     run_id=run.id,
-                    candidates=[],
                 )
             single_settlement_summary = {
                 "processed": 0,
@@ -838,6 +837,51 @@ def run_prop_refresh_cycle(
             )
         run.status = "completed"
         run.records_processed = records
+        run.finished_at = datetime.now(timezone.utc)
+        db.flush()
+        return run
+    except Exception as exc:
+        run.status = "failed"
+        run.error_message = str(exc)
+        run.finished_at = datetime.now(timezone.utc)
+        db.flush()
+        raise
+
+
+def run_shadow_capture_cycle(
+    db: Session,
+    *,
+    scope: str,
+    source_run_id: int | None = None,
+) -> Run:
+    if scope == "current_slate" and (source_run_id or 0) <= 0:
+        raise ValueError("A source refresh run is required for shadow capture.")
+    if scope not in {"current_slate", "backfill"}:
+        raise ValueError(f"Unsupported shadow capture scope: {scope}")
+
+    run_details = {"shadow_capture_scope": scope}
+    if source_run_id is not None:
+        run_details["source_run_id"] = source_run_id
+    run = Run(kind="shadow_capture", status="running", details=run_details)
+    db.add(run)
+    db.flush()
+    try:
+        sync_family_runtime_health(db)
+        shadow_prediction_count, shadow_parlay_prediction_count = capture_shadow_artifacts(
+            db,
+            run_id=run.id,
+            source_run_id=source_run_id,
+            backfill=(scope == "backfill"),
+        )
+        run.details = {
+            "shadow_capture_scope": scope,
+            "source_run_id": source_run_id,
+            "shadow_predictions_captured": shadow_prediction_count,
+            "shadow_parlay_predictions_captured": shadow_parlay_prediction_count,
+            "refresh_scope": "shadow_capture",
+        }
+        run.status = "completed"
+        run.records_processed = shadow_prediction_count + shadow_parlay_prediction_count
         run.finished_at = datetime.now(timezone.utc)
         db.flush()
         return run

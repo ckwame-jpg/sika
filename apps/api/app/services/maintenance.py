@@ -21,6 +21,7 @@ from app.models import (
     ShadowParlayInference,
     SignalSnapshot,
 )
+from app.services.ml.study_progress import retained_study_cutoff
 
 
 TERMINAL_RUN_STATUSES = ("completed", "failed")
@@ -47,7 +48,7 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
 
     market_snapshot_cutoff = now - timedelta(days=settings.market_snapshot_retention_days)
     signal_snapshot_cutoff = now - timedelta(days=settings.signal_snapshot_retention_days)
-    shadow_cutoff = now - timedelta(days=settings.shadow_inference_retention_days)
+    shadow_cutoff = retained_study_cutoff(now=now, settings=settings)
     run_cutoff = now - timedelta(days=settings.run_retention_days)
     refresh_job_cutoff = now - timedelta(days=settings.refresh_job_retention_days)
     prediction_cutoff = now - timedelta(days=settings.prediction_retention_days)
@@ -111,6 +112,20 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
         if old_prediction_ids
         else 0
     )
+    shadow_prediction_source_links_cleared = (
+        db.query(ShadowInference)
+        .filter(ShadowInference.source_prediction_id.in_(tuple(old_prediction_ids)))
+        .update({ShadowInference.source_prediction_id: None}, synchronize_session=False)
+        if old_prediction_ids
+        else 0
+    )
+    shadow_parlay_source_links_cleared = (
+        db.query(ShadowParlayInference)
+        .filter(ShadowParlayInference.source_parlay_prediction_id.in_(tuple(old_parlay_prediction_ids)))
+        .update({ShadowParlayInference.source_parlay_prediction_id: None}, synchronize_session=False)
+        if old_parlay_prediction_ids
+        else 0
+    )
     predictions_deleted = _delete_rows(db, Prediction, old_prediction_ids)
     player_search_cache_deleted = (
         db.query(EspnPlayerSearchCache)
@@ -146,6 +161,8 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
         "parlay_prediction_legs_deleted": int(parlay_prediction_legs_deleted or 0),
         "parlay_predictions_deleted": int(parlay_predictions_deleted or 0),
         "parlay_prediction_source_links_cleared": int(parlay_prediction_source_links_cleared or 0),
+        "shadow_prediction_source_links_cleared": int(shadow_prediction_source_links_cleared or 0),
+        "shadow_parlay_source_links_cleared": int(shadow_parlay_source_links_cleared or 0),
         "predictions_deleted": int(predictions_deleted or 0),
         "player_search_cache_deleted": int(player_search_cache_deleted or 0),
         "player_gamelog_cache_deleted": int(player_gamelog_cache_deleted or 0),
