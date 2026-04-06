@@ -128,23 +128,26 @@ def _rates_from_diagnostics(rows: list[Any]) -> tuple[dict[str, float], dict[str
 
 def _readiness_status(
     *,
+    study_track: str,
     desired_mode: str,
-    total_predictions: int,
     settled_predictions: int,
     shadow_predictions: int,
     shadow_coverage_ratio: float,
 ) -> tuple[str, str]:
+    if study_track != "active":
+        return "heuristic_only", "This family is not in the active ML study track and stays on the heuristic path."
     if desired_mode == "ml":
         return "serving", "This family is configured to serve ML. Runtime health below shows whether it is currently falling back."
-    if total_predictions and settled_predictions < MIN_SETTLED_FOR_REVIEW:
-        return "insufficient_history", f"Only {settled_predictions} settled predictions are available; need {MIN_SETTLED_FOR_REVIEW} before review."
-    if desired_mode in {"shadow", "ml"} and shadow_predictions == 0:
-        return "shadow_not_started", "Shadow is configured but this family has not recorded any shadow inferences yet."
-    if shadow_predictions > 0 and shadow_coverage_ratio < MIN_SHADOW_COVERAGE:
+    if settled_predictions < MIN_SETTLED_FOR_REVIEW:
+        return "insufficient_history", (
+            f"This family is in the active ML study track. Only {settled_predictions} settled predictions are available; "
+            f"need {MIN_SETTLED_FOR_REVIEW} before review."
+        )
+    if shadow_predictions == 0:
+        return "shadow_not_started", "This family is in the active ML study track, but shadow capture has not started yet."
+    if shadow_coverage_ratio < MIN_SHADOW_COVERAGE:
         return "shadowing", f"Shadow coverage is {shadow_coverage_ratio:.0%}; need at least {MIN_SHADOW_COVERAGE:.0%} before review."
-    if shadow_predictions > 0 and settled_predictions >= MIN_SETTLED_FOR_REVIEW:
-        return "ready_for_review", "Settled history and shadow coverage are high enough for a promotion review."
-    return "heuristic_only", "This family is still operating on the heuristic path without active ML shadow coverage."
+    return "ready_for_review", "Settled history and shadow coverage are high enough for a promotion review."
 
 
 def _summary_for_family(
@@ -182,8 +185,8 @@ def _summary_for_family(
     pnls = [float(row.realized_pnl) for row in predictions if getattr(row, "realized_pnl", None) is not None]
     shadow_coverage_ratio = round(min(len(shadows) / total_predictions, 1.0), 4) if total_predictions else 0.0
     readiness_status, why_not_ready = _readiness_status(
+        study_track=definition.study_track,
         desired_mode=runtime.desired_mode,
-        total_predictions=total_predictions,
         settled_predictions=len(settled),
         shadow_predictions=len(shadows),
         shadow_coverage_ratio=shadow_coverage_ratio,
@@ -197,6 +200,7 @@ def _summary_for_family(
         "scope": definition.scope,
         "sport_scope": definition.sport_scope,
         "leg_count": definition.leg_count,
+        "study_track": definition.study_track,
         "readiness_status": readiness_status,
         "why_not_ready": why_not_ready,
         "runtime": {

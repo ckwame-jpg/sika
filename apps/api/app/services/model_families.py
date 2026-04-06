@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
+
+
+StudyTrack = Literal["active", "heuristic_only"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -10,18 +14,40 @@ class ModelFamilyDefinition:
     scope: str
     sport_scope: str
     leg_count: int | None = None
+    study_track: StudyTrack = "heuristic_only"
 
 
 FAMILY_DEFINITIONS: tuple[ModelFamilyDefinition, ...] = (
-    ModelFamilyDefinition(key="nba_singles", label="NBA singles", scope="single", sport_scope="NBA"),
-    ModelFamilyDefinition(key="mlb_singles", label="MLB singles", scope="single", sport_scope="MLB"),
-    ModelFamilyDefinition(key="nba_props", label="NBA props", scope="single", sport_scope="NBA"),
-    ModelFamilyDefinition(key="mlb_props", label="MLB props", scope="single", sport_scope="MLB"),
-    ModelFamilyDefinition(key="nba_parlay_2leg", label="NBA 2-leg parlays", scope="parlay", sport_scope="NBA", leg_count=2),
+    ModelFamilyDefinition(key="nba_singles", label="NBA singles", scope="single", sport_scope="NBA", study_track="active"),
+    ModelFamilyDefinition(key="mlb_singles", label="MLB singles", scope="single", sport_scope="MLB", study_track="active"),
+    ModelFamilyDefinition(key="nba_props", label="NBA props", scope="single", sport_scope="NBA", study_track="active"),
+    ModelFamilyDefinition(key="mlb_props", label="MLB props", scope="single", sport_scope="MLB", study_track="active"),
+    ModelFamilyDefinition(
+        key="nba_parlay_2leg",
+        label="NBA 2-leg parlays",
+        scope="parlay",
+        sport_scope="NBA",
+        leg_count=2,
+        study_track="active",
+    ),
     ModelFamilyDefinition(key="nba_parlay_3leg", label="NBA 3-leg parlays", scope="parlay", sport_scope="NBA", leg_count=3),
-    ModelFamilyDefinition(key="mlb_parlay_2leg", label="MLB 2-leg parlays", scope="parlay", sport_scope="MLB", leg_count=2),
+    ModelFamilyDefinition(
+        key="mlb_parlay_2leg",
+        label="MLB 2-leg parlays",
+        scope="parlay",
+        sport_scope="MLB",
+        leg_count=2,
+        study_track="active",
+    ),
     ModelFamilyDefinition(key="mlb_parlay_3leg", label="MLB 3-leg parlays", scope="parlay", sport_scope="MLB", leg_count=3),
-    ModelFamilyDefinition(key="mixed_parlay_2leg", label="Mixed 2-leg parlays", scope="parlay", sport_scope="MIXED", leg_count=2),
+    ModelFamilyDefinition(
+        key="mixed_parlay_2leg",
+        label="Mixed 2-leg parlays",
+        scope="parlay",
+        sport_scope="MIXED",
+        leg_count=2,
+        study_track="active",
+    ),
     ModelFamilyDefinition(key="mixed_parlay_3leg", label="Mixed 3-leg parlays", scope="parlay", sport_scope="MIXED", leg_count=3),
     ModelFamilyDefinition(key="parlay_4_6_leg_combiner", label="4-6 leg parlay combiner", scope="parlay", sport_scope="MIXED"),
 )
@@ -34,6 +60,10 @@ def family_definition(key: str) -> ModelFamilyDefinition:
         key,
         ModelFamilyDefinition(key=key, label=key.replace("_", " "), scope="unknown", sport_scope="UNKNOWN"),
     )
+
+
+def study_track_for_family(key: str) -> StudyTrack:
+    return family_definition(key).study_track
 
 
 def single_family_key(sport_key: str | None, market_family: str | None) -> str:

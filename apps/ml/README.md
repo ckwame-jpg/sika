@@ -4,19 +4,19 @@ Offline training, calibration, backtests, and artifact packaging for the public-
 
 ## Scope
 
-- Singles:
+- Active study track:
   - `nba_singles_v1`
   - `mlb_singles_v1`
   - `nba_props_v1`
   - `mlb_props_v1`
-- Direct parlays:
   - `nba_parlay_2leg_v1`
-  - `nba_parlay_3leg_v1`
   - `mlb_parlay_2leg_v1`
-  - `mlb_parlay_3leg_v1`
   - `mixed_parlay_2leg_v1`
+- Heuristic lane for now:
+  - `nba_parlay_3leg_v1`
+  - `mlb_parlay_3leg_v1`
   - `mixed_parlay_3leg_v1`
-- 4-leg through 6-leg parlays stay on a calibrated combiner until there is enough historical density for direct models.
+  - `4-leg` through `6-leg` parlays stay on a calibrated combiner until there is enough historical density for direct models.
 
 ## Public Data Sources
 

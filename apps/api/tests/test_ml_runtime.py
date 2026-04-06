@@ -177,9 +177,12 @@ def test_run_shadow_inference_failure_does_not_activate_serving_fallback(db_sess
 @pytest.mark.parametrize(
     ("live_family_key", "artifact_family_key", "scope"),
     [
+        ("mlb_singles", "mlb_singles_v1", "single"),
         ("nba_props", "nba_props_v1", "single"),
         ("mlb_props", "mlb_props_v1", "single"),
+        ("nba_parlay_2leg", "nba_parlay_2leg_v1", "parlay"),
         ("mlb_parlay_2leg", "mlb_parlay_2leg_v1", "parlay"),
+        ("mixed_parlay_2leg", "mixed_parlay_2leg_v1", "parlay"),
     ],
 )
 def test_versioned_manifest_family_can_serve_live_family_key(

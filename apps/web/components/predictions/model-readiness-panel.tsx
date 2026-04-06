@@ -28,6 +28,14 @@ function runtimeVariant(status: RuntimeHealthStatus): "positive" | "warning" | "
   return "negative";
 }
 
+function studyTrackVariant(studyTrack: ModelFamilyReadinessRead["study_track"]): "warning" | "default" {
+  return studyTrack === "active" ? "warning" : "default";
+}
+
+function studyTrackLabel(studyTrack: ModelFamilyReadinessRead["study_track"]): string {
+  return studyTrack === "active" ? "active study" : "heuristic lane";
+}
+
 function FamilyCard({
   family,
   selected,
@@ -58,6 +66,9 @@ function FamilyCard({
         </Badge>
       </div>
       <div className="mt-3 flex flex-wrap gap-2 text-xs">
+        <Badge variant={studyTrackVariant(family.study_track)}>
+          {studyTrackLabel(family.study_track)}
+        </Badge>
         <Badge variant={runtimeVariant(family.runtime.runtime_health)}>
           {family.runtime.runtime_health}
         </Badge>
@@ -196,7 +207,7 @@ export function ModelReadinessPanel() {
             </Button>
           </div>
           <p className="text-sm text-muted-foreground">
-            Heuristic confidence is heuristic reliability, not calibrated probability. Only families with effective mode <span className="font-mono">ml</span> are serving calibrated probabilities.
+            Heuristic confidence is heuristic reliability, not calibrated probability. Active study families can still show heuristic runtime while history and shadow coverage are building. Only families with effective mode <span className="font-mono">ml</span> are serving calibrated probabilities.
           </p>
         </CardHeader>
         <CardContent className="px-4 py-4">
@@ -218,6 +229,9 @@ export function ModelReadinessPanel() {
           <CardHeader className="gap-2 border-b border-border/80 px-4 py-4">
             <div className="flex flex-wrap items-center gap-2">
               <CardTitle className="text-base">{selected.label}</CardTitle>
+              <Badge variant={studyTrackVariant(selected.study_track)}>
+                {studyTrackLabel(selected.study_track)}
+              </Badge>
               <Badge variant={readinessVariant(selected.readiness_status)}>
                 {selected.readiness_status.replaceAll("_", " ")}
               </Badge>

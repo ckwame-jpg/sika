@@ -20,6 +20,20 @@
       }
     },
     {
+      "family_key": "mlb_singles_v1",
+      "serves_family_key": "mlb_singles",
+      "model_name": "mlb_singles_v1",
+      "model_version": "2026-04-05",
+      "calibration_version": "2026-04-05",
+      "feature_set_version": "public-feature-set-v1",
+      "artifact_path": "artifacts/mlb_singles_v1/model.joblib",
+      "mode": "shadow",
+      "metadata": {
+        "sport": "MLB",
+        "scope": "single"
+      }
+    },
+    {
       "family_key": "nba_props_v1",
       "serves_family_key": "nba_props",
       "model_name": "nba_props_v1",
@@ -48,6 +62,21 @@
       }
     },
     {
+      "family_key": "nba_parlay_2leg_v1",
+      "serves_family_key": "nba_parlay_2leg",
+      "model_name": "nba_parlay_2leg_v1",
+      "model_version": "2026-04-05",
+      "calibration_version": "2026-04-05",
+      "feature_set_version": "public-feature-set-v1",
+      "artifact_path": "artifacts/nba_parlay_2leg_v1/model.joblib",
+      "mode": "shadow",
+      "metadata": {
+        "sport": "NBA",
+        "scope": "parlay",
+        "leg_count": 2
+      }
+    },
+    {
       "family_key": "mlb_parlay_2leg_v1",
       "serves_family_key": "mlb_parlay_2leg",
       "model_name": "mlb_parlay_2leg_v1",
@@ -58,6 +87,21 @@
       "mode": "shadow",
       "metadata": {
         "sport": "MLB",
+        "scope": "parlay",
+        "leg_count": 2
+      }
+    },
+    {
+      "family_key": "mixed_parlay_2leg_v1",
+      "serves_family_key": "mixed_parlay_2leg",
+      "model_name": "mixed_parlay_2leg_v1",
+      "model_version": "2026-04-05",
+      "calibration_version": "2026-04-05",
+      "feature_set_version": "public-feature-set-v1",
+      "artifact_path": "artifacts/mixed_parlay_2leg_v1/model.joblib",
+      "mode": "shadow",
+      "metadata": {
+        "sport": "MIXED",
         "scope": "parlay",
         "leg_count": 2
       }

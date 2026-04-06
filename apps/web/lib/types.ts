@@ -414,6 +414,7 @@ export type ReadinessStatus =
   | "serving";
 
 export type RuntimeHealthStatus = "healthy" | "degraded" | "unavailable";
+export type StudyTrack = "active" | "heuristic_only";
 
 export interface ReadinessBucketRead {
   label: string;
@@ -451,6 +452,7 @@ export interface ModelFamilyReadinessRead {
   scope: string;
   sport_scope: string;
   leg_count: number | null;
+  study_track: StudyTrack;
   readiness_status: ReadinessStatus;
   why_not_ready: string;
   runtime: ModelFamilyRuntimeHealthRead;

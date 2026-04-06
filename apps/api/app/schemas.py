@@ -410,6 +410,7 @@ ReadinessStatus = Literal[
 ]
 
 RuntimeHealthStatus = Literal["healthy", "degraded", "unavailable"]
+StudyTrack = Literal["active", "heuristic_only"]
 
 
 class ReadinessBucketRead(BaseModel):
@@ -448,6 +449,7 @@ class ModelFamilyReadinessRead(BaseModel):
     scope: str
     sport_scope: str
     leg_count: int | None = None
+    study_track: StudyTrack
     readiness_status: ReadinessStatus
     why_not_ready: str
     runtime: ModelFamilyRuntimeHealthRead

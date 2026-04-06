@@ -192,13 +192,42 @@ def _seed_shadow_singles(db_session, *, count: int):
     db_session.flush()
 
 
-def test_models_readiness_endpoint_reports_heuristic_only_with_no_history(client):
+def test_models_readiness_endpoint_reports_insufficient_history_for_active_study_with_no_history(client):
     response = client.get("/models/readiness")
 
     assert response.status_code == 200
     payload = response.json()
     nba = next(item for item in payload["families"] if item["family_key"] == "nba_singles")
-    assert nba["readiness_status"] == "heuristic_only"
+    assert nba["study_track"] == "active"
+    assert nba["readiness_status"] == "insufficient_history"
+
+
+def test_models_readiness_endpoint_marks_locked_and_heuristic_families(client):
+    response = client.get("/models/readiness")
+
+    assert response.status_code == 200
+    payload = response.json()
+    by_key = {item["family_key"]: item for item in payload["families"]}
+
+    for family_key in {
+        "nba_singles",
+        "mlb_singles",
+        "nba_props",
+        "mlb_props",
+        "nba_parlay_2leg",
+        "mlb_parlay_2leg",
+        "mixed_parlay_2leg",
+    }:
+        assert by_key[family_key]["study_track"] == "active"
+
+    for family_key in {
+        "nba_parlay_3leg",
+        "mlb_parlay_3leg",
+        "mixed_parlay_3leg",
+        "parlay_4_6_leg_combiner",
+    }:
+        assert by_key[family_key]["study_track"] == "heuristic_only"
+        assert by_key[family_key]["readiness_status"] == "heuristic_only"
 
 
 def test_models_readiness_endpoint_reports_insufficient_history(client, db_session):
@@ -211,6 +240,19 @@ def test_models_readiness_endpoint_reports_insufficient_history(client, db_sessi
     payload = response.json()
     assert payload["readiness_status"] == "insufficient_history"
     assert payload["settled_predictions"] == 10
+
+
+def test_models_readiness_endpoint_reports_shadow_not_started_for_active_study_family(client, db_session):
+    _seed_nba_single_predictions(db_session, total=40, settled=40)
+    db_session.commit()
+
+    response = client.get("/models/readiness/nba_singles")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["study_track"] == "active"
+    assert payload["readiness_status"] == "shadow_not_started"
+    assert payload["runtime"]["desired_mode"] == "heuristic"
 
 
 def test_models_readiness_endpoint_separates_coverage_history_from_recommendation_history(client, db_session):
