@@ -90,7 +90,7 @@ export function RunsDesk() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-medium text-foreground">
-                          {run.kind === "prop_refresh" ? "Prop Refresh" : "Refresh"} #{run.id}
+                          {run.kind === "prop_refresh" ? "Maintenance Refresh" : "Refresh"} #{run.id}
                         </p>
                         <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
                       </div>

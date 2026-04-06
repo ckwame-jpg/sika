@@ -158,11 +158,21 @@ def _summary_for_family(
     definition = family_definition(family_key)
     scope = definition.scope
     runtime = read_family_runtime(db, family_key, scope=scope)
-    predictions: list[Any] = single_predictions if scope == "single" else parlay_predictions
+    all_predictions: list[Any] = single_predictions if scope == "single" else parlay_predictions
     shadows: list[Any] = shadow_singles if scope == "single" else shadow_parlays
+    if scope == "single":
+        coverage_predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") == "coverage"]
+        predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") != "coverage"]
+    else:
+        coverage_predictions = []
+        predictions = all_predictions
     total_predictions = len(predictions)
     settled = [row for row in predictions if getattr(row, "prediction_outcome", None) in {"won", "lost", "push", "cancelled"}]
     pending = [row for row in predictions if getattr(row, "prediction_outcome", None) == "pending"]
+    coverage_settled = [
+        row for row in coverage_predictions if getattr(row, "prediction_outcome", None) in {"won", "lost", "push", "cancelled"}
+    ]
+    coverage_pending = [row for row in coverage_predictions if getattr(row, "prediction_outcome", None) == "pending"]
     wins = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "won")
     losses = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "lost")
     pushes = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "push")
@@ -210,6 +220,9 @@ def _summary_for_family(
         "total_predictions": total_predictions,
         "settled_predictions": len(settled),
         "pending_predictions": len(pending),
+        "coverage_predictions": len(coverage_predictions),
+        "coverage_settled_predictions": len(coverage_settled),
+        "coverage_pending_predictions": len(coverage_pending),
         "shadow_predictions": len(shadows),
         "shadow_coverage_ratio": shadow_coverage_ratio,
         "won_predictions": wins,

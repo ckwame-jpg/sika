@@ -40,3 +40,4 @@ Offline training, calibration, backtests, and artifact packaging for the public-
 ## Artifact Contract
 
 The live API stays inference-only and reads a manifest shaped like [`manifests/public-shadow.example.json`](./manifests/public-shadow.example.json).
+Use `serves_family_key` when the packaged artifact keeps a versioned family name such as `nba_props_v1` but should serve the live API family key such as `nba_props`.

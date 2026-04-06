@@ -28,15 +28,28 @@ def _coverage_reference_now(now: datetime | None = None) -> datetime:
     return now or datetime.now(timezone.utc)
 
 
+def _coerce_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def is_current_watchlist_event(event: Event | None, *, now: datetime | None = None) -> bool:
     if event is None or event.starts_at is None:
         return False
     if (event.status or "").lower() in TERMINAL_EVENT_STATUSES:
         return False
 
-    reference_now = _coverage_reference_now(now)
+    starts_at = _coerce_utc(event.starts_at)
+    if starts_at is None:
+        return False
+    reference_now = _coerce_utc(_coverage_reference_now(now))
+    if reference_now is None:
+        return False
     local_tz = _coverage_timezone()
-    event_local_date = event.starts_at.astimezone(local_tz).date()
+    event_local_date = starts_at.astimezone(local_tz).date()
     current_local_date = reference_now.astimezone(local_tz).date()
     return (event.status or "").lower() == "in_progress" or event_local_date == current_local_date
 
@@ -114,6 +127,7 @@ def warm_current_watchlist_prop_context(
     *,
     sport: str | None = None,
     now: datetime | None = None,
+    markets: list[Market] | None = None,
 ) -> dict[str, int]:
     if resolver is None:
         from app.services.scoring import PropStatsResolver
@@ -122,7 +136,8 @@ def warm_current_watchlist_prop_context(
     else:
         active_resolver = resolver
     unique_subjects: dict[tuple[str, str, str], tuple[str, str, str | None]] = {}
-    for market in current_watchlist_markets(db, sport=sport, now=now):
+    selected_markets = markets if markets is not None else current_watchlist_markets(db, sport=sport, now=now)
+    for market in selected_markets:
         raw_data = market.raw_data or {}
         if raw_data.get("copilot_market_family") != "player_prop":
             continue

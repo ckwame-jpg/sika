@@ -28,7 +28,7 @@ from app.services.model_families import single_family_key
 from app.services.parlays import ParlayCandidateInput, capture_parlay_artifacts, clear_active_parlay_watchlist
 from app.services.predictions import MODEL_NAME, OPEN_MARKET_STATUSES, capture_prediction
 from app.services.stats_query import _build_game_logs, default_season_for_sport
-from app.services.watchlist_coverage import is_current_watchlist_market
+from app.services.watchlist_coverage import is_current_watchlist_market, latest_snapshot_by_market_id
 from app.sports.base import alias_tokens
 
 
@@ -1902,6 +1902,7 @@ def regenerate_watchlist(
     allowed_market_ids: set[int] | None = None,
     replace_all: bool = True,
     capture_parlays: bool = True,
+    candidate_markets: list[Market] | None = None,
 ) -> WatchlistGenerationSummary:
     if replace_all:
         db.query(Recommendation).delete()
@@ -1914,22 +1915,32 @@ def regenerate_watchlist(
     parlay_candidates: list[ParlayCandidateInput] = []
     pending_recommendations: list[tuple[Market, ScoredRecommendation]] = []
     current_coverage_candidates: list[tuple[Market, ScoredRecommendation]] = []
-    stmt = (
-        select(Market)
-        .options(joinedload(Market.event).selectinload(Event.participants).joinedload(EventParticipant.participant))
-        .where(Market.event_id.is_not(None), Market.status.in_(tuple(OPEN_MARKET_STATUSES)))
-    )
-    if allowed_market_ids is not None:
-        if not allowed_market_ids:
-            return summary
-        stmt = stmt.where(Market.id.in_(tuple(sorted(allowed_market_ids))))
-    markets = db.scalars(stmt).all()
+    if candidate_markets is not None:
+        markets = [
+            market
+            for market in candidate_markets
+            if market.event_id is not None and (market.status or "").lower() in OPEN_MARKET_STATUSES
+        ]
+        if allowed_market_ids is not None:
+            if not allowed_market_ids:
+                return summary
+            markets = [market for market in markets if market.id in allowed_market_ids]
+    else:
+        stmt = (
+            select(Market)
+            .options(joinedload(Market.event).selectinload(Event.participants).joinedload(EventParticipant.participant))
+            .where(Market.event_id.is_not(None), Market.status.in_(tuple(OPEN_MARKET_STATUSES)))
+        )
+        if allowed_market_ids is not None:
+            if not allowed_market_ids:
+                return summary
+            stmt = stmt.where(Market.id.in_(tuple(sorted(allowed_market_ids))))
+        markets = db.scalars(stmt).all()
+    latest_snapshots = latest_snapshot_by_market_id(db, [market.id for market in markets])
     for market in markets:
         if not market.event:
             continue
-        latest_snapshot = db.scalars(
-            select(MarketSnapshot).where(MarketSnapshot.market_id == market.id).order_by(MarketSnapshot.captured_at.desc()).limit(1)
-        ).first()
+        latest_snapshot = latest_snapshots.get(market.id)
         scored = _build_scored_recommendation(db, market.event, market, latest_snapshot, resolver=active_resolver)
         if scored:
             db.add(scored.signal)

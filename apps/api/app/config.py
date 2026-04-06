@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     refresh_job_retention_days: int = 14
     prediction_retention_days: int = 30
     refresh_job_stale_minutes: int = 30
+    market_snapshot_heartbeat_minutes: int = 30
     prefer_yes_side_props: bool = True
     enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "SOCCER", "TENNIS"])
     soccer_leagues: list[str] = Field(

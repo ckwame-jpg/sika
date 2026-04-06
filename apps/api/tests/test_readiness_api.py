@@ -110,6 +110,54 @@ def _seed_nba_single_predictions(db_session, *, total: int, settled: int):
     db_session.flush()
 
 
+def _seed_nba_coverage_predictions(db_session, *, total: int, settled: int):
+    for index in range(total):
+        outcome = "pending"
+        settlement_status = "pending"
+        settled_at = None
+        realized_pnl = None
+        if index < settled:
+            outcome = "won" if index % 2 == 0 else "lost"
+            settlement_status = "settled"
+            settled_at = datetime(2026, 4, 3, 12, 0, tzinfo=timezone.utc)
+            realized_pnl = 0.18 if outcome == "won" else -0.42
+
+        db_session.add(
+            Prediction(
+                run_id=1,
+                event_id=None,
+                market_id=10_000 + index,
+                ticker=f"NBA-COVERAGE-{index}",
+                sport_key="NBA",
+                event_name="Coverage game",
+                market_title="Coverage market",
+                market_family="player_prop",
+                market_kind="player_prop",
+                capture_scope="coverage",
+                side="yes",
+                action="buy",
+                suggested_price=0.45,
+                fair_yes_price=0.58,
+                fair_no_price=0.42,
+                edge=0.13,
+                confidence=0.68,
+                selection_score=0.17,
+                model_name="heuristic-v1",
+                rationale="Coverage rationale",
+                reasons=["coverage"],
+                features={},
+                scoring_diagnostics={},
+                market_status_at_capture="active",
+                settlement_status=settlement_status,
+                prediction_outcome=outcome,
+                settled_at=settled_at,
+                realized_pnl=realized_pnl,
+                captured_at=datetime(2026, 4, 3, 10, 0, tzinfo=timezone.utc),
+            )
+        )
+    db_session.flush()
+
+
 def _seed_shadow_singles(db_session, *, count: int):
     for index in range(count):
         db_session.add(
@@ -163,6 +211,20 @@ def test_models_readiness_endpoint_reports_insufficient_history(client, db_sessi
     payload = response.json()
     assert payload["readiness_status"] == "insufficient_history"
     assert payload["settled_predictions"] == 10
+
+
+def test_models_readiness_endpoint_separates_coverage_history_from_recommendation_history(client, db_session):
+    _seed_nba_coverage_predictions(db_session, total=12, settled=8)
+    db_session.commit()
+
+    response = client.get("/models/readiness/nba_props")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_predictions"] == 0
+    assert payload["settled_predictions"] == 0
+    assert payload["coverage_predictions"] == 12
+    assert payload["coverage_settled_predictions"] == 8
 
 
 def test_models_readiness_endpoint_reports_shadowing_with_low_coverage(client, db_session, monkeypatch, tmp_path):

@@ -454,6 +454,9 @@ class ModelFamilyReadinessRead(BaseModel):
     total_predictions: int
     settled_predictions: int
     pending_predictions: int
+    coverage_predictions: int = 0
+    coverage_settled_predictions: int = 0
+    coverage_pending_predictions: int = 0
     shadow_predictions: int
     shadow_coverage_ratio: float
     won_predictions: int

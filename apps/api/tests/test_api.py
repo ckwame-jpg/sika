@@ -325,6 +325,25 @@ def test_refresh_jobs_enqueues_current_slate_job(client, db_session):
     assert detail.json()["status"] == "queued"
 
 
+def test_refresh_job_detail_reconciles_stale_running_job(client, db_session):
+    job = RefreshJob(
+        kind="refresh",
+        scope="current_slate",
+        reason="manual",
+        status="running",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=45),
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    detail = client.get(f"/jobs/{job.id}")
+
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["status"] == "failed"
+    assert payload["error_message"] == "stalled - reconciled automatically"
+
+
 def test_watchlist_diagnostics_endpoint_reports_zero_emission_refresh(client, db_session):
     run = Run(
         kind="refresh",

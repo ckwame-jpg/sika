@@ -73,7 +73,10 @@ def _safe_modes_mapping() -> dict[str, RuntimeMode]:
 
 
 def _manifest_family_map(manifest: ModelManifest | None) -> dict[str, ModelManifestFamily]:
-    return {item.family_key: item for item in (manifest.families if manifest else [])}
+    return {
+        (item.serves_family_key or item.family_key): item
+        for item in (manifest.families if manifest else [])
+    }
 
 
 def _resolve_requested_mode(
@@ -124,7 +127,9 @@ def _lineage_from_manifest_family(family: ModelManifestFamily | None, scope: str
     if family is None:
         return _heuristic_lineage_for_scope(scope)
     metadata = dict(family.metadata or {})
-    metadata.setdefault("family_key", family.family_key)
+    metadata.setdefault("family_key", family.serves_family_key or family.family_key)
+    metadata.setdefault("artifact_family_key", family.family_key)
+    metadata.setdefault("serves_family_key", family.serves_family_key or family.family_key)
     metadata.setdefault("serving_mode", family.mode)
     return ModelLineage(
         model_name=family.model_name,
@@ -139,6 +144,8 @@ def _validate_artifact_payload(
     family_key: str,
     scope: str,
     artifact_path: str | None,
+    *,
+    artifact_family_key: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not artifact_path:
         return None, "No artifact_path configured for this family."
@@ -150,8 +157,13 @@ def _validate_artifact_payload(
     except Exception as exc:  # pragma: no cover - defensive
         return None, f"Artifact load failed: {exc}"
 
-    if str(payload.get("family_key") or "") != family_key:
+    payload_family_key = str(payload.get("family_key") or "")
+    expected_artifact_key = artifact_family_key or family_key
+    if payload_family_key not in {family_key, expected_artifact_key}:
         return None, f"Artifact family mismatch for {family_key}."
+    payload_serves_key = str(payload.get("serves_family_key") or "").strip()
+    if payload_serves_key and payload_serves_key != family_key:
+        return None, f"Artifact serving key mismatch for {family_key}."
     if str(payload.get("scope") or "").strip().lower() != scope:
         return None, f"Artifact scope mismatch for {family_key}."
     if str(payload.get("behavior") or "").strip().lower() == "raise_on_load":
@@ -280,7 +292,12 @@ def resolve_family_runtime(
         db.flush()
         return _decision_from_row(row, scope)
 
-    payload, error = _validate_artifact_payload(family_key, scope, artifact_path)
+    payload, error = _validate_artifact_payload(
+        family_key,
+        scope,
+        artifact_path,
+        artifact_family_key=str(lineage.model_metadata.get("artifact_family_key") or family_key),
+    )
     if error is not None or payload is None:
         _apply_runtime_state(
             row,
@@ -324,7 +341,13 @@ def sync_family_runtime_health(db: Session) -> list[FamilyRuntimeDecision]:
 
 
 def _artifact_payload_for_decision(decision: FamilyRuntimeDecision, scope: str) -> dict[str, Any]:
-    payload, error = _validate_artifact_payload(decision.family_key, scope, decision.artifact_path)
+    metadata = dict(decision.lineage.model_metadata or {})
+    payload, error = _validate_artifact_payload(
+        decision.family_key,
+        scope,
+        decision.artifact_path,
+        artifact_family_key=str(metadata.get("artifact_family_key") or decision.family_key),
+    )
     if error is not None or payload is None:
         raise RuntimeError(error or "Artifact payload unavailable.")
     return payload

@@ -6,7 +6,7 @@ import { fetchRefreshJob, keys, triggerRefresh } from "@/lib/api";
 import type { RefreshJobRead } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 2_500;
-const TIMEOUT_MS = 3 * 60_000;
+const TIMEOUT_MS = 40 * 60_000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));

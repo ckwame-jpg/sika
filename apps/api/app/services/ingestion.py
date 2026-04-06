@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+from time import perf_counter
 from typing import Any, Iterable
 
 import httpx
@@ -16,7 +17,7 @@ from app.services.ml import capture_shadow_artifacts
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import OPEN_MARKET_STATUSES, settle_predictions
 from app.services.scoring import PropStatsResolver, regenerate_watchlist, warm_prop_context_cache
-from app.services.watchlist_coverage import current_watchlist_markets, warm_current_watchlist_prop_context
+from app.services.watchlist_coverage import current_watchlist_markets, latest_snapshot_by_market_id, warm_current_watchlist_prop_context
 from app.sports.base import NormalizedEvent
 from app.sports.registry import ADAPTERS
 
@@ -31,6 +32,29 @@ SPORT_LABELS = {
 
 FREE_PROVIDER_SPORTS = {"SOCCER", "TENNIS"}
 PUBLIC_MAJOR_SPORTS = {"NBA", "NFL", "MLB"}
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _snapshot_materially_changed(
+    previous: MarketSnapshot | None,
+    current: dict[str, float | None],
+    *,
+    payload: dict[str, Any],
+) -> bool:
+    if previous is None:
+        return True
+    for field in ("yes_bid", "yes_ask", "no_bid", "no_ask", "last_price", "volume", "open_interest"):
+        if getattr(previous, field) != current.get(field):
+            return True
+    previous_status = str((previous.raw_data or {}).get("status") or "")
+    return previous_status != str(payload.get("status") or "")
 
 
 def _merge_numeric_detail_maps(*payloads: dict[str, int]) -> dict[str, int]:
@@ -286,14 +310,99 @@ def refresh_kalshi_markets(
     discover_combo_props: bool = True,
 ) -> dict[str, object]:
     client = client or KalshiPublicClient()
+    settings = get_settings()
     processed = 0
     total_seen = 0
     supported_nba_props = 0
     supported_mlb_props = 0
     combo_prop_legs_discovered = 0
     combo_prop_legs_refreshed = 0
+    market_snapshots_written = 0
     unsupported_prop_categories: dict[str, int] = {}
     open_market_tickers: set[str] = set()
+    touched_market_ids: set[int] = set()
+    heartbeat = timedelta(minutes=settings.market_snapshot_heartbeat_minutes)
+    payload_records: list[dict[str, Any]] = []
+
+    if include_standalone:
+        for payload in client.list_markets(status="open", limit=1000, mve_filter="exclude"):
+            total_seen += 1
+            payload_records.append(
+                {
+                    "payload": payload,
+                    "source_type": "standalone",
+                    "source_payload": None,
+                    "classification_override": None,
+                }
+            )
+
+    if refresh_combo_prop_tickers:
+        tracked_combo_prop_markets = [
+            market
+            for market in db.scalars(select(Market).where(Market.status.in_(tuple(OPEN_MARKET_STATUSES)))).all()
+            if (market.raw_data or {}).get("copilot_market_family") == "player_prop"
+            and (market.raw_data or {}).get("copilot_source_type") == "combo_derived"
+        ]
+        for market in tracked_combo_prop_markets:
+            try:
+                payload = client.get_market(market.ticker)
+            except Exception:
+                continue
+            if not payload:
+                continue
+            payload_records.append(
+                {
+                    "payload": payload,
+                    "source_type": "combo_derived",
+                    "source_payload": None,
+                    "classification_override": None,
+                }
+            )
+
+    if discover_combo_props:
+        combo_leg_tickers_seen: set[str] = set()
+        for combo_payload in client.list_markets(status="open", limit=1000, mve_filter="include"):
+            if not (combo_payload.get("mve_collection_ticker") or combo_payload.get("mve_selected_legs")):
+                continue
+            for leg in combo_payload.get("mve_selected_legs") or []:
+                leg_ticker = str(leg.get("market_ticker") or "").strip()
+                if not leg_ticker or leg_ticker in combo_leg_tickers_seen:
+                    continue
+                combo_leg_tickers_seen.add(leg_ticker)
+                try:
+                    leg_payload = client.get_market(leg_ticker)
+                except Exception:
+                    continue
+                if not leg_payload:
+                    continue
+                leg_classification = classify_market_payload(leg_payload)
+                leg_metadata = leg_classification.get("metadata") or {}
+                if (
+                    not leg_classification.get("supported")
+                    or leg_metadata.get("copilot_market_family") != "player_prop"
+                ):
+                    continue
+                payload_records.append(
+                    {
+                        "payload": {
+                            **leg_payload,
+                            "mve_collection_ticker": None,
+                            "mve_selected_legs": None,
+                        },
+                        "source_type": "combo_derived",
+                        "source_payload": combo_payload,
+                        "classification_override": leg_classification,
+                    }
+                )
+
+    existing_markets: dict[str, Market] = {}
+    tickers = sorted({str(record["payload"].get("ticker") or "") for record in payload_records if record["payload"].get("ticker")})
+    if tickers:
+        existing_markets = {
+            market.ticker: market
+            for market in db.scalars(select(Market).where(Market.ticker.in_(tuple(tickers)))).all()
+        }
+    latest_snapshots = latest_snapshot_by_market_id(db, [market.id for market in existing_markets.values()])
 
     def persist_market_payload(
         payload: dict[str, Any],
@@ -302,7 +411,7 @@ def refresh_kalshi_markets(
         source_payload: dict[str, Any] | None = None,
         classification_override: dict[str, Any] | None = None,
     ) -> bool:
-        nonlocal processed, supported_nba_props, supported_mlb_props
+        nonlocal processed, supported_nba_props, supported_mlb_props, combo_prop_legs_discovered, combo_prop_legs_refreshed, market_snapshots_written
         classification = classification_override or classify_market_payload(payload)
         metadata = classification.get("metadata")
         if not classification.get("supported") or not metadata:
@@ -320,7 +429,7 @@ def refresh_kalshi_markets(
                 supported_nba_props += 1
             if market_sport_key == "MLB":
                 supported_mlb_props += 1
-        market = db.scalar(select(Market).where(Market.ticker == ticker))
+        market = existing_markets.get(ticker)
         had_existing_market = market is not None
         existing_raw = dict(market.raw_data or {}) if market else {}
         existing_source_type = str(existing_raw.get("copilot_source_type") or "standalone")
@@ -328,6 +437,7 @@ def refresh_kalshi_markets(
             market = Market(ticker=ticker, title=payload.get("title") or ticker)
             db.add(market)
             db.flush()
+            existing_markets[ticker] = market
         market.series_ticker = payload.get("series_ticker")
         market.event_ticker = payload.get("event_ticker")
         market.sport_key = market_sport_key
@@ -358,71 +468,40 @@ def refresh_kalshi_markets(
         else:
             raw_data["copilot_source_type"] = existing_source_type
         market.raw_data = raw_data
+        touched_market_ids.add(market.id)
         if market.status in OPEN_MARKET_STATUSES:
             open_market_tickers.add(ticker)
 
         snapshot = snapshot_from_market_payload(payload)
-        db.add(MarketSnapshot(market_id=market.id, raw_data=payload, **snapshot))
+        latest_snapshot = latest_snapshots.get(market.id)
+        latest_snapshot_at = _as_utc(latest_snapshot.captured_at) if latest_snapshot else None
+        should_write_snapshot = _snapshot_materially_changed(latest_snapshot, snapshot, payload=payload)
+        if not should_write_snapshot and latest_snapshot_at is not None:
+            should_write_snapshot = datetime.now(timezone.utc) - latest_snapshot_at >= heartbeat
+        if should_write_snapshot:
+            snapshot_row = MarketSnapshot(
+                market_id=market.id,
+                captured_at=datetime.now(timezone.utc),
+                raw_data=payload,
+                **snapshot,
+            )
+            db.add(snapshot_row)
+            latest_snapshots[market.id] = snapshot_row
+            market_snapshots_written += 1
         processed += 1
+        if source_type == "combo_derived" and source_payload is None:
+            combo_prop_legs_refreshed += 1
+        elif source_type == "combo_derived":
+            combo_prop_legs_discovered += 1
         return True
 
-    if include_standalone:
-        for payload in client.list_markets(status="open", limit=1000, mve_filter="exclude"):
-            total_seen += 1
-            persist_market_payload(payload, source_type="standalone")
-
-    if refresh_combo_prop_tickers:
-        tracked_combo_prop_markets = [
-            market
-            for market in db.scalars(select(Market).where(Market.status.in_(tuple(OPEN_MARKET_STATUSES)))).all()
-            if (market.raw_data or {}).get("copilot_market_family") == "player_prop"
-            and (market.raw_data or {}).get("copilot_source_type") == "combo_derived"
-        ]
-        for market in tracked_combo_prop_markets:
-            try:
-                payload = client.get_market(market.ticker)
-            except Exception:
-                continue
-            if not payload:
-                continue
-            if persist_market_payload(payload, source_type="combo_derived"):
-                combo_prop_legs_refreshed += 1
-
-    if discover_combo_props:
-        combo_leg_tickers_seen: set[str] = set()
-        for combo_payload in client.list_markets(status="open", limit=1000, mve_filter="include"):
-            if not (combo_payload.get("mve_collection_ticker") or combo_payload.get("mve_selected_legs")):
-                continue
-            for leg in combo_payload.get("mve_selected_legs") or []:
-                leg_ticker = str(leg.get("market_ticker") or "").strip()
-                if not leg_ticker or leg_ticker in combo_leg_tickers_seen:
-                    continue
-                combo_leg_tickers_seen.add(leg_ticker)
-                try:
-                    leg_payload = client.get_market(leg_ticker)
-                except Exception:
-                    continue
-                if not leg_payload:
-                    continue
-                leg_classification = classify_market_payload(leg_payload)
-                leg_metadata = leg_classification.get("metadata") or {}
-                if (
-                    not leg_classification.get("supported")
-                    or leg_metadata.get("copilot_market_family") != "player_prop"
-                ):
-                    continue
-                leg_payload = {
-                    **leg_payload,
-                    "mve_collection_ticker": None,
-                    "mve_selected_legs": None,
-                }
-                if persist_market_payload(
-                    leg_payload,
-                    source_type="combo_derived",
-                    source_payload=combo_payload,
-                    classification_override=leg_classification,
-                ):
-                    combo_prop_legs_discovered += 1
+    for record in payload_records:
+        persist_market_payload(
+            record["payload"],
+            source_type=str(record["source_type"]),
+            source_payload=record["source_payload"],
+            classification_override=record["classification_override"],
+        )
 
     db.flush()
     return {
@@ -433,6 +512,8 @@ def refresh_kalshi_markets(
         "unsupported_prop_category_counts": unsupported_prop_categories,
         "combo_prop_legs_discovered": combo_prop_legs_discovered,
         "combo_prop_legs_refreshed": combo_prop_legs_refreshed,
+        "market_snapshots_written": market_snapshots_written,
+        "touched_market_ids": touched_market_ids,
         "open_market_tickers": open_market_tickers,
     }
 
@@ -511,6 +592,7 @@ def _build_watchlist_run_details(
         "sports_fetch_errors": (sports_summary or {}).get("sports_fetch_errors") or {},
         "total_kalshi_markets_seen": kalshi_summary.get("total_kalshi_markets_seen") or 0,
         "supported_markets_kept": kalshi_summary.get("processed") or 0,
+        "market_snapshots_written": kalshi_summary.get("market_snapshots_written") or 0,
         "supported_nba_props_seen": kalshi_summary.get("supported_nba_props_seen") or 0,
         "supported_mlb_props_seen": kalshi_summary.get("supported_mlb_props_seen") or 0,
         "unsupported_prop_category_counts": kalshi_summary.get("unsupported_prop_category_counts") or {},
@@ -579,6 +661,9 @@ def run_refresh_cycle(
             espn_client = major_provider or EspnPublicClient(http_client=shared_http_client)
             settings = get_settings()
             active_sports = list(sports or (["NBA", "MLB"] if current_slate_only else settings.enabled_sports))
+            stage_details: dict[str, float] = {}
+
+            stage_started = perf_counter()
             sports_summary = refresh_sports_data(
                 db,
                 provider=provider,
@@ -588,7 +673,10 @@ def run_refresh_cycle(
                 lookback_days=settings.current_slate_lookback_days if current_slate_only else None,
                 lookahead_days=settings.current_slate_lookahead_days if current_slate_only else None,
             )
+            stage_details["sports_ingest_seconds"] = round(perf_counter() - stage_started, 3)
             db.commit()
+
+            stage_started = perf_counter()
             kalshi_summary = refresh_kalshi_markets(
                 db,
                 client=kalshi_client,
@@ -596,12 +684,26 @@ def run_refresh_cycle(
                 refresh_combo_prop_tickers=not current_slate_only,
                 discover_combo_props=False,
             )
-            mapped_count = map_markets_to_events(db)
+            stage_details["kalshi_ingest_seconds"] = round(perf_counter() - stage_started, 3)
+
+            stage_started = perf_counter()
+            touched_market_ids = set(kalshi_summary.get("touched_market_ids") or set())
+            mapped_count = map_markets_to_events(db, candidate_market_ids=touched_market_ids if touched_market_ids else None)
+            stage_details["market_mapping_seconds"] = round(perf_counter() - stage_started, 3)
             db.commit()
+
+            current_markets = current_watchlist_markets(db) if current_slate_only else None
             current_watchlist_resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
-            current_watchlist_summary = warm_current_watchlist_prop_context(db, resolver=current_watchlist_resolver)
-            target_market_ids = {market.id for market in current_watchlist_markets(db)} if current_slate_only else None
+            stage_started = perf_counter()
+            current_watchlist_summary = warm_current_watchlist_prop_context(
+                db,
+                resolver=current_watchlist_resolver,
+                markets=current_markets,
+            )
+            stage_details["prop_warming_seconds"] = round(perf_counter() - stage_started, 3)
+            target_market_ids = {market.id for market in current_markets or []} if current_slate_only else None
             resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=False)
+            stage_started = perf_counter()
             watchlist_summary = regenerate_watchlist(
                 db,
                 run_id=run.id,
@@ -609,7 +711,9 @@ def run_refresh_cycle(
                 allowed_market_ids=target_market_ids,
                 replace_all=not current_slate_only,
                 capture_parlays=not current_slate_only,
+                candidate_markets=current_markets,
             )
+            stage_details["watchlist_regeneration_seconds"] = round(perf_counter() - stage_started, 3)
             db.commit()
             if current_slate_only:
                 shadow_prediction_count, shadow_parlay_prediction_count = 0, 0
@@ -619,13 +723,18 @@ def run_refresh_cycle(
                     run_id=run.id,
                     candidates=[],
                 )
-            single_settlement_summary = settle_predictions(
-                db,
-                client=kalshi_client,
-                open_market_tickers=set(kalshi_summary.get("open_market_tickers") or set()),
-                sport_keys=set(active_sports) if current_slate_only else None,
-            )
-            parlay_settlement_summary = settle_parlay_predictions(db) if not current_slate_only else {
+            single_settlement_summary = {
+                "processed": 0,
+                "updated": 0,
+                "won": 0,
+                "lost": 0,
+                "push": 0,
+                "cancelled": 0,
+                "pending": 0,
+                "unresolved": 0,
+                "errors": 0,
+            }
+            parlay_settlement_summary = {
                 "updated": 0,
                 "won": 0,
                 "lost": 0,
@@ -649,6 +758,7 @@ def run_refresh_cycle(
                 extra_details={
                     **_merge_numeric_detail_maps(current_watchlist_summary, resolver.stats.as_dict()),
                     "refresh_scope": "current_slate" if current_slate_only else "full",
+                    **stage_details,
                 },
             )
         run.status = "completed"
@@ -677,6 +787,9 @@ def run_prop_refresh_cycle(
         with httpx.Client(follow_redirects=True, timeout=20) as shared_http_client:
             kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)
             espn_client = major_provider or EspnPublicClient(http_client=shared_http_client)
+            stage_details: dict[str, float] = {}
+
+            stage_started = perf_counter()
             kalshi_summary = refresh_kalshi_markets(
                 db,
                 client=kalshi_client,
@@ -684,16 +797,34 @@ def run_prop_refresh_cycle(
                 refresh_combo_prop_tickers=False,
                 discover_combo_props=True,
             )
-            mapped_count = map_markets_to_events(db)
+            stage_details["kalshi_ingest_seconds"] = round(perf_counter() - stage_started, 3)
+
+            stage_started = perf_counter()
+            touched_market_ids = set(kalshi_summary.get("touched_market_ids") or set())
+            mapped_count = map_markets_to_events(db, candidate_market_ids=touched_market_ids if touched_market_ids else None)
+            stage_details["market_mapping_seconds"] = round(perf_counter() - stage_started, 3)
             db.commit()
             resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
+            stage_started = perf_counter()
             warm_summary = warm_prop_context_cache(db, resolver=resolver)
+            stage_details["prop_warming_seconds"] = round(perf_counter() - stage_started, 3)
+            stage_started = perf_counter()
             watchlist_summary = regenerate_watchlist(
                 db,
                 run_id=run.id,
                 resolver=resolver,
             )
+            stage_details["watchlist_regeneration_seconds"] = round(perf_counter() - stage_started, 3)
             db.commit()
+            stage_started = perf_counter()
+            single_settlement_summary = settle_predictions(
+                db,
+                client=kalshi_client,
+                open_market_tickers=set(kalshi_summary.get("open_market_tickers") or set()),
+                latest_only_per_key=True,
+            )
+            parlay_settlement_summary = settle_parlay_predictions(db)
+            stage_details["maintenance_settlement_seconds"] = round(perf_counter() - stage_started, 3)
             run.details, records = _build_watchlist_run_details(
                 db,
                 sports=sports,
@@ -701,7 +832,9 @@ def run_prop_refresh_cycle(
                 kalshi_summary=kalshi_summary,
                 mapped_count=mapped_count,
                 watchlist_summary=watchlist_summary,
-                extra_details=warm_summary,
+                single_settlement_summary=single_settlement_summary,
+                parlay_settlement_summary=parlay_settlement_summary,
+                extra_details={**warm_summary, **stage_details, "refresh_scope": "maintenance"},
             )
         run.status = "completed"
         run.records_processed = records

@@ -43,8 +43,15 @@ def _normalize_utc(value):
     return value.astimezone(timezone.utc)
 
 
-def map_markets_to_events(db: Session) -> int:
-    markets = db.scalars(select(Market).where(Market.event_id.is_(None))).all()
+def map_markets_to_events(db: Session, *, candidate_market_ids: set[int] | None = None) -> int:
+    stmt = select(Market)
+    if candidate_market_ids is None:
+        stmt = stmt.where(Market.event_id.is_(None))
+    else:
+        if not candidate_market_ids:
+            return 0
+        stmt = stmt.where(Market.id.in_(tuple(sorted(candidate_market_ids))))
+    markets = db.scalars(stmt).all()
     if not markets:
         return 0
 
@@ -53,6 +60,15 @@ def map_markets_to_events(db: Session) -> int:
         .options(selectinload(Event.participants).selectinload(EventParticipant.participant))
         .where(Event.status != "completed")
     ).all()
+
+    event_context = [
+        (
+            event,
+            _event_tokens(event),
+            _normalize_utc(event.starts_at),
+        )
+        for event in events
+    ]
 
     updated = 0
     for market in markets:
@@ -67,13 +83,12 @@ def map_markets_to_events(db: Session) -> int:
         anchor_time = _normalize_utc(market_anchor_time(market.raw_data or {}) or market.close_time)
         best_event = None
         best_score = 0.0
-        for event in events:
+        for event, event_tokens, event_starts_at in event_context:
             if market_sport_key and event.sport_key != market_sport_key:
                 continue
-            event_starts_at = _normalize_utc(event.starts_at)
             if anchor_time and event_starts_at and abs((event_starts_at - anchor_time).total_seconds()) > timedelta(days=3).total_seconds():
                 continue
-            score = _token_score(market_tokens, _event_tokens(event))
+            score = _token_score(market_tokens, event_tokens)
             if score > best_score:
                 best_score = score
                 best_event = event

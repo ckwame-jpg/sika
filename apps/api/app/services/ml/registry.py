@@ -13,6 +13,7 @@ class ModelManifestFamily:
     family_key: str
     model_name: str
     model_version: str
+    serves_family_key: str | None = None
     calibration_version: str | None = None
     feature_set_version: str | None = None
     artifact_path: str | None = None
@@ -43,6 +44,7 @@ def load_model_manifest(manifest_path: str | None = None) -> ModelManifest | Non
     families = [
         ModelManifestFamily(
             family_key=str(item.get("family_key") or ""),
+            serves_family_key=str(item.get("serves_family_key") or item.get("metadata", {}).get("serves_family_key") or "").strip() or None,
             model_name=str(item.get("model_name") or ""),
             model_version=str(item.get("model_version") or ""),
             calibration_version=item.get("calibration_version"),

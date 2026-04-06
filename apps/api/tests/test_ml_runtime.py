@@ -22,12 +22,14 @@ def _write_artifact(
     scope: str,
     probability: float = 0.64,
     behavior: str = "static_probability",
+    serves_family_key: str | None = None,
 ):
     artifact_path = tmp_path / f"{family_key}.json"
     artifact_path.write_text(
         json.dumps(
             {
                 "family_key": family_key,
+                **({"serves_family_key": serves_family_key} if serves_family_key else {}),
                 "scope": scope,
                 "behavior": behavior,
                 "probability": probability,
@@ -40,7 +42,14 @@ def _write_artifact(
     return artifact_path
 
 
-def _write_manifest(tmp_path, *, family_key: str, artifact_path: str, mode: str = "ml"):
+def _write_manifest(
+    tmp_path,
+    *,
+    family_key: str,
+    artifact_path: str,
+    mode: str = "ml",
+    serves_family_key: str | None = None,
+):
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(
         json.dumps(
@@ -50,6 +59,7 @@ def _write_manifest(tmp_path, *, family_key: str, artifact_path: str, mode: str 
                 "families": [
                     {
                         "family_key": family_key,
+                        **({"serves_family_key": serves_family_key} if serves_family_key else {}),
                         "model_name": f"{family_key}-model",
                         "model_version": "test-v1",
                         "calibration_version": "test-cal",
@@ -162,3 +172,46 @@ def test_run_shadow_inference_failure_does_not_activate_serving_fallback(db_sess
     assert result is None
     assert decision.desired_mode == "shadow"
     assert decision.fallback_active is False
+
+
+@pytest.mark.parametrize(
+    ("live_family_key", "artifact_family_key", "scope"),
+    [
+        ("nba_props", "nba_props_v1", "single"),
+        ("mlb_props", "mlb_props_v1", "single"),
+        ("mlb_parlay_2leg", "mlb_parlay_2leg_v1", "parlay"),
+    ],
+)
+def test_versioned_manifest_family_can_serve_live_family_key(
+    db_session,
+    monkeypatch,
+    tmp_path,
+    live_family_key,
+    artifact_family_key,
+    scope,
+):
+    artifact_path = _write_artifact(
+        tmp_path,
+        family_key=artifact_family_key,
+        scope=scope,
+        serves_family_key=live_family_key,
+    )
+    manifest_path = _write_manifest(
+        tmp_path,
+        family_key=artifact_family_key,
+        artifact_path=str(artifact_path),
+        mode="ml",
+        serves_family_key=live_family_key,
+    )
+    monkeypatch.setenv("ML_SERVING_MODE", "ml")
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(manifest_path))
+    monkeypatch.setenv("ML_FAMILY_MODES_JSON", json.dumps({live_family_key: "ml"}))
+
+    result, decision = run_serving_inference(db_session, family_key=live_family_key, scope=scope)
+
+    assert result is not None
+    assert decision.desired_mode == "ml"
+    assert decision.effective_mode == "ml"
+    assert decision.runtime_health == "healthy"
+    assert result.lineage.model_metadata["artifact_family_key"] == artifact_family_key
+    assert result.lineage.model_metadata["serves_family_key"] == live_family_key

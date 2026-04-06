@@ -69,7 +69,7 @@ from app.services.ml.readiness import build_model_readiness_detail, build_model_
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
-from app.services.refresh_jobs import enqueue_refresh_job, get_refresh_job
+from app.services.refresh_jobs import enqueue_refresh_job, get_refresh_job, reconcile_stale_jobs as reconcile_stale_refresh_jobs
 from app.services.scheduler import get_refresh_runtime_state
 from app.services.stats_query import StatsQueryService
 from app.services.watchlist_coverage import (
@@ -1536,6 +1536,8 @@ def refresh_jobs(db: Session = Depends(get_db)) -> JobRefreshResponse:
 
 @router.get("/jobs/{job_id}", response_model=RefreshJobRead)
 def refresh_job_detail(job_id: int, db: Session = Depends(get_db)) -> RefreshJobRead:
+    if reconcile_stale_refresh_jobs(db):
+        db.commit()
     job = get_refresh_job(db, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Refresh job not found")

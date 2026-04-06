@@ -50,7 +50,7 @@ function FamilyCard({
         <div>
           <p className="text-sm font-medium text-foreground">{family.label}</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {family.settled_predictions} settled · {family.shadow_predictions} shadow
+            {family.settled_predictions} settled · {family.shadow_predictions} shadow · {family.coverage_predictions} coverage
           </p>
         </div>
         <Badge variant={readinessVariant(family.readiness_status)}>
@@ -231,7 +231,7 @@ export function ModelReadinessPanel() {
             <p className="text-sm text-muted-foreground">{selected.why_not_ready}</p>
           </CardHeader>
           <CardContent className="flex flex-col gap-4 px-4 py-4">
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
               <div className="rounded-xl border border-border bg-surface px-3 py-3">
                 <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Serving</p>
                 <p className="mt-1 font-mono text-sm text-foreground">
@@ -239,8 +239,13 @@ export function ModelReadinessPanel() {
                 </p>
               </div>
               <div className="rounded-xl border border-border bg-surface px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Settled</p>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Settled Recs</p>
                 <p className="mt-1 font-mono text-sm text-foreground">{selected.settled_predictions}</p>
+              </div>
+              <div className="rounded-xl border border-border bg-surface px-3 py-3">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Coverage</p>
+                <p className="mt-1 font-mono text-sm text-foreground">{selected.coverage_predictions}</p>
+                <p className="text-xs text-muted-foreground">{selected.coverage_settled_predictions} settled daily samples</p>
               </div>
               <div className="rounded-xl border border-border bg-surface px-3 py-3">
                 <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Shadow</p>

@@ -23,32 +23,24 @@ export function useHealthStatus() {
 function isAnyJobStalled(health: HealthResponse): boolean {
   const stalledMs = 30 * 60 * 1000;
   const now = Date.now();
-  return [health.active_refresh_job, health.active_prop_refresh_job].some((job) => {
-    if (!job?.started_at) {
-      return false;
-    }
-    return now - new Date(job.started_at).getTime() > stalledMs;
-  });
+  const job = health.active_refresh_job;
+  if (!job?.started_at) {
+    return false;
+  }
+  return now - new Date(job.started_at).getTime() > stalledMs;
 }
 
 export function getSyncState(health?: HealthResponse | null): SyncState | null {
   if (!health) return null;
-  const isRefreshing =
-    health.refresh_status === "queued" ||
-    health.refresh_status === "running" ||
-    health.prop_refresh_status === "queued" ||
-    health.prop_refresh_status === "running";
+  const isRefreshing = health.refresh_status === "queued" || health.refresh_status === "running";
 
   if (isRefreshing) {
     return isAnyJobStalled(health) ? "stalled" : "refreshing";
   }
-  if (
-    (health.refresh_status === "failed" && health.data_stale) ||
-    (health.prop_refresh_status === "failed" && health.prop_data_stale)
-  ) {
+  if (health.refresh_status === "failed" && health.data_stale) {
     return "failed";
   }
-  if (health.data_stale || health.prop_data_stale) {
+  if (health.data_stale) {
     return "stale";
   }
   return "synced";
@@ -128,8 +120,8 @@ export function getPropSyncBadge(health?: HealthResponse | null): SyncBadge | nu
 
   if (health.prop_refresh_status === "queued" || health.prop_refresh_status === "running") {
     return {
-      text: "Props refreshing",
-      title: "Prop refresh is queued or running.",
+      text: "Maintenance refreshing",
+      title: "Maintenance refresh is queued or running.",
       variant: "warning",
     };
   }
@@ -137,10 +129,10 @@ export function getPropSyncBadge(health?: HealthResponse | null): SyncBadge | nu
   if (health.prop_refresh_status === "failed" && health.prop_data_stale) {
     const relative = health.last_prop_refresh_at ? fmtRelativeCompact(health.last_prop_refresh_at) : null;
     return {
-      text: relative ? `Props failed ${relative}` : "Props failed",
+      text: relative ? `Maintenance failed ${relative}` : "Maintenance failed",
       title: health.last_prop_refresh_at
-        ? `Prop refresh failed; last success ${fmtRelative(health.last_prop_refresh_at)}.`
-        : "Prop refresh failed before the first successful sync.",
+        ? `Maintenance refresh failed; last success ${fmtRelative(health.last_prop_refresh_at)}.`
+        : "Maintenance refresh failed before the first successful sync.",
       variant: "negative",
     };
   }
@@ -148,25 +140,25 @@ export function getPropSyncBadge(health?: HealthResponse | null): SyncBadge | nu
   if (health.prop_data_stale) {
     const relative = health.last_prop_refresh_at ? fmtRelativeCompact(health.last_prop_refresh_at) : null;
     return {
-      text: relative ? `Props stale ${relative}` : "Props stale",
+      text: relative ? `Maintenance stale ${relative}` : "Maintenance stale",
       title: health.last_prop_refresh_at
-        ? `Prop data is stale; last success ${fmtRelative(health.last_prop_refresh_at)}.`
-        : "Prop data is stale and awaiting the first successful refresh.",
+        ? `Maintenance data is stale; last success ${fmtRelative(health.last_prop_refresh_at)}.`
+        : "Maintenance data is stale and awaiting the first successful refresh.",
       variant: "warning",
     };
   }
 
   if (health.last_prop_refresh_at) {
     return {
-      text: `Props synced ${fmtRelativeCompact(health.last_prop_refresh_at)}`,
-      title: `Prop data last synced ${fmtRelative(health.last_prop_refresh_at)}.`,
+      text: `Maintenance synced ${fmtRelativeCompact(health.last_prop_refresh_at)}`,
+      title: `Maintenance data last synced ${fmtRelative(health.last_prop_refresh_at)}.`,
       variant: "positive",
     };
   }
 
   return {
-    text: "Props awaiting refresh",
-    title: "Prop data is waiting for the first successful refresh.",
+    text: "Maintenance awaiting refresh",
+    title: "Maintenance data is waiting for the first successful refresh.",
     variant: "warning",
   };
 }

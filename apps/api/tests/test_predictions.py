@@ -2,8 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from app.models import EspnPlayerGamelogCache, EspnPlayerSearchCache, Event, EventParticipant, Market, Participant, Prediction, SignalSnapshot
-from app.services.ingestion import refresh_kalshi_markets, run_refresh_cycle
+from app.models import EspnPlayerGamelogCache, EspnPlayerSearchCache, Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, SignalSnapshot
+from app.services.ingestion import refresh_kalshi_markets, run_prop_refresh_cycle, run_refresh_cycle
 from app.services.predictions import capture_prediction, settle_predictions
 from app.services.scoring import PropStatsResolver, warm_prop_context_cache
 from app.services.watchlist_coverage import warm_current_watchlist_prop_context
@@ -183,6 +183,9 @@ class FakeKalshiRefreshClient:
 class FakeSettlementClient:
     def __init__(self, payloads):
         self.payloads = payloads
+
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+        return []
 
     def get_market(self, ticker):
         return self.payloads[ticker]
@@ -437,6 +440,89 @@ def test_capture_prediction_supports_coverage_scope_without_recommendation(db_se
     assert stored.invalidation == "Pull if YES entry moves above 0.6300"
 
 
+def test_capture_prediction_samples_coverage_once_per_market_per_local_day(db_session):
+    event = _seed_team_event(db_session, sport_key="NBA", external_id="coverage-sampled")
+    market = Market(
+        ticker="KXNBA-COVERAGE-SAMPLED-1",
+        sport_key="NBA",
+        event_id=event.id,
+        title="Jalen Brunson: 30+ points?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_market_kind": "player_prop",
+            "copilot_stat_key": "points",
+            "copilot_threshold": 30.0,
+            "copilot_subject_name": "Jalen Brunson",
+            "copilot_subject_team": "NYK",
+        },
+    )
+    db_session.add(market)
+    db_session.flush()
+
+    first_signal = SignalSnapshot(
+        event_id=event.id,
+        market_id=market.id,
+        model_name="heuristic-v1",
+        confidence=0.62,
+        fair_yes_price=0.57,
+        fair_no_price=0.43,
+        edge=0.08,
+        selection_score=0.09,
+        reasons=["Morning sample"],
+        features={},
+        scoring_diagnostics={"selected_side": "yes", "suggested_price": 0.49},
+        captured_at=datetime(2026, 4, 5, 14, 0, tzinfo=timezone.utc),
+    )
+    second_signal = SignalSnapshot(
+        event_id=event.id,
+        market_id=market.id,
+        model_name="heuristic-v1",
+        confidence=0.71,
+        fair_yes_price=0.64,
+        fair_no_price=0.36,
+        edge=0.12,
+        selection_score=0.13,
+        reasons=["Evening sample"],
+        features={},
+        scoring_diagnostics={"selected_side": "yes", "suggested_price": 0.53},
+        captured_at=datetime(2026, 4, 5, 23, 30, tzinfo=timezone.utc),
+    )
+    db_session.add_all([first_signal, second_signal])
+    db_session.flush()
+
+    first = capture_prediction(
+        db_session,
+        run_id=21,
+        event=event,
+        market=market,
+        recommendation=None,
+        signal=first_signal,
+        metadata=market.raw_data or {},
+        capture_scope="coverage",
+    )
+    second = capture_prediction(
+        db_session,
+        run_id=22,
+        event=event,
+        market=market,
+        recommendation=None,
+        signal=second_signal,
+        metadata=market.raw_data or {},
+        capture_scope="coverage",
+    )
+    db_session.commit()
+
+    rows = db_session.scalars(select(Prediction).where(Prediction.market_id == market.id)).all()
+    assert len(rows) == 1
+    assert first.id == second.id
+    stored = rows[0]
+    assert stored.run_id == 22
+    assert stored.capture_scope == "coverage"
+    assert stored.confidence == 0.71
+    assert stored.suggested_price == 0.53
+
+
 def test_refresh_cycle_captures_durable_predictions(db_session):
     run = run_refresh_cycle(
         db_session,
@@ -453,6 +539,101 @@ def test_refresh_cycle_captures_durable_predictions(db_session):
     assert predictions[0].fair_yes_price is not None
     assert predictions[0].prediction_outcome == "pending"
     assert run.details["predictions_captured"] == 1
+
+
+def test_current_slate_refresh_skips_prediction_settlement_sweep(db_session):
+    _create_prediction(
+        db_session,
+        ticker="KXNBA-PREEXISTING-PENDING-1",
+        sport_key="NBA",
+        outcome="pending",
+        settlement_status="pending",
+    )
+    db_session.commit()
+
+    run = run_refresh_cycle(
+        db_session,
+        provider=FakeSportsProvider(),
+        public_client=FakeKalshiRefreshClient(),
+        sports=["NBA"],
+        current_slate_only=True,
+    )
+    db_session.commit()
+
+    assert run.status == "completed"
+    assert run.details["prediction_settlement_updated"] == 0
+
+
+def test_prop_refresh_cycle_runs_maintenance_settlement_on_latest_prediction_only(db_session):
+    older = _create_prediction(
+        db_session,
+        ticker="KXNBA-MAINT-SETTLE-1",
+        sport_key="NBA",
+        market_family="winner",
+        market_kind="game_winner",
+        stat_key="winner",
+        captured_at=datetime(2026, 4, 4, 1, 0, tzinfo=timezone.utc),
+        outcome="pending",
+        settlement_status="pending",
+    )
+    latest = Prediction(
+        event_id=older.event_id,
+        market_id=older.market_id,
+        ticker=older.ticker,
+        sport_key=older.sport_key,
+        event_name=older.event_name,
+        market_title=older.market_title,
+        market_family=older.market_family,
+        market_kind=older.market_kind,
+        stat_key=older.stat_key,
+        threshold=older.threshold,
+        subject_name=older.subject_name,
+        subject_team=older.subject_team,
+        side=older.side,
+        action=older.action,
+        suggested_price=older.suggested_price,
+        fair_yes_price=older.fair_yes_price,
+        fair_no_price=older.fair_no_price,
+        edge=older.edge,
+        confidence=older.confidence,
+        model_name=older.model_name,
+        invalidation=older.invalidation,
+        rationale=older.rationale,
+        reasons=list(older.reasons or []),
+        features=dict(older.features or {}),
+        market_status_at_capture=older.market_status_at_capture,
+        settlement_status="pending",
+        prediction_outcome="pending",
+        captured_at=datetime(2026, 4, 4, 3, 0, tzinfo=timezone.utc),
+    )
+    older.capture_scope = "coverage"
+    latest.capture_scope = "coverage"
+    db_session.add(latest)
+    db_session.commit()
+
+    run = run_prop_refresh_cycle(
+        db_session,
+        public_client=FakeSettlementClient(
+            {
+                "KXNBA-MAINT-SETTLE-1": {
+                    "ticker": "KXNBA-MAINT-SETTLE-1",
+                    "status": "settled",
+                    "result": "yes",
+                    "settlement_value_dollars": "1.0000",
+                    "settlement_ts": "2026-04-05T03:00:00Z",
+                }
+            }
+        ),
+        sports=["NBA"],
+    )
+    db_session.commit()
+
+    db_session.refresh(older)
+    db_session.refresh(latest)
+    assert run.status == "completed"
+    assert run.details["prediction_settlement_updated"] == 1
+    assert older.prediction_outcome == "pending"
+    assert latest.prediction_outcome == "won"
 
 
 def test_refresh_kalshi_markets_ingests_combo_derived_prop_legs(db_session):
@@ -521,6 +702,34 @@ def test_refresh_kalshi_markets_refreshes_tracked_combo_prop_tickers_without_dis
     assert client.get_market_calls == [market.ticker]
     assert summary["combo_prop_legs_refreshed"] == 1
     assert summary["combo_prop_legs_discovered"] == 0
+
+
+def test_refresh_kalshi_markets_only_writes_snapshots_on_change_or_heartbeat(db_session):
+    initial = refresh_kalshi_markets(db_session, client=FakeKalshiRefreshClient())
+    db_session.commit()
+
+    market = db_session.scalar(select(Market).where(Market.ticker == "KXNBAGAME-26MAR30BOSBKN-BOS"))
+    assert market is not None
+    assert initial["market_snapshots_written"] == 1
+
+    second = refresh_kalshi_markets(db_session, client=FakeKalshiRefreshClient())
+    db_session.commit()
+    snapshot_count = len(db_session.scalars(select(MarketSnapshot).where(MarketSnapshot.market_id == market.id)).all())
+    assert second["market_snapshots_written"] == 0
+    assert snapshot_count == 1
+
+    latest_snapshot = db_session.scalars(
+        select(MarketSnapshot).where(MarketSnapshot.market_id == market.id).order_by(MarketSnapshot.id.desc()).limit(1)
+    ).first()
+    assert latest_snapshot is not None
+    latest_snapshot.captured_at = datetime.now(timezone.utc) - timedelta(minutes=31)
+    db_session.commit()
+
+    third = refresh_kalshi_markets(db_session, client=FakeKalshiRefreshClient())
+    db_session.commit()
+    snapshot_count = len(db_session.scalars(select(MarketSnapshot).where(MarketSnapshot.market_id == market.id)).all())
+    assert third["market_snapshots_written"] == 1
+    assert snapshot_count == 2
 
 
 def test_warm_prop_context_cache_resolves_unique_subjects_once(db_session):
@@ -754,6 +963,71 @@ def test_settle_predictions_updates_pending_rows_idempotently(db_session):
         open_market_tickers={pending.ticker},
     )
     assert second_pass["updated"] == 0
+
+
+def test_settle_predictions_can_limit_processing_to_latest_duplicate_per_scope_and_side(db_session):
+    older = _create_prediction(
+        db_session,
+        ticker="KXNBA-DUPE-SETTLE-1",
+        captured_at=datetime(2026, 4, 2, 1, 0, tzinfo=timezone.utc),
+    )
+    newer = Prediction(
+        event_id=older.event_id,
+        market_id=older.market_id,
+        ticker=older.ticker,
+        sport_key=older.sport_key,
+        event_name=older.event_name,
+        market_title=older.market_title,
+        market_family=older.market_family,
+        market_kind=older.market_kind,
+        stat_key=older.stat_key,
+        threshold=older.threshold,
+        subject_name=older.subject_name,
+        subject_team=older.subject_team,
+        side=older.side,
+        action=older.action,
+        suggested_price=older.suggested_price,
+        fair_yes_price=older.fair_yes_price,
+        fair_no_price=older.fair_no_price,
+        edge=older.edge,
+        confidence=older.confidence,
+        model_name=older.model_name,
+        invalidation=older.invalidation,
+        rationale=older.rationale,
+        reasons=list(older.reasons or []),
+        features=dict(older.features or {}),
+        market_status_at_capture=older.market_status_at_capture,
+        settlement_status="pending",
+        prediction_outcome="pending",
+        captured_at=datetime(2026, 4, 2, 2, 0, tzinfo=timezone.utc),
+    )
+    older.capture_scope = "coverage"
+    newer.capture_scope = "coverage"
+    db_session.add(newer)
+    db_session.commit()
+
+    summary = settle_predictions(
+        db_session,
+        client=FakeSettlementClient(
+            {
+                "KXNBA-DUPE-SETTLE-1": {
+                    "ticker": "KXNBA-DUPE-SETTLE-1",
+                    "status": "settled",
+                    "result": "yes",
+                    "settlement_value_dollars": "1.0000",
+                }
+            }
+        ),
+        latest_only_per_key=True,
+    )
+    db_session.commit()
+
+    db_session.refresh(older)
+    db_session.refresh(newer)
+    assert summary["processed"] == 1
+    assert summary["updated"] == 1
+    assert older.prediction_outcome == "pending"
+    assert newer.prediction_outcome == "won"
 
 
 def test_prediction_history_and_summary_endpoints(client, db_session):

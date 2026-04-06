@@ -450,8 +450,8 @@ function CoverageWatchlistEmptyState({
       : "The latest refresh did not complete, so current-slate coverage could not be rebuilt.";
   } else if (diagnostics.prop_data_stale) {
     tone = "warning";
-    title = "Prop context is stale";
-    description = "Winner markets may be available, but player props can lag until current-slate prop context is warmed.";
+    title = "Maintenance context is stale";
+    description = "Winner markets may be available, but player props can lag until the maintenance refresh finishes warming context.";
   } else {
     description = "No open winner markets or player props were available upstream for the current NBA/MLB slate.";
   }
@@ -505,7 +505,7 @@ function CoverageWatchlistEmptyState({
           <EmptyStateStat
             label="Props"
             value={diagnostics?.prop_data_stale ? "Stale" : "Ready"}
-            hint={diagnostics?.last_prop_refresh_at ? `Last prop refresh ${fmtRelative(diagnostics.last_prop_refresh_at)}` : "Awaiting first prop warmup"}
+            hint={diagnostics?.last_prop_refresh_at ? `Last maintenance refresh ${fmtRelative(diagnostics.last_prop_refresh_at)}` : "Awaiting first maintenance warmup"}
           />
           <EmptyStateStat
             label="Coverage Scope"

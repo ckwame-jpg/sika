@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.clients.kalshi import KalshiPublicClient, parse_price_dollars
+from app.config import get_settings
 from app.models import Event, Market, Prediction, Recommendation, SignalSnapshot
 from app.services.ml.lineage import HEURISTIC_SINGLE_MODEL
 from app.services.market_support import parse_market_datetime
@@ -45,6 +47,24 @@ def _prediction_payout(side: str, settlement_value: float) -> float:
     return settlement_value if side == "yes" else 1.0 - settlement_value
 
 
+def _coverage_timezone() -> ZoneInfo:
+    return ZoneInfo(get_settings().default_timezone)
+
+
+def _coerce_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _coverage_day_window(captured_at: datetime) -> tuple[datetime, datetime]:
+    local_tz = _coverage_timezone()
+    captured_local = _coerce_utc(captured_at).astimezone(local_tz)
+    local_day_start = datetime.combine(captured_local.date(), time.min, tzinfo=local_tz)
+    local_day_end = local_day_start + timedelta(days=1)
+    return local_day_start.astimezone(timezone.utc), local_day_end.astimezone(timezone.utc)
+
+
 @dataclass(slots=True)
 class PredictionSettlement:
     settlement_status: str
@@ -55,6 +75,90 @@ class PredictionSettlement:
     settled_at: datetime | None
     realized_pnl: float | None
     settlement_notes: str | None
+
+
+def _session_predictions(db: Session) -> list[Prediction]:
+    seen_ids: set[int] = set()
+    predictions: list[Prediction] = []
+    for collection in (db.identity_map.values(), db.new):
+        for item in collection:
+            if not isinstance(item, Prediction):
+                continue
+            identity = id(item)
+            if identity in seen_ids:
+                continue
+            seen_ids.add(identity)
+            predictions.append(item)
+    return predictions
+
+
+def _apply_prediction_capture(
+    prediction: Prediction,
+    *,
+    run_id: int | None,
+    event: Event,
+    market: Market,
+    recommendation: Recommendation | None,
+    signal: SignalSnapshot,
+    metadata: dict[str, Any],
+    capture_scope: str,
+    diagnostics: dict[str, Any],
+    selected_side: str,
+    action: str,
+    suggested_price: float,
+    edge: float,
+    confidence: float,
+    selection_score: float | None,
+    invalidation: str | None,
+    rationale: str,
+    captured_at: datetime,
+    reset_settlement: bool = False,
+) -> Prediction:
+    prediction.run_id = run_id
+    prediction.event_id = event.id
+    prediction.market_id = market.id
+    prediction.ticker = market.ticker
+    prediction.sport_key = market.sport_key or event.sport_key
+    prediction.event_name = event.name
+    prediction.market_title = market.title
+    prediction.market_family = str(metadata.get("copilot_market_family") or "") or None
+    prediction.market_kind = str(metadata.get("copilot_market_kind") or "") or None
+    prediction.stat_key = str(metadata.get("copilot_stat_key") or "") or None
+    prediction.threshold = float(metadata.get("copilot_threshold")) if metadata.get("copilot_threshold") is not None else None
+    prediction.subject_name = str(metadata.get("copilot_subject_name") or "") or None
+    prediction.subject_team = str(metadata.get("copilot_subject_team") or "") or None
+    prediction.capture_scope = capture_scope
+    prediction.side = recommendation.side if recommendation else selected_side
+    prediction.action = action
+    prediction.suggested_price = suggested_price
+    prediction.fair_yes_price = signal.fair_yes_price
+    prediction.fair_no_price = signal.fair_no_price
+    prediction.edge = edge
+    prediction.confidence = confidence
+    prediction.selection_score = selection_score
+    prediction.model_name = signal.model_name or MODEL_NAME
+    prediction.model_version = signal.model_version
+    prediction.calibration_version = signal.calibration_version
+    prediction.feature_set_version = signal.feature_set_version
+    prediction.model_metadata = dict(signal.model_metadata or {})
+    prediction.invalidation = invalidation
+    prediction.rationale = rationale
+    prediction.reasons = list(signal.reasons or [])
+    prediction.features = dict(signal.features or {})
+    prediction.scoring_diagnostics = diagnostics
+    prediction.market_status_at_capture = market.status
+    prediction.captured_at = captured_at
+    if reset_settlement:
+        prediction.settlement_status = "pending"
+        prediction.prediction_outcome = "pending"
+        prediction.market_result = None
+        prediction.winning_side = None
+        prediction.settlement_value = None
+        prediction.settled_at = None
+        prediction.realized_pnl = None
+        prediction.settlement_source = None
+        prediction.settlement_notes = None
+    return prediction
 
 
 def capture_prediction(
@@ -83,69 +187,114 @@ def capture_prediction(
     captured_at = recommendation.captured_at if recommendation else signal.captured_at
 
     if run_id is not None:
-        existing = db.scalar(
-            select(Prediction).where(
-                Prediction.run_id == run_id,
-                Prediction.market_id == market.id,
-            )
+        existing = next(
+            (
+                item
+                for item in _session_predictions(db)
+                if item.run_id == run_id and item.market_id == market.id
+            ),
+            None,
         )
+        if existing is None:
+            existing = db.scalar(
+                select(Prediction).where(
+                    Prediction.run_id == run_id,
+                    Prediction.market_id == market.id,
+                )
+            )
         if existing is not None:
-            if recommendation is not None and existing.capture_scope != "recommendation":
-                existing.capture_scope = "recommendation"
-                existing.side = recommendation.side
-                existing.action = action
-                existing.suggested_price = suggested_price
-                existing.edge = edge
-                existing.confidence = confidence
-                existing.selection_score = selection_score
-                existing.invalidation = invalidation
-                existing.rationale = rationale
-                existing.reasons = list(signal.reasons or [])
-                existing.features = dict(signal.features or {})
-                existing.scoring_diagnostics = diagnostics
-                existing.model_name = signal.model_name or MODEL_NAME
-                existing.model_version = signal.model_version
-                existing.calibration_version = signal.calibration_version
-                existing.feature_set_version = signal.feature_set_version
-                existing.model_metadata = dict(signal.model_metadata or {})
-                existing.captured_at = captured_at
+            if recommendation is not None or existing.capture_scope == "coverage":
+                _apply_prediction_capture(
+                    existing,
+                    run_id=run_id,
+                    event=event,
+                    market=market,
+                    recommendation=recommendation,
+                    signal=signal,
+                    metadata=metadata,
+                    capture_scope="recommendation" if recommendation is not None else capture_scope,
+                    diagnostics=diagnostics,
+                    selected_side=selected_side,
+                    action=action,
+                    suggested_price=suggested_price,
+                    edge=edge,
+                    confidence=confidence,
+                    selection_score=selection_score,
+                    invalidation=invalidation,
+                    rationale=rationale,
+                    captured_at=captured_at,
+                    reset_settlement=recommendation is None,
+                )
             return existing
 
-    prediction = Prediction(
+    if capture_scope == "coverage":
+        coverage_window_start, coverage_window_end = _coverage_day_window(captured_at)
+        sampled = next(
+            (
+                item
+                for item in _session_predictions(db)
+                if item.market_id == market.id
+                and item.capture_scope == "coverage"
+                and item.captured_at is not None
+                and coverage_window_start <= _coerce_utc(item.captured_at) < coverage_window_end
+            ),
+            None,
+        )
+        if sampled is None:
+            sampled = db.scalar(
+                select(Prediction)
+                .where(
+                    Prediction.market_id == market.id,
+                    Prediction.capture_scope == "coverage",
+                    Prediction.captured_at >= coverage_window_start,
+                    Prediction.captured_at < coverage_window_end,
+                )
+                .order_by(Prediction.captured_at.desc(), Prediction.id.desc())
+                .limit(1)
+            )
+        if sampled is not None:
+            return _apply_prediction_capture(
+                sampled,
+                run_id=run_id,
+                event=event,
+                market=market,
+                recommendation=None,
+                signal=signal,
+                metadata=metadata,
+                capture_scope="coverage",
+                diagnostics=diagnostics,
+                selected_side=selected_side,
+                action=action,
+                suggested_price=suggested_price,
+                edge=edge,
+                confidence=confidence,
+                selection_score=selection_score,
+                invalidation=invalidation,
+                rationale=rationale,
+                captured_at=captured_at,
+                reset_settlement=True,
+            )
+
+    prediction = _apply_prediction_capture(
+        Prediction(),
         run_id=run_id,
-        event_id=event.id,
-        market_id=market.id,
-        ticker=market.ticker,
-        sport_key=market.sport_key or event.sport_key,
-        event_name=event.name,
-        market_title=market.title,
-        market_family=str(metadata.get("copilot_market_family") or "") or None,
-        market_kind=str(metadata.get("copilot_market_kind") or "") or None,
-        stat_key=str(metadata.get("copilot_stat_key") or "") or None,
-        threshold=float(metadata.get("copilot_threshold")) if metadata.get("copilot_threshold") is not None else None,
-        subject_name=str(metadata.get("copilot_subject_name") or "") or None,
-        subject_team=str(metadata.get("copilot_subject_team") or "") or None,
+        event=event,
+        market=market,
+        recommendation=recommendation,
+        signal=signal,
+        metadata=metadata,
         capture_scope=capture_scope,
-        side=recommendation.side if recommendation else selected_side,
+        diagnostics=diagnostics,
+        selected_side=selected_side,
         action=action,
         suggested_price=suggested_price,
-        fair_yes_price=signal.fair_yes_price,
-        fair_no_price=signal.fair_no_price,
         edge=edge,
         confidence=confidence,
         selection_score=selection_score,
-        model_name=signal.model_name or MODEL_NAME,
-        model_version=signal.model_version,
-        calibration_version=signal.calibration_version,
-        feature_set_version=signal.feature_set_version,
-        model_metadata=dict(signal.model_metadata or {}),
         invalidation=invalidation,
         rationale=rationale,
-        reasons=list(signal.reasons or []),
-        features=dict(signal.features or {}),
-        scoring_diagnostics=diagnostics,
-        market_status_at_capture=market.status,
         captured_at=captured_at,
+        reset_settlement=capture_scope == "coverage",
     )
     db.add(prediction)
     return prediction
@@ -248,16 +397,27 @@ def settle_predictions(
     client: KalshiPublicClient | None = None,
     open_market_tickers: set[str] | None = None,
     sport_keys: set[str] | None = None,
+    latest_only_per_key: bool = False,
 ) -> dict[str, int]:
     stmt = (
         select(Prediction)
         .options(joinedload(Prediction.market))
         .where(Prediction.settlement_status.in_(("pending", "unresolved")))
-        .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
+        .order_by(Prediction.captured_at.desc(), Prediction.id.desc())
     )
     if sport_keys:
         stmt = stmt.where(Prediction.sport_key.in_(tuple(sorted(sport_keys))))
     unsettled = db.scalars(stmt).all()
+    if latest_only_per_key:
+        latest_unsettled: list[Prediction] = []
+        seen_keys: set[tuple[str, str, str]] = set()
+        for prediction in unsettled:
+            dedupe_key = (prediction.ticker, prediction.capture_scope or "recommendation", prediction.side)
+            if dedupe_key in seen_keys:
+                continue
+            seen_keys.add(dedupe_key)
+            latest_unsettled.append(prediction)
+        unsettled = latest_unsettled
 
     if not unsettled:
         return {
@@ -285,6 +445,7 @@ def settle_predictions(
         "errors": 0,
     }
     open_market_tickers = set(open_market_tickers or set())
+    payload_cache: dict[str, dict[str, Any]] = {}
 
     for prediction in unsettled:
         market = prediction.market
@@ -301,7 +462,10 @@ def settle_predictions(
 
         if should_refresh:
             try:
-                latest_payload = client.get_market(prediction.ticker)
+                latest_payload = payload_cache.get(prediction.ticker)
+                if latest_payload is None:
+                    latest_payload = client.get_market(prediction.ticker)
+                    payload_cache[prediction.ticker] = latest_payload
             except Exception:
                 summary["errors"] += 1
                 if prediction.settlement_status == "pending":

@@ -457,6 +457,9 @@ export interface ModelFamilyReadinessRead {
   total_predictions: number;
   settled_predictions: number;
   pending_predictions: number;
+  coverage_predictions: number;
+  coverage_settled_predictions: number;
+  coverage_pending_predictions: number;
   shadow_predictions: number;
   shadow_coverage_ratio: number;
   won_predictions: number;

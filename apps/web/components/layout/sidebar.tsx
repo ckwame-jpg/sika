@@ -134,27 +134,23 @@ function SyncStatusBadges() {
   const syncState = getSyncState(health);
   const marketBadge = getMarketSyncBadge(health);
   const propBadge = getPropSyncBadge(health);
-  if (!marketBadge && !propBadge) return null;
+  if (!marketBadge) return propBadge ? (
+    <Badge variant={propBadge.variant} className="max-w-full" title={propBadge.title}>
+      {propBadge.text}
+    </Badge>
+  ) : null;
 
-  const variants = [marketBadge?.variant, propBadge?.variant].filter(Boolean);
-  const variant = variants.includes("negative")
-    ? "negative"
-    : variants.includes("warning")
-      ? "warning"
-      : "positive";
+  const variant = marketBadge.variant;
 
   let label = "Live";
   if (syncState === "stalled") {
     label = "Refresh stalled";
   } else if (syncState === "refreshing") {
     label = "Refreshing...";
-  } else if (variant === "negative") {
-    label = marketBadge?.variant === "negative" ? marketBadge.text : (propBadge?.text ?? "Failed");
-  } else if (variant === "warning") {
-    const staleItems: string[] = [];
-    if (marketBadge?.variant === "warning") staleItems.push("Markets");
-    if (propBadge?.variant === "warning") staleItems.push("Props");
-    label = staleItems.length > 0 ? `${staleItems.join(" & ")} stale` : (marketBadge?.text ?? "Stale");
+  } else if (variant === "negative" || variant === "warning") {
+    label = marketBadge.text;
+  } else {
+    label = marketBadge.text;
   }
 
   const title = [marketBadge?.title, propBadge?.title].filter(Boolean).join(" ");

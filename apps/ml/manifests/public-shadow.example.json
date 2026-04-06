@@ -7,6 +7,7 @@
   "families": [
     {
       "family_key": "nba_singles_v1",
+      "serves_family_key": "nba_singles",
       "model_name": "nba_singles_v1",
       "model_version": "2026-04-03",
       "calibration_version": "2026-04-03",
@@ -16,6 +17,49 @@
       "metadata": {
         "sport": "NBA",
         "scope": "single"
+      }
+    },
+    {
+      "family_key": "nba_props_v1",
+      "serves_family_key": "nba_props",
+      "model_name": "nba_props_v1",
+      "model_version": "2026-04-05",
+      "calibration_version": "2026-04-05",
+      "feature_set_version": "public-feature-set-v1",
+      "artifact_path": "artifacts/nba_props_v1/model.joblib",
+      "mode": "shadow",
+      "metadata": {
+        "sport": "NBA",
+        "scope": "single"
+      }
+    },
+    {
+      "family_key": "mlb_props_v1",
+      "serves_family_key": "mlb_props",
+      "model_name": "mlb_props_v1",
+      "model_version": "2026-04-05",
+      "calibration_version": "2026-04-05",
+      "feature_set_version": "public-feature-set-v1",
+      "artifact_path": "artifacts/mlb_props_v1/model.joblib",
+      "mode": "shadow",
+      "metadata": {
+        "sport": "MLB",
+        "scope": "single"
+      }
+    },
+    {
+      "family_key": "mlb_parlay_2leg_v1",
+      "serves_family_key": "mlb_parlay_2leg",
+      "model_name": "mlb_parlay_2leg_v1",
+      "model_version": "2026-04-05",
+      "calibration_version": "2026-04-05",
+      "feature_set_version": "public-feature-set-v1",
+      "artifact_path": "artifacts/mlb_parlay_2leg_v1/model.joblib",
+      "mode": "shadow",
+      "metadata": {
+        "sport": "MLB",
+        "scope": "parlay",
+        "leg_count": 2
       }
     }
   ]

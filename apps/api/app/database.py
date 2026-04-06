@@ -115,6 +115,8 @@ _PERFORMANCE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS ix_market_snapshot_market_captured ON market_snapshots(market_id, captured_at DESC)",
     "CREATE INDEX IF NOT EXISTS ix_recommendation_market_captured ON recommendations(market_id, captured_at DESC)",
     "CREATE INDEX IF NOT EXISTS ix_prediction_market_captured ON predictions(market_id, captured_at DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_prediction_unsettled_lookup ON predictions(settlement_status, sport_key, capture_scope, ticker, captured_at DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_prediction_coverage_daily_lookup ON predictions(market_id, capture_scope, captured_at DESC)",
 ]
 
 
