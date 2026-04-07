@@ -5,21 +5,20 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import type { TradeDeskPlayerProp, TradeDeskThreshold } from "@/lib/types";
 import { cn, fmtEdge, fmtPercent } from "@/lib/utils";
 
-interface ExposureBadge {
-  openContracts: number;
-  pendingDemoOrders: number;
-}
-
 interface PlayerPropGroupProps {
   player: TradeDeskPlayerProp;
   selectedTicker?: string;
-  exposureByTicker: Record<string, ExposureBadge>;
   onSelectThreshold: (
     subjectName: string,
     subjectTeam: string | null,
     statKey: string,
     threshold: TradeDeskThreshold,
   ) => void;
+}
+
+interface ThresholdSummary {
+  statKey: string;
+  threshold: TradeDeskThreshold;
 }
 
 function thresholdsAreMonotonic(thresholds: TradeDeskThreshold[]): boolean {
@@ -33,33 +32,55 @@ function thresholdsAreMonotonic(thresholds: TradeDeskThreshold[]): boolean {
   return true;
 }
 
-function ExposurePill({ exposure }: { exposure?: ExposureBadge }) {
-  if (!exposure || (exposure.openContracts === 0 && exposure.pendingDemoOrders === 0)) {
-    return null;
+function formatStatLabel(statKey: string) {
+  return statKey.replace(/_/g, " ");
+}
+
+function bestThresholdSummary(player: TradeDeskPlayerProp): ThresholdSummary | null {
+  let best: ThresholdSummary | null = null;
+
+  for (const group of player.stat_groups) {
+    if (!thresholdsAreMonotonic(group.thresholds)) {
+      continue;
+    }
+    const threshold = group.thresholds.find((item) => item.is_best) ?? group.thresholds[0] ?? null;
+    if (!threshold) {
+      continue;
+    }
+    if (!best || threshold.edge > best.threshold.edge) {
+      best = {
+        statKey: group.stat_key,
+        threshold,
+      };
+    }
   }
 
-  const label = exposure.openContracts > 0
-    ? `Held ${exposure.openContracts}`
-    : `${exposure.pendingDemoOrders} demo`;
-
-  return (
-    <span className="rounded-full border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
-      {label}
-    </span>
-  );
+  return best;
 }
 
 export function PlayerPropGroup({
   player,
   selectedTicker,
-  exposureByTicker,
   onSelectThreshold,
 }: PlayerPropGroupProps) {
   const [expanded, setExpanded] = useState(true);
+  const selectedSummary = player.stat_groups.flatMap((group) =>
+    group.thresholds
+      .filter((threshold) => threshold.ticker === selectedTicker)
+      .map((threshold) => ({
+        statKey: group.stat_key,
+        threshold,
+      }))
+  )[0] ?? null;
+  const summary = selectedSummary ?? bestThresholdSummary(player);
+  const summaryWinProb = summary
+    ? summary.threshold.selected_side_probability ?? summary.threshold.probability_yes
+    : null;
 
   return (
-    <div className="rounded-2xl border border-border bg-surface">
+    <div className="rounded-2xl border border-border bg-surface" data-testid="trade-prop-card">
       <button
+        type="button"
         onClick={() => setExpanded((current) => !current)}
         className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-hover"
       >
@@ -74,12 +95,20 @@ export function PlayerPropGroup({
             <p className="text-xs text-muted-foreground">{player.subject_team}</p>
           )}
         </div>
-        <div className="text-right">
-          <p className={cn("font-mono text-sm font-semibold", player.best_edge >= 0 ? "text-positive" : "text-negative")}>
-            {fmtEdge(player.best_edge)}
-          </p>
-          <p className="text-xs text-muted-foreground">{fmtPercent(player.best_win_prob)}</p>
-        </div>
+        {summary && (
+          <div className="text-right">
+            <p className="text-[11px] capitalize tracking-[0.08em] text-muted-foreground" data-testid="trade-prop-summary-label">
+              {summary.threshold.threshold}+ {formatStatLabel(summary.statKey)}
+            </p>
+            <p
+              className={cn("font-mono text-sm font-semibold", summary.threshold.edge >= 0 ? "text-positive" : "text-negative")}
+              data-testid="trade-prop-summary-edge"
+            >
+              {fmtEdge(summary.threshold.edge)}
+            </p>
+            <p className="text-xs text-muted-foreground" data-testid="trade-prop-summary-win-prob">{fmtPercent(summaryWinProb)}</p>
+          </div>
+        )}
       </button>
 
       {expanded && (
@@ -107,11 +136,13 @@ export function PlayerPropGroup({
                 </div>
                 <div className="flex flex-1 flex-wrap gap-1.5">
                   {group.thresholds.map((threshold) => {
-                    const exposure = exposureByTicker[threshold.ticker];
                     const isSelected = threshold.ticker === selectedTicker;
                     return (
                       <button
+                        type="button"
                         key={threshold.ticker}
+                        data-testid="trade-threshold-chip"
+                        aria-pressed={isSelected}
                         onClick={() =>
                           onSelectThreshold(
                             player.subject_name,
@@ -128,7 +159,6 @@ export function PlayerPropGroup({
                         )}
                       >
                         <span>{threshold.threshold}+</span>
-                        <ExposurePill exposure={exposure} />
                       </button>
                     );
                   })}

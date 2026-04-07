@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TradeDialog } from "@/components/positions/trade-dialog";
-import { cn, fmtContractPnl, fmtEdge, fmtPercent, fmtPrice } from "@/lib/utils";
+import { cn, fmtEdge, fmtPercent, fmtPrice } from "@/lib/utils";
 
 export interface TradeSelection {
   kind: "game_line" | "player_prop";
@@ -28,79 +28,13 @@ export interface TradeSelection {
   threshold?: number | null;
 }
 
-export interface ExposureSummary {
-  openPositions: number;
-  openContracts: number;
-  pendingDemoOrders: number;
-  realizedPnl: number | null;
-}
-
 interface TradeTicketProps {
   selection: TradeSelection | null;
-  marketExposure: ExposureSummary;
-  eventExposure: ExposureSummary;
   onClose?: () => void;
-}
-
-function ExposureCard({
-  title,
-  summary,
-  emptyMessage,
-}: {
-  title: string;
-  summary: ExposureSummary;
-  emptyMessage: string;
-}) {
-  const hasExposure =
-    summary.openPositions > 0 ||
-    summary.openContracts > 0 ||
-    summary.pendingDemoOrders > 0 ||
-    summary.realizedPnl != null;
-
-  return (
-    <div className="rounded-lg border border-border bg-surface/80 p-3">
-      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
-      {hasExposure ? (
-        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-          <div>
-            <p className="text-xs text-muted-foreground">Open</p>
-            <p className="font-mono text-foreground">{summary.openPositions}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Contracts</p>
-            <p className="font-mono text-foreground">{summary.openContracts}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Pending demo</p>
-            <p className="font-mono text-foreground">{summary.pendingDemoOrders}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Realized PnL</p>
-            <p
-              className={cn(
-                "font-mono",
-                summary.realizedPnl == null
-                  ? "text-muted-foreground"
-                  : summary.realizedPnl >= 0
-                    ? "text-positive"
-                    : "text-negative",
-              )}
-            >
-              {fmtContractPnl(summary.realizedPnl)}
-            </p>
-          </div>
-        </div>
-      ) : (
-        <p className="mt-2 text-sm text-muted-foreground">{emptyMessage}</p>
-      )}
-    </div>
-  );
 }
 
 export function TradeTicket({
   selection,
-  marketExposure,
-  eventExposure,
   onClose,
 }: TradeTicketProps) {
   const [tradeDestination, setTradeDestination] = useState<"paper" | "demo" | null>(null);
@@ -115,10 +49,10 @@ export function TradeTicket({
 
   return (
     <>
-      <div className="flex flex-col gap-4 rounded-2xl border border-border bg-surface p-4">
+      <div className="flex flex-col gap-4 rounded-2xl border border-border bg-surface p-4" data-testid="trade-ticket">
         <div className="space-y-1">
           <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{selection.eventName}</p>
-          <h3 className="text-lg font-semibold text-foreground">{selection.displayLabel}</h3>
+          <h3 className="text-lg font-semibold text-foreground" data-testid="trade-ticket-title">{selection.displayLabel}</h3>
           <p className="text-sm text-muted-foreground">
             {selection.projectedSideLabel
               ? `Model leans ${selection.projectedSideLabel}`
@@ -178,17 +112,6 @@ export function TradeTicket({
             </Button>
           )}
         </div>
-
-        <ExposureCard
-          title="Your Exposure"
-          summary={marketExposure}
-          emptyMessage="No open paper position or pending demo order on this market."
-        />
-        <ExposureCard
-          title="Event Context"
-          summary={eventExposure}
-          emptyMessage="No portfolio exposure on this event yet."
-        />
 
         {onClose && (
           <Button variant="ghost" size="sm" onClick={onClose}>

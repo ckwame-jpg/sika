@@ -31,7 +31,7 @@ async function waitForTradeStable(page, timeout = 30000) {
     () => {
       const text = (document.body.innerText || "").toLowerCase();
       return (
-        text.includes("open positions") ||
+        text.includes("prop ladders") ||
         text.includes("no live trade-ready markets") ||
         text.includes("research only") ||
         text.includes("trade desk failed to load") ||
@@ -62,12 +62,83 @@ async function safeText(locator) {
   return (text || "").replace(/\s+/g, " ").trim() || null;
 }
 
-async function isVisible(locator) {
-  try {
-    return await locator.first().isVisible();
-  } catch {
-    return false;
+async function verifyPropSelectionSync(page, report) {
+  const propCards = page.getByTestId("trade-prop-card");
+  const cardCount = await propCards.count();
+  for (let index = 0; index < cardCount; index += 1) {
+    const card = propCards.nth(index);
+    const chips = card.getByTestId("trade-threshold-chip");
+    const chipCount = await chips.count();
+    if (chipCount < 2) {
+      continue;
+    }
+
+    const chipA = chips.nth(0);
+    const chipB = chips.nth(1);
+    const chipAPressed = (await chipA.getAttribute("aria-pressed")) === "true";
+    const chipBPressed = (await chipB.getAttribute("aria-pressed")) === "true";
+    const firstChip = chipAPressed && !chipBPressed ? chipB : chipA;
+    const secondChip = chipAPressed && !chipBPressed ? chipA : chipB;
+    const firstChipLabel = await safeText(firstChip);
+    const secondChipLabel = await safeText(secondChip);
+
+    await firstChip.click();
+    await pause(page, 500);
+    const firstSummaryLabel = await safeText(card.getByTestId("trade-prop-summary-label"));
+    const firstSummaryEdge = await safeText(card.getByTestId("trade-prop-summary-edge"));
+    const firstSummaryWinProb = await safeText(card.getByTestId("trade-prop-summary-win-prob"));
+    const firstTicketTitle = await safeText(page.getByTestId("trade-ticket-title"));
+
+    await secondChip.click();
+    await pause(page, 500);
+    const secondSummaryLabel = await safeText(card.getByTestId("trade-prop-summary-label"));
+    const secondSummaryEdge = await safeText(card.getByTestId("trade-prop-summary-edge"));
+    const secondSummaryWinProb = await safeText(card.getByTestId("trade-prop-summary-win-prob"));
+    const secondTicketTitle = await safeText(page.getByTestId("trade-ticket-title"));
+
+    report.trade.propSelectionSync = {
+      firstChipLabel,
+      secondChipLabel,
+      firstSummaryLabel,
+      secondSummaryLabel,
+      firstSummaryEdge,
+      secondSummaryEdge,
+      firstSummaryWinProb,
+      secondSummaryWinProb,
+      firstTicketTitle,
+      secondTicketTitle,
+    };
+
+    const summaryChanged =
+      firstSummaryLabel !== secondSummaryLabel ||
+      firstSummaryEdge !== secondSummaryEdge ||
+      firstSummaryWinProb !== secondSummaryWinProb;
+    const ticketChanged = firstTicketTitle !== secondTicketTitle;
+
+    if (!summaryChanged) {
+      report.failures.push("Prop card header summary did not update after selecting a different threshold.");
+    }
+    if (!ticketChanged) {
+      report.failures.push("Trade ticket did not update after selecting a different threshold.");
+    }
+    return;
   }
+
+  report.trade.propSelectionSync = null;
+}
+
+async function isVisible(locator) {
+  const count = await locator.count();
+  for (let index = 0; index < count; index += 1) {
+    try {
+      if (await locator.nth(index).isVisible()) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 async function desktopAudit(browser) {
@@ -93,9 +164,15 @@ async function desktopAudit(browser) {
   report.trade.heading = await firstHeading(page);
   report.trade.apiUnavailable = await isVisible(page.getByText("API unavailable"));
   report.trade.loadFailure = await isVisible(page.getByText("Trade desk failed to load."));
-  report.trade.openPositionsVisible = await isVisible(page.getByText(/open positions/i));
+  report.trade.marketKpisVisible =
+    await isVisible(page.getByText(/^Events$/i)) &&
+    await isVisible(page.getByText(/^Game Lines$/i)) &&
+    await isVisible(page.getByText(/^Prop Ladders$/i)) &&
+    await isVisible(page.getByText(/^Thresholds$/i));
   if (report.trade.apiUnavailable || report.trade.loadFailure) {
     report.failures.push("Trade page did not load usable data.");
+  } else if (!report.trade.marketKpisVisible) {
+    report.failures.push("Trade page did not render the market KPI strip.");
   }
 
   const navTargets = [
@@ -138,10 +215,14 @@ async function desktopAudit(browser) {
     report.trade.firstGameLineLabel = await safeText(gameLineRows.first());
     await gameLineRows.first().click();
     await pause(page, 700);
-    report.trade.ticketVisibleAfterGameLineClick = await isVisible(page.getByText("Your Exposure"));
+    report.trade.ticketVisibleAfterGameLineClick = await isVisible(page.getByRole("button", { name: /^Paper trade$/i }));
     report.trade.paperTradeVisible = await isVisible(page.getByRole("button", { name: /^Paper trade$/i }));
+    report.trade.tradeHasExposureCards = await isVisible(page.getByText("Your Exposure")) || await isVisible(page.getByText("Event Context"));
     if (!report.trade.ticketVisibleAfterGameLineClick) {
       report.failures.push("Clicking a game line did not open the trade ticket.");
+    }
+    if (report.trade.tradeHasExposureCards) {
+      report.failures.push("Trade ticket still shows portfolio exposure cards.");
     }
 
     const paperTradeButton = page.getByRole("button", { name: /^Paper trade$/i });
@@ -162,15 +243,17 @@ async function desktopAudit(browser) {
     await playerPropsTab.click();
     await pause(page, 500);
   }
-  const propThresholdButtons = page.locator("button").filter({ hasText: /\d+\+/ });
+  const propThresholdButtons = page.getByTestId("trade-threshold-chip");
   report.trade.playerPropThresholdCount = await propThresholdButtons.count();
   if (report.trade.playerPropThresholdCount > 0) {
     report.trade.firstPropThreshold = await safeText(propThresholdButtons.first());
     await propThresholdButtons.first().click();
     await pause(page, 700);
-    report.trade.ticketVisibleAfterPropClick = await isVisible(page.getByText("Your Exposure"));
+    report.trade.ticketVisibleAfterPropClick = await isVisible(page.getByRole("button", { name: /^Paper trade$/i }));
     if (!report.trade.ticketVisibleAfterPropClick) {
       report.failures.push("Clicking a player prop threshold did not open the trade ticket.");
+    } else {
+      await verifyPropSelectionSync(page, report);
     }
   }
 
@@ -221,7 +304,7 @@ async function mobileAudit(browser) {
     }
   }
 
-  const firstPropThreshold = page.locator("button").filter({ hasText: /\d+\+/ }).first();
+  const firstPropThreshold = page.getByTestId("trade-threshold-chip").first();
   if (await firstPropThreshold.count()) {
     await firstPropThreshold.click();
     await pause(page, 700);

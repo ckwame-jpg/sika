@@ -1,96 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { RefreshCw, X } from "lucide-react";
-import { fetchPositions, fetchTradeDesk, keys } from "@/lib/api";
+import { fetchTradeDesk, keys } from "@/lib/api";
 import type {
-  PositionsRead,
   TradeDeskEvent,
   TradeDeskGameLine,
   TradeDeskResponse,
   TradeDeskThreshold,
 } from "@/lib/types";
-import { cn, fmtContractPnl, fmtEdge, fmtPercent, fmtStartsAt, sportLabel } from "@/lib/utils";
+import { cn, fmtEdge, fmtPercent, fmtStartsAt, sportLabel } from "@/lib/utils";
 import { PlayerPropGroup } from "@/components/trade/player-prop-group";
-import { ExposureSummary, TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
+import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
 
 type MarketFilter = "all" | "player_props" | "game_lines";
 
-function emptyExposure(): ExposureSummary {
-  return {
-    openPositions: 0,
-    openContracts: 0,
-    pendingDemoOrders: 0,
-    realizedPnl: null,
-  };
-}
-
-function buildTickerExposureMap(data?: PositionsRead): Record<string, ExposureSummary> {
-  const map: Record<string, ExposureSummary> = {};
-
-  for (const position of data?.paper_positions ?? []) {
-    const key = position.ticker;
-    map[key] ??= emptyExposure();
-    if (position.status === "open") {
-      map[key].openPositions += 1;
-      map[key].openContracts += position.quantity;
-    } else if (position.pnl != null) {
-      map[key].realizedPnl = (map[key].realizedPnl ?? 0) + position.pnl;
-    }
-  }
-
-  for (const order of data?.demo_orders ?? []) {
-    const key = order.ticker;
-    map[key] ??= emptyExposure();
-    if (order.status === "pending" || order.status === "resting") {
-      map[key].pendingDemoOrders += 1;
-    }
-  }
-
-  return map;
-}
-
-function exposureForTickers(data: PositionsRead | undefined, tickers: Set<string>): ExposureSummary {
-  const summary = emptyExposure();
-  for (const position of data?.paper_positions ?? []) {
-    if (!tickers.has(position.ticker)) {
-      continue;
-    }
-    if (position.status === "open") {
-      summary.openPositions += 1;
-      summary.openContracts += position.quantity;
-    } else if (position.pnl != null) {
-      summary.realizedPnl = (summary.realizedPnl ?? 0) + position.pnl;
-    }
-  }
-  for (const order of data?.demo_orders ?? []) {
-    if (!tickers.has(order.ticker)) {
-      continue;
-    }
-    if (order.status === "pending" || order.status === "resting") {
-      summary.pendingDemoOrders += 1;
-    }
-  }
-  return summary;
-}
-
-function portfolioSummary(data?: PositionsRead) {
-  const openPositions = (data?.paper_positions ?? []).filter((position) => position.status === "open");
-  const realizedPnlValues = (data?.paper_positions ?? [])
-    .filter((position) => position.status !== "open" && position.pnl != null)
-    .map((position) => position.pnl ?? 0);
-  const realizedPnl = realizedPnlValues.length > 0
-    ? realizedPnlValues.reduce((total, pnl) => total + pnl, 0)
-    : null;
-  const pendingDemoOrders = (data?.demo_orders ?? []).filter((order) => order.status === "pending" || order.status === "resting");
-
-  return {
-    openPositions: openPositions.length,
-    heldMarkets: new Set(openPositions.map((position) => position.ticker)).size,
-    realizedPnl,
-    pendingDemoOrders: pendingDemoOrders.length,
-  };
+interface TradeKpis {
+  events: number;
+  gameLines: number;
+  propLadders: number;
+  thresholds: number;
 }
 
 function gameLineSectionLabel(marketKind: string) {
@@ -110,18 +40,15 @@ function sectionOrder(marketKind: string) {
 function GameLineRow({
   line,
   selectedTicker,
-  exposure,
   onSelect,
 }: {
   line: TradeDeskGameLine;
   selectedTicker?: string;
-  exposure?: ExposureSummary;
   onSelect: () => void;
 }) {
-  const hasExposure = (exposure?.openContracts ?? 0) > 0 || (exposure?.pendingDemoOrders ?? 0) > 0;
-
   return (
     <button
+      type="button"
       onClick={onSelect}
       className={cn(
         "flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-left transition-colors",
@@ -131,14 +58,7 @@ function GameLineRow({
       )}
     >
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="truncate text-sm font-medium text-foreground">{line.display_label}</p>
-          {hasExposure && (
-            <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning">
-              {(exposure?.openContracts ?? 0) > 0 ? `Held ${exposure?.openContracts}` : `${exposure?.pendingDemoOrders} demo`}
-            </span>
-          )}
-        </div>
+        <p className="truncate text-sm font-medium text-foreground">{line.display_label}</p>
         <p className="mt-1 text-xs text-muted-foreground">
           {line.projected_side_label ? `Model leans ${line.projected_side_label}` : `Selected side ${line.selected_side.toUpperCase()}`}
         </p>
@@ -153,37 +73,59 @@ function GameLineRow({
   );
 }
 
-function PortfolioSummaryStrip({ positions }: { positions?: PositionsRead }) {
-  const summary = portfolioSummary(positions);
+function computeTradeKpis(events: TradeDeskEvent[], marketFilter: MarketFilter): TradeKpis {
+  const visibleEvents = events.filter(
+    (event) =>
+      (marketFilter !== "player_props" && event.game_lines.length > 0) ||
+      (marketFilter !== "game_lines" && event.player_props.length > 0),
+  );
+  const gameLines = marketFilter === "player_props"
+    ? 0
+    : visibleEvents.reduce((total, event) => total + event.game_lines.length, 0);
+  const propLadders = marketFilter === "game_lines"
+    ? 0
+    : visibleEvents.reduce(
+      (total, event) => total + event.player_props.reduce((eventTotal, player) => eventTotal + player.stat_groups.length, 0),
+      0,
+    );
+  const thresholds = marketFilter === "game_lines"
+    ? 0
+    : visibleEvents.reduce(
+      (total, event) =>
+        total + event.player_props.reduce(
+          (eventTotal, player) =>
+            eventTotal + player.stat_groups.reduce((groupTotal, group) => groupTotal + group.thresholds.length, 0),
+          0,
+        ),
+      0,
+    );
 
+  return {
+    events: visibleEvents.length,
+    gameLines,
+    propLadders,
+    thresholds,
+  };
+}
+
+function MarketSummaryStrip({ kpis }: { kpis: TradeKpis }) {
   return (
     <div className="grid gap-3 md:grid-cols-4">
-      <div className="rounded-2xl border border-border bg-surface px-4 py-3">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Open Positions</p>
-        <p className="mt-1 font-mono text-xl font-semibold text-foreground">{summary.openPositions}</p>
+      <div className="rounded-2xl border border-border bg-surface px-4 py-3" data-testid="trade-kpi-card-events">
+        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Events</p>
+        <p className="mt-1 font-mono text-xl font-semibold text-foreground" data-testid="trade-kpi-events">{kpis.events}</p>
       </div>
-      <div className="rounded-2xl border border-border bg-surface px-4 py-3">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Held Markets</p>
-        <p className="mt-1 font-mono text-xl font-semibold text-foreground">{summary.heldMarkets}</p>
+      <div className="rounded-2xl border border-border bg-surface px-4 py-3" data-testid="trade-kpi-card-game-lines">
+        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Game Lines</p>
+        <p className="mt-1 font-mono text-xl font-semibold text-foreground" data-testid="trade-kpi-game-lines">{kpis.gameLines}</p>
       </div>
-      <div className="rounded-2xl border border-border bg-surface px-4 py-3">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Pending Demo</p>
-        <p className="mt-1 font-mono text-xl font-semibold text-foreground">{summary.pendingDemoOrders}</p>
+      <div className="rounded-2xl border border-border bg-surface px-4 py-3" data-testid="trade-kpi-card-prop-ladders">
+        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Prop Ladders</p>
+        <p className="mt-1 font-mono text-xl font-semibold text-foreground" data-testid="trade-kpi-prop-ladders">{kpis.propLadders}</p>
       </div>
-      <div className="rounded-2xl border border-border bg-surface px-4 py-3">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Realized PnL</p>
-        <p
-          className={cn(
-            "mt-1 font-mono text-xl font-semibold",
-            summary.realizedPnl == null
-              ? "text-muted-foreground"
-              : summary.realizedPnl >= 0
-                ? "text-positive"
-                : "text-negative",
-          )}
-        >
-          {fmtContractPnl(summary.realizedPnl)}
-        </p>
+      <div className="rounded-2xl border border-border bg-surface px-4 py-3" data-testid="trade-kpi-card-thresholds">
+        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Thresholds</p>
+        <p className="mt-1 font-mono text-xl font-semibold text-foreground" data-testid="trade-kpi-thresholds">{kpis.thresholds}</p>
       </div>
     </div>
   );
@@ -247,34 +189,36 @@ export function TradeDesk({ sport }: { sport?: string }) {
     () => fetchTradeDesk(sport),
     { refreshInterval: 30_000 },
   );
-  const { data: positions } = useSWR<PositionsRead>(keys.positions, fetchPositions, {
-    refreshInterval: 15_000,
-  });
 
-  const tickerExposureMap = buildTickerExposureMap(positions);
-  const eventTickerMap = new Map<number, Set<string>>();
-  for (const event of data?.events ?? []) {
-    const tickers = new Set<string>();
-    for (const line of event.game_lines) {
-      tickers.add(line.ticker);
+  useEffect(() => {
+    if (!selected) {
+      return;
     }
-    for (const player of event.player_props) {
-      for (const statGroup of player.stat_groups) {
-        for (const threshold of statGroup.thresholds) {
-          tickers.add(threshold.ticker);
-        }
-      }
+    if (marketFilter === "player_props" && selected.kind === "game_line") {
+      setSelected(null);
+      return;
     }
-    eventTickerMap.set(event.event_id, tickers);
-  }
+    if (marketFilter === "game_lines" && selected.kind === "player_prop") {
+      setSelected(null);
+    }
+  }, [marketFilter, selected]);
 
-  const marketExposure = selected
-    ? exposureForTickers(positions, new Set([selected.ticker]))
-    : emptyExposure();
-  const selectedEvent = data?.events.find((event) => event.event_id === selected?.eventId);
-  const eventExposure = selectedEvent
-    ? exposureForTickers(positions, eventTickerMap.get(selectedEvent.event_id) ?? new Set<string>())
-    : emptyExposure();
+  useEffect(() => {
+    if (!selected || !data) {
+      return;
+    }
+
+    const selectionStillVisible = data.events.some((event) =>
+      event.game_lines.some((line) => line.ticker === selected.ticker) ||
+      event.player_props.some((player) =>
+        player.stat_groups.some((group) => group.thresholds.some((threshold) => threshold.ticker === selected.ticker))
+      )
+    );
+
+    if (!selectionStillVisible) {
+      setSelected(null);
+    }
+  }, [data, selected]);
 
   if (isLoading && !data) {
     return (
@@ -300,10 +244,11 @@ export function TradeDesk({ sport }: { sport?: string }) {
   const hasGameLines = data.events.some((event) => event.game_lines.length > 0);
   const hasPlayerProps = data.events.some((event) => event.player_props.length > 0);
   const showFilterTabs = hasGameLines && hasPlayerProps;
+  const kpis = computeTradeKpis(data.events, marketFilter);
 
   return (
     <div className="space-y-4">
-      <PortfolioSummaryStrip positions={positions} />
+      <MarketSummaryStrip kpis={kpis} />
 
       {showFilterTabs && (
         <div className="flex gap-1 rounded-2xl border border-border bg-surface p-1">
@@ -367,7 +312,6 @@ export function TradeDesk({ sport }: { sport?: string }) {
                           key={line.ticker}
                           line={line}
                           selectedTicker={selected?.ticker}
-                          exposure={tickerExposureMap[line.ticker]}
                           onSelect={() =>
                             setSelected((current) =>
                               current?.ticker === line.ticker ? null : buildGameLineSelection(event, line),
@@ -387,7 +331,6 @@ export function TradeDesk({ sport }: { sport?: string }) {
                         key={`${event.event_id}-${player.subject_name}`}
                         player={player}
                         selectedTicker={selected?.ticker}
-                        exposureByTicker={tickerExposureMap}
                         onSelectThreshold={(subjectName, subjectTeam, statKey, threshold) =>
                           setSelected((current) =>
                             current?.ticker === threshold.ticker
@@ -439,11 +382,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
         </div>
 
         <div className="sticky top-4 hidden w-80 shrink-0 self-start lg:block">
-          <TradeTicket
-            selection={selected}
-            marketExposure={marketExposure}
-            eventExposure={eventExposure}
-          />
+          <TradeTicket selection={selected} />
         </div>
       </div>
 
@@ -474,12 +413,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
           </button>
         </div>
         <div className="overflow-y-auto px-4 pb-4">
-          <TradeTicket
-            selection={selected}
-            marketExposure={marketExposure}
-            eventExposure={eventExposure}
-            onClose={() => setSelected(null)}
-          />
+          <TradeTicket selection={selected} onClose={() => setSelected(null)} />
         </div>
       </div>
     </div>
