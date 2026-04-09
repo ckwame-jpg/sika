@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.models import ParlayPrediction, ParlayPredictionLeg, Prediction, ShadowInference, ShadowParlayInference, Run
 from app.services.ingestion import run_shadow_capture_cycle
+from app.services.ml.study_progress import retained_study_cutoff
 
 
 @pytest.fixture(autouse=True)
@@ -211,7 +212,7 @@ def test_shadow_backfill_captures_uncaptured_historical_predictions_and_parlays(
         family_scopes={"nba_singles": "single", "nba_parlay_2leg": "parlay"},
     )
 
-    now = datetime(2026, 4, 3, 12, 0, tzinfo=timezone.utc)
+    now = retained_study_cutoff() + timedelta(days=5)
     run = Run(kind="refresh", status="completed")
     db_session.add(run)
     db_session.flush()

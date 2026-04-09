@@ -3,14 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import desc, select
+from sqlalchemy import case, desc, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import RefreshJob
-from app.services.ingestion import run_prop_refresh_cycle, run_refresh_cycle, run_shadow_capture_cycle
+from app.models import RefreshJob, Run
+from app.services.ingestion import advance_prop_refresh_job, run_refresh_cycle
 from app.services.maintenance import prune_runtime_artifacts
+from app.services.ml.shadow import capture_shadow_artifacts_batch
 
 
 REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "cleanup"})
@@ -175,6 +176,32 @@ def enqueue_shadow_capture_job(
     return job, created
 
 
+def _job_priority_order():
+    return case(
+        (
+            (RefreshJob.kind == "refresh") & (RefreshJob.scope == "current_slate"),
+            0,
+        ),
+        (
+            RefreshJob.kind == "refresh",
+            1,
+        ),
+        (
+            RefreshJob.kind == "prop_refresh",
+            2,
+        ),
+        (
+            RefreshJob.kind == "shadow_capture",
+            3,
+        ),
+        (
+            RefreshJob.kind == "cleanup",
+            4,
+        ),
+        else_=99,
+    )
+
+
 def _claim_next_job(db: Session) -> RefreshJob | None:
     running = db.scalar(
         select(RefreshJob)
@@ -188,7 +215,7 @@ def _claim_next_job(db: Session) -> RefreshJob | None:
     queued = db.scalar(
         select(RefreshJob)
         .where(RefreshJob.status == "queued")
-        .order_by(RefreshJob.queued_at.asc(), RefreshJob.id.asc())
+        .order_by(_job_priority_order(), RefreshJob.queued_at.asc(), RefreshJob.id.asc())
         .limit(1)
     )
     if queued is None:
@@ -198,6 +225,34 @@ def _claim_next_job(db: Session) -> RefreshJob | None:
     queued.started_at = datetime.now(timezone.utc)
     db.flush()
     return queued
+
+
+def _requeue_job(job: RefreshJob) -> None:
+    job.status = "queued"
+    job.queued_at = datetime.now(timezone.utc)
+    job.started_at = None
+    job.finished_at = None
+    job.error_message = None
+
+
+def _ensure_shadow_capture_run(
+    db: Session,
+    *,
+    job: RefreshJob,
+) -> Run:
+    if job.run_id is not None:
+        existing = db.get(Run, job.run_id)
+        if existing is not None:
+            return existing
+    source_run_id = int((job.details or {}).get("source_run_id") or 0) or None
+    run_details = {"shadow_capture_scope": job.scope}
+    if source_run_id is not None:
+        run_details["source_run_id"] = source_run_id
+    run = Run(kind="shadow_capture", status="running", details=run_details)
+    db.add(run)
+    db.flush()
+    job.run_id = run.id
+    return run
 
 
 def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
@@ -235,21 +290,82 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                     details["shadow_follow_up_scope"] = shadow_job.scope
                     job.details = details
             elif job.kind == "prop_refresh":
-                run = run_prop_refresh_cycle(db)
+                run, completed = advance_prop_refresh_job(db, job=job)
                 job.run_id = run.id
-                shadow_job, _created = enqueue_shadow_capture_job(
-                    db,
-                    scope="backfill",
-                    source_prop_refresh_job_id=job.id,
-                )
-                details = dict(job.details or {})
-                details["shadow_backfill_job_id"] = shadow_job.id
-                details["shadow_backfill_scope"] = shadow_job.scope
-                job.details = details
+                if completed:
+                    shadow_job, _created = enqueue_shadow_capture_job(
+                        db,
+                        scope="backfill",
+                        source_prop_refresh_job_id=job.id,
+                    )
+                    details = dict(job.details or {})
+                    details["shadow_backfill_job_id"] = shadow_job.id
+                    details["shadow_backfill_scope"] = shadow_job.scope
+                    job.details = details
+                else:
+                    _requeue_job(job)
+                    db.commit()
+                    db.refresh(job)
+                    return _snapshot(job)
             elif job.kind == "shadow_capture":
-                source_run_id = int((job.details or {}).get("source_run_id") or 0) or None
-                run = run_shadow_capture_cycle(db, scope=job.scope, source_run_id=source_run_id)
+                details = dict(job.details or {})
+                run = _ensure_shadow_capture_run(db, job=job)
+                source_run_id = int(details.get("source_run_id") or 0) or None
+                phase = str(details.get("phase") or "predictions")
+                cursor = dict(details.get("cursor") or {}) or None
+                batch_started = datetime.now(timezone.utc)
+                batch = capture_shadow_artifacts_batch(
+                    db,
+                    run_id=run.id,
+                    source_run_id=source_run_id,
+                    backfill=(job.scope == "backfill"),
+                    phase=phase,
+                    cursor=cursor,
+                )
                 job.run_id = run.id
+                prediction_total = int(details.get("shadow_predictions_captured_total") or 0) + batch.prediction_count
+                parlay_total = int(details.get("shadow_parlay_predictions_captured_total") or 0) + batch.parlay_prediction_count
+                details.update(
+                    {
+                        "phase": batch.next_phase or phase,
+                        "cursor": batch.next_cursor or {},
+                        "shadow_capture_scope": job.scope,
+                        "source_run_id": source_run_id,
+                        "shadow_predictions_captured_total": prediction_total,
+                        "shadow_parlay_predictions_captured_total": parlay_total,
+                        "processed_so_far": prediction_total + parlay_total,
+                        "batch_size": batch.prediction_count + batch.parlay_prediction_count,
+                        "last_batch_seconds": max((datetime.now(timezone.utc) - batch_started).total_seconds(), 0.0),
+                        "remaining_estimate": None,
+                    }
+                )
+                job.details = details
+                run.records_processed = prediction_total + parlay_total
+                run.details = {
+                    "shadow_capture_scope": job.scope,
+                    "source_run_id": source_run_id,
+                    "phase": batch.next_phase or phase,
+                    "cursor": batch.next_cursor or {},
+                    "shadow_predictions_captured": prediction_total,
+                    "shadow_parlay_predictions_captured": parlay_total,
+                    "refresh_scope": "shadow_capture",
+                    "last_batch_seconds": details["last_batch_seconds"],
+                }
+                if batch.complete:
+                    run.status = "completed"
+                    run.finished_at = datetime.now(timezone.utc)
+                    run.details = {
+                        "shadow_capture_scope": job.scope,
+                        "source_run_id": source_run_id,
+                        "shadow_predictions_captured": prediction_total,
+                        "shadow_parlay_predictions_captured": parlay_total,
+                        "refresh_scope": "shadow_capture",
+                    }
+                else:
+                    _requeue_job(job)
+                    db.commit()
+                    db.refresh(job)
+                    return _snapshot(job)
             elif job.kind == "cleanup":
                 job.details = prune_runtime_artifacts(db)
             else:  # pragma: no cover - guarded above
@@ -261,6 +377,12 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
             db.refresh(job)
             return _snapshot(job)
         except Exception as exc:
+            if job.run_id is not None:
+                run = db.get(Run, job.run_id)
+                if run is not None and run.status == "running":
+                    run.status = "failed"
+                    run.error_message = str(exc).strip() or exc.__class__.__name__
+                    run.finished_at = datetime.now(timezone.utc)
             job.status = "failed"
             job.error_message = str(exc).strip() or exc.__class__.__name__
             job.finished_at = datetime.now(timezone.utc)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -11,6 +14,18 @@ from app.services.model_families import parlay_family_key, single_family_key
 
 SHADOW_BACKFILL_MAX_PREDICTIONS = 250
 SHADOW_BACKFILL_MAX_PARLAYS = 50
+SHADOW_CAPTURE_BATCH_PREDICTIONS = 50
+SHADOW_CAPTURE_BATCH_PARLAYS = 25
+_SHADOW_SCAN_MULTIPLIER = 5
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowCaptureBatch:
+    prediction_count: int
+    parlay_prediction_count: int
+    next_phase: str | None
+    next_cursor: dict[str, object] | None
+    complete: bool
 
 
 def _single_prediction_family_key(prediction: Prediction) -> str:
@@ -291,3 +306,197 @@ def capture_shadow_artifacts(
 
     db.flush()
     return prediction_count, parlay_prediction_count
+
+
+def _shadow_cursor_filter(captured_at_field, id_field, cursor: dict[str, object] | None):
+    if not cursor:
+        return None
+    raw_captured_at = cursor.get("captured_at")
+    raw_item_id = cursor.get("item_id")
+    if not raw_captured_at or raw_item_id is None:
+        return None
+    captured_at = datetime.fromisoformat(str(raw_captured_at).replace("Z", "+00:00"))
+    return or_(
+        captured_at_field > captured_at,
+        (captured_at_field == captured_at) & (id_field > int(raw_item_id)),
+    )
+
+
+def _prediction_shadow_stmt(
+    *,
+    source_run_id: int | None,
+    run_id: int,
+    backfill: bool,
+):
+    if backfill:
+        cutoff = retained_study_cutoff()
+        return (
+            select(Prediction)
+            .where(
+                Prediction.captured_at >= cutoff,
+                or_(Prediction.capture_scope.is_(None), Prediction.capture_scope != "coverage"),
+            )
+            .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
+        )
+    if source_run_id is not None:
+        return (
+            select(Prediction)
+            .where(
+                Prediction.run_id == source_run_id,
+                or_(Prediction.capture_scope.is_(None), Prediction.capture_scope != "coverage"),
+            )
+            .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
+        )
+    return (
+        select(Prediction)
+        .where(
+            Prediction.run_id == run_id,
+            or_(Prediction.capture_scope.is_(None), Prediction.capture_scope != "coverage"),
+        )
+        .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
+    )
+
+
+def _parlay_shadow_stmt(
+    *,
+    source_run_id: int | None,
+    run_id: int,
+    backfill: bool,
+):
+    base = select(ParlayPrediction).options(selectinload(ParlayPrediction.legs))
+    if backfill:
+        cutoff = retained_study_cutoff()
+        return base.where(ParlayPrediction.captured_at >= cutoff).order_by(ParlayPrediction.captured_at.asc(), ParlayPrediction.id.asc())
+    if source_run_id is not None:
+        return base.where(ParlayPrediction.run_id == source_run_id).order_by(ParlayPrediction.captured_at.asc(), ParlayPrediction.id.asc())
+    return base.where(ParlayPrediction.run_id == run_id).order_by(ParlayPrediction.captured_at.asc(), ParlayPrediction.id.asc())
+
+
+def _select_prediction_shadow_batch(
+    db: Session,
+    *,
+    source_run_id: int | None,
+    run_id: int,
+    backfill: bool,
+    limit: int,
+    cursor: dict[str, object] | None,
+) -> tuple[list[Prediction], dict[str, object] | None, bool]:
+    selected: list[Prediction] = []
+    next_cursor = cursor
+    exhausted = False
+    while len(selected) < limit:
+        stmt = _prediction_shadow_stmt(source_run_id=source_run_id, run_id=run_id, backfill=backfill)
+        cursor_filter = _shadow_cursor_filter(Prediction.captured_at, Prediction.id, next_cursor)
+        if cursor_filter is not None:
+            stmt = stmt.where(cursor_filter)
+        rows = db.scalars(stmt.limit(limit * _SHADOW_SCAN_MULTIPLIER)).all()
+        if not rows:
+            exhausted = True
+            break
+        for row in rows:
+            next_cursor = {
+                "captured_at": row.captured_at.isoformat() if row.captured_at is not None else None,
+                "item_id": row.id,
+            }
+            if not prediction_requires_shadow_capture(db, row, active_study_only=backfill):
+                continue
+            selected.append(row)
+            if len(selected) >= limit:
+                break
+        if len(rows) < limit * _SHADOW_SCAN_MULTIPLIER:
+            exhausted = True
+            break
+    return selected, next_cursor, exhausted
+
+
+def _select_parlay_shadow_batch(
+    db: Session,
+    *,
+    source_run_id: int | None,
+    run_id: int,
+    backfill: bool,
+    limit: int,
+    cursor: dict[str, object] | None,
+) -> tuple[list[ParlayPrediction], dict[str, object] | None, bool]:
+    selected: list[ParlayPrediction] = []
+    next_cursor = cursor
+    exhausted = False
+    while len(selected) < limit:
+        stmt = _parlay_shadow_stmt(source_run_id=source_run_id, run_id=run_id, backfill=backfill)
+        cursor_filter = _shadow_cursor_filter(ParlayPrediction.captured_at, ParlayPrediction.id, next_cursor)
+        if cursor_filter is not None:
+            stmt = stmt.where(cursor_filter)
+        rows = db.scalars(stmt.limit(limit * _SHADOW_SCAN_MULTIPLIER)).unique().all()
+        if not rows:
+            exhausted = True
+            break
+        for row in rows:
+            next_cursor = {
+                "captured_at": row.captured_at.isoformat() if row.captured_at is not None else None,
+                "item_id": row.id,
+            }
+            if not parlay_requires_shadow_capture(db, row, active_study_only=backfill):
+                continue
+            selected.append(row)
+            if len(selected) >= limit:
+                break
+        if len(rows) < limit * _SHADOW_SCAN_MULTIPLIER:
+            exhausted = True
+            break
+    return selected, next_cursor, exhausted
+
+
+def capture_shadow_artifacts_batch(
+    db: Session,
+    *,
+    run_id: int,
+    source_run_id: int | None = None,
+    backfill: bool = False,
+    phase: str = "predictions",
+    cursor: dict[str, object] | None = None,
+    prediction_limit: int = SHADOW_CAPTURE_BATCH_PREDICTIONS,
+    parlay_limit: int = SHADOW_CAPTURE_BATCH_PARLAYS,
+) -> ShadowCaptureBatch:
+    settings = get_settings()
+    if settings.ml_serving_mode == "heuristic" or run_id is None:
+        return ShadowCaptureBatch(0, 0, None, None, True)
+    if source_run_id is not None and backfill:
+        raise ValueError("Shadow capture cannot target a source run and backfill in the same pass.")
+
+    if phase == "predictions":
+        predictions, next_cursor, exhausted = _select_prediction_shadow_batch(
+            db,
+            source_run_id=source_run_id,
+            run_id=run_id,
+            backfill=backfill,
+            limit=prediction_limit,
+            cursor=cursor,
+        )
+        prediction_count = 0
+        for prediction in predictions:
+            if _capture_prediction_shadow(db, prediction):
+                prediction_count += 1
+        db.flush()
+        if exhausted:
+            return ShadowCaptureBatch(prediction_count, 0, "parlays", None, False)
+        return ShadowCaptureBatch(prediction_count, 0, "predictions", next_cursor, False)
+
+    if phase == "parlays":
+        parlays, next_cursor, exhausted = _select_parlay_shadow_batch(
+            db,
+            source_run_id=source_run_id,
+            run_id=run_id,
+            backfill=backfill,
+            limit=parlay_limit,
+            cursor=cursor,
+        )
+        parlay_prediction_count = 0
+        for parlay in parlays:
+            if _capture_parlay_shadow(db, parlay):
+                parlay_prediction_count += 1
+        db.flush()
+        if exhausted:
+            return ShadowCaptureBatch(0, parlay_prediction_count, None, None, True)
+        return ShadowCaptureBatch(0, parlay_prediction_count, "parlays", next_cursor, False)
+
+    raise ValueError(f"Unsupported shadow capture phase: {phase}")

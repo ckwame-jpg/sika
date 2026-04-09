@@ -18,6 +18,7 @@ from app.models import (
     EventParticipant,
     Market,
     MarketSnapshot,
+    Prediction,
     Recommendation,
     SignalSnapshot,
 )
@@ -1892,6 +1893,318 @@ def _dedupe_winner_recommendations(
         collapsed_count += 1
 
     return [*passthrough, *deduped.values()], collapsed_count, combo_suppressed
+
+
+def _prediction_recommendation_tuple(prediction: Prediction) -> tuple[float, float, float, int]:
+    diagnostics = dict(prediction.scoring_diagnostics or {})
+    return (
+        prediction.selection_score or 0.0,
+        prediction.edge,
+        -prediction.suggested_price,
+        _quality_tier_rank(diagnostics.get("quality_tier")),
+    )
+
+
+def _build_recommendation_from_prediction(prediction: Prediction) -> Recommendation:
+    return Recommendation(
+        event_id=prediction.event_id,
+        market_id=prediction.market_id,
+        side=prediction.side,
+        action=prediction.action,
+        status="active",
+        suggested_price=prediction.suggested_price,
+        edge=prediction.edge,
+        confidence=prediction.confidence,
+        selection_score=prediction.selection_score,
+        model_name=prediction.model_name,
+        model_version=prediction.model_version,
+        calibration_version=prediction.calibration_version,
+        feature_set_version=prediction.feature_set_version,
+        model_metadata=dict(prediction.model_metadata or {}),
+        invalidation=prediction.invalidation or "Pull if execution conditions materially change.",
+        rationale=prediction.rationale,
+        scoring_diagnostics=dict(prediction.scoring_diagnostics or {}),
+        captured_at=prediction.captured_at,
+    )
+
+
+def _signal_snapshot_from_prediction(prediction: Prediction) -> SignalSnapshot:
+    fair_yes_price = float(prediction.fair_yes_price or 0.0)
+    fair_no_price = float(prediction.fair_no_price if prediction.fair_no_price is not None else (1 - fair_yes_price))
+    return SignalSnapshot(
+        event_id=prediction.event_id,
+        market_id=prediction.market_id,
+        captured_at=prediction.captured_at,
+        model_name=prediction.model_name or MODEL_NAME,
+        model_version=prediction.model_version,
+        calibration_version=prediction.calibration_version,
+        feature_set_version=prediction.feature_set_version,
+        model_metadata=dict(prediction.model_metadata or {}),
+        confidence=prediction.confidence,
+        fair_yes_price=fair_yes_price,
+        fair_no_price=fair_no_price,
+        edge=prediction.edge,
+        selection_score=prediction.selection_score,
+        reasons=list(prediction.reasons or []),
+        features=dict(prediction.features or {}),
+        scoring_diagnostics=dict(prediction.scoring_diagnostics or {}),
+    )
+
+
+def _parlay_candidate_from_prediction(prediction: Prediction) -> ParlayCandidateInput | None:
+    market = prediction.market
+    event = market.event if market is not None else None
+    if market is None or event is None:
+        return None
+    return ParlayCandidateInput(
+        event=event,
+        market=market,
+        recommendation=_build_recommendation_from_prediction(prediction),
+        signal=_signal_snapshot_from_prediction(prediction),
+        prediction=prediction,
+        metadata=dict(market.raw_data or {}),
+    )
+
+
+def _maintenance_watchlist_market_batch(
+    db: Session,
+    *,
+    cursor_market_id: int | None = None,
+    batch_size: int = 100,
+) -> list[Market]:
+    stmt = (
+        select(Market)
+        .options(joinedload(Market.event).selectinload(Event.participants).joinedload(EventParticipant.participant))
+        .where(Market.event_id.is_not(None), Market.status.in_(tuple(OPEN_MARKET_STATUSES)))
+        .order_by(Market.id.asc())
+    )
+    if cursor_market_id is not None:
+        stmt = stmt.where(Market.id > cursor_market_id)
+    return db.scalars(stmt.limit(batch_size)).all()
+
+
+def _annotate_current_watchlist_flag(scored: ScoredRecommendation, *, current_watchlist_market: bool) -> None:
+    signal_diagnostics = dict(scored.signal.scoring_diagnostics or {})
+    signal_diagnostics["current_watchlist_market"] = current_watchlist_market
+    scored.signal.scoring_diagnostics = signal_diagnostics
+    if scored.recommendation is not None:
+        recommendation_diagnostics = dict(scored.recommendation.scoring_diagnostics or {})
+        recommendation_diagnostics["current_watchlist_market"] = current_watchlist_market
+        scored.recommendation.scoring_diagnostics = recommendation_diagnostics
+
+
+def stage_maintenance_watchlist_batch(
+    db: Session,
+    *,
+    run_id: int,
+    resolver: PropStatsResolver | None = None,
+    cursor_market_id: int | None = None,
+    batch_size: int = 100,
+) -> tuple[WatchlistGenerationSummary, int | None, bool]:
+    summary = WatchlistGenerationSummary()
+    active_resolver = resolver or PropStatsResolver(db, allow_network=False)
+    markets = _maintenance_watchlist_market_batch(
+        db,
+        cursor_market_id=cursor_market_id,
+        batch_size=batch_size,
+    )
+    if not markets:
+        return summary, None, True
+
+    latest_snapshots = latest_snapshot_by_market_id(db, [market.id for market in markets])
+    for market in markets:
+        if not market.event:
+            continue
+        latest_snapshot = latest_snapshots.get(market.id)
+        scored = _build_scored_recommendation(db, market.event, market, latest_snapshot, resolver=active_resolver)
+        if scored is None:
+            continue
+        current_watchlist_market = is_current_watchlist_market(market)
+        _annotate_current_watchlist_flag(scored, current_watchlist_market=current_watchlist_market)
+        db.add(scored.signal)
+        if scored.recommendation is not None:
+            capture_prediction(
+                db,
+                run_id=run_id,
+                event=market.event,
+                market=market,
+                recommendation=scored.recommendation,
+                signal=scored.signal,
+                metadata=scored.metadata,
+                capture_scope="recommendation",
+            )
+            summary.prediction_count += 1
+            continue
+        diagnostics = dict(scored.signal.scoring_diagnostics or {})
+        suppression_reasons = {str(value) for value in list(diagnostics.get("suppression_reasons") or [])}
+        if "winner_selected_probability_floor" in suppression_reasons:
+            summary.heuristic_longshots_suppressed += 1
+        if "critical_market_snapshot_missing" in suppression_reasons:
+            summary.critical_context_suppressed += 1
+        if current_watchlist_market:
+            capture_prediction(
+                db,
+                run_id=run_id,
+                event=market.event,
+                market=market,
+                recommendation=None,
+                signal=scored.signal,
+                metadata=scored.metadata,
+                capture_scope="coverage",
+            )
+            summary.prediction_count += 1
+    db.flush()
+    return summary, markets[-1].id if markets else cursor_market_id, len(markets) < batch_size
+
+
+def _apply_prediction_monotonicity(predictions: list[Prediction]) -> None:
+    from collections import defaultdict
+
+    settings = get_settings()
+    grouped: dict[tuple[int, str, str], list[Prediction]] = defaultdict(list)
+    for prediction in predictions:
+        if prediction.market_family != "player_prop":
+            continue
+        subject_name = str(prediction.subject_name or "").strip()
+        stat_key = str(prediction.stat_key or "").strip()
+        threshold = prediction.threshold
+        if not subject_name or not stat_key or threshold is None or prediction.event_id is None:
+            continue
+        grouped[(prediction.event_id, subject_name.lower(), stat_key)].append(prediction)
+
+    for group in grouped.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda prediction: float(prediction.threshold or 0.0))
+        for index in range(1, len(group)):
+            previous = group[index - 1]
+            current = group[index]
+            previous_probability = float(previous.fair_yes_price or 0.0)
+            current_probability = float(current.fair_yes_price or 0.0)
+            if current_probability <= previous_probability:
+                continue
+            clamped_probability = round(previous_probability, 4)
+            current.fair_yes_price = clamped_probability
+            current.fair_no_price = round(1 - clamped_probability, 4)
+            current.edge = round(clamped_probability - current.suggested_price, 4)
+            diagnostics = dict(current.scoring_diagnostics or {})
+            diagnostics["selected_side_probability"] = clamped_probability
+            diagnostics["monotonicity_adjusted"] = True
+            if current.edge < settings.watchlist_min_edge:
+                suppression_reasons = [
+                    *list(diagnostics.get("suppression_reasons") or []),
+                    "monotonicity_below_min_edge",
+                ]
+                diagnostics["suppression_reasons"] = suppression_reasons
+                current.capture_scope = "coverage" if bool(diagnostics.get("current_watchlist_market")) else "suppressed"
+            current.scoring_diagnostics = diagnostics
+
+
+def _dedupe_prediction_recommendations(
+    predictions: list[Prediction],
+) -> tuple[list[Prediction], int, int]:
+    deduped: dict[str, Prediction] = {}
+    passthrough: list[Prediction] = []
+    collapsed_count = 0
+    combo_suppressed = 0
+
+    for prediction in predictions:
+        diagnostics = dict(prediction.scoring_diagnostics or {})
+        thesis_key = diagnostics.get("selected_thesis_key")
+        if not thesis_key:
+            passthrough.append(prediction)
+            continue
+
+        current = deduped.get(str(thesis_key))
+        if current is None:
+            deduped[str(thesis_key)] = prediction
+            continue
+
+        if _prediction_recommendation_tuple(prediction) > _prediction_recommendation_tuple(current):
+            if str((current.scoring_diagnostics or {}).get("source_type") or "") == "combo_derived":
+                combo_suppressed += 1
+            deduped[str(thesis_key)] = prediction
+        else:
+            if str(diagnostics.get("source_type") or "") == "combo_derived":
+                combo_suppressed += 1
+        collapsed_count += 1
+
+    return [*passthrough, *deduped.values()], collapsed_count, combo_suppressed
+
+
+def finalize_staged_watchlist(
+    db: Session,
+    *,
+    run_id: int,
+    capture_parlays: bool = True,
+) -> WatchlistGenerationSummary:
+    summary = WatchlistGenerationSummary()
+    predictions = db.scalars(
+        select(Prediction)
+        .options(
+            joinedload(Prediction.market)
+            .joinedload(Market.event)
+            .selectinload(Event.participants)
+            .joinedload(EventParticipant.participant)
+        )
+        .where(Prediction.run_id == run_id)
+        .order_by(Prediction.id.asc())
+    ).all()
+
+    candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope != "coverage"]
+    _apply_prediction_monotonicity(candidate_predictions)
+    candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope not in {"coverage", "suppressed"}]
+    winners, collapsed_count, combo_suppressed = _dedupe_prediction_recommendations(candidate_predictions)
+    summary.inverse_winner_duplicates_collapsed = collapsed_count
+    summary.combo_prop_candidates_suppressed = combo_suppressed
+    winner_ids = {prediction.id for prediction in winners}
+
+    for prediction in predictions:
+        if prediction.capture_scope == "coverage":
+            continue
+        if prediction.id in winner_ids:
+            prediction.capture_scope = "recommendation"
+            continue
+        current_flag = bool((prediction.scoring_diagnostics or {}).get("current_watchlist_market"))
+        if current_flag:
+            prediction.capture_scope = "coverage"
+            continue
+        db.delete(prediction)
+
+    db.flush()
+    db.query(Recommendation).delete()
+    if capture_parlays:
+        clear_active_parlay_watchlist(db)
+    db.flush()
+
+    parlay_candidates: list[ParlayCandidateInput] = []
+    for prediction in winners:
+        diagnostics = dict(prediction.scoring_diagnostics or {})
+        quality_tier = str(diagnostics.get("quality_tier") or "medium")
+        summary.quality_tier_counts[quality_tier] = summary.quality_tier_counts.get(quality_tier, 0) + 1
+        if str(diagnostics.get("source_type") or "") == "combo_derived":
+            summary.combo_prop_candidates_emitted += 1
+        db.add(_build_recommendation_from_prediction(prediction))
+        summary.recommendation_count += 1
+        candidate = _parlay_candidate_from_prediction(prediction)
+        if candidate is not None:
+            parlay_candidates.append(candidate)
+
+    db.flush()
+    if capture_parlays:
+        parlay_recommendation_count, parlay_prediction_count = capture_parlay_artifacts(
+            db,
+            run_id=run_id,
+            candidates=parlay_candidates,
+        )
+        summary.parlay_recommendation_count = parlay_recommendation_count
+        summary.parlay_prediction_count = parlay_prediction_count
+    db.flush()
+    summary.prediction_count = int(
+        db.scalar(select(func.count()).select_from(Prediction).where(Prediction.run_id == run_id))
+        or 0
+    )
+    return summary
 
 
 def regenerate_watchlist(

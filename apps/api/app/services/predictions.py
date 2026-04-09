@@ -5,7 +5,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.clients.kalshi import KalshiPublicClient, parse_price_dollars
@@ -391,50 +391,9 @@ def resolve_prediction_settlement(prediction: Prediction, payload: dict[str, Any
     )
 
 
-def settle_predictions(
-    db: Session,
-    *,
-    client: KalshiPublicClient | None = None,
-    open_market_tickers: set[str] | None = None,
-    sport_keys: set[str] | None = None,
-    latest_only_per_key: bool = False,
-) -> dict[str, int]:
-    stmt = (
-        select(Prediction)
-        .options(joinedload(Prediction.market))
-        .where(Prediction.settlement_status.in_(("pending", "unresolved")))
-        .order_by(Prediction.captured_at.desc(), Prediction.id.desc())
-    )
-    if sport_keys:
-        stmt = stmt.where(Prediction.sport_key.in_(tuple(sorted(sport_keys))))
-    unsettled = db.scalars(stmt).all()
-    if latest_only_per_key:
-        latest_unsettled: list[Prediction] = []
-        seen_keys: set[tuple[str, str, str]] = set()
-        for prediction in unsettled:
-            dedupe_key = (prediction.ticker, prediction.capture_scope or "recommendation", prediction.side)
-            if dedupe_key in seen_keys:
-                continue
-            seen_keys.add(dedupe_key)
-            latest_unsettled.append(prediction)
-        unsettled = latest_unsettled
-
-    if not unsettled:
-        return {
-            "processed": 0,
-            "updated": 0,
-            "won": 0,
-            "lost": 0,
-            "push": 0,
-            "cancelled": 0,
-            "pending": 0,
-            "unresolved": 0,
-            "errors": 0,
-        }
-
-    client = client or KalshiPublicClient()
-    summary = {
-        "processed": len(unsettled),
+def _empty_settlement_summary() -> dict[str, int]:
+    return {
+        "processed": 0,
         "updated": 0,
         "won": 0,
         "lost": 0,
@@ -444,6 +403,101 @@ def settle_predictions(
         "unresolved": 0,
         "errors": 0,
     }
+
+
+def _prediction_batch_cursor_filter(captured_at_field, id_field, cursor: dict[str, Any] | None):
+    if not cursor:
+        return None
+    raw_captured_at = cursor.get("captured_at")
+    raw_prediction_id = cursor.get("prediction_id")
+    if not raw_captured_at or raw_prediction_id is None:
+        return None
+    cursor_captured_at = datetime.fromisoformat(str(raw_captured_at).replace("Z", "+00:00"))
+    cursor_prediction_id = int(raw_prediction_id)
+    return or_(
+        captured_at_field < cursor_captured_at,
+        and_(captured_at_field == cursor_captured_at, id_field < cursor_prediction_id),
+    )
+
+
+def _latest_prediction_partition(
+    *,
+    sport_keys: set[str] | None = None,
+):
+    partition = (
+        select(
+            Prediction.id.label("prediction_id"),
+            Prediction.captured_at.label("captured_at"),
+            func.row_number()
+            .over(
+                partition_by=(
+                    Prediction.ticker,
+                    func.coalesce(Prediction.capture_scope, "recommendation"),
+                    Prediction.side,
+                ),
+                order_by=(Prediction.captured_at.desc(), Prediction.id.desc()),
+            )
+            .label("row_number"),
+        )
+        .where(Prediction.settlement_status.in_(("pending", "unresolved")))
+    )
+    if sport_keys:
+        partition = partition.where(Prediction.sport_key.in_(tuple(sorted(sport_keys))))
+    return partition.subquery()
+
+
+def _load_prediction_settlement_batch(
+    db: Session,
+    *,
+    sport_keys: set[str] | None = None,
+    latest_only_per_key: bool = False,
+    limit: int = 250,
+    cursor: dict[str, Any] | None = None,
+) -> list[Prediction]:
+    if latest_only_per_key:
+        latest_partition = _latest_prediction_partition(sport_keys=sport_keys)
+        stmt = (
+            select(Prediction)
+            .join(latest_partition, Prediction.id == latest_partition.c.prediction_id)
+            .options(joinedload(Prediction.market))
+            .where(latest_partition.c.row_number == 1)
+        )
+        cursor_filter = _prediction_batch_cursor_filter(
+            latest_partition.c.captured_at,
+            latest_partition.c.prediction_id,
+            cursor,
+        )
+        if cursor_filter is not None:
+            stmt = stmt.where(cursor_filter)
+        stmt = stmt.order_by(latest_partition.c.captured_at.desc(), latest_partition.c.prediction_id.desc())
+        return db.scalars(stmt.limit(limit)).all()
+
+    stmt = (
+        select(Prediction)
+        .options(joinedload(Prediction.market))
+        .where(Prediction.settlement_status.in_(("pending", "unresolved")))
+        .order_by(Prediction.captured_at.desc(), Prediction.id.desc())
+    )
+    if sport_keys:
+        stmt = stmt.where(Prediction.sport_key.in_(tuple(sorted(sport_keys))))
+    cursor_filter = _prediction_batch_cursor_filter(Prediction.captured_at, Prediction.id, cursor)
+    if cursor_filter is not None:
+        stmt = stmt.where(cursor_filter)
+    return db.scalars(stmt.limit(limit)).all()
+
+
+def _settle_prediction_rows(
+    db: Session,
+    unsettled: list[Prediction],
+    *,
+    client: KalshiPublicClient,
+    open_market_tickers: set[str] | None = None,
+) -> dict[str, int]:
+    if not unsettled:
+        return _empty_settlement_summary()
+
+    summary = _empty_settlement_summary()
+    summary["processed"] = len(unsettled)
     open_market_tickers = set(open_market_tickers or set())
     payload_cache: dict[str, dict[str, Any]] = {}
 
@@ -519,3 +573,67 @@ def settle_predictions(
 
     db.flush()
     return summary
+
+
+def settle_predictions_batch(
+    db: Session,
+    *,
+    client: KalshiPublicClient | None = None,
+    open_market_tickers: set[str] | None = None,
+    sport_keys: set[str] | None = None,
+    latest_only_per_key: bool = False,
+    limit: int = 250,
+    cursor: dict[str, Any] | None = None,
+) -> tuple[dict[str, int], dict[str, Any] | None]:
+    unsettled = _load_prediction_settlement_batch(
+        db,
+        sport_keys=sport_keys,
+        latest_only_per_key=latest_only_per_key,
+        limit=limit,
+        cursor=cursor,
+    )
+    if not unsettled:
+        return _empty_settlement_summary(), None
+
+    client = client or KalshiPublicClient()
+    summary = _settle_prediction_rows(
+        db,
+        unsettled,
+        client=client,
+        open_market_tickers=open_market_tickers,
+    )
+    next_cursor = None
+    if len(unsettled) >= limit:
+        tail = unsettled[-1]
+        next_cursor = {
+            "captured_at": tail.captured_at.isoformat() if tail.captured_at is not None else None,
+            "prediction_id": tail.id,
+        }
+    return summary, next_cursor
+
+
+def settle_predictions(
+    db: Session,
+    *,
+    client: KalshiPublicClient | None = None,
+    open_market_tickers: set[str] | None = None,
+    sport_keys: set[str] | None = None,
+    latest_only_per_key: bool = False,
+) -> dict[str, int]:
+    combined = _empty_settlement_summary()
+    cursor: dict[str, Any] | None = None
+    while True:
+        batch_summary, cursor = settle_predictions_batch(
+            db,
+            client=client,
+            open_market_tickers=open_market_tickers,
+            sport_keys=sport_keys,
+            latest_only_per_key=latest_only_per_key,
+            limit=250,
+            cursor=cursor,
+        )
+        for key, value in batch_summary.items():
+            combined[key] = combined.get(key, 0) + int(value or 0)
+        if cursor is None:
+            break
+    return combined

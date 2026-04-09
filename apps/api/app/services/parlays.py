@@ -6,7 +6,7 @@ from itertools import combinations
 from math import prod
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
@@ -452,16 +452,9 @@ def capture_parlay_artifacts(
     return recommendation_count, prediction_count
 
 
-def settle_parlay_predictions(db: Session) -> dict[str, int]:
-    unsettled = db.scalars(
-        select(ParlayPrediction)
-        .options(joinedload(ParlayPrediction.legs).joinedload(ParlayPredictionLeg.source_prediction))
-        .where(ParlayPrediction.settlement_status.in_(("pending", "unresolved")))
-        .order_by(ParlayPrediction.captured_at.asc(), ParlayPrediction.id.asc())
-    ).unique().all()
-
-    summary = {
-        "processed": len(unsettled),
+def _empty_parlay_settlement_summary() -> dict[str, int]:
+    return {
+        "processed": 0,
         "updated": 0,
         "won": 0,
         "lost": 0,
@@ -471,6 +464,44 @@ def settle_parlay_predictions(db: Session) -> dict[str, int]:
         "unresolved": 0,
         "errors": 0,
     }
+
+
+def _parlay_batch_cursor_filter(captured_at_field, id_field, cursor: dict[str, Any] | None):
+    if not cursor:
+        return None
+    raw_captured_at = cursor.get("captured_at")
+    raw_parlay_id = cursor.get("parlay_prediction_id")
+    if not raw_captured_at or raw_parlay_id is None:
+        return None
+    cursor_captured_at = datetime.fromisoformat(str(raw_captured_at).replace("Z", "+00:00"))
+    cursor_parlay_id = int(raw_parlay_id)
+    return or_(
+        captured_at_field > cursor_captured_at,
+        and_(captured_at_field == cursor_captured_at, id_field > cursor_parlay_id),
+    )
+
+
+def _load_parlay_settlement_batch(
+    db: Session,
+    *,
+    limit: int,
+    cursor: dict[str, Any] | None = None,
+) -> list[ParlayPrediction]:
+    stmt = (
+        select(ParlayPrediction)
+        .options(joinedload(ParlayPrediction.legs).joinedload(ParlayPredictionLeg.source_prediction))
+        .where(ParlayPrediction.settlement_status.in_(("pending", "unresolved")))
+        .order_by(ParlayPrediction.captured_at.asc(), ParlayPrediction.id.asc())
+    )
+    cursor_filter = _parlay_batch_cursor_filter(ParlayPrediction.captured_at, ParlayPrediction.id, cursor)
+    if cursor_filter is not None:
+        stmt = stmt.where(cursor_filter)
+    return db.scalars(stmt.limit(limit)).unique().all()
+
+
+def _settle_parlay_rows(unsettled: list[ParlayPrediction]) -> dict[str, int]:
+    summary = _empty_parlay_settlement_summary()
+    summary["processed"] = len(unsettled)
     if not unsettled:
         return summary
 
@@ -540,5 +571,41 @@ def settle_parlay_predictions(db: Session) -> dict[str, int]:
         summary["updated"] += 1
         summary["unresolved"] += 1
 
-    db.flush()
     return summary
+
+
+def settle_parlay_predictions_batch(
+    db: Session,
+    *,
+    limit: int = 100,
+    cursor: dict[str, Any] | None = None,
+) -> tuple[dict[str, int], dict[str, Any] | None]:
+    unsettled = _load_parlay_settlement_batch(db, limit=limit, cursor=cursor)
+    if not unsettled:
+        return _empty_parlay_settlement_summary(), None
+    summary = _settle_parlay_rows(unsettled)
+    db.flush()
+    next_cursor = None
+    if len(unsettled) >= limit:
+        tail = unsettled[-1]
+        next_cursor = {
+            "captured_at": tail.captured_at.isoformat() if tail.captured_at is not None else None,
+            "parlay_prediction_id": tail.id,
+        }
+    return summary, next_cursor
+
+
+def settle_parlay_predictions(db: Session) -> dict[str, int]:
+    combined = _empty_parlay_settlement_summary()
+    cursor: dict[str, Any] | None = None
+    while True:
+        batch_summary, cursor = settle_parlay_predictions_batch(
+            db,
+            limit=100,
+            cursor=cursor,
+        )
+        for key, value in batch_summary.items():
+            combined[key] = combined.get(key, 0) + int(value or 0)
+        if cursor is None:
+            break
+    return combined

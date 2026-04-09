@@ -30,6 +30,58 @@ class KalshiPublicClient:
             return self._http_client.get(url, **kwargs)
         return httpx.get(url, **kwargs)
 
+    def list_markets_page(
+        self,
+        *,
+        status: str = "open",
+        limit: int = 1000,
+        mve_filter: str = "exclude",
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        params: dict[str, Any] = {
+            "status": status,
+            "limit": min(limit, 1000),
+            "mve_filter": mve_filter,
+        }
+        if cursor:
+            params["cursor"] = cursor
+
+        response = self._get(
+            "/markets",
+            params=params,
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return list(payload.get("markets") or []), payload.get("cursor")
+
+    def iter_market_pages(
+        self,
+        *,
+        status: str = "open",
+        limit: int = 1000,
+        mve_filter: str = "exclude",
+        max_pages: int = 5,
+        cursor: str | None = None,
+    ):
+        remaining = limit
+        next_cursor = cursor
+        for _ in range(max_pages):
+            if remaining <= 0:
+                break
+            page_markets, next_cursor = self.list_markets_page(
+                status=status,
+                limit=min(remaining, 1000),
+                mve_filter=mve_filter,
+                cursor=next_cursor,
+            )
+            if not page_markets:
+                break
+            remaining -= len(page_markets)
+            yield page_markets, next_cursor
+            if not next_cursor:
+                break
+
     def list_markets(
         self,
         status: str = "open",
@@ -38,32 +90,13 @@ class KalshiPublicClient:
         max_pages: int = 5,
     ) -> list[dict[str, Any]]:
         markets: list[dict[str, Any]] = []
-        cursor: str | None = None
-
-        for _ in range(max_pages):
-            remaining = limit - len(markets)
-            if remaining <= 0:
-                break
-            params: dict[str, Any] = {
-                "status": status,
-                "limit": min(remaining, 1000),
-                "mve_filter": mve_filter,
-            }
-            if cursor:
-                params["cursor"] = cursor
-
-            response = self._get(
-                "/markets",
-                params=params,
-                timeout=20,
-            )
-            response.raise_for_status()
-            payload = response.json()
-            page_markets = payload.get("markets") or []
+        for page_markets, _cursor in self.iter_market_pages(
+            status=status,
+            limit=limit,
+            mve_filter=mve_filter,
+            max_pages=max_pages,
+        ):
             markets.extend(page_markets)
-            cursor = payload.get("cursor")
-            if not page_markets or not cursor:
-                break
 
         return markets[:limit]
 

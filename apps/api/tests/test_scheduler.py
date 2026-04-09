@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.api import routes
-from app.models import RefreshJob
+from app.models import RefreshJob, Run
 from app.services import refresh_jobs, scheduler
 
 
@@ -239,6 +239,64 @@ def test_process_refresh_job_queue_once_enqueues_shadow_follow_up_for_current_sl
     assert shadow_job.details["source_refresh_job_id"] == job.id
 
 
+def test_claim_next_job_prioritizes_current_slate_over_maintenance_continuation(db_session):
+    maintenance = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        details={"phase": "watchlist_score_batch"},
+    )
+    current_slate = RefreshJob(
+        kind="refresh",
+        scope="current_slate",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.add_all([maintenance, current_slate])
+    db_session.commit()
+
+    claimed = refresh_jobs._claim_next_job(db_session)
+
+    assert claimed is not None
+    assert claimed.id == current_slate.id
+    assert claimed.kind == "refresh"
+    assert claimed.scope == "current_slate"
+
+
+def test_process_refresh_job_queue_once_requeues_incomplete_prop_refresh(db_session, monkeypatch):
+    run = Run(kind="prop_refresh", status="running")
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+    )
+    db_session.add_all([run, job])
+    db_session.commit()
+
+    monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
+
+    def _advance(db, job):
+        job.details = {"phase": "watchlist_score_batch", "cursor": {"market_id": 500}}
+        return run, False
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+
+    assert result is not None
+    assert result.kind == "prop_refresh"
+    assert result.status == "queued"
+    db_session.refresh(job)
+    assert job.run_id == run.id
+    assert job.status == "queued"
+    assert job.started_at is None
+    assert job.details["phase"] == "watchlist_score_batch"
+
+
 def test_enqueue_shadow_capture_job_coalesces_current_slate_follow_ups(db_session):
     first_job, first_created = refresh_jobs.enqueue_shadow_capture_job(
         db_session,
@@ -304,7 +362,7 @@ def test_process_refresh_job_queue_once_enqueues_shadow_backfill_after_prop_refr
     db_session.commit()
 
     monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
-    monkeypatch.setattr(refresh_jobs, "run_prop_refresh_cycle", lambda db: SimpleNamespace(id=202))
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", lambda db, job: (SimpleNamespace(id=202), True))
 
     result = refresh_jobs.process_refresh_job_queue_once()
 
@@ -314,6 +372,42 @@ def test_process_refresh_job_queue_once_enqueues_shadow_backfill_after_prop_refr
     shadow_job = db_session.query(RefreshJob).filter_by(kind="shadow_capture", scope="backfill").one()
     assert shadow_job.status == "queued"
     assert shadow_job.details["source_prop_refresh_job_id"] == job.id
+
+
+def test_process_refresh_job_queue_once_requeues_incomplete_shadow_capture(db_session, monkeypatch):
+    job = RefreshJob(
+        kind="shadow_capture",
+        scope="backfill",
+        reason="maintenance_follow_up",
+        status="queued",
+        details={"shadow_capture_scope": "backfill"},
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
+    monkeypatch.setattr(
+        refresh_jobs,
+        "capture_shadow_artifacts_batch",
+        lambda db, **kwargs: SimpleNamespace(
+            prediction_count=12,
+            parlay_prediction_count=0,
+            next_phase="predictions",
+            next_cursor={"captured_at": datetime.now(timezone.utc).isoformat(), "item_id": 44},
+            complete=False,
+        ),
+    )
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+
+    assert result is not None
+    assert result.kind == "shadow_capture"
+    assert result.status == "queued"
+    db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.details["shadow_predictions_captured_total"] == 12
+    assert job.details["phase"] == "predictions"
+    assert job.started_at is None
 
 
 def test_shadow_capture_failure_does_not_mark_completed_refresh_failed(db_session, monkeypatch):
@@ -336,10 +430,18 @@ def test_shadow_capture_failure_does_not_mark_completed_refresh_failed(db_sessio
 
     monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
 
-    def _raise_shadow_capture(db, *, scope: str, source_run_id: int | None = None):
+    def _raise_shadow_capture_batch(
+        db,
+        *,
+        run_id: int,
+        source_run_id: int | None = None,
+        backfill: bool = False,
+        phase: str = "predictions",
+        cursor=None,
+    ):
         raise RuntimeError(f"shadow capture failed for {source_run_id}")
 
-    monkeypatch.setattr(refresh_jobs, "run_shadow_capture_cycle", _raise_shadow_capture)
+    monkeypatch.setattr(refresh_jobs, "capture_shadow_artifacts_batch", _raise_shadow_capture_batch)
 
     result = refresh_jobs.process_refresh_job_queue_once()
 
@@ -373,10 +475,18 @@ def test_shadow_backfill_failure_does_not_mark_completed_prop_refresh_failed(db_
 
     monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
 
-    def _raise_shadow_capture(db, *, scope: str, source_run_id: int | None = None):
-        raise RuntimeError(f"shadow backfill failed for {scope}")
+    def _raise_shadow_capture_batch(
+        db,
+        *,
+        run_id: int,
+        source_run_id: int | None = None,
+        backfill: bool = False,
+        phase: str = "predictions",
+        cursor=None,
+    ):
+        raise RuntimeError(f"shadow backfill failed for {'backfill' if backfill else source_run_id}")
 
-    monkeypatch.setattr(refresh_jobs, "run_shadow_capture_cycle", _raise_shadow_capture)
+    monkeypatch.setattr(refresh_jobs, "capture_shadow_artifacts_batch", _raise_shadow_capture_batch)
 
     result = refresh_jobs.process_refresh_job_queue_once()
 
