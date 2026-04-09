@@ -3,7 +3,7 @@ databases:
     plan: basic-256mb
     region: oregon
     postgresMajorVersion: "18"
-    diskSizeGB: 5
+    diskSizeGB: 20
 
 services:
   - type: web
@@ -25,9 +25,46 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: SCHEDULER_ENABLED
-        value: "true"
+        value: "false"
       - key: APP_ROLE
         value: web
+      - key: ML_SERVING_MODE
+        sync: false
+      - key: ML_MANIFEST_PATH
+        sync: false
+      - key: ML_FAMILY_MODES_JSON
+        sync: false
+      - key: KALSHI_KEY_ID
+        sync: false
+      - key: KALSHI_PRIVATE_KEY_PATH
+        value: /etc/secrets/kalshi-demo.key
+      - key: WEB_ORIGINS
+        sync: false
+    secretFiles:
+      - name: kalshi-demo.key
+        filePath: /etc/secrets/kalshi-demo.key
+
+  - type: worker
+    name: sika-scheduler
+    runtime: docker
+    repo: https://github.com/ckwame-jpg/sika.git
+    branch: main
+    rootDir: apps/api
+    dockerfilePath: ./Dockerfile
+    plan: standard
+    region: oregon
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sika
+          property: connectionString
+      - key: ENVIRONMENT
+        value: production
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      - key: APP_ROLE
+        value: worker
       - key: ML_SERVING_MODE
         sync: false
       - key: ML_MANIFEST_PATH
