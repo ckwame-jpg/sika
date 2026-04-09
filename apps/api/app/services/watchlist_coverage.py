@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -34,6 +34,14 @@ def _coerce_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _coverage_day_window(now: datetime | None = None) -> tuple[datetime, datetime]:
+    reference_now = _coerce_utc(_coverage_reference_now(now)) or datetime.now(timezone.utc)
+    local_tz = _coverage_timezone()
+    local_day_start = datetime.combine(reference_now.astimezone(local_tz).date(), time.min, tzinfo=local_tz)
+    local_day_end = local_day_start + timedelta(days=1)
+    return local_day_start.astimezone(timezone.utc), local_day_end.astimezone(timezone.utc)
 
 
 def is_current_watchlist_event(event: Event | None, *, now: datetime | None = None) -> bool:
@@ -82,22 +90,82 @@ def _coverage_market_sort_key(market: Market) -> tuple[datetime, int, int, str, 
     return starts_at, 0 if (market.sport_key or "") == "NBA" else 1, family_priority, market.title, threshold, subject_name
 
 
-def current_watchlist_markets(
+def current_watchlist_event_ids(
     db: Session,
     *,
     sport: str | None = None,
     now: datetime | None = None,
+) -> list[int]:
+    allowed_sports = {sport.upper()} if sport else set(CURRENT_WATCHLIST_SPORTS)
+    day_start, day_end = _coverage_day_window(now)
+    stmt = (
+        select(Event.id)
+        .where(
+            Event.sport_key.in_(tuple(allowed_sports)),
+            Event.status.notin_(tuple(TERMINAL_EVENT_STATUSES)),
+            ((func.lower(Event.status) == "in_progress") | ((Event.starts_at >= day_start) & (Event.starts_at < day_end))),
+        )
+        .order_by(Event.starts_at.asc(), Event.id.asc())
+    )
+    return list(db.scalars(stmt).all())
+
+
+def recommendation_market_ids_for_sports(db: Session, *, sports: set[str] | None = None) -> list[int]:
+    scoped_sports = tuple(sorted(sports or set(CURRENT_WATCHLIST_SPORTS)))
+    if not scoped_sports:
+        return []
+    rows = db.execute(
+        select(Recommendation.market_id)
+        .join(Market, Recommendation.market_id == Market.id)
+        .where(
+            Recommendation.status == "active",
+            Market.sport_key.in_(scoped_sports),
+        )
+        .group_by(Recommendation.market_id)
+        .order_by(Recommendation.market_id.asc())
+    ).all()
+    return [int(market_id) for market_id, in rows]
+
+
+def load_current_watchlist_markets(
+    db: Session,
+    *,
+    sport: str | None = None,
+    now: datetime | None = None,
+    market_ids: set[int] | None = None,
+    event_ids: set[int] | None = None,
 ) -> list[Market]:
     allowed_sports = {sport.upper()} if sport else set(CURRENT_WATCHLIST_SPORTS)
-    markets = db.scalars(
+    scoped_event_ids = set(event_ids or current_watchlist_event_ids(db, sport=sport, now=now))
+    if not scoped_event_ids:
+        return []
+    stmt = (
         select(Market)
         .options(
             joinedload(Market.event)
             .selectinload(Event.participants)
             .joinedload(EventParticipant.participant)
         )
-        .where(Market.event_id.is_not(None), Market.status.in_(tuple(OPEN_MARKET_STATUSES)), Market.sport_key.in_(tuple(allowed_sports)))
-    ).all()
+        .where(
+            Market.event_id.in_(tuple(sorted(scoped_event_ids))),
+            Market.status.in_(tuple(OPEN_MARKET_STATUSES)),
+            Market.sport_key.in_(tuple(allowed_sports)),
+        )
+    )
+    if market_ids is not None:
+        if not market_ids:
+            return []
+        stmt = stmt.where(Market.id.in_(tuple(sorted(market_ids))))
+    return list(db.scalars(stmt).all())
+
+
+def current_watchlist_markets(
+    db: Session,
+    *,
+    sport: str | None = None,
+    now: datetime | None = None,
+) -> list[Market]:
+    markets = load_current_watchlist_markets(db, sport=sport, now=now)
 
     winners: dict[tuple[int, str], Market] = {}
     game_lines: list[Market] = []

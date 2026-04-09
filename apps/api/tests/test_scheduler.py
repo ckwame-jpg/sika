@@ -225,7 +225,11 @@ def test_process_refresh_job_queue_once_enqueues_shadow_follow_up_for_current_sl
     db_session.commit()
 
     monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
-    monkeypatch.setattr(refresh_jobs, "run_refresh_cycle", lambda db, **kwargs: SimpleNamespace(id=101))
+    monkeypatch.setattr(
+        refresh_jobs,
+        "advance_current_slate_refresh_job",
+        lambda db, job, sports=None: (SimpleNamespace(id=101), True),
+    )
 
     result = refresh_jobs.process_refresh_job_queue_once()
 

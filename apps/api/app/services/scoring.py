@@ -29,7 +29,7 @@ from app.services.model_families import single_family_key
 from app.services.parlays import ParlayCandidateInput, capture_parlay_artifacts, clear_active_parlay_watchlist
 from app.services.predictions import MODEL_NAME, OPEN_MARKET_STATUSES, capture_prediction
 from app.services.stats_query import _build_game_logs, default_season_for_sport
-from app.services.watchlist_coverage import is_current_watchlist_market, latest_snapshot_by_market_id
+from app.services.watchlist_coverage import is_current_watchlist_market, latest_snapshot_by_market_id, load_current_watchlist_markets
 from app.sports.base import alias_tokens
 
 
@@ -1983,6 +1983,26 @@ def _maintenance_watchlist_market_batch(
     return db.scalars(stmt.limit(batch_size)).all()
 
 
+def _explicit_watchlist_market_batch(
+    db: Session,
+    *,
+    market_ids: list[int],
+    cursor_index: int = 0,
+    batch_size: int = 100,
+) -> tuple[list[Market], int | None, bool]:
+    batch_ids = market_ids[cursor_index : cursor_index + batch_size]
+    if not batch_ids:
+        return [], None, True
+    rows = load_current_watchlist_markets(
+        db,
+        market_ids=set(batch_ids),
+    )
+    by_id = {market.id: market for market in rows}
+    ordered = [by_id[market_id] for market_id in batch_ids if market_id in by_id]
+    next_index = cursor_index + len(batch_ids)
+    return ordered, (None if next_index >= len(market_ids) else next_index), next_index >= len(market_ids)
+
+
 def _annotate_current_watchlist_flag(scored: ScoredRecommendation, *, current_watchlist_market: bool) -> None:
     signal_diagnostics = dict(scored.signal.scoring_diagnostics or {})
     signal_diagnostics["current_watchlist_market"] = current_watchlist_market
@@ -1993,23 +2013,17 @@ def _annotate_current_watchlist_flag(scored: ScoredRecommendation, *, current_wa
         scored.recommendation.scoring_diagnostics = recommendation_diagnostics
 
 
-def stage_maintenance_watchlist_batch(
+def _score_watchlist_markets_batch(
     db: Session,
     *,
     run_id: int,
+    markets: list[Market],
     resolver: PropStatsResolver | None = None,
-    cursor_market_id: int | None = None,
-    batch_size: int = 100,
-) -> tuple[WatchlistGenerationSummary, int | None, bool]:
+) -> WatchlistGenerationSummary:
     summary = WatchlistGenerationSummary()
     active_resolver = resolver or PropStatsResolver(db, allow_network=False)
-    markets = _maintenance_watchlist_market_batch(
-        db,
-        cursor_market_id=cursor_market_id,
-        batch_size=batch_size,
-    )
     if not markets:
-        return summary, None, True
+        return summary
 
     latest_snapshots = latest_snapshot_by_market_id(db, [market.id for market in markets])
     for market in markets:
@@ -2054,7 +2068,58 @@ def stage_maintenance_watchlist_batch(
             )
             summary.prediction_count += 1
     db.flush()
+    return summary
+
+
+def stage_maintenance_watchlist_batch(
+    db: Session,
+    *,
+    run_id: int,
+    resolver: PropStatsResolver | None = None,
+    cursor_market_id: int | None = None,
+    batch_size: int = 100,
+) -> tuple[WatchlistGenerationSummary, int | None, bool]:
+    markets = _maintenance_watchlist_market_batch(
+        db,
+        cursor_market_id=cursor_market_id,
+        batch_size=batch_size,
+    )
+    if not markets:
+        return WatchlistGenerationSummary(), None, True
+
+    summary = _score_watchlist_markets_batch(
+        db,
+        run_id=run_id,
+        markets=markets,
+        resolver=resolver,
+    )
     return summary, markets[-1].id if markets else cursor_market_id, len(markets) < batch_size
+
+
+def stage_current_slate_watchlist_batch(
+    db: Session,
+    *,
+    run_id: int,
+    market_ids: list[int],
+    resolver: PropStatsResolver | None = None,
+    cursor_index: int = 0,
+    batch_size: int = 100,
+) -> tuple[WatchlistGenerationSummary, int | None, bool]:
+    markets, next_index, complete = _explicit_watchlist_market_batch(
+        db,
+        market_ids=market_ids,
+        cursor_index=cursor_index,
+        batch_size=batch_size,
+    )
+    if not markets:
+        return WatchlistGenerationSummary(), None, True
+    summary = _score_watchlist_markets_batch(
+        db,
+        run_id=run_id,
+        markets=markets,
+        resolver=resolver,
+    )
+    return summary, next_index, complete
 
 
 def _apply_prediction_monotonicity(predictions: list[Prediction]) -> None:
@@ -2199,6 +2264,69 @@ def finalize_staged_watchlist(
         )
         summary.parlay_recommendation_count = parlay_recommendation_count
         summary.parlay_prediction_count = parlay_prediction_count
+    db.flush()
+    summary.prediction_count = int(
+        db.scalar(select(func.count()).select_from(Prediction).where(Prediction.run_id == run_id))
+        or 0
+    )
+    return summary
+
+
+def finalize_current_slate_watchlist(
+    db: Session,
+    *,
+    run_id: int,
+    candidate_market_ids: set[int],
+) -> WatchlistGenerationSummary:
+    summary = WatchlistGenerationSummary()
+    predictions = db.scalars(
+        select(Prediction)
+        .options(
+            joinedload(Prediction.market)
+            .joinedload(Market.event)
+            .selectinload(Event.participants)
+            .joinedload(EventParticipant.participant)
+        )
+        .where(Prediction.run_id == run_id)
+        .order_by(Prediction.id.asc())
+    ).all()
+
+    candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope != "coverage"]
+    _apply_prediction_monotonicity(candidate_predictions)
+    candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope not in {"coverage", "suppressed"}]
+    winners, collapsed_count, combo_suppressed = _dedupe_prediction_recommendations(candidate_predictions)
+    summary.inverse_winner_duplicates_collapsed = collapsed_count
+    summary.combo_prop_candidates_suppressed = combo_suppressed
+    winner_ids = {prediction.id for prediction in winners}
+
+    for prediction in predictions:
+        if prediction.capture_scope == "coverage":
+            continue
+        if prediction.id in winner_ids:
+            prediction.capture_scope = "recommendation"
+            continue
+        current_flag = bool((prediction.scoring_diagnostics or {}).get("current_watchlist_market"))
+        if current_flag:
+            prediction.capture_scope = "coverage"
+            continue
+        db.delete(prediction)
+
+    db.flush()
+    if candidate_market_ids:
+        db.query(Recommendation).filter(
+            Recommendation.market_id.in_(tuple(sorted(candidate_market_ids)))
+        ).delete(synchronize_session=False)
+    db.flush()
+
+    for prediction in winners:
+        diagnostics = dict(prediction.scoring_diagnostics or {})
+        quality_tier = str(diagnostics.get("quality_tier") or "medium")
+        summary.quality_tier_counts[quality_tier] = summary.quality_tier_counts.get(quality_tier, 0) + 1
+        if str(diagnostics.get("source_type") or "") == "combo_derived":
+            summary.combo_prop_candidates_emitted += 1
+        db.add(_build_recommendation_from_prediction(prediction))
+        summary.recommendation_count += 1
+
     db.flush()
     summary.prediction_count = int(
         db.scalar(select(func.count()).select_from(Prediction).where(Prediction.run_id == run_id))

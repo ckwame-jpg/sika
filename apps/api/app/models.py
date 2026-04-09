@@ -557,3 +557,15 @@ class RefreshJob(Base):
     finished_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
     run = relationship("Run")
+
+
+class CurrentSlateSnapshot(Base):
+    __tablename__ = "current_slate_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    scope = Column(String, nullable=False, unique=True, index=True)
+    source_run_id = Column(Integer, ForeignKey("runs.id"), nullable=True, index=True)
+    generated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    payload = Column(JSON, default=dict)
+
+    source_run = relationship("Run")

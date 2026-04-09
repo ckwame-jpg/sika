@@ -11,7 +11,7 @@ from sqlalchemy import desc, func, select
 
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import EspnPlayerGamelogCache, Event, Run
+from app.models import EspnPlayerGamelogCache, Event, RefreshJob, Run
 from app.services.ingestion import run_refresh_cycle
 from app.services.orders import reconcile_demo_state
 from app.services.refresh_jobs import (
@@ -25,6 +25,7 @@ from app.services.refresh_jobs import (
 
 scheduler = BackgroundScheduler(timezone=get_settings().default_timezone)
 logger = logging.getLogger(__name__)
+ACTIVE_JOB_STATUSES = ("queued", "running")
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +226,61 @@ def queue_startup_refresh_if_stale() -> bool:
     return _queue_current_slate_refresh("startup")
 
 
+def _current_slate_job_pending() -> bool:
+    with SessionLocal() as db:
+        return (
+            db.scalar(
+                select(func.count())
+                .select_from(RefreshJob)
+                .where(
+                    RefreshJob.kind == "refresh",
+                    RefreshJob.scope == "current_slate",
+                    RefreshJob.status.in_(ACTIVE_JOB_STATUSES),
+                )
+            )
+            or 0
+        ) > 0
+
+
+def current_slate_refresh_due(now: datetime | None = None) -> bool:
+    settings = get_settings()
+    latest_finished_at = _latest_successful_refresh_finished_at()
+    reference_now = _as_utc(now) or datetime.now(timezone.utc)
+    if latest_finished_at is None:
+        return True
+    due_at = latest_finished_at + timedelta(minutes=settings.refresh_interval_minutes)
+    return due_at <= reference_now
+
+
+def _current_slate_due_within(seconds: int, *, now: datetime | None = None) -> bool:
+    settings = get_settings()
+    latest_finished_at = _latest_successful_refresh_finished_at()
+    reference_now = _as_utc(now) or datetime.now(timezone.utc)
+    if latest_finished_at is None:
+        return True
+    due_at = latest_finished_at + timedelta(minutes=settings.refresh_interval_minutes)
+    return due_at <= reference_now + timedelta(seconds=seconds)
+
+
+def queue_current_slate_refresh_if_due(*, reason: str = "interval") -> bool:
+    if _current_slate_job_pending():
+        return False
+    if not current_slate_refresh_due():
+        return False
+    return _queue_current_slate_refresh(reason)
+
+
 def queue_prop_refresh_if_due(*, reason: str = "manual") -> bool:
+    if not prop_refresh_needed():
+        return False
+    return _queue_maintenance_refresh(reason)
+
+
+def queue_maintenance_refresh_if_due(*, reason: str = "interval") -> bool:
+    if _current_slate_job_pending():
+        return False
+    if _current_slate_due_within(60):
+        return False
     if not prop_refresh_needed():
         return False
     return _queue_maintenance_refresh(reason)
@@ -285,6 +340,7 @@ def start_scheduler() -> None:
     settings = get_settings()
     if not settings.scheduler_enabled or scheduler.running:
         return
+    enqueue_check_seconds = max(settings.queue_poll_interval_seconds, 30)
     scheduler.add_job(
         _process_refresh_queue_job,
         trigger=IntervalTrigger(seconds=settings.queue_poll_interval_seconds),
@@ -294,17 +350,17 @@ def start_scheduler() -> None:
         max_instances=1,
     )
     scheduler.add_job(
-        lambda: _queue_current_slate_refresh("interval"),
-        trigger=IntervalTrigger(minutes=settings.refresh_interval_minutes),
-        id="live_refresh_enqueue",
+        lambda: queue_current_slate_refresh_if_due(reason="interval"),
+        trigger=IntervalTrigger(seconds=enqueue_check_seconds),
+        id="live_refresh_due_check",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
     )
     scheduler.add_job(
-        lambda: _queue_maintenance_refresh("interval"),
-        trigger=IntervalTrigger(minutes=settings.prop_refresh_interval_minutes),
-        id="maintenance_refresh_enqueue",
+        lambda: queue_maintenance_refresh_if_due(reason="interval"),
+        trigger=IntervalTrigger(seconds=enqueue_check_seconds),
+        id="maintenance_refresh_due_check",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

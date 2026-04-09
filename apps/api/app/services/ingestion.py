@@ -19,12 +19,23 @@ from app.services.predictions import OPEN_MARKET_STATUSES, settle_predictions, s
 from app.services.scoring import (
     PropStatsResolver,
     WatchlistGenerationSummary,
+    finalize_current_slate_watchlist,
     finalize_staged_watchlist,
     regenerate_watchlist,
+    stage_current_slate_watchlist_batch,
     stage_maintenance_watchlist_batch,
     warm_prop_context_cache,
 )
-from app.services.watchlist_coverage import current_watchlist_markets, latest_snapshot_by_market_id, warm_current_watchlist_prop_context
+from app.services.trade_desk import persist_current_slate_snapshots
+from app.services.watchlist_coverage import (
+    CURRENT_WATCHLIST_SPORTS,
+    current_watchlist_event_ids,
+    current_watchlist_markets,
+    latest_snapshot_by_market_id,
+    load_current_watchlist_markets,
+    recommendation_market_ids_for_sports,
+    warm_current_watchlist_prop_context,
+)
 from app.sports.base import NormalizedEvent
 from app.sports.registry import ADAPTERS
 
@@ -39,11 +50,12 @@ SPORT_LABELS = {
 
 FREE_PROVIDER_SPORTS = {"SOCCER", "TENNIS"}
 PUBLIC_MAJOR_SPORTS = {"NBA", "NFL", "MLB"}
-PROP_REFRESH_COMBO_PAGE_SIZE = 100
-PROP_CONTEXT_BATCH_SIZE = 50
-WATCHLIST_SCORE_BATCH_SIZE = 100
-PREDICTION_SETTLEMENT_BATCH_SIZE = 250
-PARLAY_SETTLEMENT_BATCH_SIZE = 100
+PROP_REFRESH_COMBO_PAGE_SIZE = 25
+PROP_REFRESH_COMBO_LEG_BATCH_SIZE = 25
+PROP_CONTEXT_BATCH_SIZE = 25
+WATCHLIST_SCORE_BATCH_SIZE = 25
+PREDICTION_SETTLEMENT_BATCH_SIZE = 100
+PARLAY_SETTLEMENT_BATCH_SIZE = 50
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -419,6 +431,7 @@ def refresh_sports_data(
     processed = 0
     processed_by_sport: dict[str, int] = {sport_key: 0 for sport_key in sports}
     fetch_errors: dict[str, list[str]] = {}
+    touched_event_ids: set[int] = set()
     for sport_key in sports:
         adapter = ADAPTERS[sport_key]
         if provider is not None:
@@ -448,7 +461,8 @@ def refresh_sports_data(
             normalized = adapter.normalize_event(raw_event)
             if not normalized:
                 continue
-            _upsert_event(db, normalized)
+            event = _upsert_event(db, normalized)
+            touched_event_ids.add(event.id)
             processed += 1
             processed_by_sport[sport_key] = processed_by_sport.get(sport_key, 0) + 1
     db.flush()
@@ -456,6 +470,7 @@ def refresh_sports_data(
         "processed": processed,
         "sports_records_ingested": processed_by_sport,
         "sports_fetch_errors": fetch_errors,
+        "touched_event_ids": touched_event_ids,
     }
 
 
@@ -769,85 +784,255 @@ def _ensure_prop_refresh_run(
     return run
 
 
+def _ensure_current_slate_run(
+    db: Session,
+    *,
+    job: RefreshJob,
+    sports: Iterable[str] | None = None,
+) -> Run:
+    if job.run_id is not None:
+        existing = db.get(Run, job.run_id)
+        if existing is not None:
+            return existing
+    run = Run(
+        kind="refresh",
+        status="running",
+        details={
+            "sports": list(sports or ["NBA", "MLB"]),
+            "refresh_scope": "current_slate",
+        },
+    )
+    db.add(run)
+    db.flush()
+    job.run_id = run.id
+    return run
+
+
+def _normalize_subject_key(raw_data: dict[str, Any]) -> tuple[str, str] | None:
+    subject_name = str(raw_data.get("copilot_subject_name") or "").strip().lower()
+    stat_key = str(raw_data.get("copilot_stat_key") or "").strip().lower()
+    if not subject_name or not stat_key:
+        return None
+    return subject_name, stat_key
+
+
+def _current_slate_candidate_market_ids(
+    db: Session,
+    *,
+    touched_market_ids: set[int],
+    touched_event_ids: set[int],
+) -> tuple[list[int], int]:
+    current_event_ids = set(current_watchlist_event_ids(db))
+    tracked_sports = set(CURRENT_WATCHLIST_SPORTS)
+    existing_recommendation_market_ids = set(
+        recommendation_market_ids_for_sports(db, sports=tracked_sports)
+    )
+    candidate_market_ids: set[int] = set(existing_recommendation_market_ids)
+    affected_event_ids: set[int] = set()
+
+    touched_markets = db.scalars(
+        select(Market).where(Market.id.in_(tuple(sorted(touched_market_ids))))
+    ).all() if touched_market_ids else []
+    touched_current_prop_keys: set[tuple[int, str, str]] = set()
+    for market in touched_markets:
+        if market.event_id is None:
+            continue
+        if (market.sport_key or "").upper() not in tracked_sports:
+            continue
+        affected_event_ids.add(market.event_id)
+        candidate_market_ids.add(market.id)
+        raw_data = market.raw_data or {}
+        if str(raw_data.get("copilot_market_family") or "") != "player_prop":
+            continue
+        subject_key = _normalize_subject_key(raw_data)
+        if subject_key is None:
+            continue
+        touched_current_prop_keys.add((market.event_id, *subject_key))
+
+    affected_event_ids.update(event_id for event_id in touched_event_ids if event_id in current_event_ids)
+    if affected_event_ids:
+        event_markets = db.scalars(
+            select(Market).where(Market.event_id.in_(tuple(sorted(affected_event_ids))))
+        ).all()
+        for market in event_markets:
+            if (market.sport_key or "").upper() not in tracked_sports:
+                continue
+            candidate_market_ids.add(market.id)
+            raw_data = market.raw_data or {}
+            if str(raw_data.get("copilot_market_family") or "") != "player_prop":
+                continue
+            subject_key = _normalize_subject_key(raw_data)
+            if subject_key is None:
+                continue
+            if (market.event_id or 0, *subject_key) in touched_current_prop_keys:
+                candidate_market_ids.add(market.id)
+
+    current_candidate_markets = load_current_watchlist_markets(
+        db,
+        market_ids=candidate_market_ids,
+        event_ids=current_event_ids,
+    )
+    expanded_ids = {market.id for market in current_candidate_markets}
+    for market in current_candidate_markets:
+        raw_data = market.raw_data or {}
+        if str(raw_data.get("copilot_market_family") or "") != "player_prop":
+            continue
+        subject_key = _normalize_subject_key(raw_data)
+        if subject_key is None:
+            continue
+        if (market.event_id or 0, *subject_key) in touched_current_prop_keys:
+            expanded_ids.add(market.id)
+
+    candidate_market_ids.update(expanded_ids)
+    return sorted(candidate_market_ids), len(affected_event_ids)
+
+
+def _warm_current_slate_context_batch(
+    db: Session,
+    *,
+    resolver: PropStatsResolver,
+    market_ids: list[int],
+    cursor_index: int = 0,
+    batch_size: int = PROP_CONTEXT_BATCH_SIZE,
+) -> tuple[dict[str, int], int | None, bool]:
+    batch_ids = market_ids[cursor_index : cursor_index + batch_size]
+    if not batch_ids:
+        return resolver.stats.as_dict(), None, True
+    markets = load_current_watchlist_markets(
+        db,
+        market_ids=set(batch_ids),
+    )
+    unique_subjects: dict[tuple[str, str, str], tuple[str, str, str | None]] = {}
+    for market in markets:
+        raw_data = market.raw_data or {}
+        if raw_data.get("copilot_market_family") != "player_prop":
+            continue
+        sport_key = str(market.sport_key or "")
+        subject_name = str(raw_data.get("copilot_subject_name") or "").strip()
+        team_hint = str(raw_data.get("copilot_subject_team") or "").strip() or None
+        if not sport_key or not subject_name:
+            continue
+        key = (sport_key, subject_name.lower(), (team_hint or "").upper())
+        unique_subjects[key] = (sport_key, subject_name, team_hint)
+
+    for sport_key, subject_name, team_hint in unique_subjects.values():
+        try:
+            resolver.resolve(sport_key, subject_name, team_hint=team_hint)
+        except Exception:
+            continue
+
+    next_index = cursor_index + len(batch_ids)
+    return resolver.stats.as_dict(), (None if next_index >= len(market_ids) else next_index), next_index >= len(market_ids)
+
+
 def _refresh_combo_prop_discovery_batch(
     db: Session,
     *,
     client: KalshiPublicClient,
-    cursor: str | None,
+    cursor_payload: dict[str, object] | None,
     limit: int = PROP_REFRESH_COMBO_PAGE_SIZE,
-) -> tuple[dict[str, object], str | None, bool]:
-    combo_page, next_cursor = client.list_markets_page(
-        status="open",
-        limit=limit,
-        mve_filter="include",
-        cursor=cursor,
-    )
-    if not combo_page:
-        return {
-            "processed": 0,
-            "total_kalshi_markets_seen": 0,
-            "supported_nba_props_seen": 0,
-            "supported_mlb_props_seen": 0,
-            "unsupported_prop_category_counts": {},
-            "combo_prop_legs_discovered": 0,
-            "combo_prop_legs_refreshed": 0,
-            "market_snapshots_written": 0,
-            "mapped_markets": 0,
-        }, None, True
+    leg_batch_size: int = PROP_REFRESH_COMBO_LEG_BATCH_SIZE,
+) -> tuple[dict[str, object], dict[str, object] | None, bool]:
+    summary = {
+        "processed": 0,
+        "total_kalshi_markets_seen": 0,
+        "supported_nba_props_seen": 0,
+        "supported_mlb_props_seen": 0,
+        "unsupported_prop_category_counts": {},
+        "combo_prop_legs_discovered": 0,
+        "combo_prop_legs_refreshed": 0,
+        "market_snapshots_written": 0,
+        "mapped_markets": 0,
+    }
+    cursor_data = dict(cursor_payload or {})
+    kalshi_cursor = str(cursor_data.get("kalshi_cursor") or "").strip() or None
+    pending_combo_legs = [dict(item) for item in list(cursor_data.get("pending_combo_legs") or []) if isinstance(item, dict)]
+
+    if not pending_combo_legs:
+        combo_page, next_cursor = client.list_markets_page(
+            status="open",
+            limit=limit,
+            mve_filter="include",
+            cursor=kalshi_cursor,
+        )
+        if not combo_page:
+            return summary, None, True
+        summary["total_kalshi_markets_seen"] = len(combo_page)
+        kalshi_cursor = next_cursor
+        combo_leg_tickers_seen: set[str] = set()
+        for combo_payload in combo_page:
+            if not (combo_payload.get("mve_collection_ticker") or combo_payload.get("mve_selected_legs")):
+                continue
+            for leg in combo_payload.get("mve_selected_legs") or []:
+                leg_ticker = str(leg.get("market_ticker") or "").strip()
+                if not leg_ticker or leg_ticker in combo_leg_tickers_seen:
+                    continue
+                combo_leg_tickers_seen.add(leg_ticker)
+                pending_combo_legs.append(
+                    {
+                        "market_ticker": leg_ticker,
+                        "source_market_ticker": combo_payload.get("ticker"),
+                        "source_market_title": combo_payload.get("title"),
+                    }
+                )
 
     payload_records: list[dict[str, Any]] = []
-    combo_leg_tickers_seen: set[str] = set()
-    total_seen = 0
-    for combo_payload in combo_page:
-        total_seen += 1
-        if not (combo_payload.get("mve_collection_ticker") or combo_payload.get("mve_selected_legs")):
+    active_combo_legs = pending_combo_legs[:leg_batch_size]
+    for combo_leg in active_combo_legs:
+        leg_ticker = str(combo_leg.get("market_ticker") or "").strip()
+        if not leg_ticker:
             continue
-        for leg in combo_payload.get("mve_selected_legs") or []:
-            leg_ticker = str(leg.get("market_ticker") or "").strip()
-            if not leg_ticker or leg_ticker in combo_leg_tickers_seen:
-                continue
-            combo_leg_tickers_seen.add(leg_ticker)
-            try:
-                leg_payload = client.get_market(leg_ticker)
-            except Exception:
-                continue
-            if not leg_payload:
-                continue
-            leg_classification = classify_market_payload(leg_payload)
-            leg_metadata = leg_classification.get("metadata") or {}
-            if (
-                not leg_classification.get("supported")
-                or leg_metadata.get("copilot_market_family") != "player_prop"
-            ):
-                continue
-            payload_records.append(
-                {
-                    "payload": {
-                        **leg_payload,
-                        "mve_collection_ticker": None,
-                        "mve_selected_legs": None,
-                    },
-                    "source_type": "combo_derived",
-                    "source_payload": combo_payload,
-                    "classification_override": leg_classification,
-                }
-            )
+        try:
+            leg_payload = client.get_market(leg_ticker)
+        except Exception:
+            continue
+        if not leg_payload:
+            continue
+        leg_classification = classify_market_payload(leg_payload)
+        leg_metadata = leg_classification.get("metadata") or {}
+        if (
+            not leg_classification.get("supported")
+            or leg_metadata.get("copilot_market_family") != "player_prop"
+        ):
+            continue
+        payload_records.append(
+            {
+                "payload": {
+                    **leg_payload,
+                    "mve_collection_ticker": None,
+                    "mve_selected_legs": None,
+                },
+                "source_type": "combo_derived",
+                "source_payload": {
+                    "ticker": combo_leg.get("source_market_ticker"),
+                    "title": combo_leg.get("source_market_title"),
+                },
+                "classification_override": leg_classification,
+            }
+        )
 
     persisted = _persist_market_payload_records(db, payload_records)
     touched_market_ids = set(persisted.get("touched_market_ids") or set())
     mapped_count = map_markets_to_events(db, candidate_market_ids=touched_market_ids if touched_market_ids else None)
-    summary = {
-        "processed": int(persisted.get("processed") or 0),
-        "total_kalshi_markets_seen": total_seen,
-        "supported_nba_props_seen": int(persisted.get("supported_nba_props_seen") or 0),
-        "supported_mlb_props_seen": int(persisted.get("supported_mlb_props_seen") or 0),
-        "unsupported_prop_category_counts": dict(persisted.get("unsupported_prop_category_counts") or {}),
-        "combo_prop_legs_discovered": int(persisted.get("combo_prop_legs_discovered") or 0),
-        "combo_prop_legs_refreshed": int(persisted.get("combo_prop_legs_refreshed") or 0),
-        "market_snapshots_written": int(persisted.get("market_snapshots_written") or 0),
-        "mapped_markets": mapped_count,
-    }
-    return summary, next_cursor, next_cursor is None
+    summary.update(
+        {
+            "processed": int(persisted.get("processed") or 0),
+            "supported_nba_props_seen": int(persisted.get("supported_nba_props_seen") or 0),
+            "supported_mlb_props_seen": int(persisted.get("supported_mlb_props_seen") or 0),
+            "unsupported_prop_category_counts": dict(persisted.get("unsupported_prop_category_counts") or {}),
+            "combo_prop_legs_discovered": int(persisted.get("combo_prop_legs_discovered") or 0),
+            "combo_prop_legs_refreshed": int(persisted.get("combo_prop_legs_refreshed") or 0),
+            "market_snapshots_written": int(persisted.get("market_snapshots_written") or 0),
+            "mapped_markets": mapped_count,
+        }
+    )
+
+    remaining_combo_legs = pending_combo_legs[leg_batch_size:]
+    if remaining_combo_legs:
+        return summary, {"kalshi_cursor": kalshi_cursor, "pending_combo_legs": remaining_combo_legs}, False
+    if kalshi_cursor is None:
+        return summary, None, True
+    return summary, {"kalshi_cursor": kalshi_cursor, "pending_combo_legs": []}, False
 
 
 def _open_market_batch(
@@ -911,6 +1096,256 @@ def _prop_refresh_processed_so_far(details: dict[str, object]) -> int:
     )
 
 
+def _current_slate_processed_so_far(details: dict[str, object]) -> int:
+    return (
+        int((details.get("sports_summary") or {}).get("processed") or 0)
+        + int((details.get("kalshi_summary") or {}).get("processed") or 0)
+        + int(details.get("mapped_count") or 0)
+        + int((details.get("watchlist_summary") or {}).get("recommendation_count") or 0)
+        + int((details.get("watchlist_summary") or {}).get("prediction_count") or 0)
+    )
+
+
+def advance_current_slate_refresh_job(
+    db: Session,
+    *,
+    job: RefreshJob,
+    provider: TheSportsDBClient | None = None,
+    major_provider: EspnPublicClient | None = None,
+    niche_provider: TheSportsDBClient | None = None,
+    public_client: KalshiPublicClient | None = None,
+    sports: Iterable[str] | None = None,
+) -> tuple[Run, bool]:
+    details = dict(job.details or {})
+    active_sports = list(sports or ["NBA", "MLB"])
+    run = _ensure_current_slate_run(db, job=job, sports=active_sports)
+    phase = str(details.get("phase") or "sports_ingest")
+    cursor_payload = dict(details.get("cursor") or {}) or None
+    stage_details = {str(key): float(value or 0.0) for key, value in dict(details.get("stage_details") or {}).items()}
+    sports_summary = {
+        "processed": int((details.get("sports_summary") or {}).get("processed") or 0),
+        "sports_records_ingested": dict((details.get("sports_summary") or {}).get("sports_records_ingested") or {}),
+        "sports_fetch_errors": dict((details.get("sports_summary") or {}).get("sports_fetch_errors") or {}),
+    }
+    touched_event_ids = [int(value) for value in list(details.get("touched_event_ids") or [])]
+    kalshi_summary = dict(details.get("kalshi_summary") or {})
+    touched_market_ids = [int(value) for value in list(details.get("touched_market_ids") or [])]
+    mapped_count = int(details.get("mapped_count") or 0)
+    warm_summary = {str(key): int(value or 0) for key, value in dict(details.get("warm_summary") or {}).items()}
+    staged_watchlist_summary = _watchlist_summary_from_payload(details.get("watchlist_summary"))
+    candidate_market_ids = [int(value) for value in list(details.get("candidate_market_ids") or [])]
+    candidate_market_count = int(details.get("candidate_market_count") or 0)
+    affected_event_count = int(details.get("affected_event_count") or 0)
+    snapshot_generated_at = str(details.get("snapshot_generated_at") or "").strip() or None
+
+    with httpx.Client(follow_redirects=True, timeout=20) as shared_http_client:
+        kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)
+        espn_client = major_provider or EspnPublicClient(http_client=shared_http_client)
+        stage_started = perf_counter()
+        batch_size = 0
+        complete = False
+
+        if phase == "sports_ingest":
+            refreshed = refresh_sports_data(
+                db,
+                provider=provider,
+                major_provider=espn_client,
+                niche_provider=niche_provider,
+                sports=active_sports,
+                lookback_days=get_settings().current_slate_lookback_days,
+                lookahead_days=get_settings().current_slate_lookahead_days,
+            )
+            sports_summary = {
+                "processed": int(refreshed.get("processed") or 0),
+                "sports_records_ingested": dict(refreshed.get("sports_records_ingested") or {}),
+                "sports_fetch_errors": dict(refreshed.get("sports_fetch_errors") or {}),
+            }
+            touched_event_ids = [int(value) for value in sorted(refreshed.get("touched_event_ids") or set())]
+            stage_details["sports_ingest_seconds"] = round(stage_details.get("sports_ingest_seconds", 0.0) + (perf_counter() - stage_started), 3)
+            batch_size = int(sports_summary.get("processed") or 0)
+            phase = "kalshi_ingest"
+            cursor_payload = {}
+        elif phase == "kalshi_ingest":
+            refreshed = refresh_kalshi_markets(
+                db,
+                client=kalshi_client,
+                include_standalone=True,
+                refresh_combo_prop_tickers=False,
+                discover_combo_props=False,
+            )
+            touched_market_ids = [int(value) for value in sorted(refreshed.get("touched_market_ids") or set())]
+            kalshi_summary = {
+                "processed": int(refreshed.get("processed") or 0),
+                "total_kalshi_markets_seen": int(refreshed.get("total_kalshi_markets_seen") or 0),
+                "supported_nba_props_seen": int(refreshed.get("supported_nba_props_seen") or 0),
+                "supported_mlb_props_seen": int(refreshed.get("supported_mlb_props_seen") or 0),
+                "unsupported_prop_category_counts": dict(refreshed.get("unsupported_prop_category_counts") or {}),
+                "combo_prop_legs_discovered": int(refreshed.get("combo_prop_legs_discovered") or 0),
+                "combo_prop_legs_refreshed": int(refreshed.get("combo_prop_legs_refreshed") or 0),
+                "market_snapshots_written": int(refreshed.get("market_snapshots_written") or 0),
+            }
+            stage_details["kalshi_ingest_seconds"] = round(stage_details.get("kalshi_ingest_seconds", 0.0) + (perf_counter() - stage_started), 3)
+            batch_size = int(kalshi_summary.get("processed") or 0)
+            phase = "market_mapping"
+            cursor_payload = {}
+        elif phase == "market_mapping":
+            mapped_count = map_markets_to_events(
+                db,
+                candidate_market_ids=set(touched_market_ids) if touched_market_ids else None,
+            )
+            kalshi_summary["mapped_markets"] = mapped_count
+            stage_details["market_mapping_seconds"] = round(stage_details.get("market_mapping_seconds", 0.0) + (perf_counter() - stage_started), 3)
+            batch_size = mapped_count
+            phase = "candidate_selection"
+            cursor_payload = {}
+        elif phase == "candidate_selection":
+            candidate_market_ids, affected_event_count = _current_slate_candidate_market_ids(
+                db,
+                touched_market_ids=set(touched_market_ids),
+                touched_event_ids=set(touched_event_ids),
+            )
+            candidate_market_count = len(candidate_market_ids)
+            batch_size = candidate_market_count
+            if candidate_market_ids:
+                phase = "warm_prop_context_batch"
+                cursor_payload = {"candidate_index": 0}
+            else:
+                phase = "watchlist_finalize"
+                cursor_payload = {}
+        elif phase == "warm_prop_context_batch":
+            resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
+            batch_summary, next_index, phase_complete = _warm_current_slate_context_batch(
+                db,
+                resolver=resolver,
+                market_ids=candidate_market_ids,
+                cursor_index=int(cursor_payload.get("candidate_index") or 0) if cursor_payload else 0,
+                batch_size=PROP_CONTEXT_BATCH_SIZE,
+            )
+            warm_summary = _merge_numeric_detail_maps(warm_summary, batch_summary)
+            stage_details["prop_warming_seconds"] = round(stage_details.get("prop_warming_seconds", 0.0) + (perf_counter() - stage_started), 3)
+            batch_size = PROP_CONTEXT_BATCH_SIZE
+            if phase_complete:
+                phase = "watchlist_score_batch"
+                cursor_payload = {"candidate_index": 0}
+            else:
+                cursor_payload = {"candidate_index": next_index}
+        elif phase == "watchlist_score_batch":
+            resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=False)
+            batch_summary, next_index, phase_complete = stage_current_slate_watchlist_batch(
+                db,
+                run_id=run.id,
+                market_ids=candidate_market_ids,
+                resolver=resolver,
+                cursor_index=int(cursor_payload.get("candidate_index") or 0) if cursor_payload else 0,
+                batch_size=WATCHLIST_SCORE_BATCH_SIZE,
+            )
+            staged_watchlist_summary = _merge_watchlist_summaries(staged_watchlist_summary, batch_summary)
+            stage_details["watchlist_regeneration_seconds"] = round(stage_details.get("watchlist_regeneration_seconds", 0.0) + (perf_counter() - stage_started), 3)
+            batch_size = WATCHLIST_SCORE_BATCH_SIZE
+            if phase_complete:
+                phase = "watchlist_finalize"
+                cursor_payload = {}
+            else:
+                cursor_payload = {"candidate_index": next_index}
+        elif phase == "watchlist_finalize":
+            batch_summary = finalize_current_slate_watchlist(
+                db,
+                run_id=run.id,
+                candidate_market_ids=set(candidate_market_ids),
+            )
+            batch_summary.heuristic_longshots_suppressed += staged_watchlist_summary.heuristic_longshots_suppressed
+            batch_summary.critical_context_suppressed += staged_watchlist_summary.critical_context_suppressed
+            staged_watchlist_summary = batch_summary
+            stage_details["watchlist_regeneration_seconds"] = round(stage_details.get("watchlist_regeneration_seconds", 0.0) + (perf_counter() - stage_started), 3)
+            batch_size = max(staged_watchlist_summary.prediction_count, 1)
+            phase = "trade_snapshot_persist"
+            cursor_payload = {}
+        elif phase == "trade_snapshot_persist":
+            snapshots = persist_current_slate_snapshots(
+                db,
+                source_run_id=run.id,
+            )
+            snapshot_generated_at = snapshots.get("all").isoformat() if snapshots.get("all") else datetime.now(timezone.utc).isoformat()
+            batch_size = len(snapshots)
+            complete = True
+        else:
+            raise ValueError(f"Unsupported current-slate phase: {phase}")
+
+    details.update(
+        {
+            "phase": phase,
+            "cursor": cursor_payload or {},
+            "sports_summary": sports_summary,
+            "touched_event_ids": touched_event_ids,
+            "kalshi_summary": kalshi_summary,
+            "touched_market_ids": touched_market_ids,
+            "mapped_count": mapped_count,
+            "warm_summary": warm_summary,
+            "watchlist_summary": _watchlist_summary_to_payload(staged_watchlist_summary),
+            "candidate_market_ids": candidate_market_ids,
+            "candidate_market_count": candidate_market_count,
+            "affected_event_count": affected_event_count,
+            "processed_so_far": _current_slate_processed_so_far(
+                {
+                    "sports_summary": sports_summary,
+                    "kalshi_summary": kalshi_summary,
+                    "mapped_count": mapped_count,
+                    "watchlist_summary": _watchlist_summary_to_payload(staged_watchlist_summary),
+                }
+            ),
+            "batch_size": batch_size,
+            "last_batch_seconds": round(perf_counter() - stage_started, 3),
+            "remaining_estimate": None,
+            "snapshot_generated_at": snapshot_generated_at,
+        }
+    )
+    job.details = details
+    run.records_processed = int(details.get("processed_so_far") or 0)
+    run.details = {
+        "sports": active_sports,
+        "refresh_scope": "current_slate",
+        "phase": phase,
+        "cursor": cursor_payload or {},
+        "candidate_market_count": candidate_market_count,
+        "affected_event_count": affected_event_count,
+        "processed_so_far": run.records_processed,
+        "batch_size": batch_size,
+        "last_batch_seconds": details["last_batch_seconds"],
+        "snapshot_generated_at": snapshot_generated_at,
+        "stage_details": stage_details,
+    }
+
+    if not complete:
+        db.flush()
+        return run, False
+
+    run.details, records = _build_watchlist_run_details(
+        db,
+        sports=active_sports,
+        sports_summary=sports_summary,
+        kalshi_summary=kalshi_summary,
+        mapped_count=mapped_count,
+        watchlist_summary=staged_watchlist_summary,
+        shadow_prediction_count=0,
+        shadow_parlay_prediction_count=0,
+        single_settlement_summary=None,
+        parlay_settlement_summary=None,
+        extra_details={
+            **warm_summary,
+            **stage_details,
+            "refresh_scope": "current_slate",
+            "candidate_market_count": candidate_market_count,
+            "affected_event_count": affected_event_count,
+            "snapshot_generated_at": snapshot_generated_at,
+        },
+    )
+    run.records_processed = records
+    run.status = "completed"
+    run.finished_at = datetime.now(timezone.utc)
+    db.flush()
+    return run, True
+
+
 def advance_prop_refresh_job(
     db: Session,
     *,
@@ -963,8 +1398,9 @@ def advance_prop_refresh_job(
             batch_summary, next_cursor, phase_complete = _refresh_combo_prop_discovery_batch(
                 db,
                 client=kalshi_client,
-                cursor=str(cursor_payload.get("kalshi_cursor")) if cursor_payload and cursor_payload.get("kalshi_cursor") else None,
+                cursor_payload=cursor_payload,
                 limit=PROP_REFRESH_COMBO_PAGE_SIZE,
+                leg_batch_size=PROP_REFRESH_COMBO_LEG_BATCH_SIZE,
             )
             kalshi_summary = {
                 "processed": int(kalshi_summary.get("processed") or 0) + int(batch_summary.get("processed") or 0),
@@ -981,12 +1417,12 @@ def advance_prop_refresh_job(
                 "mapped_markets": int(kalshi_summary.get("mapped_markets") or 0) + int(batch_summary.get("mapped_markets") or 0),
             }
             stage_details["kalshi_ingest_seconds"] = round(stage_details.get("kalshi_ingest_seconds", 0.0) + (perf_counter() - batch_started), 3)
-            batch_size = PROP_REFRESH_COMBO_PAGE_SIZE
+            batch_size = PROP_REFRESH_COMBO_LEG_BATCH_SIZE
             if phase_complete:
                 phase = "warm_prop_context_batch"
                 cursor_payload = None
             else:
-                cursor_payload = {"kalshi_cursor": next_cursor}
+                cursor_payload = next_cursor
         elif phase == "warm_prop_context_batch":
             resolver = PropStatsResolver(db, espn_client=espn_client, allow_network=True)
             batch_summary, next_cursor, phase_complete = _warm_prop_context_batch(

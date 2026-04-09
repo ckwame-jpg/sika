@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import RefreshJob, Run
-from app.services.ingestion import advance_prop_refresh_job, run_refresh_cycle
+from app.services.ingestion import advance_current_slate_refresh_job, advance_prop_refresh_job, run_refresh_cycle
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.ml.shadow import capture_shadow_artifacts_batch
 
@@ -183,20 +183,24 @@ def _job_priority_order():
             0,
         ),
         (
-            RefreshJob.kind == "refresh",
+            (RefreshJob.kind == "shadow_capture") & (RefreshJob.scope == "current_slate"),
             1,
         ),
         (
-            RefreshJob.kind == "prop_refresh",
+            RefreshJob.kind == "refresh",
             2,
         ),
         (
-            RefreshJob.kind == "shadow_capture",
+            RefreshJob.kind == "prop_refresh",
             3,
         ),
         (
-            RefreshJob.kind == "cleanup",
+            RefreshJob.kind == "shadow_capture",
             4,
+        ),
+        (
+            RefreshJob.kind == "cleanup",
+            5,
         ),
         else_=99,
     )
@@ -272,13 +276,18 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
             return None
         try:
             if job.kind == "refresh":
-                run = run_refresh_cycle(
-                    db,
-                    sports=["NBA", "MLB"] if job.scope == "current_slate" else None,
-                    current_slate_only=(job.scope == "current_slate"),
-                )
-                job.run_id = run.id
                 if job.scope == "current_slate":
+                    run, completed = advance_current_slate_refresh_job(
+                        db,
+                        job=job,
+                        sports=["NBA", "MLB"],
+                    )
+                    job.run_id = run.id
+                    if not completed:
+                        _requeue_job(job)
+                        db.commit()
+                        db.refresh(job)
+                        return _snapshot(job)
                     shadow_job, _created = enqueue_shadow_capture_job(
                         db,
                         scope="current_slate",
@@ -289,6 +298,13 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                     details["shadow_follow_up_job_id"] = shadow_job.id
                     details["shadow_follow_up_scope"] = shadow_job.scope
                     job.details = details
+                else:
+                    run = run_refresh_cycle(
+                        db,
+                        sports=None,
+                        current_slate_only=False,
+                    )
+                    job.run_id = run.id
             elif job.kind == "prop_refresh":
                 run, completed = advance_prop_refresh_job(db, job=job)
                 job.run_id = run.id

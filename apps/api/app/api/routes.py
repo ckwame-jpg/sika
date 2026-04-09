@@ -72,6 +72,11 @@ from app.services.predictions import settle_predictions
 from app.services.refresh_jobs import enqueue_refresh_job, get_refresh_job, reconcile_stale_jobs as reconcile_stale_refresh_jobs
 from app.services.scheduler import get_refresh_runtime_state
 from app.services.stats_query import StatsQueryService
+from app.services.trade_desk import (
+    build_trade_desk_response as build_trade_desk_response_live,
+    load_trade_desk_snapshot,
+    sport_availability_rows,
+)
 from app.services.watchlist_coverage import (
     CURRENT_WATCHLIST_SPORTS,
     current_watchlist_markets,
@@ -1139,7 +1144,7 @@ def _build_trade_desk_response(db: Session, sport: str | None = None) -> TradeDe
 
 @router.get("/sports/availability", response_model=list[SportAvailabilityRead])
 def list_sport_availability(db: Session = Depends(get_db)) -> list[SportAvailabilityRead]:
-    return sorted(_sport_availability_rows(db), key=lambda item: _sport_order(item.sport_key))
+    return sorted(sport_availability_rows(db), key=lambda item: _sport_order(item.sport_key))
 
 
 @router.get("/trade-desk", response_model=TradeDeskResponse)
@@ -1147,7 +1152,10 @@ def get_trade_desk(
     sport: str | None = None,
     db: Session = Depends(get_db),
 ) -> TradeDeskResponse:
-    return _build_trade_desk_response(db, sport=sport)
+    snapshot = load_trade_desk_snapshot(db, sport=sport)
+    if snapshot is not None:
+        return snapshot
+    return build_trade_desk_response_live(db, sport=sport)
 
 
 @router.get("/watchlist/diagnostics", response_model=WatchlistDiagnosticsRead)
