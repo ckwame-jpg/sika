@@ -283,7 +283,14 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
         if market is None or market.event is None:
             continue
         if recommendation.edge <= 0:
-            continue
+            raw_data = market.raw_data or {}
+            diagnostics = dict(recommendation.scoring_diagnostics or {})
+            is_monotonicity_adjusted_prop = (
+                str(raw_data.get("copilot_market_family") or "") == "player_prop"
+                and diagnostics.get("monotonicity_adjusted") is True
+            )
+            if not is_monotonicity_adjusted_prop:
+                continue
         if not is_current_watchlist_market(market):
             continue
         if not trade_desk_market_matches_event(market):
@@ -377,8 +384,11 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
             for stat_key, thresholds in stat_map.items():
                 assert isinstance(thresholds, list)
                 thresholds.sort(key=lambda item: item.threshold)
-                if not thresholds_are_monotonic(thresholds):
-                    continue
+                for idx in range(1, len(thresholds)):
+                    if thresholds[idx].probability_yes > thresholds[idx - 1].probability_yes:
+                        thresholds[idx].probability_yes = thresholds[idx - 1].probability_yes
+                        if thresholds[idx].selected_side_probability is not None:
+                            thresholds[idx].selected_side_probability = thresholds[idx - 1].probability_yes
                 best_index = max(range(len(thresholds)), key=lambda index: thresholds[index].edge)
                 thresholds[best_index].is_best = True
                 best_edge = max(best_edge, thresholds[best_index].edge)

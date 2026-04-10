@@ -347,7 +347,9 @@ def _prop_volatility_penalty(values: list[float], threshold: float, profile: Heu
     return round(scaled * profile.volatility_max_penalty, 4)
 
 
-def _days_since_participant_game(db: Session, participant_id: int, before: datetime) -> float | None:
+def _days_since_participant_game(db: Session, participant_id: int, before: datetime | None) -> float | None:
+    if before is None:
+        return None
     latest = db.scalar(
         select(Event.starts_at)
         .join(EventParticipant, Event.id == EventParticipant.event_id)
@@ -360,8 +362,10 @@ def _days_since_participant_game(db: Session, participant_id: int, before: datet
     return max((before - latest).total_seconds() / 86400.0, 0.0)
 
 
-def _days_since_latest_log(game_logs: list[dict[str, Any]], before: datetime) -> float | None:
+def _days_since_latest_log(game_logs: list[dict[str, Any]], before: datetime | None) -> float | None:
     if not game_logs:
+        return None
+    if before is None:
         return None
     game_date = game_logs[0].get("game_date")
     if not isinstance(game_date, datetime):
@@ -373,7 +377,9 @@ def _days_since_latest_log(game_logs: list[dict[str, Any]], before: datetime) ->
     return max((before - game_date).total_seconds() / 86400.0, 0.0)
 
 
-def _recent_participant_results(db: Session, participant_id: int, before: datetime, limit: int = 10) -> list[tuple[float, str | None]]:
+def _recent_participant_results(db: Session, participant_id: int, before: datetime | None, limit: int = 10) -> list[tuple[float, str | None]]:
+    if before is None:
+        return []
     rows = db.execute(
         select(EventParticipant.score, EventParticipant.result)
         .join(Event)
@@ -493,7 +499,9 @@ def _parse_first_five_runs(event: Event, role: str) -> tuple[float | None, float
     return away_total, home_total
 
 
-def _recent_first_five_results(db: Session, participant_id: int, before: datetime, limit: int = 10) -> list[tuple[float, float, str]]:
+def _recent_first_five_results(db: Session, participant_id: int, before: datetime | None, limit: int = 10) -> list[tuple[float, float, str]]:
+    if before is None:
+        return []
     rows = db.execute(
         select(Event, EventParticipant.role)
         .join(EventParticipant, Event.id == EventParticipant.event_id)
@@ -536,7 +544,9 @@ def _avg_first_five_diff(results: list[tuple[float, float, str]]) -> float:
     return sum(diff for _, diff, _ in results) / len(results)
 
 
-def _games_in_recent_window(db: Session, participant_id: int, before: datetime, *, days: int) -> int:
+def _games_in_recent_window(db: Session, participant_id: int, before: datetime | None, *, days: int) -> int:
+    if before is None:
+        return 0
     window_start = before - timedelta(days=days)
     count = db.scalar(
         select(func.count())
@@ -551,7 +561,9 @@ def _games_in_recent_window(db: Session, participant_id: int, before: datetime, 
     return int(count or 0)
 
 
-def _latest_home_state(db: Session, participant_id: int, before: datetime) -> bool | None:
+def _latest_home_state(db: Session, participant_id: int, before: datetime | None) -> bool | None:
+    if before is None:
+        return None
     return db.scalar(
         select(EventParticipant.is_home)
         .join(Event, Event.id == EventParticipant.event_id)
@@ -561,7 +573,9 @@ def _latest_home_state(db: Session, participant_id: int, before: datetime) -> bo
     )
 
 
-def _schedule_context(db: Session, participant_id: int, before: datetime) -> dict[str, Any]:
+def _schedule_context(db: Session, participant_id: int, before: datetime | None) -> dict[str, Any]:
+    if before is None:
+        return {"days_rest": None, "games_last_4": 0, "games_last_7": 0, "back_to_back": False, "last_home_state": None}
     days_rest = _days_since_participant_game(db, participant_id, before)
     games_last_4 = _games_in_recent_window(db, participant_id, before, days=4)
     games_last_7 = _games_in_recent_window(db, participant_id, before, days=7)
@@ -835,9 +849,11 @@ def _score_team_winner(
 def _recent_score_pairs(
     db: Session,
     participant_id: int,
-    before: datetime,
+    before: datetime | None,
     limit: int = 10,
 ) -> list[tuple[float, float]]:
+    if before is None:
+        return []
     events = db.scalars(
         select(Event)
         .join(EventParticipant, Event.id == EventParticipant.event_id)
@@ -1833,15 +1849,9 @@ def _enforce_prop_monotonicity(
             }
 
             if recommendation.edge < settings.watchlist_min_edge:
-                suppression_reasons = [
-                    *list(current_scored.signal.scoring_diagnostics.get("suppression_reasons") or []),
-                    "monotonicity_below_min_edge",
-                ]
-                current_scored.signal.scoring_diagnostics = {
-                    **dict(current_scored.signal.scoring_diagnostics or {}),
-                    "suppression_reasons": suppression_reasons,
-                }
-                current_scored.recommendation = None
+                signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
+                signal_diagnostics["monotonicity_edge_below_min"] = True
+                current_scored.signal.scoring_diagnostics = signal_diagnostics
 
 
 def _dedupe_winner_recommendations(
@@ -2156,12 +2166,7 @@ def _apply_prediction_monotonicity(predictions: list[Prediction]) -> None:
             diagnostics["selected_side_probability"] = clamped_probability
             diagnostics["monotonicity_adjusted"] = True
             if current.edge < settings.watchlist_min_edge:
-                suppression_reasons = [
-                    *list(diagnostics.get("suppression_reasons") or []),
-                    "monotonicity_below_min_edge",
-                ]
-                diagnostics["suppression_reasons"] = suppression_reasons
-                current.capture_scope = "coverage" if bool(diagnostics.get("current_watchlist_market")) else "suppressed"
+                diagnostics["monotonicity_edge_below_min"] = True
             current.scoring_diagnostics = diagnostics
 
 
