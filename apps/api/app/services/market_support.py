@@ -22,6 +22,18 @@ SUPPORTED_SPORT_HINTS = {
     "SOCCER": ("SOCCER", "MLS", "EPL", "UEFA", "UCL", "FIFA", "EURO", "LALIGA", "SERIEA", "BUNDESLIGA", "LIGUE1"),
     "TENNIS": ("TENNIS", "ATP", "WTA", "ITF", "CHALLENGER"),
 }
+SUPPORTED_COMBO_PROP_FAMILIES = {
+    "NBA": frozenset({"PTS", "REB", "AST", "PR", "PA", "RA", "PRA", "3PM", "STL", "BLK", "TOV"}),
+    "MLB": frozenset({"H", "HIT", "HITS", "R", "RUN", "RUNS", "RBI", "RBIS", "HR", "BB", "TB", "HRR"}),
+}
+BLOCKED_COMBO_LEG_FAMILY_PREFIXES = {
+    "NBA": ("GAME", "SPREAD", "TOTAL", "WINNER", "1H", "2H", "1Q", "2Q", "3Q", "4Q"),
+    "MLB": ("GAME", "SPREAD", "TOTAL", "WINNER", "F5"),
+}
+KNOWN_UNSUPPORTED_COMBO_PROP_FAMILIES = {
+    "NBA": frozenset(),
+    "MLB": frozenset({"SO", "IP", "OUTS", "ER"}),
+}
 
 PLAYER_PROP_TITLE_RE = re.compile(
     r"^(?P<subject>.+?):\s*(?P<threshold>\d+(?:\.\d+)?)\+\s+(?P<phrase>.+?)(?:\?)?$",
@@ -141,6 +153,45 @@ def infer_market_sport_key(payload: dict) -> str | None:
         if any(hint in lookup for hint in hints):
             return sport_key
     return None
+
+
+def combo_leg_metadata_prefilter(payload: dict[str, Any]) -> dict[str, Any]:
+    market_ticker = str(payload.get("market_ticker") or payload.get("ticker") or "").strip().upper()
+    event_ticker = str(payload.get("event_ticker") or "").strip().upper()
+    sport_key = infer_market_sport_key({"ticker": market_ticker, "event_ticker": event_ticker})
+    family_code = _combo_leg_family_code(market_ticker, sport_key)
+
+    result: dict[str, Any] = {
+        "supported": False,
+        "sport_key": sport_key,
+        "market_family_code": family_code,
+        "reason": None,
+    }
+
+    if not market_ticker:
+        result["reason"] = "missing_identity"
+        return result
+    if sport_key not in {"NBA", "MLB"}:
+        result["reason"] = "unsupported_sport"
+        return result
+    if not family_code:
+        result["reason"] = "unsupported_market"
+        return result
+    if _combo_leg_family_is_blocked(sport_key, family_code):
+        result["reason"] = "unsupported_market_family"
+        return result
+    if family_code in KNOWN_UNSUPPORTED_COMBO_PROP_FAMILIES.get(sport_key, frozenset()):
+        result["reason"] = "unsupported_prop_category"
+        return result
+    if family_code in SUPPORTED_COMBO_PROP_FAMILIES.get(sport_key, frozenset()):
+        result["supported"] = True
+        return result
+    if not _combo_leg_has_player_prop_shape(market_ticker):
+        result["reason"] = "unsupported_market_shape"
+        return result
+
+    result["supported"] = True
+    return result
 
 
 def classify_market_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -331,6 +382,25 @@ def _player_prop_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, 
         "copilot_subject_team": team_hint,
         "copilot_requires_lineup": _requires_lineup_confirmation(payload),
     }
+
+
+def _combo_leg_family_code(market_ticker: str, sport_key: str | None) -> str | None:
+    if sport_key not in {"NBA", "MLB"}:
+        return None
+    prefix = "KXNBA" if sport_key == "NBA" else "KXMLB"
+    if not market_ticker.startswith(prefix):
+        return None
+    family_code, _separator, _rest = market_ticker[len(prefix) :].partition("-")
+    return family_code or None
+
+
+def _combo_leg_family_is_blocked(sport_key: str, family_code: str) -> bool:
+    return any(family_code.startswith(prefix) for prefix in BLOCKED_COMBO_LEG_FAMILY_PREFIXES.get(sport_key, ()))
+
+
+def _combo_leg_has_player_prop_shape(market_ticker: str) -> bool:
+    parts = market_ticker.split("-")
+    return len(parts) >= 4 and len(parts[-2]) > 4
 
 
 def _component_stat_keys(sport_key: str, raw_phrase: str) -> list[str] | None:

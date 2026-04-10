@@ -134,11 +134,34 @@ def _serialize_job(job) -> dict[str, object] | None:
         "status": job.status,
         "run_id": job.run_id,
         "error_message": job.error_message,
-        "details": dict(job.details or {}),
+        "details": _serialize_job_details(job),
         "queued_at": _as_utc(job.queued_at),
         "started_at": _as_utc(job.started_at),
         "finished_at": _as_utc(job.finished_at),
     }
+
+
+def _serialize_job_details(job) -> dict[str, object]:
+    details = dict(job.details or {})
+    if job.kind != "prop_refresh":
+        return details
+
+    cursor = details.get("cursor")
+    if not isinstance(cursor, dict):
+        return details
+
+    pending_combo_legs = cursor.get("pending_combo_legs")
+    if not isinstance(pending_combo_legs, list):
+        return details
+
+    summarized_cursor = dict(cursor)
+    summarized_cursor["pending_combo_leg_count"] = len(pending_combo_legs)
+    summarized_cursor["pending_combo_leg_preview"] = [
+        dict(item) if isinstance(item, dict) else item for item in pending_combo_legs[:3]
+    ]
+    summarized_cursor.pop("pending_combo_legs", None)
+    details["cursor"] = summarized_cursor
+    return details
 
 
 def get_refresh_runtime_state() -> dict[str, object | None]:
