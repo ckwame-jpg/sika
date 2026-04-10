@@ -51,15 +51,18 @@ def _coverage_timezone() -> ZoneInfo:
     return ZoneInfo(get_settings().default_timezone)
 
 
-def _coerce_utc(value: datetime) -> datetime:
+def _coerce_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
 
-def _coverage_day_window(captured_at: datetime) -> tuple[datetime, datetime]:
+def _coverage_day_window(captured_at: datetime | None) -> tuple[datetime, datetime]:
     local_tz = _coverage_timezone()
-    captured_local = _coerce_utc(captured_at).astimezone(local_tz)
+    reference = _coerce_utc(captured_at) or _now_utc()
+    captured_local = reference.astimezone(local_tz)
     local_day_start = datetime.combine(captured_local.date(), time.min, tzinfo=local_tz)
     local_day_end = local_day_start + timedelta(days=1)
     return local_day_start.astimezone(timezone.utc), local_day_end.astimezone(timezone.utc)
@@ -185,6 +188,17 @@ def capture_prediction(
     confidence = recommendation.confidence if recommendation else signal.confidence
     selection_score = recommendation.selection_score if recommendation else signal.selection_score
     captured_at = recommendation.captured_at if recommendation else signal.captured_at
+    if captured_at is None:
+        # Column defaults only populate on flush, but capture_prediction is
+        # called on freshly-constructed SignalSnapshot/Recommendation objects
+        # before the session is flushed. Fall back to now so downstream
+        # tz-aware arithmetic (_coverage_day_window, _coerce_utc) never sees
+        # a None datetime.
+        captured_at = _now_utc()
+        if recommendation is not None and recommendation.captured_at is None:
+            recommendation.captured_at = captured_at
+        if signal.captured_at is None:
+            signal.captured_at = captured_at
 
     if run_id is not None:
         existing = next(

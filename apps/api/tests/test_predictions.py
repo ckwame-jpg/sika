@@ -767,7 +767,15 @@ def test_warm_prop_context_cache_resolves_unique_subjects_once(db_session):
 
 
 def test_warm_current_watchlist_prop_context_only_warms_current_slate(db_session):
-    now = datetime.now(timezone.utc)
+    # Pin `now` to local-noon to avoid date-rollover flakes when the test runs
+    # near midnight Central (is_current_watchlist_event compares local dates).
+    from zoneinfo import ZoneInfo
+
+    from app.config import get_settings
+
+    local_tz = ZoneInfo(get_settings().default_timezone)
+    local_noon = datetime.now(local_tz).replace(hour=12, minute=0, second=0, microsecond=0)
+    now = local_noon.astimezone(timezone.utc)
     current_event = _seed_team_event(db_session, sport_key="NBA", external_id="current-slate")
     current_event.starts_at = now + timedelta(hours=1)
     future_event = _seed_team_event(db_session, sport_key="NBA", external_id="future-slate")
