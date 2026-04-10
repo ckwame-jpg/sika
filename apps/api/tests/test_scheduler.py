@@ -303,13 +303,108 @@ def test_process_refresh_job_queue_once_requeues_incomplete_prop_refresh(db_sess
     assert job.details["phase"] == "watchlist_score_batch"
 
 
+def test_process_refresh_job_queue_once_runs_multiple_prop_refresh_batches_within_budget(db_session, monkeypatch):
+    run = Run(kind="prop_refresh", status="running")
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+    )
+    db_session.add_all([run, job])
+    db_session.commit()
+
+    monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(maintenance_claim_budget_seconds=25, refresh_job_stale_minutes=30),
+    )
+    perf_counter_values = iter([0.0, 5.0, 30.0])
+    monkeypatch.setattr(refresh_jobs, "perf_counter", lambda: next(perf_counter_values))
+
+    call_count = {"count": 0}
+
+    def _advance(db, job):
+        call_count["count"] += 1
+        job.details = {"phase": "watchlist_score_batch", "cursor": {"market_id": 500 + call_count["count"]}}
+        return run, False
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+
+    assert result is not None
+    assert result.kind == "prop_refresh"
+    assert result.status == "queued"
+    assert call_count["count"] == 2
+    db_session.refresh(job)
+    assert job.run_id == run.id
+    assert job.status == "queued"
+    assert job.details["cursor"]["market_id"] == 502
+
+
+def test_process_refresh_job_queue_once_yields_prop_refresh_when_current_slate_arrives(db_session, monkeypatch):
+    run = Run(kind="prop_refresh", status="running")
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+    )
+    db_session.add_all([run, job])
+    db_session.commit()
+
+    monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(maintenance_claim_budget_seconds=25, refresh_job_stale_minutes=30),
+    )
+    perf_counter_values = iter([0.0, 1.0])
+    monkeypatch.setattr(refresh_jobs, "perf_counter", lambda: next(perf_counter_values))
+
+    call_count = {"count": 0}
+
+    def _advance(db, job):
+        call_count["count"] += 1
+        if db.query(RefreshJob).filter_by(kind="refresh", scope="current_slate").count() == 0:
+            db.add(
+                RefreshJob(
+                    kind="refresh",
+                    scope="current_slate",
+                    reason="manual",
+                    status="queued",
+                )
+            )
+            db.flush()
+        job.details = {"phase": "watchlist_score_batch", "cursor": {"market_id": 700}}
+        return run, False
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+
+    assert result is not None
+    assert result.kind == "prop_refresh"
+    assert result.status == "queued"
+    assert call_count["count"] == 1
+    db_session.refresh(job)
+    assert job.status == "queued"
+    assert db_session.query(RefreshJob).filter_by(kind="refresh", scope="current_slate", status="queued").count() == 1
+
+
 def test_process_refresh_job_queue_once_requeues_prop_refresh_after_transient_http_error(db_session, monkeypatch):
     job = RefreshJob(
         kind="prop_refresh",
         scope="maintenance",
         reason="interval",
         status="queued",
-        details={"phase": "combo_discovery_page", "cursor": {"kalshi_cursor": "abc"}},
+        details={
+            "phase": "combo_discovery_page",
+            "cursor": {"kalshi_cursor": "abc"},
+            "kalshi_summary": {"processed": 11},
+        },
     )
     db_session.add(job)
     db_session.commit()
@@ -334,7 +429,53 @@ def test_process_refresh_job_queue_once_requeues_prop_refresh_after_transient_ht
     assert job.started_at is None
     assert job.error_message is None
     assert job.details["phase"] == "combo_discovery_page"
+    assert job.details["cursor"] == {"kalshi_cursor": "abc"}
+    assert job.details["kalshi_summary"] == {"processed": 11}
     assert "connection reset by peer" in job.details["last_transient_error"]
+
+
+def test_runtime_state_summarizes_pending_combo_legs_for_health_payloads(db_session, monkeypatch, client):
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="running",
+        details={
+            "phase": "combo_discovery_page",
+            "cursor": {
+                "kalshi_cursor": "cursor-123",
+                "pending_combo_legs": [
+                    {"market_ticker": "KXNBAPTS-1"},
+                    {"market_ticker": "KXNBAPTS-2"},
+                    {"market_ticker": "KXNBAPTS-3"},
+                    {"market_ticker": "KXNBAPTS-4"},
+                ],
+            },
+        },
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+
+    runtime = scheduler.get_refresh_runtime_state()
+    cursor = runtime["active_prop_refresh_job"]["details"]["cursor"]
+    assert cursor["kalshi_cursor"] == "cursor-123"
+    assert cursor["pending_combo_leg_count"] == 4
+    assert len(cursor["pending_combo_leg_preview"]) == 3
+    assert "pending_combo_legs" not in cursor
+
+    health = client.get("/health")
+    assert health.status_code == 200
+    health_cursor = health.json()["active_prop_refresh_job"]["details"]["cursor"]
+    assert health_cursor["pending_combo_leg_count"] == 4
+    assert "pending_combo_legs" not in health_cursor
+
+    diagnostics = client.get("/watchlist/diagnostics")
+    assert diagnostics.status_code == 200
+    diagnostics_cursor = diagnostics.json()["active_prop_refresh_job"]["details"]["cursor"]
+    assert diagnostics_cursor["pending_combo_leg_count"] == 4
+    assert "pending_combo_legs" not in diagnostics_cursor
 
 
 def test_enqueue_shadow_capture_job_coalesces_current_slate_follow_ups(db_session):

@@ -3,7 +3,12 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.models import EspnPlayerGamelogCache, EspnPlayerSearchCache, Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, SignalSnapshot
-from app.services.ingestion import refresh_kalshi_markets, run_prop_refresh_cycle, run_refresh_cycle
+from app.services.ingestion import (
+    _refresh_combo_prop_discovery_batch,
+    refresh_kalshi_markets,
+    run_prop_refresh_cycle,
+    run_refresh_cycle,
+)
 from app.services.predictions import capture_prediction, settle_predictions
 from app.services.scoring import PropStatsResolver, warm_prop_context_cache
 from app.services.watchlist_coverage import warm_current_watchlist_prop_context
@@ -370,6 +375,50 @@ class TrackedComboRefreshClient:
         }
 
 
+class ComboDiscoveryPrefilterClient:
+    def __init__(self):
+        self.get_market_calls: list[str] = []
+
+    def list_markets_page(self, status="open", limit=50, mve_filter="include", cursor=None):
+        assert mve_filter == "include"
+        return (
+            [
+                {
+                    "ticker": "KXMVE-MIXED-1",
+                    "title": "mixed combo",
+                    "mve_collection_ticker": "KXMVE-MIXED-COLLECTION",
+                    "mve_selected_legs": [
+                        {"market_ticker": "KXEPLGAME-26APR11ARSBOU-ARS"},
+                        {"market_ticker": "KXNBATOTAL-26APR10CLEATL-219"},
+                        {
+                            "event_ticker": "KXNBAPTS-26APR10DETCHA",
+                            "market_ticker": "KXNBAPTS-26APR10DETCHA-CHAMBRIDGES0-10",
+                        },
+                    ],
+                }
+            ],
+            None,
+        )
+
+    def get_market(self, ticker):
+        self.get_market_calls.append(ticker)
+        assert ticker == "KXNBAPTS-26APR10DETCHA-CHAMBRIDGES0-10"
+        return {
+            "ticker": ticker,
+            "event_ticker": "KXNBAPTS-26APR10DETCHA",
+            "title": "Miles Bridges: 10+ points?",
+            "subtitle": "Detroit at Charlotte",
+            "status": "active",
+            "close_time": "2026-04-13T23:30:00Z",
+            "yes_ask_dollars": "0.39",
+            "no_ask_dollars": "0.63",
+            "last_price_dollars": "0.41",
+            "yes_sub_title": "Miles Bridges: 10+",
+            "rules_primary": "If Miles Bridges records 10+ Points in the Detroit at Charlotte professional basketball game, then the market resolves to Yes.",
+            "primary_participant_key": "basketball_player",
+        }
+
+
 def test_prediction_model_persists_snapshot_fields(db_session):
     prediction = _create_prediction(db_session, ticker="KXNBA-PERSIST-1")
     db_session.commit()
@@ -702,6 +751,23 @@ def test_refresh_kalshi_markets_refreshes_tracked_combo_prop_tickers_without_dis
     assert client.get_market_calls == [market.ticker]
     assert summary["combo_prop_legs_refreshed"] == 1
     assert summary["combo_prop_legs_discovered"] == 0
+
+
+def test_refresh_combo_prop_discovery_batch_prefilters_obvious_non_target_legs(db_session):
+    client = ComboDiscoveryPrefilterClient()
+
+    summary, next_cursor, complete = _refresh_combo_prop_discovery_batch(
+        db_session,
+        client=client,
+        cursor_payload=None,
+        limit=50,
+        leg_batch_size=10,
+    )
+
+    assert client.get_market_calls == ["KXNBAPTS-26APR10DETCHA-CHAMBRIDGES0-10"]
+    assert summary["processed"] == 1
+    assert next_cursor is None
+    assert complete is True
 
 
 def test_refresh_kalshi_markets_only_writes_snapshots_on_change_or_heartbeat(db_session):

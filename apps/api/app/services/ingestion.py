@@ -12,7 +12,12 @@ from app.clients.sports_data import TheSportsDBClient
 from app.config import get_settings
 from app.models import Event, EventParticipant, League, Market, MarketSnapshot, ParlayRecommendation, Participant, Recommendation, RefreshJob, Run, Sport
 from app.services.market_mapping import map_markets_to_events
-from app.services.market_support import classify_market_payload, infer_market_sport_key, infer_supported_market_kind
+from app.services.market_support import (
+    classify_market_payload,
+    combo_leg_metadata_prefilter,
+    infer_market_sport_key,
+    infer_supported_market_kind,
+)
 from app.services.ml import capture_shadow_artifacts, sync_family_runtime_health
 from app.services.parlays import settle_parlay_predictions, settle_parlay_predictions_batch
 from app.services.predictions import OPEN_MARKET_STATUSES, settle_predictions, settle_predictions_batch
@@ -535,6 +540,9 @@ def refresh_kalshi_markets(
             if not (combo_payload.get("mve_collection_ticker") or combo_payload.get("mve_selected_legs")):
                 continue
             for leg in combo_payload.get("mve_selected_legs") or []:
+                leg_prefilter = combo_leg_metadata_prefilter(leg)
+                if not leg_prefilter.get("supported"):
+                    continue
                 leg_ticker = str(leg.get("market_ticker") or "").strip()
                 if not leg_ticker or leg_ticker in combo_leg_tickers_seen:
                     continue
@@ -964,12 +972,16 @@ def _refresh_combo_prop_discovery_batch(
             if not (combo_payload.get("mve_collection_ticker") or combo_payload.get("mve_selected_legs")):
                 continue
             for leg in combo_payload.get("mve_selected_legs") or []:
+                leg_prefilter = combo_leg_metadata_prefilter(leg)
+                if not leg_prefilter.get("supported"):
+                    continue
                 leg_ticker = str(leg.get("market_ticker") or "").strip()
                 if not leg_ticker or leg_ticker in combo_leg_tickers_seen:
                     continue
                 combo_leg_tickers_seen.add(leg_ticker)
                 pending_combo_legs.append(
                     {
+                        "event_ticker": leg.get("event_ticker"),
                         "market_ticker": leg_ticker,
                         "source_market_ticker": combo_payload.get("ticker"),
                         "source_market_title": combo_payload.get("title"),
@@ -979,6 +991,9 @@ def _refresh_combo_prop_discovery_batch(
     payload_records: list[dict[str, Any]] = []
     active_combo_legs = pending_combo_legs[:leg_batch_size]
     for combo_leg in active_combo_legs:
+        leg_prefilter = combo_leg_metadata_prefilter(combo_leg)
+        if not leg_prefilter.get("supported"):
+            continue
         leg_ticker = str(combo_leg.get("market_ticker") or "").strip()
         if not leg_ticker:
             continue

@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     refresh_interval_minutes: int = 5
     prop_refresh_interval_minutes: int = 20
     queue_poll_interval_seconds: int = 5
+    maintenance_claim_budget_seconds: int = 25
     cleanup_interval_hours: int = 6
     startup_refresh_stale_after_minutes: int = 15
     espn_player_search_cache_hours: int = 168

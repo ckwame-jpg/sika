@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from time import perf_counter
 
 import httpx
 from sqlalchemy import case, desc, select
@@ -240,6 +241,21 @@ def _requeue_job(job: RefreshJob) -> None:
     job.error_message = None
 
 
+def _current_slate_refresh_pending(db: Session) -> bool:
+    return (
+        db.scalar(
+            select(RefreshJob.id)
+            .where(
+                RefreshJob.kind == "refresh",
+                RefreshJob.scope == "current_slate",
+                RefreshJob.status.in_(tuple(ACTIVE_JOB_STATUSES)),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
 def _ensure_shadow_capture_run(
     db: Session,
     *,
@@ -307,8 +323,22 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                     )
                     job.run_id = run.id
             elif job.kind == "prop_refresh":
-                run, completed = advance_prop_refresh_job(db, job=job)
-                job.run_id = run.id
+                settings = get_settings()
+                claim_started = perf_counter()
+                budget_seconds = max(float(settings.maintenance_claim_budget_seconds), 0.0)
+                completed = False
+                run = None
+                while True:
+                    run, completed = advance_prop_refresh_job(db, job=job)
+                    job.run_id = run.id
+                    if completed:
+                        break
+                    if _current_slate_refresh_pending(db):
+                        break
+                    if perf_counter() - claim_started >= budget_seconds:
+                        break
+
+                assert run is not None
                 if completed:
                     shadow_job, _created = enqueue_shadow_capture_job(
                         db,

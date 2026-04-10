@@ -1,5 +1,5 @@
 from app.services.ingestion import is_supported_market_payload
-from app.services.market_support import classify_market_payload, market_metadata
+from app.services.market_support import classify_market_payload, combo_leg_metadata_prefilter, market_metadata
 
 
 def test_market_filter_rejects_cross_category_combos():
@@ -136,3 +136,26 @@ def test_market_filter_accepts_supported_spread_and_total_game_lines():
     assert total["metadata"]["copilot_market_kind"] == "total"
     assert total["metadata"]["copilot_direction"] == "over"
     assert total["metadata"]["copilot_threshold"] == 220.5
+
+
+def test_combo_leg_prefilter_accepts_supported_nba_prop_ticker_metadata():
+    classification = combo_leg_metadata_prefilter(
+        {
+            "event_ticker": "KXNBAPTS-26APR05NYKBOS",
+            "market_ticker": "KXNBAPTS-26APR05NYKBOS-NYKJBRUNSON11-30",
+        }
+    )
+
+    assert classification["supported"] is True
+    assert classification["sport_key"] == "NBA"
+
+
+def test_combo_leg_prefilter_rejects_non_target_combo_leg_ticker_metadata():
+    classification = combo_leg_metadata_prefilter(
+        {
+            "market_ticker": "KXEPLGAME-26APR11ARSBOU-ARS",
+        }
+    )
+
+    assert classification["supported"] is False
+    assert classification["reason"] == "unsupported_sport"
