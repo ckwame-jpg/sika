@@ -80,6 +80,7 @@ from app.services.trade_desk import (
 from app.services.watchlist_coverage import (
     CURRENT_WATCHLIST_SPORTS,
     current_watchlist_markets,
+    is_current_watchlist_market,
     latest_prediction_by_market_id,
     latest_recommendation_by_market_id,
     latest_snapshot_by_market_id,
@@ -1219,6 +1220,9 @@ def get_watchlist(sport: str | None = None, limit: int = 25, db: Session = Depen
     return [
         _serialize_recommendation(item, item.market)
         for item in recommendations
+        if item.market is None
+        or (item.market.sport_key or "").upper() not in CURRENT_WATCHLIST_SPORTS
+        or is_current_watchlist_market(item.market)
     ]
 
 

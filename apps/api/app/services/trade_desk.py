@@ -16,7 +16,12 @@ from app.schemas import (
     TradeDeskStatGroupRead,
     TradeDeskThresholdRead,
 )
-from app.services.watchlist_coverage import CURRENT_WATCHLIST_SPORTS, TERMINAL_EVENT_STATUSES, is_current_watchlist_market
+from app.services.watchlist_coverage import (
+    CURRENT_WATCHLIST_SPORTS,
+    TERMINAL_EVENT_STATUSES,
+    is_current_watchlist_market,
+    is_current_watchlist_status,
+)
 from app.sports.base import alias_tokens
 
 KALSHI_SPORT_CATEGORY_ROOTS = {
@@ -479,4 +484,10 @@ def load_trade_desk_snapshot(db: Session, *, sport: str | None = None) -> TradeD
     snapshot = db.scalar(select(CurrentSlateSnapshot).where(CurrentSlateSnapshot.scope == scope))
     if snapshot is None or not snapshot.payload:
         return None
-    return TradeDeskResponse.model_validate(snapshot.payload)
+    response = TradeDeskResponse.model_validate(snapshot.payload)
+    for event in response.events:
+        if event.sport_key not in CURRENT_WATCHLIST_SPORTS:
+            continue
+        if not is_current_watchlist_status(event.event_status, event.starts_at):
+            return None
+    return response

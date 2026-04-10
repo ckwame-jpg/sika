@@ -99,6 +99,7 @@ def _add_trade_market(
 
 
 def test_watchlist_and_positions_endpoints(client, db_session):
+    now = datetime.now(timezone.utc)
     home = Participant(external_id="home", sport_key="NBA", display_name="Boston Celtics", short_name="Celtics", participant_type="team")
     away = Participant(external_id="away", sport_key="NBA", display_name="Miami Heat", short_name="Heat", participant_type="team")
     db_session.add_all([home, away])
@@ -108,8 +109,8 @@ def test_watchlist_and_positions_endpoints(client, db_session):
         external_id="evt-1",
         sport_key="NBA",
         name="Miami Heat at Boston Celtics",
-        status="scheduled",
-        starts_at=datetime(2026, 3, 30, 22, 0, tzinfo=timezone.utc),
+        status="in_progress",
+        starts_at=now - timedelta(hours=1),
     )
     db_session.add(event)
     db_session.flush()
@@ -171,7 +172,7 @@ def test_watchlist_and_positions_endpoints(client, db_session):
     assert watchlist.json()[0]["selected_side_probability"] == 0.58
     assert watchlist.json()[0]["quality_tier"] == "high"
     assert watchlist.json()[0]["source_badge_label"] == "Combo-derived"
-    assert watchlist.json()[0]["starts_at"] == "2026-03-30T22:00:00Z"
+    assert watchlist.json()[0]["starts_at"].startswith(event.starts_at.isoformat())
 
     open_position = client.post(
         "/paper-positions",
@@ -301,6 +302,84 @@ def test_watchlist_coverage_endpoint_reports_prediction_only_rows(client, db_ses
     assert row["coverage_status"] == "prediction"
     assert row["prop_context_stale"] is True
     assert row["latest_prediction"]["capture_scope"] == "coverage"
+
+
+def test_current_slate_endpoints_hide_stale_in_progress_events(client, db_session):
+    now = datetime.now(timezone.utc)
+    stale_event = _seed_trade_event(
+        db_session,
+        prefix="stale-nba",
+        sport_key="NBA",
+        event_name="New York Knicks at Atlanta Hawks",
+        home_name="Atlanta Hawks",
+        home_short="Hawks",
+        away_name="New York Knicks",
+        away_short="Knicks",
+        starts_at=now - timedelta(days=3),
+        status="in_progress",
+    )
+    fresh_event = _seed_trade_event(
+        db_session,
+        prefix="fresh-nba",
+        sport_key="NBA",
+        event_name="Los Angeles Lakers at Golden State Warriors",
+        home_name="Golden State Warriors",
+        home_short="Warriors",
+        away_name="Los Angeles Lakers",
+        away_short="Lakers",
+        starts_at=now - timedelta(hours=1),
+        status="in_progress",
+    )
+
+    _add_trade_market(
+        db_session,
+        event=stale_event,
+        ticker="STALE-NBA-PROP",
+        title="Jalen Brunson: 20+ points",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_market_kind": "player_prop",
+            "copilot_stat_key": "points",
+            "copilot_threshold": 20.0,
+            "copilot_subject_name": "Jalen Brunson",
+            "copilot_subject_team": "NYK",
+        },
+        suggested_price=0.54,
+        edge=0.08,
+        confidence=0.62,
+        selected_side_probability=0.62,
+    )
+    _add_trade_market(
+        db_session,
+        event=fresh_event,
+        ticker="FRESH-NBA-PROP",
+        title="LeBron James: 8+ rebounds",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_market_kind": "player_prop",
+            "copilot_stat_key": "rebounds",
+            "copilot_threshold": 8.0,
+            "copilot_subject_name": "LeBron James",
+            "copilot_subject_team": "LAL",
+        },
+        suggested_price=0.48,
+        edge=0.09,
+        confidence=0.65,
+        selected_side_probability=0.57,
+    )
+    db_session.commit()
+
+    watchlist = client.get("/watchlist", params={"sport": "NBA", "limit": 25})
+    assert watchlist.status_code == 200
+    tickers = [item["ticker"] for item in watchlist.json()]
+    assert "FRESH-NBA-PROP" in tickers
+    assert "STALE-NBA-PROP" not in tickers
+
+    trade_desk = client.get("/trade-desk", params={"sport": "NBA"})
+    assert trade_desk.status_code == 200
+    payload = trade_desk.json()
+    event_names = [item["event_name"] for item in payload["events"]]
+    assert event_names == ["Los Angeles Lakers at Golden State Warriors"]
 
 
 def test_refresh_jobs_enqueues_current_slate_job(client, db_session):

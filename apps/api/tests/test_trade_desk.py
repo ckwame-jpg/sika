@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 
-from app.models import Event, EventParticipant, Market, Participant, Recommendation
+from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Participant, Recommendation
 from app.schemas import TradeDeskThresholdRead
-from app.services.trade_desk import build_trade_desk_response, thresholds_are_monotonic
+from app.services.trade_desk import build_trade_desk_response, load_trade_desk_snapshot, thresholds_are_monotonic
 
 
 def test_thresholds_are_monotonic_utility():
@@ -118,3 +118,27 @@ def test_build_trade_desk_clamps_rather_than_drops_non_monotonic_stat_group(db_s
     # Verify monotonicity holds after clamping
     for i in range(1, len(probs)):
         assert probs[i] <= probs[i - 1]
+
+
+def test_load_trade_desk_snapshot_falls_back_when_payload_contains_stale_in_progress_event(db_session):
+    snapshot = CurrentSlateSnapshot(
+        scope="NBA",
+        payload={
+            "events": [
+                {
+                    "event_id": 336,
+                    "event_name": "New York Knicks at Atlanta Hawks",
+                    "event_status": "in_progress",
+                    "starts_at": "2026-04-06T23:00:00Z",
+                    "sport_key": "NBA",
+                    "game_lines": [],
+                    "player_props": [],
+                }
+            ],
+            "research_sports": [],
+        },
+    )
+    db_session.add(snapshot)
+    db_session.commit()
+
+    assert load_trade_desk_snapshot(db_session, sport="NBA") is None

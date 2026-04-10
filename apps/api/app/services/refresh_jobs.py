@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import httpx
 from sqlalchemy import case, desc, select
 from sqlalchemy.orm import Session
 
@@ -393,6 +394,14 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
             db.refresh(job)
             return _snapshot(job)
         except Exception as exc:
+            if job.kind == "prop_refresh" and isinstance(exc, httpx.HTTPError):
+                _requeue_job(job)
+                details = dict(job.details or {})
+                details["last_transient_error"] = str(exc).strip() or exc.__class__.__name__
+                job.details = details
+                db.commit()
+                db.refresh(job)
+                return _snapshot(job)
             if job.run_id is not None:
                 run = db.get(Run, job.run_id)
                 if run is not None and run.status == "running":

@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import httpx
+
 from app.api import routes
 from app.models import RefreshJob, Run
 from app.services import refresh_jobs, scheduler
@@ -299,6 +301,40 @@ def test_process_refresh_job_queue_once_requeues_incomplete_prop_refresh(db_sess
     assert job.status == "queued"
     assert job.started_at is None
     assert job.details["phase"] == "watchlist_score_batch"
+
+
+def test_process_refresh_job_queue_once_requeues_prop_refresh_after_transient_http_error(db_session, monkeypatch):
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+        details={"phase": "combo_discovery_page", "cursor": {"kalshi_cursor": "abc"}},
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
+
+    def _raise_transport_error(db, job):
+        raise httpx.ReadError(
+            "connection reset by peer",
+            request=httpx.Request("GET", "https://example.test/markets"),
+        )
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _raise_transport_error)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+
+    assert result is not None
+    assert result.kind == "prop_refresh"
+    assert result.status == "queued"
+    db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.started_at is None
+    assert job.error_message is None
+    assert job.details["phase"] == "combo_discovery_page"
+    assert "connection reset by peer" in job.details["last_transient_error"]
 
 
 def test_enqueue_shadow_capture_job_coalesces_current_slate_follow_ups(db_session):
