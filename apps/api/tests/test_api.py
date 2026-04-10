@@ -656,7 +656,10 @@ def test_trade_desk_groups_game_lines_props_and_research_rows(client, db_session
     assert "UFC" not in research_rows
 
 
-def test_trade_desk_hides_non_monotonic_prop_ladders(client, db_session):
+def test_trade_desk_clamps_non_monotonic_prop_ladders(client, db_session):
+    """Non-monotonic prop ladders should be clamped at display (not dropped).
+    The higher threshold's probability is capped to the lower threshold's,
+    preserving the full ladder so users see all options."""
     event = _seed_trade_event(
         db_session,
         prefix="trade-bad-ladder",
@@ -733,7 +736,16 @@ def test_trade_desk_hides_non_monotonic_prop_ladders(client, db_session):
     payload = response.json()
     assert len(payload["events"]) == 1
     assert payload["events"][0]["game_lines"][0]["ticker"] == "KXNBAGAME-BAD-LADDER-BOS"
-    assert payload["events"][0]["player_props"] == []
+    # Ladder is preserved with the non-monotonic threshold clamped down.
+    assert len(payload["events"][0]["player_props"]) == 1
+    prop = payload["events"][0]["player_props"][0]
+    assert prop["subject_name"] == "Scottie Barnes"
+    assert len(prop["stat_groups"]) == 1
+    thresholds = prop["stat_groups"][0]["thresholds"]
+    assert [t["threshold"] for t in thresholds] == [8.0, 10.0]
+    # 10+ was 0.912 upstream; must be clamped down to 8+'s 0.737.
+    assert thresholds[0]["probability_yes"] == 0.737
+    assert thresholds[1]["probability_yes"] == 0.737
 
 
 def test_trade_desk_filters_mismatched_event_markets(client, db_session):

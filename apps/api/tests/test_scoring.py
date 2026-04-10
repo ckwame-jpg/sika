@@ -859,3 +859,72 @@ def test_scoring_functions_handle_none_starts_at(db_session):
     assert context["games_last_7"] == 0
     assert context["back_to_back"] is False
     assert context["last_home_state"] is None
+
+
+def test_capture_prediction_defaults_captured_at_when_signal_missing(db_session):
+    """capture_prediction must tolerate a freshly-constructed SignalSnapshot
+    whose captured_at has not been set yet (column default only fills on flush).
+    This is the production crash path for watchlist_score_batch coverage
+    predictions where recommendation is None and signal.captured_at is None.
+    """
+    from app.services.predictions import capture_prediction
+
+    event = Event(
+        external_id="none-captured-at-event",
+        sport_key="NBA",
+        name="Test Event",
+        status="in_progress",
+        starts_at=datetime(2026, 4, 9, 19, 0, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    market = Market(
+        ticker="KXTEST",
+        sport_key="NBA",
+        event_id=event.id,
+        title="Test Market",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_market_kind": "player_prop",
+            "copilot_stat_key": "points",
+            "copilot_threshold": 20.0,
+            "copilot_subject_name": "Test Player",
+        },
+    )
+    db_session.add(market)
+    db_session.flush()
+
+    # Construct a fresh SignalSnapshot WITHOUT captured_at — simulates the
+    # in-memory state during _score_watchlist_markets_batch before flush.
+    signal = SignalSnapshot(
+        event_id=event.id,
+        market_id=market.id,
+        model_name="heuristic-v1",
+        confidence=0.6,
+        fair_yes_price=0.55,
+        fair_no_price=0.45,
+        edge=0.02,
+        reasons=["test"],
+        features={},
+        scoring_diagnostics={"selected_side": "yes"},
+    )
+    assert signal.captured_at is None
+
+    # Coverage scope with recommendation=None is the exact production crash path.
+    prediction = capture_prediction(
+        db_session,
+        run_id=None,
+        event=event,
+        market=market,
+        recommendation=None,
+        signal=signal,
+        metadata=market.raw_data,
+        capture_scope="coverage",
+    )
+
+    assert prediction.captured_at is not None
+    assert prediction.captured_at.tzinfo is not None
+    # Signal should have been backfilled so downstream code never sees None.
+    assert signal.captured_at is not None

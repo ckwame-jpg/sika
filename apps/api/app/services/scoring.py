@@ -1577,6 +1577,7 @@ def _build_scored_recommendation(
             reasons=reasons,
             features=features,
             scoring_diagnostics=signal_diagnostics,
+            captured_at=datetime.now(timezone.utc),
         )
         return ScoredRecommendation(
             recommendation=None,
@@ -1629,6 +1630,7 @@ def _build_scored_recommendation(
                 reasons=reasons,
                 features=features,
                 scoring_diagnostics=signal_diagnostics,
+                captured_at=datetime.now(timezone.utc),
             )
             return ScoredRecommendation(
                 recommendation=None,
@@ -1730,6 +1732,7 @@ def _build_scored_recommendation(
         **signal_diagnostics,
         "suppression_reasons": suppression_reasons,
     }
+    now_captured_at = datetime.now(timezone.utc)
     signal = SignalSnapshot(
         event_id=event.id,
         market_id=market.id if market else None,
@@ -1746,6 +1749,7 @@ def _build_scored_recommendation(
         reasons=reasons,
         features=features,
         scoring_diagnostics=signal_diagnostics,
+        captured_at=now_captured_at,
     )
 
     if suppression_reasons:
@@ -1774,7 +1778,7 @@ def _build_scored_recommendation(
             invalidation=invalidation,
             rationale="; ".join(reasons),
             scoring_diagnostics=signal_diagnostics,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=now_captured_at,
         ),
         signal=signal,
         metadata=metadata,
