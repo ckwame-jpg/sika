@@ -26,9 +26,20 @@ class KalshiPublicClient:
 
     def _get(self, path: str, **kwargs):
         url = path if path.startswith("http") else f"{self.base_url}{path}"
-        if self._http_client is not None:
-            return self._http_client.get(url, **kwargs)
-        return httpx.get(url, **kwargs)
+        attempts = 3
+        last_error: httpx.HTTPError | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                if self._http_client is not None:
+                    return self._http_client.get(url, **kwargs)
+                return httpx.get(url, **kwargs)
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt >= attempts or not isinstance(exc, httpx.TransportError):
+                    raise
+                time.sleep(0.25 * attempt)
+        assert last_error is not None
+        raise last_error
 
     def list_markets_page(
         self,

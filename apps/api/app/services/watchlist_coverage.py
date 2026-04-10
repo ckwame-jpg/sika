@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 CURRENT_WATCHLIST_SPORTS = frozenset({"NBA", "MLB"})
 CURRENT_WATCHLIST_MARKET_FAMILIES = frozenset({"winner", "game_line", "player_prop"})
 TERMINAL_EVENT_STATUSES = frozenset({"completed", "cancelled"})
+CURRENT_WATCHLIST_MAX_IN_PROGRESS_AGE = timedelta(hours=18)
 
 
 def _coverage_timezone() -> ZoneInfo:
@@ -44,22 +45,42 @@ def _coverage_day_window(now: datetime | None = None) -> tuple[datetime, datetim
     return local_day_start.astimezone(timezone.utc), local_day_end.astimezone(timezone.utc)
 
 
-def is_current_watchlist_event(event: Event | None, *, now: datetime | None = None) -> bool:
-    if event is None or event.starts_at is None:
-        return False
-    if (event.status or "").lower() in TERMINAL_EVENT_STATUSES:
-        return False
+def _in_progress_cutoff(now: datetime | None = None) -> datetime:
+    reference_now = _coerce_utc(_coverage_reference_now(now)) or datetime.now(timezone.utc)
+    return reference_now - CURRENT_WATCHLIST_MAX_IN_PROGRESS_AGE
 
-    starts_at = _coerce_utc(event.starts_at)
+
+def is_current_watchlist_status(
+    event_status: str | None,
+    starts_at: datetime | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
     if starts_at is None:
         return False
-    reference_now = _coerce_utc(_coverage_reference_now(now))
-    if reference_now is None:
+
+    normalized_status = str(event_status or "").lower()
+    if normalized_status in TERMINAL_EVENT_STATUSES:
         return False
+
+    starts_at_utc = _coerce_utc(starts_at)
+    reference_now = _coerce_utc(_coverage_reference_now(now))
+    if starts_at_utc is None or reference_now is None:
+        return False
+
+    if normalized_status == "in_progress":
+        return starts_at_utc >= _in_progress_cutoff(reference_now)
+
     local_tz = _coverage_timezone()
-    event_local_date = starts_at.astimezone(local_tz).date()
+    event_local_date = starts_at_utc.astimezone(local_tz).date()
     current_local_date = reference_now.astimezone(local_tz).date()
-    return (event.status or "").lower() == "in_progress" or event_local_date == current_local_date
+    return event_local_date == current_local_date
+
+
+def is_current_watchlist_event(event: Event | None, *, now: datetime | None = None) -> bool:
+    if event is None:
+        return False
+    return is_current_watchlist_status(event.status, event.starts_at, now=now)
 
 
 def is_current_watchlist_market(market: Market | None, *, now: datetime | None = None) -> bool:
@@ -98,12 +119,16 @@ def current_watchlist_event_ids(
 ) -> list[int]:
     allowed_sports = {sport.upper()} if sport else set(CURRENT_WATCHLIST_SPORTS)
     day_start, day_end = _coverage_day_window(now)
+    in_progress_cutoff = _in_progress_cutoff(now)
     stmt = (
         select(Event.id)
         .where(
             Event.sport_key.in_(tuple(allowed_sports)),
             Event.status.notin_(tuple(TERMINAL_EVENT_STATUSES)),
-            ((func.lower(Event.status) == "in_progress") | ((Event.starts_at >= day_start) & (Event.starts_at < day_end))),
+            (
+                ((func.lower(Event.status) == "in_progress") & (Event.starts_at >= in_progress_cutoff))
+                | ((Event.starts_at >= day_start) & (Event.starts_at < day_end))
+            ),
         )
         .order_by(Event.starts_at.asc(), Event.id.asc())
     )
