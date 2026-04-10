@@ -7,7 +7,15 @@ from app.models import Event, EventParticipant, Market, MarketSnapshot, Particip
 from app.services.scoring import (
     ResolvedPropSubject,
     ScoredRecommendation,
+    _days_since_latest_log,
+    _days_since_participant_game,
     _enforce_prop_monotonicity,
+    _games_in_recent_window,
+    _latest_home_state,
+    _recent_first_five_results,
+    _recent_participant_results,
+    _recent_score_pairs,
+    _schedule_context,
     regenerate_watchlist,
     score_event,
 )
@@ -337,7 +345,7 @@ def test_regenerate_watchlist_collapses_inverse_winner_duplicates(db_session):
         settings.watchlist_min_selected_prob_heuristic_winner = original_floor
 
 
-def test_enforce_prop_monotonicity_suppresses_invalid_higher_threshold_recommendations():
+def test_enforce_prop_monotonicity_preserves_recommendation_with_diagnostic_flag():
     lower_market = Market(
         ticker="KXNBAREB-LOWER",
         sport_key="NBA",
@@ -435,9 +443,10 @@ def test_enforce_prop_monotonicity_suppresses_invalid_higher_threshold_recommend
 
     assert higher_scored.signal.fair_yes_price == 0.737
     assert higher_scored.signal.fair_no_price == 0.263
-    assert higher_scored.recommendation is None
+    assert higher_scored.recommendation is not None
+    assert higher_scored.recommendation.edge == round(0.737 - 0.80, 4)
     assert higher_scored.signal.scoring_diagnostics["monotonicity_adjusted"] is True
-    assert "monotonicity_below_min_edge" in higher_scored.signal.scoring_diagnostics["suppression_reasons"]
+    assert higher_scored.signal.scoring_diagnostics.get("monotonicity_edge_below_min") is True
 
 
 def _mlb_raw_event(home_name, away_name, home_abbr, away_abbr, home_lines, away_lines, home_era, away_era):
@@ -821,3 +830,32 @@ def test_missing_context_penalty_lowers_prop_confidence_and_selection_score(db_s
     assert matched_signal is not None and missing_signal is not None
     assert missing_signal.confidence < matched_signal.confidence
     assert missing_recommendation.selection_score < matched_recommendation.selection_score
+
+
+def test_scoring_functions_handle_none_starts_at(db_session):
+    """All datetime helpers must tolerate before=None without crashing."""
+    participant = Participant(
+        external_id="none-dt-player",
+        sport_key="NBA",
+        display_name="Test Player",
+        short_name="TST",
+        participant_type="team",
+    )
+    db_session.add(participant)
+    db_session.flush()
+
+    assert _days_since_participant_game(db_session, participant.id, None) is None
+    assert _days_since_latest_log([{"game_date": datetime(2026, 3, 1, tzinfo=timezone.utc)}], None) is None
+    assert _days_since_latest_log([], None) is None
+    assert _recent_participant_results(db_session, participant.id, None) == []
+    assert _recent_first_five_results(db_session, participant.id, None) == []
+    assert _games_in_recent_window(db_session, participant.id, None, days=7) == 0
+    assert _latest_home_state(db_session, participant.id, None) is None
+    assert _recent_score_pairs(db_session, participant.id, None) == []
+
+    context = _schedule_context(db_session, participant.id, None)
+    assert context["days_rest"] is None
+    assert context["games_last_4"] == 0
+    assert context["games_last_7"] == 0
+    assert context["back_to_back"] is False
+    assert context["last_home_state"] is None
