@@ -61,8 +61,8 @@ export function RunsDesk() {
   const shadowSourceRunId = detail?.details.source_run_id != null ? String(detail.details.source_run_id) : null;
 
   return (
-    <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <Card className="min-h-0">
+    <div className="grid h-full min-h-0 gap-4 overflow-auto xl:grid-cols-[360px_minmax(0,1fr)]">
+      <Card className="relative z-10 min-h-0 overflow-hidden">
         <CardHeader className="flex-col items-start gap-1 border-none">
           <CardTitle>Recent Runs</CardTitle>
           <CardDescription>Refresh history, diagnostics, and emitted recommendations</CardDescription>
@@ -131,7 +131,7 @@ export function RunsDesk() {
         </CardContent>
       </Card>
 
-      <Card className="min-h-0">
+      <Card className="min-h-0 overflow-hidden">
         <CardHeader className="flex-col items-start gap-1 border-none">
           <CardTitle>{detail ? `${runKindLabel(detail.kind)} #${detail.id}` : "Run Detail"}</CardTitle>
           <CardDescription>
