@@ -15,6 +15,10 @@ UTCDateTime = Annotated[
 ]
 
 
+ProductSlateStatus = Literal["fresh", "stale", "degraded", "empty"]
+ProductFreshnessStatus = Literal["fresh", "stale", "degraded", "empty", "missing"]
+
+
 class RefreshJobRead(BaseModel):
     id: int
     kind: str
@@ -319,7 +323,14 @@ class TradeDeskResponse(BaseModel):
     events: list[TradeDeskEventRead] = Field(default_factory=list)
     research_sports: list[SportAvailabilityRead] = Field(default_factory=list)
     generated_at: UTCDateTime | None = None
-    freshness_status: Literal["fresh", "stale"] = "fresh"
+    freshness_status: ProductSlateStatus = "fresh"
+    event_count: int = 0
+    candidate_market_count: int = 0
+    scored_market_count: int = 0
+    recommendation_count: int = 0
+    coverage_prediction_count: int = 0
+    blocking_reason: str | None = None
+    generated_from_run_id: int | None = None
 
 
 class ProductScopeFreshnessRead(BaseModel):
@@ -334,7 +345,14 @@ class ProductScopeFreshnessRead(BaseModel):
 
     scope: str
     generated_at: UTCDateTime | None = None
-    status: Literal["fresh", "stale", "missing"]
+    status: ProductFreshnessStatus
+    event_count: int = 0
+    candidate_market_count: int = 0
+    scored_market_count: int = 0
+    recommendation_count: int = 0
+    coverage_prediction_count: int = 0
+    blocking_reason: str | None = None
+    generated_from_run_id: int | None = None
 
 
 class ProductFreshnessResponse(BaseModel):
@@ -348,7 +366,7 @@ class ProductFreshnessResponse(BaseModel):
     """
 
     scopes: list[ProductScopeFreshnessRead] = Field(default_factory=list)
-    overall_status: Literal["fresh", "stale", "missing"]
+    overall_status: ProductFreshnessStatus
 
 
 class ProductSportsResponse(BaseModel):
@@ -371,6 +389,12 @@ class RunSummaryCounts(BaseModel):
     supported_mlb_props_seen: int = 0
     mapped_markets: int = 0
     mapped_prop_markets: int = 0
+    current_slate_event_count: int = 0
+    current_slate_candidate_market_count: int = 0
+    current_slate_scored_market_count: int = 0
+    current_slate_coverage_prediction_count: int = 0
+    current_slate_blocking_reason: str | None = None
+    scorer_outcome_counts: dict[str, int] = Field(default_factory=dict)
     recommendations_emitted: int = 0
     predictions_captured: int = 0
     parlay_recommendations_emitted: int = 0
@@ -433,6 +457,12 @@ class WatchlistDiagnosticsRead(BaseModel):
     latest_refresh_succeeded: bool | None = None
     latest_supported_markets_kept: int = 0
     latest_recommendations_emitted: int = 0
+    latest_current_slate_event_count: int = 0
+    latest_current_slate_candidate_market_count: int = 0
+    latest_current_slate_scored_market_count: int = 0
+    latest_current_slate_coverage_prediction_count: int = 0
+    latest_current_slate_blocking_reason: str | None = None
+    latest_scorer_outcome_counts: dict[str, int] = Field(default_factory=dict)
     latest_watchlist_counts_by_sport: dict[str, int] = Field(default_factory=dict)
     current_recommendation_count: int = 0
     watchlist_min_edge: float

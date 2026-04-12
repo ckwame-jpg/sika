@@ -1425,7 +1425,7 @@ export interface components {
              * Overall Status
              * @enum {string}
              */
-            overall_status: "fresh" | "stale" | "missing";
+            overall_status: "fresh" | "stale" | "degraded" | "empty" | "missing";
             /** Scopes */
             scopes?: components["schemas"]["ProductScopeFreshnessRead"][];
         };
@@ -1440,15 +1440,44 @@ export interface components {
          *     ``"missing"`` state for scopes that have never been snapshotted.
          */
         ProductScopeFreshnessRead: {
+            /** Blocking Reason */
+            blocking_reason?: string | null;
+            /**
+             * Candidate Market Count
+             * @default 0
+             */
+            candidate_market_count: number;
+            /**
+             * Coverage Prediction Count
+             * @default 0
+             */
+            coverage_prediction_count: number;
+            /**
+             * Event Count
+             * @default 0
+             */
+            event_count: number;
             /** Generated At */
             generated_at?: string | null;
+            /** Generated From Run Id */
+            generated_from_run_id?: number | null;
+            /**
+             * Recommendation Count
+             * @default 0
+             */
+            recommendation_count: number;
             /** Scope */
             scope: string;
+            /**
+             * Scored Market Count
+             * @default 0
+             */
+            scored_market_count: number;
             /**
              * Status
              * @enum {string}
              */
-            status: "fresh" | "stale" | "missing";
+            status: "fresh" | "stale" | "degraded" | "empty" | "missing";
         };
         /**
          * ProductSportsResponse
@@ -1648,6 +1677,28 @@ export interface components {
              * @default 0
              */
             critical_context_suppressed: number;
+            /** Current Slate Blocking Reason */
+            current_slate_blocking_reason?: string | null;
+            /**
+             * Current Slate Candidate Market Count
+             * @default 0
+             */
+            current_slate_candidate_market_count: number;
+            /**
+             * Current Slate Coverage Prediction Count
+             * @default 0
+             */
+            current_slate_coverage_prediction_count: number;
+            /**
+             * Current Slate Event Count
+             * @default 0
+             */
+            current_slate_event_count: number;
+            /**
+             * Current Slate Scored Market Count
+             * @default 0
+             */
+            current_slate_scored_market_count: number;
             /**
              * Gamelog Cache Hits
              * @default 0
@@ -1743,6 +1794,10 @@ export interface components {
              * @default 0
              */
             recommendations_emitted: number;
+            /** Scorer Outcome Counts */
+            scorer_outcome_counts?: {
+                [key: string]: number;
+            };
             /** Sports Records Ingested */
             sports_records_ingested?: {
                 [key: string]: number;
@@ -2000,6 +2055,23 @@ export interface components {
         };
         /** TradeDeskResponse */
         TradeDeskResponse: {
+            /** Blocking Reason */
+            blocking_reason?: string | null;
+            /**
+             * Candidate Market Count
+             * @default 0
+             */
+            candidate_market_count: number;
+            /**
+             * Coverage Prediction Count
+             * @default 0
+             */
+            coverage_prediction_count: number;
+            /**
+             * Event Count
+             * @default 0
+             */
+            event_count: number;
             /** Events */
             events?: components["schemas"]["TradeDeskEventRead"][];
             /**
@@ -2007,11 +2079,23 @@ export interface components {
              * @default fresh
              * @enum {string}
              */
-            freshness_status: "fresh" | "stale";
+            freshness_status: "fresh" | "stale" | "degraded" | "empty";
             /** Generated At */
             generated_at?: string | null;
+            /** Generated From Run Id */
+            generated_from_run_id?: number | null;
+            /**
+             * Recommendation Count
+             * @default 0
+             */
+            recommendation_count: number;
             /** Research Sports */
             research_sports?: components["schemas"]["SportAvailabilityRead"][];
+            /**
+             * Scored Market Count
+             * @default 0
+             */
+            scored_market_count: number;
         };
         /** TradeDeskStatGroupRead */
         TradeDeskStatGroupRead: {
@@ -2116,6 +2200,28 @@ export interface components {
             last_prop_refresh_at?: string | null;
             /** Last Successful Refresh At */
             last_successful_refresh_at?: string | null;
+            /** Latest Current Slate Blocking Reason */
+            latest_current_slate_blocking_reason?: string | null;
+            /**
+             * Latest Current Slate Candidate Market Count
+             * @default 0
+             */
+            latest_current_slate_candidate_market_count: number;
+            /**
+             * Latest Current Slate Coverage Prediction Count
+             * @default 0
+             */
+            latest_current_slate_coverage_prediction_count: number;
+            /**
+             * Latest Current Slate Event Count
+             * @default 0
+             */
+            latest_current_slate_event_count: number;
+            /**
+             * Latest Current Slate Scored Market Count
+             * @default 0
+             */
+            latest_current_slate_scored_market_count: number;
             latest_prop_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
             /**
              * Latest Recommendations Emitted
@@ -2126,6 +2232,10 @@ export interface components {
             latest_refresh_run?: components["schemas"]["RunRead"] | null;
             /** Latest Refresh Succeeded */
             latest_refresh_succeeded?: boolean | null;
+            /** Latest Scorer Outcome Counts */
+            latest_scorer_outcome_counts?: {
+                [key: string]: number;
+            };
             /**
              * Latest Supported Markets Kept
              * @default 0

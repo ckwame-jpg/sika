@@ -5,6 +5,7 @@ from sqlalchemy import select
 from app.models import EspnPlayerGamelogCache, EspnPlayerSearchCache, Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, SignalSnapshot
 from app.services.ingestion import (
     _refresh_combo_prop_discovery_batch,
+    refresh_current_slate_kalshi_markets,
     refresh_kalshi_markets,
     run_prop_refresh_cycle,
     run_refresh_cycle,
@@ -194,6 +195,31 @@ class FakeSettlementClient:
 
     def get_market(self, ticker):
         return self.payloads[ticker]
+
+
+class CurrentSlateTargetClient:
+    def __init__(self):
+        self.get_market_calls: list[str] = []
+        self.list_market_calls = 0
+
+    def get_market(self, ticker):
+        self.get_market_calls.append(ticker)
+        return {
+            "ticker": ticker,
+            "event_ticker": "KXNBAGAME-CURRENT",
+            "title": "Brooklyn at Boston Winner?",
+            "subtitle": "NBA regular season",
+            "status": "active",
+            "yes_sub_title": "Boston",
+            "no_sub_title": "Brooklyn",
+            "yes_ask_dollars": "0.42",
+            "no_ask_dollars": "0.62",
+            "last_price_dollars": "0.43",
+        }
+
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+        self.list_market_calls += 1
+        return []
 
 
 class FakeKalshiComboClient:
@@ -751,6 +777,33 @@ def test_refresh_kalshi_markets_refreshes_tracked_combo_prop_tickers_without_dis
     assert client.get_market_calls == [market.ticker]
     assert summary["combo_prop_legs_refreshed"] == 1
     assert summary["combo_prop_legs_discovered"] == 0
+
+
+def test_refresh_current_slate_kalshi_markets_uses_targeted_get_market_before_broad_scan(db_session):
+    event = _seed_team_event(db_session, sport_key="NBA", external_id="target-current")
+    event.starts_at = datetime.now(timezone.utc)
+    market = Market(
+        ticker="KXNBAGAME-CURRENT-BOS",
+        sport_key="NBA",
+        event_id=event.id,
+        title="Brooklyn at Boston Winner?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "winner",
+            "copilot_market_kind": "game_winner",
+            "event_ticker": "KXNBAGAME-CURRENT",
+        },
+    )
+    db_session.add(market)
+    db_session.commit()
+
+    client = CurrentSlateTargetClient()
+    summary = refresh_current_slate_kalshi_markets(db_session, client=client)
+
+    assert client.get_market_calls == [market.ticker]
+    assert client.list_market_calls == 0
+    assert summary["broad_market_fallback_used"] is False
+    assert summary["current_slate_targeted_markets_refreshed"] == 1
 
 
 def test_refresh_combo_prop_discovery_batch_prefilters_obvious_non_target_legs(db_session):

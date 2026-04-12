@@ -1,6 +1,5 @@
 from datetime import date, datetime, timezone
-from typing import Literal
-
+from math import isfinite
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -427,6 +426,12 @@ def _run_summary_counts(details: dict | None) -> RunSummaryCounts:
         supported_mlb_props_seen=int(payload.get("supported_mlb_props_seen") or 0),
         mapped_markets=int(payload.get("mapped_markets") or 0),
         mapped_prop_markets=int(payload.get("mapped_prop_markets") or 0),
+        current_slate_event_count=int(payload.get("current_slate_event_count") or payload.get("affected_event_count") or 0),
+        current_slate_candidate_market_count=int(payload.get("current_slate_candidate_market_count") or payload.get("candidate_market_count") or 0),
+        current_slate_scored_market_count=int(payload.get("current_slate_scored_market_count") or payload.get("scored_market_count") or 0),
+        current_slate_coverage_prediction_count=int(payload.get("current_slate_coverage_prediction_count") or payload.get("coverage_prediction_count") or 0),
+        current_slate_blocking_reason=payload.get("current_slate_blocking_reason"),
+        scorer_outcome_counts=payload.get("scorer_outcome_counts") or payload.get("outcome_reason_counts") or {},
         recommendations_emitted=int(payload.get("recommendations_emitted") or 0),
         predictions_captured=int(payload.get("predictions_captured") or 0),
         parlay_recommendations_emitted=int(payload.get("parlay_recommendations_emitted") or 0),
@@ -455,6 +460,18 @@ def _run_summary_counts(details: dict | None) -> RunSummaryCounts:
         parlay_watchlist_counts_by_scope=payload.get("parlay_watchlist_counts_by_scope") or {},
         parlay_watchlist_counts_by_leg_count=payload.get("parlay_watchlist_counts_by_leg_count") or {},
     )
+
+
+def _rounded_metric(value, digits: int = 4) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(number):
+        return None
+    return round(number, digits)
 
 
 def _serialize_signal(item: SignalSnapshot) -> SignalSnapshotRead:
@@ -728,9 +745,9 @@ def _aggregate_prediction_summary(
         cancelled_predictions=cancelled_predictions,
         win_rate=round(won_predictions / win_loss_total, 4) if win_loss_total else None,
         loss_rate=round(lost_predictions / win_loss_total, 4) if win_loss_total else None,
-        average_edge=round(float(totals[1]), 4) if totals[1] is not None else None,
-        average_confidence=round(float(totals[2]), 4) if totals[2] is not None else None,
-        average_realized_pnl=round(float(totals[3]), 4) if totals[3] is not None else None,
+        average_edge=_rounded_metric(totals[1]),
+        average_confidence=_rounded_metric(totals[2]),
+        average_realized_pnl=_rounded_metric(totals[3]),
         by_sport=by_sport,
         by_market_family=by_market_family,
         by_outcome=by_outcome,
@@ -792,9 +809,9 @@ def _aggregate_parlay_prediction_summary(
         cancelled_predictions=cancelled_predictions,
         win_rate=round(won_predictions / win_loss_total, 4) if win_loss_total else None,
         loss_rate=round(lost_predictions / win_loss_total, 4) if win_loss_total else None,
-        average_edge=round(float(totals[1]), 4) if totals[1] is not None else None,
-        average_confidence=round(float(totals[2]), 4) if totals[2] is not None else None,
-        average_realized_pnl=round(float(totals[3]), 4) if totals[3] is not None else None,
+        average_edge=_rounded_metric(totals[1]),
+        average_confidence=_rounded_metric(totals[2]),
+        average_realized_pnl=_rounded_metric(totals[3]),
         by_sport_scope=by_sport_scope,
         by_leg_count=by_leg_count,
         by_outcome=by_outcome,
@@ -916,14 +933,17 @@ def get_product_freshness(db: Session = Depends(get_db)) -> ProductFreshnessResp
                 scope=scope,
                 generated_at=snapshot.generated_at,
                 status=snapshot.freshness_status,
+                event_count=snapshot.event_count,
+                candidate_market_count=snapshot.candidate_market_count,
+                scored_market_count=snapshot.scored_market_count,
+                recommendation_count=snapshot.recommendation_count,
+                coverage_prediction_count=snapshot.coverage_prediction_count,
+                blocking_reason=snapshot.blocking_reason,
+                generated_from_run_id=snapshot.generated_from_run_id,
             )
         )
-    if any(s.status == "missing" for s in scopes):
-        overall: Literal["fresh", "stale", "missing"] = "missing"
-    elif any(s.status == "stale" for s in scopes):
-        overall = "stale"
-    else:
-        overall = "fresh"
+    status_rank = {"fresh": 0, "empty": 1, "stale": 2, "degraded": 3, "missing": 4}
+    overall = max((s.status for s in scopes), key=lambda status: status_rank.get(status, 0))
     return ProductFreshnessResponse(scopes=scopes, overall_status=overall)
 
 
@@ -971,6 +991,12 @@ def get_watchlist_diagnostics(db: Session = Depends(get_db)) -> WatchlistDiagnos
         latest_refresh_succeeded=(latest_refresh_run.status == "completed") if latest_refresh_run else None,
         latest_supported_markets_kept=summary_counts.supported_markets_kept if summary_counts else 0,
         latest_recommendations_emitted=summary_counts.recommendations_emitted if summary_counts else 0,
+        latest_current_slate_event_count=summary_counts.current_slate_event_count if summary_counts else 0,
+        latest_current_slate_candidate_market_count=summary_counts.current_slate_candidate_market_count if summary_counts else 0,
+        latest_current_slate_scored_market_count=summary_counts.current_slate_scored_market_count if summary_counts else 0,
+        latest_current_slate_coverage_prediction_count=summary_counts.current_slate_coverage_prediction_count if summary_counts else 0,
+        latest_current_slate_blocking_reason=summary_counts.current_slate_blocking_reason if summary_counts else None,
+        latest_scorer_outcome_counts=summary_counts.scorer_outcome_counts if summary_counts else {},
         latest_watchlist_counts_by_sport=summary_counts.watchlist_counts_by_sport if summary_counts else {},
         current_recommendation_count=int(current_recommendation_count),
         watchlist_min_edge=settings.watchlist_min_edge,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 
 from sqlalchemy import select
@@ -21,6 +22,33 @@ from app.services.model_families import FAMILY_DEFINITIONS, family_definition, p
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(number):
+        return None
+    return number
+
+
+def _average_metric(values: list[float]) -> float | None:
+    finite_values = [value for value in values if isfinite(value)]
+    if not finite_values:
+        return None
+    return round(sum(finite_values) / len(finite_values), 4)
+
+
+def _runtime_mode(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in {"heuristic", "shadow", "ml"} else "heuristic"
+
+
+def _runtime_health(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in {"healthy", "degraded", "unavailable"} else "unavailable"
 
 
 def _single_prediction_family_key(prediction: Prediction) -> str:
@@ -244,15 +272,18 @@ def _summary_for_family(
     losses = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "lost")
     pushes = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "push")
     cancelled = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "cancelled")
-    edges = [float(getattr(row, "edge", 0.0)) for row in predictions]
-    confidences = [float(getattr(row, "confidence", 0.0)) for row in predictions]
-    pnls = [float(row.realized_pnl) for row in predictions if getattr(row, "realized_pnl", None) is not None]
+    edges = [value for row in predictions if (value := _safe_float(getattr(row, "edge", None))) is not None]
+    confidences = [value for row in predictions if (value := _safe_float(getattr(row, "confidence", None))) is not None]
+    pnls = [value for row in predictions if (value := _safe_float(getattr(row, "realized_pnl", None))) is not None]
+    desired_mode = _runtime_mode(runtime.desired_mode)
+    effective_mode = _runtime_mode(runtime.effective_mode)
+    runtime_health = _runtime_health(runtime.runtime_health)
     shadow_ratio = shadow_coverage_ratio(total_predictions=total_predictions, shadow_predictions=covered_shadow_predictions)
     readiness_status, why_not_ready = _readiness_status(
         family_key=family_key,
         scope=scope,
         study_track=definition.study_track,
-        desired_mode=runtime.desired_mode,
+        desired_mode=desired_mode,
         settled_predictions=len(settled),
         shadow_predictions=covered_shadow_predictions,
         shadow_coverage_ratio=shadow_ratio,
@@ -272,9 +303,9 @@ def _summary_for_family(
         "why_not_ready": why_not_ready,
         "runtime": {
             "family_key": family_key,
-            "desired_mode": runtime.desired_mode,
-            "effective_mode": runtime.effective_mode,
-            "runtime_health": runtime.runtime_health,
+            "desired_mode": desired_mode,
+            "effective_mode": effective_mode,
+            "runtime_health": runtime_health,
             "fallback_active": runtime.fallback_active,
             "consecutive_failures": runtime.consecutive_failures,
             "last_check_at": runtime.last_check_at,
@@ -303,9 +334,9 @@ def _summary_for_family(
         "lost_predictions": losses,
         "push_predictions": pushes,
         "cancelled_predictions": cancelled,
-        "average_edge": round(sum(edges) / len(edges), 4) if edges else None,
-        "average_confidence": round(sum(confidences) / len(confidences), 4) if confidences else None,
-        "average_realized_pnl": round(sum(pnls) / len(pnls), 4) if pnls else None,
+        "average_edge": _average_metric(edges),
+        "average_confidence": _average_metric(confidences),
+        "average_realized_pnl": _average_metric(pnls),
         "last_settled_at": last_settled_at,
         "confidence_buckets": _confidence_buckets(predictions),
         "edge_buckets": _edge_buckets(predictions),

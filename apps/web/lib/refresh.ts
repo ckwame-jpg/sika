@@ -29,11 +29,12 @@ async function revalidateAfterRefresh() {
   await Promise.all([
     mutate((key) => typeof key === "string" && key.startsWith("/ops/runs")),
     mutate((key) => typeof key === "string" && key.startsWith("/events")),
-    mutate((key) => typeof key === "string" && key.startsWith("/watchlist")),
+    mutate((key) => typeof key === "string" && key.startsWith("/trade-desk")),
     mutate((key) => typeof key === "string" && key.startsWith("/markets")),
     mutate((key) => typeof key === "string" && key.startsWith("/positions")),
     mutate((key) => typeof key === "string" && key.startsWith("/predictions")),
     mutate((key) => typeof key === "string" && key.startsWith("/parlays")),
+    mutate(keys.productFreshness),
     mutate(keys.watchlistDiagnostics),
     mutate(keys.health),
   ]);

@@ -2997,6 +2997,8 @@
             "enum": [
               "fresh",
               "stale",
+              "degraded",
+              "empty",
               "missing"
             ],
             "title": "Overall Status",
@@ -3019,6 +3021,32 @@
       "ProductScopeFreshnessRead": {
         "description": "Per-scope freshness status for the product read path.\n\n``scope`` is either ``\"all\"`` (full cross-sport slate) or a sport key\nsuch as ``\"NBA\"``/``\"MLB\"``. ``generated_at`` is the ``persisted_at`` of\nthe latest snapshot row for that scope. ``status`` follows the same\nvocabulary as ``TradeDeskResponse.freshness_status`` with an extra\n``\"missing\"`` state for scopes that have never been snapshotted.",
         "properties": {
+          "blocking_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocking Reason"
+          },
+          "candidate_market_count": {
+            "default": 0,
+            "title": "Candidate Market Count",
+            "type": "integer"
+          },
+          "coverage_prediction_count": {
+            "default": 0,
+            "title": "Coverage Prediction Count",
+            "type": "integer"
+          },
+          "event_count": {
+            "default": 0,
+            "title": "Event Count",
+            "type": "integer"
+          },
           "generated_at": {
             "anyOf": [
               {
@@ -3030,14 +3058,37 @@
             ],
             "title": "Generated At"
           },
+          "generated_from_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated From Run Id"
+          },
+          "recommendation_count": {
+            "default": 0,
+            "title": "Recommendation Count",
+            "type": "integer"
+          },
           "scope": {
             "title": "Scope",
             "type": "string"
+          },
+          "scored_market_count": {
+            "default": 0,
+            "title": "Scored Market Count",
+            "type": "integer"
           },
           "status": {
             "enum": [
               "fresh",
               "stale",
+              "degraded",
+              "empty",
               "missing"
             ],
             "title": "Status",
@@ -3668,6 +3719,37 @@
             "title": "Critical Context Suppressed",
             "type": "integer"
           },
+          "current_slate_blocking_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Slate Blocking Reason"
+          },
+          "current_slate_candidate_market_count": {
+            "default": 0,
+            "title": "Current Slate Candidate Market Count",
+            "type": "integer"
+          },
+          "current_slate_coverage_prediction_count": {
+            "default": 0,
+            "title": "Current Slate Coverage Prediction Count",
+            "type": "integer"
+          },
+          "current_slate_event_count": {
+            "default": 0,
+            "title": "Current Slate Event Count",
+            "type": "integer"
+          },
+          "current_slate_scored_market_count": {
+            "default": 0,
+            "title": "Current Slate Scored Market Count",
+            "type": "integer"
+          },
           "gamelog_cache_hits": {
             "default": 0,
             "title": "Gamelog Cache Hits",
@@ -3777,6 +3859,13 @@
             "default": 0,
             "title": "Recommendations Emitted",
             "type": "integer"
+          },
+          "scorer_outcome_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Scorer Outcome Counts",
+            "type": "object"
           },
           "sports_records_ingested": {
             "additionalProperties": {
@@ -4523,6 +4612,32 @@
       },
       "TradeDeskResponse": {
         "properties": {
+          "blocking_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocking Reason"
+          },
+          "candidate_market_count": {
+            "default": 0,
+            "title": "Candidate Market Count",
+            "type": "integer"
+          },
+          "coverage_prediction_count": {
+            "default": 0,
+            "title": "Coverage Prediction Count",
+            "type": "integer"
+          },
+          "event_count": {
+            "default": 0,
+            "title": "Event Count",
+            "type": "integer"
+          },
           "events": {
             "items": {
               "$ref": "#/components/schemas/TradeDeskEventRead"
@@ -4534,7 +4649,9 @@
             "default": "fresh",
             "enum": [
               "fresh",
-              "stale"
+              "stale",
+              "degraded",
+              "empty"
             ],
             "title": "Freshness Status",
             "type": "string"
@@ -4550,12 +4667,33 @@
             ],
             "title": "Generated At"
           },
+          "generated_from_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated From Run Id"
+          },
+          "recommendation_count": {
+            "default": 0,
+            "title": "Recommendation Count",
+            "type": "integer"
+          },
           "research_sports": {
             "items": {
               "$ref": "#/components/schemas/SportAvailabilityRead"
             },
             "title": "Research Sports",
             "type": "array"
+          },
+          "scored_market_count": {
+            "default": 0,
+            "title": "Scored Market Count",
+            "type": "integer"
           }
         },
         "title": "TradeDeskResponse",
@@ -4942,6 +5080,37 @@
             ],
             "title": "Last Successful Refresh At"
           },
+          "latest_current_slate_blocking_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Current Slate Blocking Reason"
+          },
+          "latest_current_slate_candidate_market_count": {
+            "default": 0,
+            "title": "Latest Current Slate Candidate Market Count",
+            "type": "integer"
+          },
+          "latest_current_slate_coverage_prediction_count": {
+            "default": 0,
+            "title": "Latest Current Slate Coverage Prediction Count",
+            "type": "integer"
+          },
+          "latest_current_slate_event_count": {
+            "default": 0,
+            "title": "Latest Current Slate Event Count",
+            "type": "integer"
+          },
+          "latest_current_slate_scored_market_count": {
+            "default": 0,
+            "title": "Latest Current Slate Scored Market Count",
+            "type": "integer"
+          },
           "latest_prop_refresh_job": {
             "anyOf": [
               {
@@ -4987,6 +5156,13 @@
               }
             ],
             "title": "Latest Refresh Succeeded"
+          },
+          "latest_scorer_outcome_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Latest Scorer Outcome Counts",
+            "type": "object"
           },
           "latest_supported_markets_kept": {
             "default": 0,

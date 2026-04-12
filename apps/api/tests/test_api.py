@@ -949,6 +949,8 @@ def _seed_snapshot(
     scope: str,
     generated_at: datetime,
     events: list[dict] | None = None,
+    status: str = "fresh",
+    health: dict | None = None,
 ) -> None:
     db_session.add(
         CurrentSlateSnapshot(
@@ -958,7 +960,8 @@ def _seed_snapshot(
                 "events": events or [],
                 "research_sports": [],
                 "generated_at": generated_at.isoformat().replace("+00:00", "Z"),
-                "freshness_status": "fresh",
+                "freshness_status": status,
+                **(health or {}),
             },
         )
     )
@@ -1041,3 +1044,66 @@ def test_product_freshness_marks_overall_stale_when_any_scope_has_stale_events(
     assert per_scope["NBA"] == "stale"
     assert per_scope["MLB"] == "fresh"
     assert per_scope["all"] == "fresh"
+
+
+def test_product_freshness_ranks_degraded_above_stale_and_empty(client, db_session):
+    now = datetime.now(timezone.utc)
+    _seed_snapshot(
+        db_session,
+        scope="all",
+        generated_at=now,
+        status="empty",
+        health={
+            "event_count": 2,
+            "candidate_market_count": 12,
+            "scored_market_count": 12,
+            "recommendation_count": 0,
+            "coverage_prediction_count": 12,
+            "blocking_reason": "Current slate scored successfully, but no markets cleared recommendation thresholds.",
+        },
+    )
+    _seed_snapshot(
+        db_session,
+        scope="NBA",
+        generated_at=now,
+        status="degraded",
+        health={
+            "event_count": 1,
+            "candidate_market_count": 0,
+            "scored_market_count": 0,
+            "recommendation_count": 0,
+            "coverage_prediction_count": 0,
+            "blocking_reason": "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them.",
+            "generated_from_run_id": 123,
+        },
+    )
+    _seed_snapshot(
+        db_session,
+        scope="MLB",
+        generated_at=now,
+        events=[
+            {
+                "event_id": 43,
+                "event_name": "Yankees at Rays",
+                "sport_key": "MLB",
+                "event_status": "in_progress",
+                "starts_at": datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
+                "game_lines": [],
+                "player_props": [],
+            }
+        ],
+    )
+    db_session.commit()
+
+    response = client.get("/product/freshness")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["overall_status"] == "degraded"
+    nba = next(row for row in payload["scopes"] if row["scope"] == "NBA")
+    assert nba["status"] == "degraded"
+    assert nba["event_count"] == 1
+    assert nba["candidate_market_count"] == 0
+    assert nba["generated_from_run_id"] == 123
+    assert next(row for row in payload["scopes"] if row["scope"] == "all")["status"] == "empty"
+    assert next(row for row in payload["scopes"] if row["scope"] == "MLB")["status"] == "stale"

@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 
+import app.services.scoring as scoring_module
 from app.config import get_settings
 from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, Recommendation, Run, SignalSnapshot
 from app.services.scoring import (
@@ -1034,6 +1035,8 @@ def test_score_watchlist_markets_batch_is_pure(db_session):
     assert summary.prediction_count == sum(
         1 for capture in captures if capture.capture_scope is not None
     )
+    assert summary.scored_market_count >= 1
+    assert summary.outcome_reason_counts["recommended"] >= 1
 
 
 def test_persist_scored_watchlist_captures_writes_signals_and_predictions(db_session):
@@ -1064,3 +1067,92 @@ def test_persist_scored_watchlist_captures_writes_signals_and_predictions(db_ses
     assert after_predictions == initial_predictions + expected_predictions
 
 
+def test_score_watchlist_markets_batch_counts_missing_snapshot(db_session):
+    market = _setup_scorable_winner_market(db_session, key="missing-snapshot")
+    db_session.query(MarketSnapshot).filter(MarketSnapshot.market_id == market.id).delete()
+    db_session.commit()
+
+    summary, captures = _score_watchlist_markets_batch(db_session, markets=[market])
+
+    assert captures
+    assert summary.scored_market_count == 1
+    assert summary.outcome_reason_counts["missing_snapshot"] == 1
+    assert summary.critical_context_suppressed == 1
+
+
+def test_score_watchlist_markets_batch_counts_suppression_reasons(db_session, monkeypatch):
+    market = _setup_scorable_winner_market(db_session, key="suppressed-edge")
+    market.event.starts_at = datetime.now(timezone.utc)
+    market.raw_data = {**(market.raw_data or {}), "copilot_market_family": "winner"}
+    db_session.commit()
+
+    def fake_build_scored_recommendation(db, event, market, snapshot, resolver=None):
+        signal = SignalSnapshot(
+            event_id=event.id,
+            market_id=market.id,
+            model_name="test",
+            confidence=0.7,
+            fair_yes_price=0.5,
+            fair_no_price=0.5,
+            edge=0.01,
+            selection_score=0.01,
+            reasons=[],
+            features={},
+            scoring_diagnostics={"suppression_reasons": ["min_edge"]},
+        )
+        return ScoredRecommendation(recommendation=None, signal=signal, metadata={})
+
+    monkeypatch.setattr(scoring_module, "_build_scored_recommendation", fake_build_scored_recommendation)
+
+    summary, captures = _score_watchlist_markets_batch(db_session, markets=[market])
+
+    assert captures
+    assert summary.scored_market_count == 1
+    assert summary.coverage_prediction_count == 1
+    assert summary.outcome_reason_counts["suppressed_min_edge"] == 1
+
+
+def test_score_watchlist_markets_batch_counts_low_confidence_suppression(db_session, monkeypatch):
+    market = _setup_scorable_winner_market(db_session, key="suppressed-confidence")
+    market.event.starts_at = datetime.now(timezone.utc)
+    market.raw_data = {**(market.raw_data or {}), "copilot_market_family": "winner"}
+    db_session.commit()
+
+    def fake_build_scored_recommendation(db, event, market, snapshot, resolver=None):
+        signal = SignalSnapshot(
+            event_id=event.id,
+            market_id=market.id,
+            model_name="test",
+            confidence=0.2,
+            fair_yes_price=0.5,
+            fair_no_price=0.5,
+            edge=0.1,
+            selection_score=0.01,
+            reasons=[],
+            features={},
+            scoring_diagnostics={"suppression_reasons": ["min_confidence"]},
+        )
+        return ScoredRecommendation(recommendation=None, signal=signal, metadata={})
+
+    monkeypatch.setattr(scoring_module, "_build_scored_recommendation", fake_build_scored_recommendation)
+
+    summary, captures = _score_watchlist_markets_batch(db_session, markets=[market])
+
+    assert captures
+    assert summary.scored_market_count == 1
+    assert summary.coverage_prediction_count == 1
+    assert summary.outcome_reason_counts["suppressed_min_confidence"] == 1
+
+
+def test_score_watchlist_markets_batch_counts_scoring_returned_none(db_session, monkeypatch):
+    market = _setup_scorable_winner_market(db_session, key="returned-none")
+    market.raw_data = {**(market.raw_data or {}), "copilot_market_family": "winner"}
+    db_session.commit()
+
+    monkeypatch.setattr(scoring_module, "_build_scored_recommendation", lambda *args, **kwargs: None)
+
+    summary, captures = _score_watchlist_markets_batch(db_session, markets=[market])
+
+    assert captures == []
+    assert summary.scored_market_count == 0
+    assert summary.outcome_reason_counts["scoring_returned_none"] == 1

@@ -299,7 +299,14 @@ export interface TradeDeskResponse {
   events: TradeDeskEvent[];
   research_sports: SportAvailabilityRead[];
   generated_at: string | null;
-  freshness_status: "fresh" | "stale";
+  freshness_status: "fresh" | "stale" | "degraded" | "empty";
+  event_count: number;
+  candidate_market_count: number;
+  scored_market_count: number;
+  recommendation_count: number;
+  coverage_prediction_count: number;
+  blocking_reason: string | null;
+  generated_from_run_id: number | null;
 }
 
 export interface MarketHistoryPointRead {
@@ -328,6 +335,12 @@ export interface RunSummaryCounts {
   supported_mlb_props_seen: number;
   mapped_markets: number;
   mapped_prop_markets: number;
+  current_slate_event_count: number;
+  current_slate_candidate_market_count: number;
+  current_slate_scored_market_count: number;
+  current_slate_coverage_prediction_count: number;
+  current_slate_blocking_reason: string | null;
+  scorer_outcome_counts: Record<string, number>;
   recommendations_emitted: number;
   predictions_captured: number;
   parlay_recommendations_emitted: number;
@@ -390,6 +403,12 @@ export interface WatchlistDiagnosticsRead {
   latest_refresh_succeeded: boolean | null;
   latest_supported_markets_kept: number;
   latest_recommendations_emitted: number;
+  latest_current_slate_event_count: number;
+  latest_current_slate_candidate_market_count: number;
+  latest_current_slate_scored_market_count: number;
+  latest_current_slate_coverage_prediction_count: number;
+  latest_current_slate_blocking_reason: string | null;
+  latest_scorer_outcome_counts: Record<string, number>;
   latest_watchlist_counts_by_sport: Record<string, number>;
   current_recommendation_count: number;
   watchlist_min_edge: number;

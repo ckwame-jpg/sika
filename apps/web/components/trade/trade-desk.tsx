@@ -44,18 +44,42 @@ function sectionOrder(marketKind: string) {
  * point of the versioned, append-only snapshot store from Slice 2) and this
  * pill tells the user what they're looking at.
  */
-function StaleSlatePill({ generatedAt }: { generatedAt: string | null }) {
+function SlateStatusPill({ data }: { data: TradeDeskResponse }) {
+  if (data.freshness_status === "fresh") return null;
+  const generatedAt = data.generated_at ?? null;
   const relative = generatedAt ? fmtRelative(generatedAt) : null;
+  const message =
+    data.freshness_status === "stale"
+      ? `Showing last known slate${relative ? ` (snapshot ${relative})` : ""}. Refresh is behind.`
+      : data.blocking_reason ||
+        (data.freshness_status === "empty"
+          ? "Current slate scored successfully, but no markets cleared recommendation thresholds."
+          : "Current slate refresh did not produce a usable trade desk.");
   return (
     <div
       className="flex items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning"
       role="status"
-      data-testid="trade-desk-stale-pill"
+      data-testid="trade-desk-status-pill"
     >
-      <span className="font-medium">
-        Showing last known slate
-        {relative ? ` (snapshot ${relative})` : ""}. Refresh is behind.
-      </span>
+      <span className="font-medium">{message}</span>
+    </div>
+  );
+}
+
+function SlateHealthDetails({ data }: { data: TradeDeskResponse }) {
+  return (
+    <div className="mt-4 grid gap-2 text-left sm:grid-cols-2 lg:grid-cols-4">
+      {[
+        ["Current events", data.event_count],
+        ["Candidate markets", data.candidate_market_count],
+        ["Scored markets", data.scored_market_count],
+        ["Recommendations", data.recommendation_count],
+      ].map(([label, value]) => (
+        <div key={label} className="rounded-xl border border-border bg-background/40 px-3 py-2">
+          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+          <p className="mt-1 font-mono text-base text-foreground">{value}</p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -271,9 +295,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
 
   return (
     <div className="space-y-4">
-      {data.freshness_status === "stale" && (
-        <StaleSlatePill generatedAt={data.generated_at ?? null} />
-      )}
+      <SlateStatusPill data={data} />
       <MarketSummaryStrip kpis={kpis} />
 
       {showFilterTabs && (
@@ -375,11 +397,18 @@ export function TradeDesk({ sport }: { sport?: string }) {
           {data.events.length === 0 && (
             <div className="rounded-2xl border border-border bg-surface px-4 py-8 text-center">
               <p className="text-sm font-medium text-foreground">
-                No live trade-ready markets{sport ? ` for ${sportLabel(sport)}` : ""}.
+                {data.freshness_status === "empty"
+                  ? `No markets cleared thresholds${sport ? ` for ${sportLabel(sport)}` : ""}.`
+                  : data.freshness_status === "degraded"
+                    ? `Current slate is degraded${sport ? ` for ${sportLabel(sport)}` : ""}.`
+                    : `No live trade-ready markets${sport ? ` for ${sportLabel(sport)}` : ""}.`}
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                NBA and MLB markets appear here when the current slate is populated.
+                {data.blocking_reason || "NBA and MLB markets appear here when the current slate is populated."}
               </p>
+              {(data.freshness_status === "degraded" || data.freshness_status === "empty") && (
+                <SlateHealthDetails data={data} />
+              )}
             </div>
           )}
 

@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
-from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Recommendation, Run
+from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Prediction, Recommendation, Run
 from app.schemas import (
     SportAvailabilityRead,
     TradeDeskEventRead,
@@ -19,6 +19,8 @@ from app.schemas import (
 from app.services.watchlist_coverage import (
     CURRENT_WATCHLIST_SPORTS,
     TERMINAL_EVENT_STATUSES,
+    current_watchlist_event_ids,
+    current_watchlist_markets,
     is_current_watchlist_market,
     is_current_watchlist_status,
 )
@@ -56,6 +58,9 @@ KALSHI_PROP_CATEGORY_SLUGS = {
     },
 }
 SNAPSHOT_SCOPE_ALL = "all"
+PRODUCT_SLATE_EMPTY_REASON = "Current slate scored successfully, but no markets cleared recommendation thresholds."
+PRODUCT_SLATE_NO_CANDIDATES_REASON = "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+PRODUCT_SLATE_UNSCORED_REASON = "Current slate markets exist, but none were scored successfully."
 
 
 def visible_sports() -> list[str]:
@@ -268,6 +273,86 @@ def _latest_trade_recommendations(db: Session, *, sport: str | None = None) -> l
     return list(db.scalars(stmt).all())
 
 
+def _recommendation_count_from_events(events: list[TradeDeskEventRead]) -> int:
+    count = 0
+    for event in events:
+        count += len(event.game_lines)
+        for player in event.player_props:
+            for stat_group in player.stat_groups:
+                count += len(stat_group.thresholds)
+    return count
+
+
+def _prediction_counts_for_run(db: Session, *, run_id: int | None, sport: str | None = None) -> tuple[int, int]:
+    if run_id is None:
+        return 0, 0
+    stmt = select(Prediction.capture_scope, func.count(Prediction.id)).where(Prediction.run_id == run_id)
+    if sport:
+        stmt = stmt.where(Prediction.sport_key == sport)
+    rows = db.execute(stmt.group_by(Prediction.capture_scope)).all()
+    by_scope = {str(scope or ""): int(count or 0) for scope, count in rows}
+    scored = sum(by_scope.values())
+    coverage = int(by_scope.get("coverage") or 0)
+    return scored, coverage
+
+
+def _classify_product_slate(
+    *,
+    event_count: int,
+    candidate_market_count: int,
+    scored_market_count: int,
+    recommendation_count: int,
+    coverage_prediction_count: int,
+) -> tuple[str, str | None]:
+    if event_count <= 0:
+        return "fresh", None
+    if candidate_market_count <= 0:
+        return "degraded", PRODUCT_SLATE_NO_CANDIDATES_REASON
+    if scored_market_count <= 0:
+        return "degraded", PRODUCT_SLATE_UNSCORED_REASON
+    if recommendation_count <= 0:
+        if coverage_prediction_count > 0:
+            return "empty", PRODUCT_SLATE_EMPTY_REASON
+        return "degraded", PRODUCT_SLATE_UNSCORED_REASON
+    return "fresh", None
+
+
+def _apply_product_slate_health(
+    db: Session,
+    response: TradeDeskResponse,
+    *,
+    scope: str,
+    source_run_id: int | None,
+) -> None:
+    sport = None if scope == SNAPSHOT_SCOPE_ALL else scope
+    event_count = len(current_watchlist_event_ids(db, sport=sport))
+    candidate_market_count = len(current_watchlist_markets(db, sport=sport))
+    scored_market_count, coverage_prediction_count = _prediction_counts_for_run(
+        db,
+        run_id=source_run_id,
+        sport=sport,
+    )
+    recommendation_count = _recommendation_count_from_events(response.events)
+    if scored_market_count <= 0 and source_run_id is None and recommendation_count > 0:
+        scored_market_count = recommendation_count
+
+    status, blocking_reason = _classify_product_slate(
+        event_count=event_count,
+        candidate_market_count=candidate_market_count,
+        scored_market_count=scored_market_count,
+        recommendation_count=recommendation_count,
+        coverage_prediction_count=coverage_prediction_count,
+    )
+    response.event_count = event_count
+    response.candidate_market_count = candidate_market_count
+    response.scored_market_count = scored_market_count
+    response.recommendation_count = recommendation_count
+    response.coverage_prediction_count = coverage_prediction_count
+    response.freshness_status = status  # type: ignore[assignment]
+    response.blocking_reason = blocking_reason
+    response.generated_from_run_id = source_run_id
+
+
 def build_trade_desk_response(db: Session, *, sport: str | None = None) -> TradeDeskResponse:
     normalized_sport = sport.upper() if sport else None
     availability_rows = sorted(sport_availability_rows(db), key=lambda item: sport_order(item.sport_key))
@@ -451,12 +536,19 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
         for row in availability_rows
         if row.availability_mode == "research_only" and (normalized_sport is None or row.sport_key == normalized_sport)
     ]
-    return TradeDeskResponse(
+    response = TradeDeskResponse(
         events=events,
         research_sports=research_sports,
         generated_at=None,
         freshness_status="fresh",
     )
+    _apply_product_slate_health(
+        db,
+        response,
+        scope=SNAPSHOT_SCOPE_ALL if normalized_sport is None else normalized_sport,
+        source_run_id=None,
+    )
+    return response
 
 
 def persist_current_slate_snapshots(
@@ -481,7 +573,12 @@ def persist_current_slate_snapshots(
         # Stamp freshness metadata directly into the persisted payload so that
         # the stored snapshot is self-describing regardless of DB-row fields.
         response.generated_at = timestamp
-        response.freshness_status = "fresh"
+        _apply_product_slate_health(
+            db,
+            response,
+            scope=scope,
+            source_run_id=source_run_id,
+        )
         snapshot = CurrentSlateSnapshot(
             scope=scope,
             source_run_id=source_run_id,
@@ -492,6 +589,73 @@ def persist_current_slate_snapshots(
         persisted[scope] = timestamp
     db.flush()
     return persisted
+
+
+def _snapshot_response(
+    db: Session,
+    snapshot: CurrentSlateSnapshot,
+    *,
+    scope: str,
+) -> TradeDeskResponse:
+    response = TradeDeskResponse.model_validate(snapshot.payload)
+    if response.generated_at is None and snapshot.generated_at is not None:
+        row_generated_at = snapshot.generated_at
+        if row_generated_at.tzinfo is None:
+            row_generated_at = row_generated_at.replace(tzinfo=timezone.utc)
+        response.generated_at = row_generated_at
+    if response.generated_from_run_id is None:
+        response.generated_from_run_id = snapshot.source_run_id
+    if (
+        response.event_count == 0
+        and response.candidate_market_count == 0
+        and response.scored_market_count == 0
+        and response.recommendation_count == 0
+        and response.coverage_prediction_count == 0
+        and response.blocking_reason is None
+    ):
+        _apply_product_slate_health(
+            db,
+            response,
+            scope=scope,
+            source_run_id=snapshot.source_run_id,
+        )
+    return response
+
+
+def _has_stale_snapshot_events(response: TradeDeskResponse) -> bool:
+    for event in response.events:
+        if event.sport_key not in CURRENT_WATCHLIST_SPORTS:
+            continue
+        if not is_current_watchlist_status(event.event_status, event.starts_at):
+            return True
+    return False
+
+
+def _latest_prior_useful_snapshot(
+    db: Session,
+    *,
+    scope: str,
+    latest: CurrentSlateSnapshot,
+) -> CurrentSlateSnapshot | None:
+    rows = db.scalars(
+        select(CurrentSlateSnapshot)
+        .where(CurrentSlateSnapshot.scope == scope)
+        .where(
+            (CurrentSlateSnapshot.generated_at < latest.generated_at)
+            | (
+                (CurrentSlateSnapshot.generated_at == latest.generated_at)
+                & (CurrentSlateSnapshot.id < latest.id)
+            )
+        )
+        .order_by(CurrentSlateSnapshot.generated_at.desc(), CurrentSlateSnapshot.id.desc())
+    ).all()
+    for row in rows:
+        if not row.payload:
+            continue
+        candidate = TradeDeskResponse.model_validate(row.payload)
+        if candidate.events:
+            return row
+    return None
 
 
 def load_trade_desk_snapshot(db: Session, *, sport: str | None = None) -> TradeDeskResponse | None:
@@ -520,22 +684,15 @@ def load_trade_desk_snapshot(db: Session, *, sport: str | None = None) -> TradeD
     )
     if snapshot is None or not snapshot.payload:
         return None
-    response = TradeDeskResponse.model_validate(snapshot.payload)
-    # Back-fill generated_at for rows persisted before this field existed on
-    # TradeDeskResponse. The DB row always has a trustworthy timestamp. Some
-    # backends (SQLite) return naive datetimes on round-trip, so normalize to
-    # UTC before assigning to the response.
-    if response.generated_at is None and snapshot.generated_at is not None:
-        row_generated_at = snapshot.generated_at
-        if row_generated_at.tzinfo is None:
-            row_generated_at = row_generated_at.replace(tzinfo=timezone.utc)
-        response.generated_at = row_generated_at
-    is_stale = False
-    for event in response.events:
-        if event.sport_key not in CURRENT_WATCHLIST_SPORTS:
-            continue
-        if not is_current_watchlist_status(event.event_status, event.starts_at):
-            is_stale = True
-            break
-    response.freshness_status = "stale" if is_stale else "fresh"
+    response = _snapshot_response(db, snapshot, scope=scope)
+    if response.freshness_status == "degraded":
+        prior = _latest_prior_useful_snapshot(db, scope=scope, latest=snapshot)
+        if prior is not None:
+            prior_response = _snapshot_response(db, prior, scope=scope)
+            prior_response.freshness_status = "stale"
+            latest_reason = response.blocking_reason or "Latest current-slate refresh is degraded."
+            prior_response.blocking_reason = f"{latest_reason} Showing previous non-empty slate."
+            return prior_response
+    if _has_stale_snapshot_events(response):
+        response.freshness_status = "stale"
     return response

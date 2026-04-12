@@ -236,20 +236,8 @@ export const keys = {
     `/trade-desk?sport=${sport ?? ""}`,
   events: (sport?: string, day?: string) =>
     `/events?sport=${sport ?? ""}&day=${day ?? ""}`,
-  watchlist: (sport?: string, limit = 50) =>
-    `/watchlist?sport=${sport ?? ""}&limit=${limit}`,
-  watchlistCoverage: (sport?: string, limit = 250) =>
-    `/watchlist/coverage?sport=${sport ?? ""}&limit=${limit}`,
   watchlistDiagnostics: "/ops/watchlist/diagnostics",
-  parlayWatchlist: (sportScope = "all", legCount?: number, limit = 50) =>
-    `/parlays/watchlist?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,
   positions: "/positions",
-  markets: (args?: Record<string, string | number | undefined>) =>
-    `/markets?${new URLSearchParams(
-      Object.entries(args ?? {}).flatMap(([key, value]) =>
-        value == null || value === "" ? [] : [[key, String(value)]],
-      ),
-    ).toString()}`,
   market: (ticker: string) => `/markets/${ticker}`,
   marketHistory: (ticker: string, range: string) =>
     `/markets/${ticker}/history?range=${range}`,

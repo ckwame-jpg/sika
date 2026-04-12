@@ -147,6 +147,13 @@ export const tradeDeskFixture: TradeDeskResponse = {
   ],
   generated_at: "2026-04-07T18:00:00Z",
   freshness_status: "fresh",
+  event_count: 1,
+  candidate_market_count: 7,
+  scored_market_count: 7,
+  recommendation_count: 7,
+  coverage_prediction_count: 0,
+  blocking_reason: null,
+  generated_from_run_id: 99,
 };
 
 export const tradeDeskFixtureWithNonMonotonicGroup: TradeDeskResponse = {

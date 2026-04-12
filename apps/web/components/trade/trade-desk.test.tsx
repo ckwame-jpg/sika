@@ -71,4 +71,46 @@ describe("TradeDesk", () => {
     expectAnyTicketTitleToContain("Davion Mitchell 10+ points");
     expect(within(propCard).getAllByTestId("trade-threshold-chip").filter((chip) => chip.getAttribute("aria-pressed") === "true")).toHaveLength(1);
   });
+
+  it("renders degraded slate health instead of a generic empty state", async () => {
+    mockFetchTradeDesk.mockResolvedValue({
+      ...tradeDeskFixture,
+      events: [],
+      freshness_status: "degraded",
+      event_count: 2,
+      candidate_market_count: 0,
+      scored_market_count: 0,
+      recommendation_count: 0,
+      coverage_prediction_count: 0,
+      blocking_reason: "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them.",
+    });
+
+    renderWithProviders(<TradeDesk sport="NBA" />);
+
+    await screen.findByText("Current slate is degraded for NBA.");
+    expect(screen.getByTestId("trade-desk-status-pill")).toHaveTextContent("Current NBA/MLB events exist");
+    expect(screen.getByText("Current events")).toBeInTheDocument();
+    expect(screen.getByText("Candidate markets")).toBeInTheDocument();
+  });
+
+  it("renders empty scored slate state when no markets clear thresholds", async () => {
+    mockFetchTradeDesk.mockResolvedValue({
+      ...tradeDeskFixture,
+      events: [],
+      freshness_status: "empty",
+      event_count: 2,
+      candidate_market_count: 18,
+      scored_market_count: 18,
+      recommendation_count: 0,
+      coverage_prediction_count: 18,
+      blocking_reason: "Current slate scored successfully, but no markets cleared recommendation thresholds.",
+    });
+
+    renderWithProviders(<TradeDesk />);
+
+    await screen.findByText("No markets cleared thresholds.");
+    expect(screen.getByTestId("trade-desk-status-pill")).toHaveTextContent("no markets cleared");
+    expect(screen.getByText("Scored markets")).toBeInTheDocument();
+    expect(screen.getAllByText("18").length).toBeGreaterThan(0);
+  });
 });

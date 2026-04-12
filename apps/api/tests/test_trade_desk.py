@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Participant, Recommendation
+from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Participant, Prediction, Recommendation, Run
 from app.schemas import TradeDeskThresholdRead
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.trade_desk import (
@@ -212,6 +212,157 @@ def test_load_trade_desk_snapshot_marks_fully_fresh_payload_as_fresh(db_session)
     assert response.freshness_status == "fresh"
     assert response.generated_at == persisted_at
     assert len(response.events) == 1
+
+
+def test_persist_current_slate_snapshots_marks_current_events_without_candidates_degraded(db_session):
+    event = Event(
+        external_id="degraded-no-candidates",
+        sport_key="NBA",
+        name="Brooklyn Nets at Boston Celtics",
+        status="scheduled",
+        starts_at=datetime.now(timezone.utc),
+    )
+    db_session.add(event)
+    db_session.commit()
+
+    persist_current_slate_snapshots(db_session, source_run_id=None, generated_at=datetime.now(timezone.utc))
+    db_session.commit()
+
+    response = load_trade_desk_snapshot(db_session, sport="NBA")
+
+    assert response is not None
+    assert response.freshness_status == "degraded"
+    assert response.event_count == 1
+    assert response.candidate_market_count == 0
+    assert response.blocking_reason == "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+
+
+def test_persist_current_slate_snapshots_marks_scored_zero_recommendation_slate_empty(db_session):
+    run = Run(kind="refresh", status="running")
+    event = Event(
+        external_id="empty-scored-slate",
+        sport_key="NBA",
+        name="Brooklyn Nets at Boston Celtics",
+        status="scheduled",
+        starts_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([run, event])
+    db_session.flush()
+    market = Market(
+        ticker="KXNBAGAME-EMPTY-BOS",
+        sport_key="NBA",
+        event_id=event.id,
+        title="Brooklyn at Boston Winner?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "winner",
+            "copilot_market_kind": "game_winner",
+            "event_ticker": "KXNBAGAME-EMPTY",
+        },
+    )
+    db_session.add(market)
+    db_session.flush()
+    db_session.add(
+        Prediction(
+            run_id=run.id,
+            event_id=event.id,
+            market_id=market.id,
+            ticker=market.ticker,
+            sport_key="NBA",
+            event_name=event.name,
+            market_title=market.title,
+            market_family="winner",
+            market_kind="game_winner",
+            capture_scope="coverage",
+            side="yes",
+            action="buy",
+            suggested_price=0.5,
+            edge=0.0,
+            confidence=0.5,
+            rationale="coverage only",
+        )
+    )
+    db_session.commit()
+
+    persist_current_slate_snapshots(db_session, source_run_id=run.id, generated_at=datetime.now(timezone.utc))
+    db_session.commit()
+
+    response = load_trade_desk_snapshot(db_session, sport="NBA")
+
+    assert response is not None
+    assert response.freshness_status == "empty"
+    assert response.event_count == 1
+    assert response.candidate_market_count == 1
+    assert response.scored_market_count == 1
+    assert response.coverage_prediction_count == 1
+    assert response.recommendation_count == 0
+
+
+def test_load_trade_desk_snapshot_serves_previous_non_empty_slate_when_latest_is_degraded(db_session):
+    older_ts = datetime.now(timezone.utc)
+    newer_ts = older_ts + timedelta(minutes=5)
+    db_session.add(
+        CurrentSlateSnapshot(
+            scope="NBA",
+            generated_at=older_ts,
+            payload={
+                "events": [
+                    {
+                        "event_id": 501,
+                        "event_name": "Brooklyn Nets at Boston Celtics",
+                        "event_status": "scheduled",
+                        "starts_at": older_ts.isoformat().replace("+00:00", "Z"),
+                        "sport_key": "NBA",
+                        "game_lines": [
+                            {
+                                "ticker": "KXNBAGAME-FALLBACK-BOS",
+                                "market_title": "Brooklyn at Boston Winner?",
+                                "display_label": "Boston Celtics to win",
+                                "sport_key": "NBA",
+                                "market_kind": "game_winner",
+                                "selected_side": "yes",
+                                "selected_side_probability": 0.61,
+                                "entry_price": 0.54,
+                                "edge": 0.07,
+                                "confidence": 0.7,
+                            }
+                        ],
+                        "player_props": [],
+                    }
+                ],
+                "research_sports": [],
+                "generated_at": older_ts.isoformat().replace("+00:00", "Z"),
+                "freshness_status": "fresh",
+            },
+        )
+    )
+    db_session.add(
+        CurrentSlateSnapshot(
+            scope="NBA",
+            generated_at=newer_ts,
+            payload={
+                "events": [],
+                "research_sports": [],
+                "generated_at": newer_ts.isoformat().replace("+00:00", "Z"),
+                "freshness_status": "degraded",
+                "event_count": 1,
+                "candidate_market_count": 0,
+                "scored_market_count": 0,
+                "recommendation_count": 0,
+                "coverage_prediction_count": 0,
+                "blocking_reason": "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them.",
+            },
+        )
+    )
+    db_session.commit()
+
+    response = load_trade_desk_snapshot(db_session, sport="NBA")
+
+    assert response is not None
+    assert response.generated_at == older_ts
+    assert response.freshness_status == "stale"
+    assert len(response.events) == 1
+    assert "Showing previous non-empty slate" in (response.blocking_reason or "")
 
 
 def test_load_trade_desk_snapshot_returns_latest_when_multiple_rows_exist(db_session):

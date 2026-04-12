@@ -592,6 +592,62 @@ def refresh_kalshi_markets(
     }
 
 
+def refresh_current_slate_kalshi_markets(
+    db: Session,
+    client: KalshiPublicClient | None = None,
+) -> dict[str, object]:
+    """Hydrate known current-slate markets directly before falling back to a broad scan."""
+    client = client or KalshiPublicClient()
+    target_markets = current_watchlist_markets(db)
+    payload_records: list[dict[str, Any]] = []
+    for market in target_markets:
+        try:
+            payload = client.get_market(market.ticker)
+        except Exception:
+            continue
+        if not payload:
+            continue
+        source_type = str((market.raw_data or {}).get("copilot_source_type") or "standalone")
+        payload_records.append(
+            {
+                "payload": payload,
+                "source_type": "combo_derived" if source_type == "combo_derived" else "standalone",
+                "source_payload": None,
+                "classification_override": None,
+            }
+        )
+
+    if not payload_records:
+        fallback = refresh_kalshi_markets(
+            db,
+            client=client,
+            include_standalone=True,
+            refresh_combo_prop_tickers=False,
+            discover_combo_props=False,
+        )
+        fallback["current_slate_targeted_market_count"] = len(target_markets)
+        fallback["current_slate_targeted_markets_refreshed"] = 0
+        fallback["broad_market_fallback_used"] = True
+        return fallback
+
+    persisted = _persist_market_payload_records(db, payload_records)
+    return {
+        "processed": int(persisted.get("processed") or 0),
+        "total_kalshi_markets_seen": len(target_markets),
+        "supported_nba_props_seen": int(persisted.get("supported_nba_props_seen") or 0),
+        "supported_mlb_props_seen": int(persisted.get("supported_mlb_props_seen") or 0),
+        "unsupported_prop_category_counts": dict(persisted.get("unsupported_prop_category_counts") or {}),
+        "combo_prop_legs_discovered": int(persisted.get("combo_prop_legs_discovered") or 0),
+        "combo_prop_legs_refreshed": int(persisted.get("combo_prop_legs_refreshed") or 0),
+        "market_snapshots_written": int(persisted.get("market_snapshots_written") or 0),
+        "touched_market_ids": persisted.get("touched_market_ids") or set(),
+        "open_market_tickers": persisted.get("open_market_tickers") or set(),
+        "current_slate_targeted_market_count": len(target_markets),
+        "current_slate_targeted_markets_refreshed": len(payload_records),
+        "broad_market_fallback_used": False,
+    }
+
+
 
 def _merge_settlement_summaries(*summaries: dict[str, int]) -> dict[str, int]:
     merged = {
@@ -674,6 +730,12 @@ def _build_watchlist_run_details(
         "combo_prop_legs_refreshed": kalshi_summary.get("combo_prop_legs_refreshed") or 0,
         "mapped_markets": mapped_count,
         "mapped_prop_markets": mapped_prop_markets,
+        "current_slate_event_count": int((extra_details or {}).get("current_slate_event_count") or 0),
+        "current_slate_candidate_market_count": int((extra_details or {}).get("current_slate_candidate_market_count") or 0),
+        "current_slate_scored_market_count": watchlist_summary.scored_market_count,
+        "current_slate_coverage_prediction_count": watchlist_summary.coverage_prediction_count,
+        "current_slate_blocking_reason": (extra_details or {}).get("current_slate_blocking_reason"),
+        "scorer_outcome_counts": dict(watchlist_summary.outcome_reason_counts or {}),
         "recommendations_emitted": watchlist_summary.recommendation_count,
         "predictions_captured": watchlist_summary.prediction_count,
         "parlay_recommendations_emitted": watchlist_summary.parlay_recommendation_count,
@@ -722,11 +784,14 @@ def _watchlist_summary_to_payload(summary: WatchlistGenerationSummary) -> dict[s
         "prediction_count": summary.prediction_count,
         "parlay_recommendation_count": summary.parlay_recommendation_count,
         "parlay_prediction_count": summary.parlay_prediction_count,
+        "scored_market_count": summary.scored_market_count,
+        "coverage_prediction_count": summary.coverage_prediction_count,
         "heuristic_longshots_suppressed": summary.heuristic_longshots_suppressed,
         "inverse_winner_duplicates_collapsed": summary.inverse_winner_duplicates_collapsed,
         "combo_prop_candidates_emitted": summary.combo_prop_candidates_emitted,
         "combo_prop_candidates_suppressed": summary.combo_prop_candidates_suppressed,
         "critical_context_suppressed": summary.critical_context_suppressed,
+        "outcome_reason_counts": dict(summary.outcome_reason_counts or {}),
         "quality_tier_counts": dict(summary.quality_tier_counts or {}),
     }
 
@@ -738,11 +803,14 @@ def _watchlist_summary_from_payload(payload: dict[str, object] | None) -> Watchl
         prediction_count=int(payload.get("prediction_count") or 0),
         parlay_recommendation_count=int(payload.get("parlay_recommendation_count") or 0),
         parlay_prediction_count=int(payload.get("parlay_prediction_count") or 0),
+        scored_market_count=int(payload.get("scored_market_count") or 0),
+        coverage_prediction_count=int(payload.get("coverage_prediction_count") or 0),
         heuristic_longshots_suppressed=int(payload.get("heuristic_longshots_suppressed") or 0),
         inverse_winner_duplicates_collapsed=int(payload.get("inverse_winner_duplicates_collapsed") or 0),
         combo_prop_candidates_emitted=int(payload.get("combo_prop_candidates_emitted") or 0),
         combo_prop_candidates_suppressed=int(payload.get("combo_prop_candidates_suppressed") or 0),
         critical_context_suppressed=int(payload.get("critical_context_suppressed") or 0),
+        outcome_reason_counts={str(key): int(value or 0) for key, value in dict(payload.get("outcome_reason_counts") or {}).items()},
         quality_tier_counts={str(key): int(value or 0) for key, value in dict(payload.get("quality_tier_counts") or {}).items()},
     )
 
@@ -756,14 +824,36 @@ def _merge_watchlist_summaries(
         prediction_count=left.prediction_count + right.prediction_count,
         parlay_recommendation_count=left.parlay_recommendation_count + right.parlay_recommendation_count,
         parlay_prediction_count=left.parlay_prediction_count + right.parlay_prediction_count,
+        scored_market_count=left.scored_market_count + right.scored_market_count,
+        coverage_prediction_count=left.coverage_prediction_count + right.coverage_prediction_count,
         heuristic_longshots_suppressed=left.heuristic_longshots_suppressed + right.heuristic_longshots_suppressed,
         inverse_winner_duplicates_collapsed=left.inverse_winner_duplicates_collapsed + right.inverse_winner_duplicates_collapsed,
         combo_prop_candidates_emitted=left.combo_prop_candidates_emitted + right.combo_prop_candidates_emitted,
         combo_prop_candidates_suppressed=left.combo_prop_candidates_suppressed + right.combo_prop_candidates_suppressed,
         critical_context_suppressed=left.critical_context_suppressed + right.critical_context_suppressed,
+        outcome_reason_counts=_merge_count_maps(left.outcome_reason_counts, right.outcome_reason_counts),
         quality_tier_counts=_merge_count_maps(left.quality_tier_counts, right.quality_tier_counts),
     )
     return merged
+
+
+def _current_slate_blocking_reason(
+    *,
+    event_count: int,
+    candidate_market_count: int,
+    summary: WatchlistGenerationSummary,
+) -> str | None:
+    if event_count <= 0:
+        return None
+    if candidate_market_count <= 0:
+        return "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+    if summary.scored_market_count <= 0:
+        return "Current slate markets exist, but none were scored successfully."
+    if summary.recommendation_count <= 0 and summary.coverage_prediction_count > 0:
+        return "Current slate scored successfully, but no markets cleared recommendation thresholds."
+    if summary.recommendation_count <= 0:
+        return "Current slate markets exist, but none were scored successfully."
+    return None
 
 
 def _ensure_prop_refresh_run(
@@ -1179,12 +1269,9 @@ def advance_current_slate_refresh_job(
             phase = "kalshi_ingest"
             cursor_payload = {}
         elif phase == "kalshi_ingest":
-            refreshed = refresh_kalshi_markets(
+            refreshed = refresh_current_slate_kalshi_markets(
                 db,
                 client=kalshi_client,
-                include_standalone=True,
-                refresh_combo_prop_tickers=False,
-                discover_combo_props=False,
             )
             touched_market_ids = [int(value) for value in sorted(refreshed.get("touched_market_ids") or set())]
             kalshi_summary = {
@@ -1196,6 +1283,9 @@ def advance_current_slate_refresh_job(
                 "combo_prop_legs_discovered": int(refreshed.get("combo_prop_legs_discovered") or 0),
                 "combo_prop_legs_refreshed": int(refreshed.get("combo_prop_legs_refreshed") or 0),
                 "market_snapshots_written": int(refreshed.get("market_snapshots_written") or 0),
+                "current_slate_targeted_market_count": int(refreshed.get("current_slate_targeted_market_count") or 0),
+                "current_slate_targeted_markets_refreshed": int(refreshed.get("current_slate_targeted_markets_refreshed") or 0),
+                "broad_market_fallback_used": bool(refreshed.get("broad_market_fallback_used") or False),
             }
             stage_details["kalshi_ingest_seconds"] = round(stage_details.get("kalshi_ingest_seconds", 0.0) + (perf_counter() - stage_started), 3)
             batch_size = int(kalshi_summary.get("processed") or 0)
@@ -1268,6 +1358,18 @@ def advance_current_slate_refresh_job(
             )
             batch_summary.heuristic_longshots_suppressed += staged_watchlist_summary.heuristic_longshots_suppressed
             batch_summary.critical_context_suppressed += staged_watchlist_summary.critical_context_suppressed
+            batch_summary.scored_market_count = max(
+                batch_summary.scored_market_count,
+                staged_watchlist_summary.scored_market_count,
+            )
+            batch_summary.coverage_prediction_count = max(
+                batch_summary.coverage_prediction_count,
+                staged_watchlist_summary.coverage_prediction_count,
+            )
+            batch_summary.outcome_reason_counts = _merge_count_maps(
+                batch_summary.outcome_reason_counts,
+                staged_watchlist_summary.outcome_reason_counts,
+            )
             staged_watchlist_summary = batch_summary
             stage_details["watchlist_regeneration_seconds"] = round(stage_details.get("watchlist_regeneration_seconds", 0.0) + (perf_counter() - stage_started), 3)
             batch_size = max(staged_watchlist_summary.prediction_count, 1)
@@ -1298,6 +1400,11 @@ def advance_current_slate_refresh_job(
             "candidate_market_ids": candidate_market_ids,
             "candidate_market_count": candidate_market_count,
             "affected_event_count": affected_event_count,
+            "current_slate_blocking_reason": _current_slate_blocking_reason(
+                event_count=affected_event_count,
+                candidate_market_count=candidate_market_count,
+                summary=staged_watchlist_summary,
+            ),
             "processed_so_far": _current_slate_processed_so_far(
                 {
                     "sports_summary": sports_summary,
@@ -1321,6 +1428,7 @@ def advance_current_slate_refresh_job(
         "cursor": cursor_payload or {},
         "candidate_market_count": candidate_market_count,
         "affected_event_count": affected_event_count,
+        "current_slate_blocking_reason": details.get("current_slate_blocking_reason"),
         "processed_so_far": run.records_processed,
         "batch_size": batch_size,
         "last_batch_seconds": details["last_batch_seconds"],
@@ -1349,6 +1457,9 @@ def advance_current_slate_refresh_job(
             "refresh_scope": "current_slate",
             "candidate_market_count": candidate_market_count,
             "affected_event_count": affected_event_count,
+            "current_slate_event_count": affected_event_count,
+            "current_slate_candidate_market_count": candidate_market_count,
+            "current_slate_blocking_reason": details.get("current_slate_blocking_reason"),
             "snapshot_generated_at": snapshot_generated_at,
         },
     )

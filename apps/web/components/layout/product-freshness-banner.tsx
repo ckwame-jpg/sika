@@ -24,8 +24,12 @@ function pickWorstScope(
 ): ProductScopeFreshnessRead | null {
   const missing = scopes.find((s) => s.status === "missing");
   if (missing) return missing;
+  const degraded = scopes.find((s) => s.status === "degraded");
+  if (degraded) return degraded;
   const stale = scopes.find((s) => s.status === "stale");
   if (stale) return stale;
+  const empty = scopes.find((s) => s.status === "empty");
+  if (empty) return empty;
   return null;
 }
 
@@ -46,7 +50,14 @@ function getMessage(data: ProductFreshnessResponse): string | null {
     return "Product data is awaiting its first refresh.";
   }
 
-  // stale
+  if (data.overall_status === "degraded") {
+    return worst?.blocking_reason || "Product data is degraded.";
+  }
+
+  if (data.overall_status === "empty") {
+    return worst?.blocking_reason || "Current slate has no trade-ready markets.";
+  }
+
   if (worst && worst.generated_at) {
     const relative = fmtRelative(worst.generated_at);
     if (worst.scope !== "all") {
@@ -68,7 +79,7 @@ export function ProductFreshnessBanner() {
   const message = getMessage(data);
   if (!message) return null;
 
-  const tone = data.overall_status === "missing" ? "warning" : "muted";
+  const tone = data.overall_status === "missing" || data.overall_status === "degraded" ? "warning" : "muted";
 
   return (
     <div

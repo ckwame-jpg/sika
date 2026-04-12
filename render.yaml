@@ -26,8 +26,6 @@ services:
         value: production
       - key: SCHEDULER_ENABLED
         value: "false"
-      - key: APP_ROLE
-        value: web
       - key: ML_SERVING_MODE
         sync: false
       - key: ML_MANIFEST_PATH
@@ -63,8 +61,6 @@ services:
         value: production
       - key: SCHEDULER_ENABLED
         value: "true"
-      - key: APP_ROLE
-        value: worker
       - key: ML_SERVING_MODE
         sync: false
       - key: ML_MANIFEST_PATH

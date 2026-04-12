@@ -3,4 +3,4 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-CMD ["sh", "-c", "if [ \"${APP_ROLE:-web}\" = \"worker\" ]; then python -m app.worker; else uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}; fi"]
+CMD ["sh", "-c", "if [ \"${SCHEDULER_ENABLED:-false}\" = \"true\" ]; then python -m app.worker; else uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}; fi"]

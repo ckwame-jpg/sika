@@ -95,12 +95,50 @@ class WatchlistGenerationSummary:
     prediction_count: int = 0
     parlay_recommendation_count: int = 0
     parlay_prediction_count: int = 0
+    scored_market_count: int = 0
+    coverage_prediction_count: int = 0
     heuristic_longshots_suppressed: int = 0
     inverse_winner_duplicates_collapsed: int = 0
     combo_prop_candidates_emitted: int = 0
     combo_prop_candidates_suppressed: int = 0
     critical_context_suppressed: int = 0
+    outcome_reason_counts: dict[str, int] = field(default_factory=dict)
     quality_tier_counts: dict[str, int] = field(default_factory=dict)
+
+
+def _record_scorer_outcome(summary: WatchlistGenerationSummary, reason: str) -> None:
+    summary.outcome_reason_counts[reason] = summary.outcome_reason_counts.get(reason, 0) + 1
+
+
+def _scoring_none_reason(market: Market) -> str:
+    if market.event is None:
+        return "mapping_failed"
+    metadata = _market_metadata(market)
+    family = str(metadata.get("copilot_market_family") or "")
+    if family not in {"winner", "game_line", "player_prop"}:
+        return "unsupported_shape"
+    if family == "player_prop":
+        subject_name = str(metadata.get("copilot_subject_name") or "").strip()
+        stat_key = str(metadata.get("copilot_stat_key") or "").strip()
+        threshold = float(metadata.get("copilot_threshold") or 0.0)
+        if not subject_name or not stat_key or threshold <= 0:
+            return "unsupported_shape"
+        return "prop_context_missing"
+    return "scoring_returned_none"
+
+
+def _suppression_outcome_reason(scored: ScoredRecommendation, *, current_watchlist_market: bool) -> str:
+    diagnostics = dict(scored.signal.scoring_diagnostics or {})
+    suppression_reasons = {str(value) for value in list(diagnostics.get("suppression_reasons") or [])}
+    if "critical_market_snapshot_missing" in suppression_reasons:
+        return "missing_snapshot"
+    if "min_edge" in suppression_reasons or "yes_side_negative_edge" in suppression_reasons:
+        return "suppressed_min_edge"
+    if "min_confidence" in suppression_reasons:
+        return "suppressed_min_confidence"
+    if not current_watchlist_market:
+        return "not_current_slate"
+    return "coverage"
 
 
 @dataclass(frozen=True, slots=True)
@@ -2067,14 +2105,18 @@ def _score_watchlist_markets_batch(
     latest_snapshots = latest_snapshot_by_market_id(db, [market.id for market in markets])
     for market in markets:
         if not market.event:
+            _record_scorer_outcome(summary, "mapping_failed")
             continue
         latest_snapshot = latest_snapshots.get(market.id)
         scored = _build_scored_recommendation(db, market.event, market, latest_snapshot, resolver=active_resolver)
         if scored is None:
+            _record_scorer_outcome(summary, _scoring_none_reason(market))
             continue
+        summary.scored_market_count += 1
         current_watchlist_market = is_current_watchlist_market(market)
         _annotate_current_watchlist_flag(scored, current_watchlist_market=current_watchlist_market)
         if scored.recommendation is not None:
+            _record_scorer_outcome(summary, "recommended")
             captures.append(
                 ScoredWatchlistCapture(
                     market=market,
@@ -2084,6 +2126,10 @@ def _score_watchlist_markets_batch(
             )
             summary.prediction_count += 1
             continue
+        _record_scorer_outcome(
+            summary,
+            _suppression_outcome_reason(scored, current_watchlist_market=current_watchlist_market),
+        )
         diagnostics = dict(scored.signal.scoring_diagnostics or {})
         suppression_reasons = {str(value) for value in list(diagnostics.get("suppression_reasons") or [])}
         if "winner_selected_probability_floor" in suppression_reasons:
@@ -2099,6 +2145,7 @@ def _score_watchlist_markets_batch(
                 )
             )
             summary.prediction_count += 1
+            summary.coverage_prediction_count += 1
         else:
             # The scored signal still needs to be persisted even when no
             # prediction is captured — production behavior pre-Slice-6 always
@@ -2340,6 +2387,15 @@ def finalize_staged_watchlist(
         db.scalar(select(func.count()).select_from(Prediction).where(Prediction.run_id == run_id))
         or 0
     )
+    summary.scored_market_count = len(predictions)
+    summary.coverage_prediction_count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(Prediction)
+            .where(Prediction.run_id == run_id, Prediction.capture_scope == "coverage")
+        )
+        or 0
+    )
     return summary
 
 
@@ -2455,18 +2511,27 @@ def regenerate_watchlist(
         latest_snapshot = latest_snapshots.get(market.id)
         scored = _build_scored_recommendation(db, market.event, market, latest_snapshot, resolver=active_resolver)
         if scored:
+            summary.scored_market_count += 1
             db.add(scored.signal)
-            if is_current_watchlist_market(market):
+            current_watchlist_market = is_current_watchlist_market(market)
+            if current_watchlist_market:
                 current_coverage_candidates.append((market, scored))
             if scored.recommendation:
+                _record_scorer_outcome(summary, "recommended")
                 pending_recommendations.append((market, scored))
             else:
+                _record_scorer_outcome(
+                    summary,
+                    _suppression_outcome_reason(scored, current_watchlist_market=current_watchlist_market),
+                )
                 diagnostics = dict(scored.signal.scoring_diagnostics or {})
                 suppression_reasons = {str(value) for value in list(diagnostics.get("suppression_reasons") or [])}
                 if "winner_selected_probability_floor" in suppression_reasons:
                     summary.heuristic_longshots_suppressed += 1
                 if "critical_market_snapshot_missing" in suppression_reasons:
                     summary.critical_context_suppressed += 1
+        else:
+            _record_scorer_outcome(summary, _scoring_none_reason(market))
 
     _enforce_prop_monotonicity(pending_recommendations)
     deduped_recommendations, collapsed_count, combo_suppressed = _dedupe_winner_recommendations(pending_recommendations)
@@ -2520,6 +2585,7 @@ def regenerate_watchlist(
             capture_scope="coverage",
         )
         summary.prediction_count += 1
+        summary.coverage_prediction_count += 1
     db.flush()
     if capture_parlays:
         parlay_recommendation_count, parlay_prediction_count = capture_parlay_artifacts(
