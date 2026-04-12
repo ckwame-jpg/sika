@@ -1158,6 +1158,7 @@ def test_settle_predictions_can_limit_processing_to_latest_duplicate_per_scope_a
 
 
 def test_prediction_history_and_summary_endpoints(client, db_session):
+    captured_base = datetime.now(timezone.utc) - timedelta(days=1)
     _create_prediction(
         db_session,
         ticker="KXNBA-API-1",
@@ -1165,7 +1166,7 @@ def test_prediction_history_and_summary_endpoints(client, db_session):
         stat_key="points",
         outcome="won",
         settlement_status="settled",
-        captured_at=datetime(2026, 4, 1, 1, 0, tzinfo=timezone.utc),
+        captured_at=captured_base,
         confidence=0.72,
     )
     _create_prediction(
@@ -1175,7 +1176,7 @@ def test_prediction_history_and_summary_endpoints(client, db_session):
         stat_key="hits",
         outcome="lost",
         settlement_status="settled",
-        captured_at=datetime(2026, 4, 2, 1, 0, tzinfo=timezone.utc),
+        captured_at=captured_base + timedelta(minutes=30),
         confidence=0.61,
     )
     _create_prediction(
@@ -1185,7 +1186,7 @@ def test_prediction_history_and_summary_endpoints(client, db_session):
         stat_key="points",
         outcome="pending",
         settlement_status="pending",
-        captured_at=datetime(2026, 4, 2, 5, 0, tzinfo=timezone.utc),
+        captured_at=captured_base + timedelta(hours=1),
         confidence=0.69,
     )
     db_session.commit()

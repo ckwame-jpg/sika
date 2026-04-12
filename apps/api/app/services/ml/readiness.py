@@ -5,7 +5,7 @@ from math import isfinite
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, load_only, selectinload
 
 from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
 from app.services.ml.runtime import read_family_runtime, shadow_capture_blocker
@@ -18,6 +18,8 @@ from app.services.ml.study_progress import (
     shadow_coverage_ready,
 )
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition, parlay_family_key, single_family_key
+
+READINESS_ROW_LIMIT = 5_000
 
 
 def _now_utc() -> datetime:
@@ -350,14 +352,88 @@ def _summary_for_family(
 
 def build_model_readiness_summary(db: Session) -> dict[str, Any]:
     cutoff = retained_study_cutoff()
-    single_predictions = db.scalars(select(Prediction).where(Prediction.captured_at >= cutoff)).all()
+    single_predictions = db.scalars(
+        select(Prediction)
+        .options(
+            load_only(
+                Prediction.id,
+                Prediction.run_id,
+                Prediction.market_id,
+                Prediction.ticker,
+                Prediction.sport_key,
+                Prediction.market_family,
+                Prediction.capture_scope,
+                Prediction.edge,
+                Prediction.confidence,
+                Prediction.scoring_diagnostics,
+                Prediction.prediction_outcome,
+                Prediction.realized_pnl,
+                Prediction.settled_at,
+                Prediction.captured_at,
+            )
+        )
+        .where(Prediction.captured_at >= cutoff)
+        .order_by(Prediction.captured_at.desc(), Prediction.id.desc())
+        .limit(READINESS_ROW_LIMIT)
+    ).all()
     parlay_predictions = db.scalars(
         select(ParlayPrediction)
-        .options(selectinload(ParlayPrediction.legs))
+        .options(
+            load_only(
+                ParlayPrediction.id,
+                ParlayPrediction.run_id,
+                ParlayPrediction.sport_scope,
+                ParlayPrediction.leg_count,
+                ParlayPrediction.participating_sports,
+                ParlayPrediction.edge,
+                ParlayPrediction.confidence,
+                ParlayPrediction.prediction_outcome,
+                ParlayPrediction.realized_pnl,
+                ParlayPrediction.settled_at,
+                ParlayPrediction.captured_at,
+            ),
+            selectinload(ParlayPrediction.legs),
+        )
         .where(ParlayPrediction.captured_at >= cutoff)
+        .order_by(ParlayPrediction.captured_at.desc(), ParlayPrediction.id.desc())
+        .limit(READINESS_ROW_LIMIT)
     ).all()
-    shadow_singles = db.scalars(select(ShadowInference).where(ShadowInference.captured_at >= cutoff)).all()
-    shadow_parlays = db.scalars(select(ShadowParlayInference).where(ShadowParlayInference.captured_at >= cutoff)).all()
+    shadow_singles = db.scalars(
+        select(ShadowInference)
+        .options(
+            load_only(
+                ShadowInference.source_prediction_id,
+                ShadowInference.run_id,
+                ShadowInference.market_id,
+                ShadowInference.ticker,
+                ShadowInference.sport_key,
+                ShadowInference.market_family,
+                ShadowInference.model_metadata,
+                ShadowInference.captured_at,
+            )
+        )
+        .where(ShadowInference.captured_at >= cutoff)
+        .order_by(ShadowInference.captured_at.desc(), ShadowInference.id.desc())
+        .limit(READINESS_ROW_LIMIT)
+    ).all()
+    shadow_parlays = db.scalars(
+        select(ShadowParlayInference)
+        .options(
+            load_only(
+                ShadowParlayInference.source_parlay_prediction_id,
+                ShadowParlayInference.run_id,
+                ShadowParlayInference.sport_scope,
+                ShadowParlayInference.leg_count,
+                ShadowParlayInference.participating_sports,
+                ShadowParlayInference.leg_tickers,
+                ShadowParlayInference.model_metadata,
+                ShadowParlayInference.captured_at,
+            )
+        )
+        .where(ShadowParlayInference.captured_at >= cutoff)
+        .order_by(ShadowParlayInference.captured_at.desc(), ShadowParlayInference.id.desc())
+        .limit(READINESS_ROW_LIMIT)
+    ).all()
 
     singles_by_family: dict[str, list[Prediction]] = {}
     for prediction in single_predictions:
@@ -403,12 +479,52 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
     if definition.scope == "single":
         single_predictions = [
             prediction
-            for prediction in db.scalars(select(Prediction).where(Prediction.captured_at >= cutoff)).all()
+            for prediction in db.scalars(
+                select(Prediction)
+                .options(
+                    load_only(
+                        Prediction.id,
+                        Prediction.run_id,
+                        Prediction.market_id,
+                        Prediction.ticker,
+                        Prediction.sport_key,
+                        Prediction.market_family,
+                        Prediction.capture_scope,
+                        Prediction.edge,
+                        Prediction.confidence,
+                        Prediction.scoring_diagnostics,
+                        Prediction.prediction_outcome,
+                        Prediction.realized_pnl,
+                        Prediction.settled_at,
+                        Prediction.captured_at,
+                    )
+                )
+                .where(Prediction.captured_at >= cutoff)
+                .order_by(Prediction.captured_at.desc(), Prediction.id.desc())
+                .limit(READINESS_ROW_LIMIT)
+            ).all()
             if _single_prediction_family_key(prediction) == family_key
         ]
         shadow_singles = [
             item
-            for item in db.scalars(select(ShadowInference).where(ShadowInference.captured_at >= cutoff)).all()
+            for item in db.scalars(
+                select(ShadowInference)
+                .options(
+                    load_only(
+                        ShadowInference.source_prediction_id,
+                        ShadowInference.run_id,
+                        ShadowInference.market_id,
+                        ShadowInference.ticker,
+                        ShadowInference.sport_key,
+                        ShadowInference.market_family,
+                        ShadowInference.model_metadata,
+                        ShadowInference.captured_at,
+                    )
+                )
+                .where(ShadowInference.captured_at >= cutoff)
+                .order_by(ShadowInference.captured_at.desc(), ShadowInference.id.desc())
+                .limit(READINESS_ROW_LIMIT)
+            ).all()
             if _shadow_single_family_key(item) == family_key
         ]
         return _summary_for_family(
@@ -424,14 +540,48 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
         prediction
         for prediction in db.scalars(
             select(ParlayPrediction)
-            .options(selectinload(ParlayPrediction.legs))
+            .options(
+                load_only(
+                    ParlayPrediction.id,
+                    ParlayPrediction.run_id,
+                    ParlayPrediction.sport_scope,
+                    ParlayPrediction.leg_count,
+                    ParlayPrediction.participating_sports,
+                    ParlayPrediction.edge,
+                    ParlayPrediction.confidence,
+                    ParlayPrediction.prediction_outcome,
+                    ParlayPrediction.realized_pnl,
+                    ParlayPrediction.settled_at,
+                    ParlayPrediction.captured_at,
+                ),
+                selectinload(ParlayPrediction.legs),
+            )
             .where(ParlayPrediction.captured_at >= cutoff)
+            .order_by(ParlayPrediction.captured_at.desc(), ParlayPrediction.id.desc())
+            .limit(READINESS_ROW_LIMIT)
         ).all()
         if _parlay_prediction_family_key(prediction) == family_key
     ]
     shadow_parlays = [
         item
-        for item in db.scalars(select(ShadowParlayInference).where(ShadowParlayInference.captured_at >= cutoff)).all()
+        for item in db.scalars(
+            select(ShadowParlayInference)
+            .options(
+                load_only(
+                    ShadowParlayInference.source_parlay_prediction_id,
+                    ShadowParlayInference.run_id,
+                    ShadowParlayInference.sport_scope,
+                    ShadowParlayInference.leg_count,
+                    ShadowParlayInference.participating_sports,
+                    ShadowParlayInference.leg_tickers,
+                    ShadowParlayInference.model_metadata,
+                    ShadowParlayInference.captured_at,
+                )
+            )
+            .where(ShadowParlayInference.captured_at >= cutoff)
+            .order_by(ShadowParlayInference.captured_at.desc(), ShadowParlayInference.id.desc())
+            .limit(READINESS_ROW_LIMIT)
+        ).all()
         if _shadow_parlay_family_key(item) == family_key
     ]
     return _summary_for_family(

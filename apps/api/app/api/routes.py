@@ -65,6 +65,7 @@ from app.schemas import (
 )
 from app.services.market_history import build_market_history
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
+from app.services.ml.study_progress import retained_study_cutoff
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
@@ -687,6 +688,8 @@ def _aggregate_prediction_summary(
     captured_from: date | None = None,
     captured_to: date | None = None,
 ) -> PredictionSummaryRead:
+    if captured_from is None and captured_to is None:
+        captured_from = retained_study_cutoff().date()
     base_stmt = _prediction_stmt(
         sport=sport,
         market_family=market_family,
