@@ -89,6 +89,7 @@ from app.services.watchlist_coverage import (
 from app.sports.base import alias_tokens
 
 router = APIRouter()
+PREDICTION_SUMMARY_ROW_LIMIT = 5_000
 
 # Slice 5 + Slice 7a: v2 IA splits the URL space into three axes — product,
 # research, and ops. The handler bodies still live in this file (they share
@@ -688,6 +689,7 @@ def _aggregate_prediction_summary(
     captured_from: date | None = None,
     captured_to: date | None = None,
 ) -> PredictionSummaryRead:
+    use_recent_window_limit = captured_from is None and captured_to is None
     if captured_from is None and captured_to is None:
         captured_from = retained_study_cutoff().date()
     base_stmt = _prediction_stmt(
@@ -698,6 +700,11 @@ def _aggregate_prediction_summary(
         captured_from=captured_from,
         captured_to=captured_to,
     ).order_by(None)
+    if use_recent_window_limit:
+        base_stmt = base_stmt.order_by(
+            Prediction.captured_at.desc(),
+            Prediction.id.desc(),
+        ).limit(PREDICTION_SUMMARY_ROW_LIMIT)
     subquery = base_stmt.subquery()
 
     totals = db.execute(
