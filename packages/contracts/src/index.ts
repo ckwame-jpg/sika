@@ -1,11 +1,14 @@
-export type ContractGenerationStatus = "pending-client-phase";
+// Re-exports the generated OpenAPI contract so downstream consumers have
+// one import site. Regenerate with `npm run contracts:generate` from the
+// repo root whenever the FastAPI app's schemas change.
+//
+// The generated file lives at ../generated/api.d.ts and is committed so CI
+// can detect drift (see scripts/check_drift.mjs).
 
-export interface ContractPackageInfo {
-  status: ContractGenerationStatus;
-  note: string;
-}
+export type { paths, components, operations } from "../generated/api";
 
-export const contractPackageInfo: ContractPackageInfo = {
-  status: "pending-client-phase",
-  note: "OpenAPI-driven TS generation will be added when client implementation begins.",
-};
+import type { components } from "../generated/api";
+
+/** Helper: extract a response schema by name (e.g. Schema<"TradeDeskResponse">). */
+export type Schema<K extends keyof components["schemas"]> =
+  components["schemas"][K];

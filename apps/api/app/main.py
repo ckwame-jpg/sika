@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import router
+from app.api.routes import ops_router, research_router, router
 from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.services.ingestion import seed_sports
@@ -46,3 +46,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(ops_router)
+app.include_router(research_router)

@@ -64,10 +64,6 @@ def normalize_event_status(value: str | None, default: str = "scheduled") -> str
     return default
 
 
-def is_terminal_event_status(status: str | None) -> bool:
-    return normalize_event_status(status) in TERMINAL_EVENT_STATUSES
-
-
 def alias_tokens(*values: str | None) -> set[str]:
     tokens: set[str] = set()
     for value in values:

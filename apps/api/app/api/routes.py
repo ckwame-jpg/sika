@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -55,11 +56,10 @@ from app.schemas import (
     SportRead,
     StatsQueryRead,
     StatsQueryRequest,
-    TradeDeskEventRead,
-    TradeDeskGameLineRead,
-    TradeDeskPlayerPropRead,
+    ProductFreshnessResponse,
+    ProductScopeFreshnessRead,
+    ProductSportsResponse,
     TradeDeskResponse,
-    TradeDeskStatGroupRead,
     TradeDeskThresholdRead,
     WatchlistDiagnosticsRead,
     WatchlistCoverageRowRead,
@@ -73,6 +73,7 @@ from app.services.refresh_jobs import enqueue_refresh_job, get_refresh_job, reco
 from app.services.scheduler import get_refresh_runtime_state
 from app.services.stats_query import StatsQueryService
 from app.services.trade_desk import (
+    SNAPSHOT_SCOPE_ALL,
     build_trade_desk_response as build_trade_desk_response_live,
     load_trade_desk_snapshot,
     sport_availability_rows,
@@ -88,6 +89,25 @@ from app.services.watchlist_coverage import (
 from app.sports.base import alias_tokens
 
 router = APIRouter()
+
+# Slice 5 + Slice 7a: v2 IA splits the URL space into three axes — product,
+# research, and ops. The handler bodies still live in this file (they share
+# private helpers like ``_serialize_run`` and ``_serialize_refresh_job`` that
+# would require a third module to factor out cleanly), but each operator and
+# research handler is registered on its own prefixed router. Slice 5 stacked
+# the new prefixed decorators on top of legacy unprefixed ones during the
+# migration window; Slice 7a removed the legacy decorators now that every
+# caller (frontend ``apps/web/lib/api.ts``, backend tests, contracts dump)
+# has migrated to ``/ops/*`` and ``/research/*``.
+#
+# ``/health`` is intentionally NOT registered under ``/ops/*``. It is the
+# operator liveness endpoint — consumed by Render health checks
+# (``render.yaml:healthCheckPath: /health``) and operator surfaces only.
+# Product surfaces must not poll it; they read ``/product/freshness`` and
+# the per-payload ``freshness_status`` field instead. ``/health`` stays at
+# its top-level URL forever because the infra contract pins it.
+ops_router = APIRouter(prefix="/ops", tags=["ops"])
+research_router = APIRouter(prefix="/research", tags=["research"])
 
 
 def _serialize_refresh_job(item: RefreshJob | None) -> RefreshJobRead | None:
@@ -640,127 +660,6 @@ def _parlay_prediction_stmt(*, sport_scope: str, leg_count: int | None):
     return stmt
 
 
-def _build_prediction_summary(predictions: list[Prediction]) -> PredictionSummaryRead:
-    by_sport: dict[str, int] = {}
-    by_market_family: dict[str, int] = {}
-    by_outcome: dict[str, int] = {}
-    settled_predictions = 0
-    pending_predictions = 0
-    unresolved_predictions = 0
-    won_predictions = 0
-    lost_predictions = 0
-    push_predictions = 0
-    cancelled_predictions = 0
-
-    for prediction in predictions:
-        sport_key = prediction.sport_key or "UNKNOWN"
-        by_sport[sport_key] = by_sport.get(sport_key, 0) + 1
-        family = prediction.market_family or "unknown"
-        by_market_family[family] = by_market_family.get(family, 0) + 1
-
-        outcome = prediction.prediction_outcome or "pending"
-        by_outcome[outcome] = by_outcome.get(outcome, 0) + 1
-        if outcome == "won":
-            won_predictions += 1
-            settled_predictions += 1
-        elif outcome == "lost":
-            lost_predictions += 1
-            settled_predictions += 1
-        elif outcome == "push":
-            push_predictions += 1
-            settled_predictions += 1
-        elif outcome == "cancelled":
-            cancelled_predictions += 1
-            settled_predictions += 1
-        elif outcome == "unresolved":
-            unresolved_predictions += 1
-        else:
-            pending_predictions += 1
-
-    win_loss_total = won_predictions + lost_predictions
-    realized = [prediction.realized_pnl for prediction in predictions if prediction.realized_pnl is not None]
-    edges = [prediction.edge for prediction in predictions]
-    confidences = [prediction.confidence for prediction in predictions]
-    return PredictionSummaryRead(
-        total_predictions=len(predictions),
-        settled_predictions=settled_predictions,
-        pending_predictions=pending_predictions,
-        unresolved_predictions=unresolved_predictions,
-        won_predictions=won_predictions,
-        lost_predictions=lost_predictions,
-        push_predictions=push_predictions,
-        cancelled_predictions=cancelled_predictions,
-        win_rate=round(won_predictions / win_loss_total, 4) if win_loss_total else None,
-        loss_rate=round(lost_predictions / win_loss_total, 4) if win_loss_total else None,
-        average_edge=round(sum(edges) / len(edges), 4) if edges else None,
-        average_confidence=round(sum(confidences) / len(confidences), 4) if confidences else None,
-        average_realized_pnl=round(sum(realized) / len(realized), 4) if realized else None,
-        by_sport=by_sport,
-        by_market_family=by_market_family,
-        by_outcome=by_outcome,
-    )
-
-
-def _build_parlay_prediction_summary(predictions: list[ParlayPrediction]) -> ParlayPredictionSummaryRead:
-    by_sport_scope: dict[str, int] = {}
-    by_leg_count: dict[str, int] = {}
-    by_outcome: dict[str, int] = {}
-    settled_predictions = 0
-    pending_predictions = 0
-    unresolved_predictions = 0
-    won_predictions = 0
-    lost_predictions = 0
-    push_predictions = 0
-    cancelled_predictions = 0
-
-    for prediction in predictions:
-        scope = prediction.sport_scope or "MIXED"
-        by_sport_scope[scope] = by_sport_scope.get(scope, 0) + 1
-        leg_key = str(prediction.leg_count)
-        by_leg_count[leg_key] = by_leg_count.get(leg_key, 0) + 1
-        outcome = prediction.prediction_outcome or "pending"
-        by_outcome[outcome] = by_outcome.get(outcome, 0) + 1
-        if outcome == "won":
-            won_predictions += 1
-            settled_predictions += 1
-        elif outcome == "lost":
-            lost_predictions += 1
-            settled_predictions += 1
-        elif outcome == "push":
-            push_predictions += 1
-            settled_predictions += 1
-        elif outcome == "cancelled":
-            cancelled_predictions += 1
-            settled_predictions += 1
-        elif outcome == "unresolved":
-            unresolved_predictions += 1
-        else:
-            pending_predictions += 1
-
-    win_loss_total = won_predictions + lost_predictions
-    realized = [prediction.realized_pnl for prediction in predictions if prediction.realized_pnl is not None]
-    edges = [prediction.edge for prediction in predictions]
-    confidences = [prediction.confidence for prediction in predictions]
-    return ParlayPredictionSummaryRead(
-        total_predictions=len(predictions),
-        settled_predictions=settled_predictions,
-        pending_predictions=pending_predictions,
-        unresolved_predictions=unresolved_predictions,
-        won_predictions=won_predictions,
-        lost_predictions=lost_predictions,
-        push_predictions=push_predictions,
-        cancelled_predictions=cancelled_predictions,
-        win_rate=round(won_predictions / win_loss_total, 4) if win_loss_total else None,
-        loss_rate=round(lost_predictions / win_loss_total, 4) if win_loss_total else None,
-        average_edge=round(sum(edges) / len(edges), 4) if edges else None,
-        average_confidence=round(sum(confidences) / len(confidences), 4) if confidences else None,
-        average_realized_pnl=round(sum(realized) / len(realized), 4) if realized else None,
-        by_sport_scope=by_sport_scope,
-        by_leg_count=by_leg_count,
-        by_outcome=by_outcome,
-    )
-
-
 def _aggregate_prediction_summary(
     db: Session,
     *,
@@ -969,180 +868,6 @@ def list_events(
     return [_serialize_event(item) for item in db.scalars(stmt).all()]
 
 
-def _build_trade_desk_response(db: Session, sport: str | None = None) -> TradeDeskResponse:
-    normalized_sport = sport.upper() if sport else None
-    availability_rows = sorted(_sport_availability_rows(db), key=lambda item: _sport_order(item.sport_key))
-    if normalized_sport and normalized_sport not in CURRENT_WATCHLIST_SPORTS:
-        research_rows = [
-            row for row in availability_rows if row.sport_key == normalized_sport and row.availability_mode == "research_only"
-        ]
-        return TradeDeskResponse(events=[], research_sports=research_rows)
-
-    markets = current_watchlist_markets(db, sport=normalized_sport if normalized_sport in CURRENT_WATCHLIST_SPORTS else None)
-    market_ids = [market.id for market in markets]
-    latest_recommendations = latest_recommendation_by_market_id(db, market_ids)
-
-    event_buckets: dict[int, dict[str, object]] = {}
-    for market in markets:
-        recommendation = latest_recommendations.get(market.id)
-        if recommendation is None or market.event is None:
-            continue
-        if recommendation.edge <= 0:
-            continue
-        if not _trade_desk_market_matches_event(market):
-            continue
-
-        raw_data = market.raw_data or {}
-        family = str(raw_data.get("copilot_market_family") or "")
-        bucket = event_buckets.setdefault(
-            market.event.id,
-            {
-                "event": market.event,
-                "game_lines": [],
-                "props": {},
-            },
-        )
-
-        if family == "player_prop":
-            if recommendation.side.lower() != "yes":
-                continue
-            subject_name = str(raw_data.get("copilot_subject_name") or "").strip()
-            subject_team = str(raw_data.get("copilot_subject_team") or "").strip() or None
-            stat_key = str(raw_data.get("copilot_stat_key") or "").strip()
-            threshold = raw_data.get("copilot_threshold")
-            selected_probability = dict(recommendation.scoring_diagnostics or {}).get("selected_side_probability")
-            if not subject_name or not stat_key or threshold is None or selected_probability is None:
-                continue
-
-            player_map = bucket["props"]
-            assert isinstance(player_map, dict)
-            player_key = (subject_name, subject_team)
-            stat_map = player_map.setdefault(player_key, {})
-            assert isinstance(stat_map, dict)
-            thresholds = stat_map.setdefault(stat_key, [])
-            assert isinstance(thresholds, list)
-            thresholds.append(
-                TradeDeskThresholdRead(
-                    ticker=market.ticker,
-                    threshold=float(threshold),
-                    probability_yes=float(selected_probability),
-                    selected_side=recommendation.side,
-                    selected_side_probability=float(selected_probability),
-                    entry_price=recommendation.suggested_price,
-                    edge=recommendation.edge,
-                    confidence=recommendation.confidence,
-                    kalshi_url=_kalshi_market_url(market),
-                )
-            )
-            continue
-
-        if family not in {"winner", "game_line"}:
-            continue
-
-        selected_probability = dict(recommendation.scoring_diagnostics or {}).get("selected_side_probability")
-        if selected_probability is None:
-            continue
-        game_lines = bucket["game_lines"]
-        assert isinstance(game_lines, list)
-        game_lines.append(
-            TradeDeskGameLineRead(
-                ticker=market.ticker,
-                market_title=market.title,
-                display_label=_game_line_display_label(market, recommendation),
-                sport_key=market.sport_key,
-                market_kind=str(raw_data.get("copilot_market_kind") or ""),
-                selected_side=recommendation.side,
-                projected_side_label=_game_line_projected_label(market, recommendation),
-                selected_side_probability=float(selected_probability),
-                entry_price=recommendation.suggested_price,
-                edge=recommendation.edge,
-                confidence=recommendation.confidence,
-                kalshi_url=_kalshi_market_url(market),
-            )
-        )
-
-    events: list[TradeDeskEventRead] = []
-    game_line_order = {"game_winner": 0, "first_five_winner": 0, "spread": 1, "total": 2}
-    for bucket in event_buckets.values():
-        event = bucket["event"]
-        game_lines = bucket["game_lines"]
-        props = bucket["props"]
-        assert isinstance(event, Event)
-        assert isinstance(game_lines, list)
-        assert isinstance(props, dict)
-
-        player_props: list[TradeDeskPlayerPropRead] = []
-        for (subject_name, subject_team), stat_map in props.items():
-            assert isinstance(stat_map, dict)
-            stat_groups: list[TradeDeskStatGroupRead] = []
-            best_edge = 0.0
-            best_win_prob: float | None = None
-            for stat_key, thresholds in stat_map.items():
-                assert isinstance(thresholds, list)
-                thresholds.sort(key=lambda item: item.threshold)
-                if not _thresholds_are_monotonic(thresholds):
-                    continue
-                best_index = max(range(len(thresholds)), key=lambda index: thresholds[index].edge)
-                thresholds[best_index].is_best = True
-                best_edge = max(best_edge, thresholds[best_index].edge)
-                group_win_prob = max((threshold.probability_yes for threshold in thresholds), default=0.0)
-                best_win_prob = group_win_prob if best_win_prob is None else max(best_win_prob, group_win_prob)
-                stat_groups.append(
-                    TradeDeskStatGroupRead(
-                        stat_key=str(stat_key),
-                        thresholds=thresholds,
-                    )
-                )
-            if stat_groups:
-                player_props.append(
-                    TradeDeskPlayerPropRead(
-                        subject_name=str(subject_name),
-                        subject_team=subject_team,
-                        stat_groups=stat_groups,
-                        best_edge=best_edge,
-                        best_win_prob=best_win_prob,
-                    )
-                )
-
-        player_props.sort(key=lambda item: (-item.best_edge, item.subject_name.lower()))
-        sorted_game_lines = sorted(
-            game_lines,
-            key=lambda item: (
-                game_line_order.get(item.market_kind, 99),
-                -item.edge,
-                item.display_label.lower(),
-            ),
-        )
-        if not sorted_game_lines and not player_props:
-            continue
-        events.append(
-            TradeDeskEventRead(
-                event_id=event.id,
-                event_name=event.name,
-                event_status=event.status,
-                starts_at=event.starts_at,
-                sport_key=event.sport_key,
-                game_lines=sorted_game_lines,
-                player_props=player_props,
-            )
-        )
-
-    events.sort(
-        key=lambda item: (
-            _sport_order(item.sport_key),
-            item.starts_at or datetime.max.replace(tzinfo=timezone.utc),
-            item.event_name.lower(),
-        )
-    )
-
-    research_sports = [
-        row
-        for row in availability_rows
-        if row.availability_mode == "research_only" and (normalized_sport is None or row.sport_key == normalized_sport)
-    ]
-    return TradeDeskResponse(events=events, research_sports=research_sports)
-
-
 @router.get("/sports/availability", response_model=list[SportAvailabilityRead])
 def list_sport_availability(db: Session = Depends(get_db)) -> list[SportAvailabilityRead]:
     return sorted(sport_availability_rows(db), key=lambda item: _sport_order(item.sport_key))
@@ -1159,7 +884,62 @@ def get_trade_desk(
     return build_trade_desk_response_live(db, sport=sport)
 
 
-@router.get("/watchlist/diagnostics", response_model=WatchlistDiagnosticsRead)
+@router.get("/product/freshness", response_model=ProductFreshnessResponse)
+def get_product_freshness(db: Session = Depends(get_db)) -> ProductFreshnessResponse:
+    """Product-facing freshness gauge.
+
+    Slice 3: replaces the v1 shell-level ``/health`` gate. Surfaces that
+    render product data should consult this endpoint (or the
+    ``freshness_status`` field of their own payload) to decide whether to
+    render a "stale" pill — they must NOT blank themselves on a failed
+    request here, because this endpoint is read-only over the append-only
+    snapshot store and has no coupling to the write path. The per-sport
+    scopes plus the cross-sport ``"all"`` scope let the UI differentiate
+    "NBA is stale but MLB is fresh" from a whole-slate outage.
+    """
+    scopes: list[ProductScopeFreshnessRead] = []
+    scope_order = (SNAPSHOT_SCOPE_ALL, *sorted(CURRENT_WATCHLIST_SPORTS))
+    for scope in scope_order:
+        sport_arg = None if scope == SNAPSHOT_SCOPE_ALL else scope
+        snapshot = load_trade_desk_snapshot(db, sport=sport_arg)
+        if snapshot is None:
+            scopes.append(
+                ProductScopeFreshnessRead(
+                    scope=scope,
+                    generated_at=None,
+                    status="missing",
+                )
+            )
+            continue
+        scopes.append(
+            ProductScopeFreshnessRead(
+                scope=scope,
+                generated_at=snapshot.generated_at,
+                status=snapshot.freshness_status,
+            )
+        )
+    if any(s.status == "missing" for s in scopes):
+        overall: Literal["fresh", "stale", "missing"] = "missing"
+    elif any(s.status == "stale" for s in scopes):
+        overall = "stale"
+    else:
+        overall = "fresh"
+    return ProductFreshnessResponse(scopes=scopes, overall_status=overall)
+
+
+@router.get("/product/sports", response_model=ProductSportsResponse)
+def get_product_sports() -> ProductSportsResponse:
+    """Runtime sport scope for product pickers (Slice 4).
+
+    Sourced from ``config.py:enabled_sports`` so runtime configuration
+    changes do not require a frontend redeploy. The list is uppercased and
+    filtered to match ``_visible_sports()`` — i.e. UFC is hidden even if it
+    is in ``enabled_sports`` — so all product surfaces agree on scope.
+    """
+    return ProductSportsResponse(sports=_visible_sports())
+
+
+@ops_router.get("/watchlist/diagnostics", response_model=WatchlistDiagnosticsRead)
 def get_watchlist_diagnostics(db: Session = Depends(get_db)) -> WatchlistDiagnosticsRead:
     settings = get_settings()
     runtime = get_refresh_runtime_state()
@@ -1263,12 +1043,12 @@ def get_parlay_watchlist(
     return [ParlayRecommendationRead.model_validate(item) for item in items]
 
 
-@router.get("/models/readiness", response_model=ModelReadinessSummaryRead)
+@ops_router.get("/models/readiness", response_model=ModelReadinessSummaryRead)
 def model_readiness_summary(db: Session = Depends(get_db)) -> ModelReadinessSummaryRead:
     return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
 
 
-@router.get("/models/readiness/{family_key}", response_model=ModelFamilyReadinessRead)
+@ops_router.get("/models/readiness/{family_key}", response_model=ModelFamilyReadinessRead)
 def model_readiness_detail(family_key: str, db: Session = Depends(get_db)) -> ModelFamilyReadinessRead:
     payload = build_model_readiness_detail(db, family_key)
     if payload is None:
@@ -1476,7 +1256,7 @@ def get_market_history(ticker: str, range: str = "1D", db: Session = Depends(get
     return MarketHistoryRead.model_validate(history)
 
 
-@router.get("/runs", response_model=list[RunRead])
+@ops_router.get("/runs", response_model=list[RunRead])
 def list_runs(kind: str | None = None, status: str | None = None, limit: int = 20, db: Session = Depends(get_db)) -> list[RunRead]:
     stmt = select(Run)
     if kind:
@@ -1488,7 +1268,7 @@ def list_runs(kind: str | None = None, status: str | None = None, limit: int = 2
     return [_serialize_run(item) for item in runs]
 
 
-@router.get("/runs/{run_id}", response_model=RunDetailRead)
+@ops_router.get("/runs/{run_id}", response_model=RunDetailRead)
 def get_run_detail(run_id: int, db: Session = Depends(get_db)) -> RunDetailRead:
     run = db.scalar(select(Run).where(Run.id == run_id))
     if not run:
@@ -1529,7 +1309,7 @@ def cancel_order(order_id: int, db: Session = Depends(get_db)) -> DemoOrderRead:
     return DemoOrderRead.model_validate(order)
 
 
-@router.post("/jobs/refresh", response_model=JobRefreshResponse, status_code=202)
+@ops_router.post("/jobs/refresh", response_model=JobRefreshResponse, status_code=202)
 def refresh_jobs(db: Session = Depends(get_db)) -> JobRefreshResponse:
     job, _created = enqueue_refresh_job(
         db,
@@ -1546,7 +1326,7 @@ def refresh_jobs(db: Session = Depends(get_db)) -> JobRefreshResponse:
     )
 
 
-@router.get("/jobs/{job_id}", response_model=RefreshJobRead)
+@ops_router.get("/jobs/{job_id}", response_model=RefreshJobRead)
 def refresh_job_detail(job_id: int, db: Session = Depends(get_db)) -> RefreshJobRead:
     if reconcile_stale_refresh_jobs(db):
         db.commit()
@@ -1556,7 +1336,7 @@ def refresh_job_detail(job_id: int, db: Session = Depends(get_db)) -> RefreshJob
     return _serialize_refresh_job(job)  # type: ignore[return-value]
 
 
-@router.post("/jobs/settle-predictions", response_model=PredictionSettlementResponse)
+@ops_router.post("/jobs/settle-predictions", response_model=PredictionSettlementResponse)
 def settle_prediction_job(db: Session = Depends(get_db)) -> PredictionSettlementResponse:
     single_summary = settle_predictions(db)
     parlay_summary = settle_parlay_predictions(db)
@@ -1564,7 +1344,7 @@ def settle_prediction_job(db: Session = Depends(get_db)) -> PredictionSettlement
     return PredictionSettlementResponse(**_merge_settlement_summaries(single_summary, parlay_summary))
 
 
-@router.post("/stats/query", response_model=StatsQueryRead)
+@research_router.post("/stats/query", response_model=StatsQueryRead)
 def query_stats(
     payload: StatsQueryRequest,
     service: StatsQueryService = Depends(get_stats_query_service),

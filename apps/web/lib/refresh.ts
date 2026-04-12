@@ -27,7 +27,7 @@ async function waitForRefreshJob(jobId: number): Promise<RefreshJobRead> {
 
 async function revalidateAfterRefresh() {
   await Promise.all([
-    mutate((key) => typeof key === "string" && key.startsWith("/runs")),
+    mutate((key) => typeof key === "string" && key.startsWith("/ops/runs")),
     mutate((key) => typeof key === "string" && key.startsWith("/events")),
     mutate((key) => typeof key === "string" && key.startsWith("/watchlist")),
     mutate((key) => typeof key === "string" && key.startsWith("/markets")),

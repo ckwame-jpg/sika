@@ -730,7 +730,7 @@ def test_stats_query_endpoint(client):
 
     app.dependency_overrides[get_stats_query_service] = lambda: FakeService()
     try:
-        response = client.post("/stats/query", json={"question": "Patrick Mahomes last 2 games", "sport_key": "NFL", "season": 2025})
+        response = client.post("/research/stats/query", json={"question": "Patrick Mahomes last 2 games", "sport_key": "NFL", "season": 2025})
     finally:
         app.dependency_overrides.pop(get_stats_query_service, None)
 

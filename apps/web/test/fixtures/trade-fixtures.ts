@@ -145,6 +145,8 @@ export const tradeDeskFixture: TradeDeskResponse = {
       last_refresh_at: "2026-04-07T18:00:00Z",
     },
   ],
+  generated_at: "2026-04-07T18:00:00Z",
+  freshness_status: "fresh",
 };
 
 export const tradeDeskFixtureWithNonMonotonicGroup: TradeDeskResponse = {

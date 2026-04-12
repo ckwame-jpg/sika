@@ -1,3 +1,5 @@
+import type { Schema } from "@kalshi-sports-copilot/contracts";
+
 import type {
   DemoOrderCreate,
   DemoOrderRead,
@@ -6,7 +8,6 @@ import type {
   JobRefreshResponse,
   MarketDetailRead,
   MarketHistoryRead,
-  MarketListRead,
   ModelFamilyReadinessRead,
   ModelReadinessSummaryRead,
   PaperPositionCreate,
@@ -14,22 +15,24 @@ import type {
   PaperPositionRead,
   ParlayPredictionRead,
   ParlayPredictionSummaryRead,
-  ParlayRecommendationRead,
   PositionsRead,
   PredictionRead,
   PredictionSettlementResponse,
   PredictionSummaryRead,
   RefreshJobRead,
-  RecommendationRead,
   RunDetailRead,
   RunRead,
-  SportRead,
-  SportAvailabilityRead,
   StatsQueryRead,
   TradeDeskResponse,
-  WatchlistDiagnosticsRead,
-  WatchlistCoverageRowRead,
 } from "./types";
+
+// Slice 4: new product metadata endpoints source their types directly
+// from the generated OpenAPI contract rather than the hand-written
+// ``apps/web/lib/types.ts``. Surfaces are migrated to generated types
+// one-by-one; ``lib/types.ts`` will be removed once every surface
+// has moved.
+export type ProductFreshnessResponse = Schema<"ProductFreshnessResponse">;
+export type ProductScopeFreshnessRead = Schema<"ProductScopeFreshnessRead">;
 
 const BASE = "/api";
 
@@ -83,8 +86,8 @@ async function request<T>(
 }
 
 export const fetchHealth = () => request<HealthResponse>("/health");
-export const fetchSports = () => request<SportRead[]>("/sports");
-export const fetchSportAvailability = () => request<SportAvailabilityRead[]>("/sports/availability");
+export const fetchProductFreshness = () =>
+  request<ProductFreshnessResponse>("/product/freshness");
 export const fetchTradeDesk = (sport?: string) => {
   const params = new URLSearchParams();
   if (sport) params.set("sport", sport);
@@ -98,27 +101,6 @@ export const fetchEvents = (sport?: string, day?: string) => {
   if (day) params.set("day", day);
   const qs = params.toString();
   return request<EventRead[]>(`/events${qs ? `?${qs}` : ""}`);
-};
-
-export const fetchWatchlist = (sport?: string, limit = 50) => {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (sport) params.set("sport", sport);
-  return request<RecommendationRead[]>(`/watchlist?${params}`);
-};
-
-export const fetchWatchlistCoverage = (sport?: string, limit = 250) => {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (sport) params.set("sport", sport);
-  return request<WatchlistCoverageRowRead[]>(`/watchlist/coverage?${params}`);
-};
-
-export const fetchWatchlistDiagnostics = () =>
-  request<WatchlistDiagnosticsRead>("/watchlist/diagnostics");
-
-export const fetchParlayWatchlist = (sportScope = "all", legCount?: number, limit = 50) => {
-  const params = new URLSearchParams({ sport_scope: sportScope, limit: String(limit) });
-  if (legCount != null) params.set("leg_count", String(legCount));
-  return request<ParlayRecommendationRead[]>(`/parlays/watchlist?${params}`);
 };
 
 export const fetchPositions = () => request<PositionsRead>("/positions");
@@ -147,44 +129,25 @@ export const cancelDemoOrder = (id: number) =>
 export const fetchMarket = (ticker: string) =>
   request<MarketDetailRead>(`/markets/${encodeURIComponent(ticker)}`);
 
-export const fetchMarkets = (
-  options: {
-    sport?: string;
-    family?: string;
-    status?: string;
-    search?: string;
-    limit?: number;
-  } = {},
-) => {
-  const params = new URLSearchParams();
-  if (options.limit) params.set("limit", String(options.limit));
-  if (options.sport) params.set("sport", options.sport);
-  if (options.family) params.set("family", options.family);
-  if (options.status) params.set("status", options.status);
-  if (options.search) params.set("search", options.search);
-  const qs = params.toString();
-  return request<MarketListRead[]>(`/markets${qs ? `?${qs}` : ""}`);
-};
-
 export const fetchMarketHistory = (ticker: string, range = "1D") =>
   request<MarketHistoryRead>(
     `/markets/${encodeURIComponent(ticker)}/history?range=${range}`,
   );
 
 export const fetchRuns = (limit = 10) =>
-  request<RunRead[]>(`/runs?limit=${limit}`);
+  request<RunRead[]>(`/ops/runs?limit=${limit}`);
 
 export const fetchRun = (id: number) =>
-  request<RunDetailRead>(`/runs/${id}`);
+  request<RunDetailRead>(`/ops/runs/${id}`);
 
 export const triggerRefresh = () =>
   request<JobRefreshResponse>(
-    "/jobs/refresh",
+    "/ops/jobs/refresh",
     { method: "POST" },
   );
 
 export const fetchRefreshJob = (id: number) =>
-  request<RefreshJobRead>(`/jobs/${id}`);
+  request<RefreshJobRead>(`/ops/jobs/${id}`);
 
 export const fetchPredictions = (
   options: {
@@ -231,10 +194,10 @@ export const fetchPredictionSummary = (
 };
 
 export const fetchModelReadinessSummary = () =>
-  request<ModelReadinessSummaryRead>("/models/readiness");
+  request<ModelReadinessSummaryRead>("/ops/models/readiness");
 
 export const fetchModelReadinessDetail = (familyKey: string) =>
-  request<ModelFamilyReadinessRead>(`/models/readiness/${encodeURIComponent(familyKey)}`);
+  request<ModelFamilyReadinessRead>(`/ops/models/readiness/${encodeURIComponent(familyKey)}`);
 
 export const fetchParlayPredictions = (sportScope = "all", legCount?: number, limit = 100) => {
   const params = new URLSearchParams({ sport_scope: sportScope, limit: String(limit) });
@@ -249,7 +212,7 @@ export const fetchParlayPredictionSummary = (sportScope = "all", legCount?: numb
 };
 
 export const triggerPredictionSettlement = () =>
-  request<PredictionSettlementResponse>("/jobs/settle-predictions", {
+  request<PredictionSettlementResponse>("/ops/jobs/settle-predictions", {
     method: "POST",
   });
 
@@ -258,7 +221,7 @@ export const queryStats = (body: {
   sport_key: string;
   season?: number;
 }) =>
-  request<StatsQueryRead>("/stats/query", {
+  request<StatsQueryRead>("/research/stats/query", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -267,6 +230,8 @@ export const keys = {
   health: "/health",
   sports: "/sports",
   sportAvailability: "/sports/availability",
+  productSports: "/product/sports",
+  productFreshness: "/product/freshness",
   tradeDesk: (sport?: string) =>
     `/trade-desk?sport=${sport ?? ""}`,
   events: (sport?: string, day?: string) =>
@@ -275,7 +240,7 @@ export const keys = {
     `/watchlist?sport=${sport ?? ""}&limit=${limit}`,
   watchlistCoverage: (sport?: string, limit = 250) =>
     `/watchlist/coverage?sport=${sport ?? ""}&limit=${limit}`,
-  watchlistDiagnostics: "/watchlist/diagnostics",
+  watchlistDiagnostics: "/ops/watchlist/diagnostics",
   parlayWatchlist: (sportScope = "all", legCount?: number, limit = 50) =>
     `/parlays/watchlist?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,
   positions: "/positions",
@@ -288,9 +253,9 @@ export const keys = {
   market: (ticker: string) => `/markets/${ticker}`,
   marketHistory: (ticker: string, range: string) =>
     `/markets/${ticker}/history?range=${range}`,
-  runs: "/runs",
-  run: (id: number) => `/runs/${id}`,
-  refreshJob: (id: number) => `/jobs/${id}`,
+  runs: "/ops/runs",
+  run: (id: number) => `/ops/runs/${id}`,
+  refreshJob: (id: number) => `/ops/jobs/${id}`,
   predictions: (args?: Record<string, string | number | undefined>) =>
     `/predictions?${new URLSearchParams(
       Object.entries(args ?? {}).flatMap(([key, value]) =>
@@ -303,8 +268,8 @@ export const keys = {
         value == null || value === "" ? [] : [[key, String(value)]],
       ),
     ).toString()}`,
-  modelReadinessSummary: "/models/readiness",
-  modelReadinessDetail: (familyKey: string) => `/models/readiness/${familyKey}`,
+  modelReadinessSummary: "/ops/models/readiness",
+  modelReadinessDetail: (familyKey: string) => `/ops/models/readiness/${familyKey}`,
   parlayPredictions: (sportScope = "all", legCount?: number, limit = 100) =>
     `/parlays/predictions?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,
   parlayPredictionSummary: (sportScope = "all", legCount?: number) =>

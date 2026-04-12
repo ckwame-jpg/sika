@@ -107,7 +107,7 @@ export function StatsWorkspace({
             <div>
               <CardTitle>Stats Assistant</CardTitle>
               <CardDescription>
-                Cross-sport player query desk wired to `/stats/query`
+                Cross-sport player query desk wired to `/research/stats/query`
               </CardDescription>
             </div>
           </div>

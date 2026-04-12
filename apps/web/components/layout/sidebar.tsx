@@ -31,11 +31,22 @@ import { triggerRefreshAndRevalidate } from "@/lib/refresh";
 import { SPORT_OPTIONS, cn } from "@/lib/utils";
 import { useSportQueryParam } from "@/components/filters/sport-filter-select";
 
-const NAV = [
+// Slice 5: primary nav is product-only — the surfaces a trader hits every
+// session. Research (Stats) and operator surfaces (Runs / Settings) move
+// to a secondary nav block below the primary list. They are still
+// accessible via direct URL and via the secondary nav; they're just
+// visually de-emphasized so the product surface is the obvious default.
+const PRIMARY_NAV = [
   { href: "/trade", label: "Trade", icon: CandlestickChart },
-  { href: "/stats", label: "Stats", icon: BarChart3 },
   { href: "/predictions", label: "Predictions", icon: Target },
   { href: "/positions", label: "Portfolio", icon: FileText },
+];
+
+const RESEARCH_NAV = [
+  { href: "/stats", label: "Stats", icon: BarChart3 },
+];
+
+const OPS_NAV = [
   { href: "/runs", label: "Runs", icon: DatabaseZap },
   { href: "/settings", label: "Settings", icon: Settings2 },
 ];
@@ -193,7 +204,7 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="flex-1 space-y-4 overflow-y-auto px-2 py-3">
         <nav className="space-y-0.5">
-          {NAV.map((item) => (
+          {PRIMARY_NAV.map((item) => (
             <NavItem key={item.href} {...item} onNavigate={onNavigate} />
           ))}
         </nav>
@@ -203,6 +214,28 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
             Sport
           </p>
           <SportFilter onNavigate={onNavigate} />
+        </div>
+
+        <div>
+          <p className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Research
+          </p>
+          <nav className="space-y-0.5">
+            {RESEARCH_NAV.map((item) => (
+              <NavItem key={item.href} {...item} onNavigate={onNavigate} />
+            ))}
+          </nav>
+        </div>
+
+        <div>
+          <p className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Operator
+          </p>
+          <nav className="space-y-0.5">
+            {OPS_NAV.map((item) => (
+              <NavItem key={item.href} {...item} onNavigate={onNavigate} />
+            ))}
+          </nav>
         </div>
       </div>
 

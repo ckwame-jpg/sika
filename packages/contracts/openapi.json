@@ -1,0 +1,6619 @@
+{
+  "components": {
+    "schemas": {
+      "DemoOrderCreate": {
+        "properties": {
+          "action": {
+            "default": "buy",
+            "title": "Action",
+            "type": "string"
+          },
+          "approved": {
+            "default": false,
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "limit_price": {
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Limit Price",
+            "type": "number"
+          },
+          "quantity": {
+            "minimum": 1.0,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "time_in_force": {
+            "default": "good_till_canceled",
+            "title": "Time In Force",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "side",
+          "quantity",
+          "limit_price"
+        ],
+        "title": "DemoOrderCreate",
+        "type": "object"
+      },
+      "DemoOrderRead": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "approved_by_user": {
+            "title": "Approved By User",
+            "type": "boolean"
+          },
+          "client_order_id": {
+            "title": "Client Order Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kalshi_order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kalshi Order Id"
+          },
+          "last_synced_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Synced At"
+          },
+          "limit_price": {
+            "title": "Limit Price",
+            "type": "number"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ticker",
+          "client_order_id",
+          "side",
+          "action",
+          "quantity",
+          "limit_price",
+          "status",
+          "approved_by_user"
+        ],
+        "title": "DemoOrderRead",
+        "type": "object"
+      },
+      "EventParticipantRead": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "is_home": {
+            "title": "Is Home",
+            "type": "boolean"
+          },
+          "participant_id": {
+            "title": "Participant Id",
+            "type": "integer"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          }
+        },
+        "required": [
+          "participant_id",
+          "display_name",
+          "role",
+          "is_home"
+        ],
+        "title": "EventParticipantRead",
+        "type": "object"
+      },
+      "EventRead": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "participants": {
+            "items": {
+              "$ref": "#/components/schemas/EventParticipantRead"
+            },
+            "title": "Participants",
+            "type": "array"
+          },
+          "raw_data": {
+            "additionalProperties": true,
+            "title": "Raw Data",
+            "type": "object"
+          },
+          "sport_key": {
+            "title": "Sport Key",
+            "type": "string"
+          },
+          "starts_at": {
+            "title": "Starts At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "external_id",
+          "sport_key",
+          "name",
+          "status",
+          "starts_at",
+          "participants"
+        ],
+        "title": "EventRead",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "active_prop_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "active_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "data_stale": {
+            "title": "Data Stale",
+            "type": "boolean"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "last_prop_refresh_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Prop Refresh At"
+          },
+          "last_successful_refresh_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Successful Refresh At"
+          },
+          "latest_prop_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prop_data_stale": {
+            "title": "Prop Data Stale",
+            "type": "boolean"
+          },
+          "prop_refresh_error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prop Refresh Error Message"
+          },
+          "prop_refresh_reason": {
+            "enum": [
+              "none",
+              "startup",
+              "interval",
+              "manual"
+            ],
+            "title": "Prop Refresh Reason",
+            "type": "string"
+          },
+          "prop_refresh_status": {
+            "enum": [
+              "idle",
+              "queued",
+              "running",
+              "failed"
+            ],
+            "title": "Prop Refresh Status",
+            "type": "string"
+          },
+          "refresh_error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Error Message"
+          },
+          "refresh_reason": {
+            "enum": [
+              "none",
+              "startup",
+              "interval",
+              "manual",
+              "pregame"
+            ],
+            "title": "Refresh Reason",
+            "type": "string"
+          },
+          "refresh_status": {
+            "enum": [
+              "idle",
+              "queued",
+              "running",
+              "failed"
+            ],
+            "title": "Refresh Status",
+            "type": "string"
+          },
+          "scheduler_enabled": {
+            "title": "Scheduler Enabled",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "environment",
+          "scheduler_enabled",
+          "refresh_status",
+          "refresh_reason",
+          "data_stale",
+          "prop_refresh_status",
+          "prop_refresh_reason",
+          "prop_data_stale"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "JobRefreshResponse": {
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "kind",
+          "scope",
+          "status"
+        ],
+        "title": "JobRefreshResponse",
+        "type": "object"
+      },
+      "MarketDetailRead": {
+        "properties": {
+          "close_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Time"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "event": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_signal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalSnapshotRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketSnapshotRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "market_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Family"
+          },
+          "market_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Kind"
+          },
+          "recommendations": {
+            "items": {
+              "$ref": "#/components/schemas/RecommendationRead"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "stat_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Key"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "subject_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Team"
+          },
+          "subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtitle"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "title",
+          "status",
+          "recommendations"
+        ],
+        "title": "MarketDetailRead",
+        "type": "object"
+      },
+      "MarketHistoryPointRead": {
+        "properties": {
+          "last_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Price"
+          },
+          "mean_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mean Price"
+          },
+          "no_ask": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Ask"
+          },
+          "no_bid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Bid"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          },
+          "yes_ask": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yes Ask"
+          },
+          "yes_bid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yes Bid"
+          }
+        },
+        "required": [
+          "timestamp",
+          "source"
+        ],
+        "title": "MarketHistoryPointRead",
+        "type": "object"
+      },
+      "MarketHistoryRead": {
+        "properties": {
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/MarketHistoryPointRead"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "range": {
+            "title": "Range",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "range",
+          "points"
+        ],
+        "title": "MarketHistoryRead",
+        "type": "object"
+      },
+      "MarketListRead": {
+        "properties": {
+          "close_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Time"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "latest_recommendation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecommendationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketSnapshotRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "market_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Family"
+          },
+          "market_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Kind"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "stat_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Key"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "subject_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Team"
+          },
+          "subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtitle"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "title",
+          "status"
+        ],
+        "title": "MarketListRead",
+        "type": "object"
+      },
+      "MarketSnapshotRead": {
+        "properties": {
+          "captured_at": {
+            "title": "Captured At",
+            "type": "string"
+          },
+          "last_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Price"
+          },
+          "no_ask": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Ask"
+          },
+          "no_bid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Bid"
+          },
+          "open_interest": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Interest"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          },
+          "yes_ask": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yes Ask"
+          },
+          "yes_bid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yes Bid"
+          }
+        },
+        "required": [
+          "captured_at"
+        ],
+        "title": "MarketSnapshotRead",
+        "type": "object"
+      },
+      "ModelFamilyReadinessRead": {
+        "properties": {
+          "average_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Confidence"
+          },
+          "average_edge": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Edge"
+          },
+          "average_realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Realized Pnl"
+          },
+          "cancelled_predictions": {
+            "title": "Cancelled Predictions",
+            "type": "integer"
+          },
+          "confidence_buckets": {
+            "items": {
+              "$ref": "#/components/schemas/ReadinessBucketRead"
+            },
+            "title": "Confidence Buckets",
+            "type": "array"
+          },
+          "coverage_pending_predictions": {
+            "default": 0,
+            "title": "Coverage Pending Predictions",
+            "type": "integer"
+          },
+          "coverage_predictions": {
+            "default": 0,
+            "title": "Coverage Predictions",
+            "type": "integer"
+          },
+          "coverage_settled_predictions": {
+            "default": 0,
+            "title": "Coverage Settled Predictions",
+            "type": "integer"
+          },
+          "edge_buckets": {
+            "items": {
+              "$ref": "#/components/schemas/ReadinessBucketRead"
+            },
+            "title": "Edge Buckets",
+            "type": "array"
+          },
+          "family_key": {
+            "title": "Family Key",
+            "type": "string"
+          },
+          "feature_coverage_rates": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Feature Coverage Rates",
+            "type": "object"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last_fallback_event_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Fallback Event At"
+          },
+          "last_settled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Settled At"
+          },
+          "last_shadow_capture_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Shadow Capture At"
+          },
+          "last_validation_failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Validation Failure"
+          },
+          "leg_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leg Count"
+          },
+          "lost_predictions": {
+            "title": "Lost Predictions",
+            "type": "integer"
+          },
+          "missing_context_rates": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Missing Context Rates",
+            "type": "object"
+          },
+          "pending_predictions": {
+            "title": "Pending Predictions",
+            "type": "integer"
+          },
+          "push_predictions": {
+            "title": "Push Predictions",
+            "type": "integer"
+          },
+          "readiness_status": {
+            "enum": [
+              "heuristic_only",
+              "insufficient_history",
+              "shadow_not_started",
+              "shadowing",
+              "ready_for_review",
+              "serving"
+            ],
+            "title": "Readiness Status",
+            "type": "string"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/ModelFamilyRuntimeHealthRead"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "settled_predictions": {
+            "title": "Settled Predictions",
+            "type": "integer"
+          },
+          "shadow_backlog_parlays": {
+            "default": 0,
+            "title": "Shadow Backlog Parlays",
+            "type": "integer"
+          },
+          "shadow_backlog_predictions": {
+            "default": 0,
+            "title": "Shadow Backlog Predictions",
+            "type": "integer"
+          },
+          "shadow_coverage_ratio": {
+            "title": "Shadow Coverage Ratio",
+            "type": "number"
+          },
+          "shadow_predictions": {
+            "title": "Shadow Predictions",
+            "type": "integer"
+          },
+          "sport_scope": {
+            "title": "Sport Scope",
+            "type": "string"
+          },
+          "study_track": {
+            "enum": [
+              "active",
+              "heuristic_only"
+            ],
+            "title": "Study Track",
+            "type": "string"
+          },
+          "top_failure_reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Top Failure Reasons",
+            "type": "object"
+          },
+          "total_predictions": {
+            "title": "Total Predictions",
+            "type": "integer"
+          },
+          "why_not_ready": {
+            "title": "Why Not Ready",
+            "type": "string"
+          },
+          "won_predictions": {
+            "title": "Won Predictions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "family_key",
+          "label",
+          "scope",
+          "sport_scope",
+          "study_track",
+          "readiness_status",
+          "why_not_ready",
+          "runtime",
+          "total_predictions",
+          "settled_predictions",
+          "pending_predictions",
+          "shadow_predictions",
+          "shadow_coverage_ratio",
+          "won_predictions",
+          "lost_predictions",
+          "push_predictions",
+          "cancelled_predictions"
+        ],
+        "title": "ModelFamilyReadinessRead",
+        "type": "object"
+      },
+      "ModelFamilyRuntimeHealthRead": {
+        "properties": {
+          "artifact_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Path"
+          },
+          "calibration_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Version"
+          },
+          "consecutive_failures": {
+            "title": "Consecutive Failures",
+            "type": "integer"
+          },
+          "desired_mode": {
+            "enum": [
+              "heuristic",
+              "shadow",
+              "ml"
+            ],
+            "title": "Desired Mode",
+            "type": "string"
+          },
+          "effective_mode": {
+            "enum": [
+              "heuristic",
+              "shadow",
+              "ml"
+            ],
+            "title": "Effective Mode",
+            "type": "string"
+          },
+          "fallback_active": {
+            "title": "Fallback Active",
+            "type": "boolean"
+          },
+          "family_key": {
+            "title": "Family Key",
+            "type": "string"
+          },
+          "feature_set_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Set Version"
+          },
+          "last_check_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Check At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_error_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error At"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "model_metadata": {
+            "additionalProperties": true,
+            "title": "Model Metadata",
+            "type": "object"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "runtime_health": {
+            "enum": [
+              "healthy",
+              "degraded",
+              "unavailable"
+            ],
+            "title": "Runtime Health",
+            "type": "string"
+          }
+        },
+        "required": [
+          "family_key",
+          "desired_mode",
+          "effective_mode",
+          "runtime_health",
+          "fallback_active",
+          "consecutive_failures"
+        ],
+        "title": "ModelFamilyRuntimeHealthRead",
+        "type": "object"
+      },
+      "ModelReadinessSummaryRead": {
+        "properties": {
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/ModelFamilyReadinessRead"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generated_at"
+        ],
+        "title": "ModelReadinessSummaryRead",
+        "type": "object"
+      },
+      "PaperPositionCreate": {
+        "properties": {
+          "entry_price": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "title": "Entry Price",
+            "type": "number"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "quantity": {
+            "minimum": 1.0,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "side",
+          "quantity",
+          "entry_price"
+        ],
+        "title": "PaperPositionCreate",
+        "type": "object"
+      },
+      "PaperPositionExit": {
+        "properties": {
+          "exit_price": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "title": "Exit Price",
+            "type": "number"
+          }
+        },
+        "required": [
+          "exit_price"
+        ],
+        "title": "PaperPositionExit",
+        "type": "object"
+      },
+      "PaperPositionRead": {
+        "properties": {
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "entry_price": {
+            "title": "Entry Price",
+            "type": "number"
+          },
+          "exit_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Price"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "opened_at": {
+            "title": "Opened At",
+            "type": "string"
+          },
+          "pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pnl"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ticker",
+          "side",
+          "quantity",
+          "entry_price",
+          "status",
+          "opened_at"
+        ],
+        "title": "PaperPositionRead",
+        "type": "object"
+      },
+      "ParlayPredictionLegRead": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "fair_no_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair No Price"
+          },
+          "fair_yes_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair Yes Price"
+          },
+          "leg_index": {
+            "title": "Leg Index",
+            "type": "integer"
+          },
+          "market_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Family"
+          },
+          "market_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Kind"
+          },
+          "market_title": {
+            "title": "Market Title",
+            "type": "string"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "stat_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Key"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "subject_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Team"
+          },
+          "suggested_price": {
+            "title": "Suggested Price",
+            "type": "number"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "leg_index",
+          "ticker",
+          "market_title",
+          "side",
+          "action",
+          "suggested_price",
+          "edge",
+          "confidence"
+        ],
+        "title": "ParlayPredictionLegRead",
+        "type": "object"
+      },
+      "ParlayPredictionRead": {
+        "properties": {
+          "american_odds": {
+            "title": "American Odds",
+            "type": "string"
+          },
+          "calibration_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Version"
+          },
+          "captured_at": {
+            "title": "Captured At",
+            "type": "string"
+          },
+          "combined_market_price": {
+            "title": "Combined Market Price",
+            "type": "number"
+          },
+          "combined_model_probability": {
+            "title": "Combined Model Probability",
+            "type": "number"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "feature_set_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Set Version"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "invalidation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalidation"
+          },
+          "leg_count": {
+            "title": "Leg Count",
+            "type": "integer"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/ParlayPredictionLegRead"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "participating_sports": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Participating Sports",
+            "type": "array"
+          },
+          "prediction_outcome": {
+            "title": "Prediction Outcome",
+            "type": "string"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "settled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled At"
+          },
+          "settlement_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Notes"
+          },
+          "settlement_status": {
+            "title": "Settlement Status",
+            "type": "string"
+          },
+          "settlement_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Value"
+          },
+          "sport_scope": {
+            "title": "Sport Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "leg_count",
+          "sport_scope",
+          "combined_market_price",
+          "combined_model_probability",
+          "american_odds",
+          "edge",
+          "confidence",
+          "rationale",
+          "settlement_status",
+          "prediction_outcome",
+          "captured_at"
+        ],
+        "title": "ParlayPredictionRead",
+        "type": "object"
+      },
+      "ParlayPredictionSummaryRead": {
+        "properties": {
+          "average_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Confidence"
+          },
+          "average_edge": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Edge"
+          },
+          "average_realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Realized Pnl"
+          },
+          "by_leg_count": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Leg Count",
+            "type": "object"
+          },
+          "by_outcome": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Outcome",
+            "type": "object"
+          },
+          "by_sport_scope": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Sport Scope",
+            "type": "object"
+          },
+          "cancelled_predictions": {
+            "title": "Cancelled Predictions",
+            "type": "integer"
+          },
+          "loss_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss Rate"
+          },
+          "lost_predictions": {
+            "title": "Lost Predictions",
+            "type": "integer"
+          },
+          "pending_predictions": {
+            "title": "Pending Predictions",
+            "type": "integer"
+          },
+          "push_predictions": {
+            "title": "Push Predictions",
+            "type": "integer"
+          },
+          "settled_predictions": {
+            "title": "Settled Predictions",
+            "type": "integer"
+          },
+          "total_predictions": {
+            "title": "Total Predictions",
+            "type": "integer"
+          },
+          "unresolved_predictions": {
+            "title": "Unresolved Predictions",
+            "type": "integer"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "won_predictions": {
+            "title": "Won Predictions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_predictions",
+          "settled_predictions",
+          "pending_predictions",
+          "unresolved_predictions",
+          "won_predictions",
+          "lost_predictions",
+          "push_predictions",
+          "cancelled_predictions"
+        ],
+        "title": "ParlayPredictionSummaryRead",
+        "type": "object"
+      },
+      "ParlayRecommendationLegRead": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "fair_no_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair No Price"
+          },
+          "fair_yes_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair Yes Price"
+          },
+          "leg_index": {
+            "title": "Leg Index",
+            "type": "integer"
+          },
+          "market_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Family"
+          },
+          "market_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Kind"
+          },
+          "market_title": {
+            "title": "Market Title",
+            "type": "string"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "stat_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Key"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "subject_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Team"
+          },
+          "suggested_price": {
+            "title": "Suggested Price",
+            "type": "number"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "leg_index",
+          "ticker",
+          "market_title",
+          "side",
+          "action",
+          "suggested_price",
+          "edge",
+          "confidence"
+        ],
+        "title": "ParlayRecommendationLegRead",
+        "type": "object"
+      },
+      "ParlayRecommendationRead": {
+        "properties": {
+          "american_odds": {
+            "title": "American Odds",
+            "type": "string"
+          },
+          "calibration_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Version"
+          },
+          "captured_at": {
+            "title": "Captured At",
+            "type": "string"
+          },
+          "combined_market_price": {
+            "title": "Combined Market Price",
+            "type": "number"
+          },
+          "combined_model_probability": {
+            "title": "Combined Model Probability",
+            "type": "number"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "feature_set_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Set Version"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "invalidation": {
+            "title": "Invalidation",
+            "type": "string"
+          },
+          "leg_count": {
+            "title": "Leg Count",
+            "type": "integer"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/ParlayRecommendationLegRead"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "participating_sports": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Participating Sports",
+            "type": "array"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "sport_scope": {
+            "title": "Sport Scope",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "leg_count",
+          "sport_scope",
+          "status",
+          "combined_market_price",
+          "combined_model_probability",
+          "american_odds",
+          "edge",
+          "confidence",
+          "invalidation",
+          "rationale",
+          "captured_at"
+        ],
+        "title": "ParlayRecommendationRead",
+        "type": "object"
+      },
+      "PositionsRead": {
+        "properties": {
+          "demo_orders": {
+            "items": {
+              "$ref": "#/components/schemas/DemoOrderRead"
+            },
+            "title": "Demo Orders",
+            "type": "array"
+          },
+          "paper_positions": {
+            "items": {
+              "$ref": "#/components/schemas/PaperPositionRead"
+            },
+            "title": "Paper Positions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "paper_positions",
+          "demo_orders"
+        ],
+        "title": "PositionsRead",
+        "type": "object"
+      },
+      "PredictionRead": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "calibration_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Version"
+          },
+          "capture_scope": {
+            "default": "recommendation",
+            "title": "Capture Scope",
+            "type": "string"
+          },
+          "captured_at": {
+            "title": "Captured At",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "context_coverage_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Coverage Score"
+          },
+          "display_market_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Market Title"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "fair_no_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair No Price"
+          },
+          "fair_yes_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair Yes Price"
+          },
+          "feature_set_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Set Version"
+          },
+          "features": {
+            "additionalProperties": true,
+            "title": "Features",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "invalidation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalidation"
+          },
+          "market_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Family"
+          },
+          "market_id": {
+            "title": "Market Id",
+            "type": "integer"
+          },
+          "market_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Kind"
+          },
+          "market_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Result"
+          },
+          "market_status_at_capture": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Status At Capture"
+          },
+          "market_title": {
+            "title": "Market Title",
+            "type": "string"
+          },
+          "model_name": {
+            "title": "Model Name",
+            "type": "string"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "prediction_outcome": {
+            "title": "Prediction Outcome",
+            "type": "string"
+          },
+          "quality_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Tier"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "selected_side_probability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Side Probability"
+          },
+          "settled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled At"
+          },
+          "settlement_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Notes"
+          },
+          "settlement_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Source"
+          },
+          "settlement_status": {
+            "title": "Settlement Status",
+            "type": "string"
+          },
+          "settlement_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Value"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "source_badge_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Badge Label"
+          },
+          "source_market_ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Market Ticker"
+          },
+          "source_market_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Market Title"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "stat_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Key"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "subject_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Team"
+          },
+          "suggested_price": {
+            "title": "Suggested Price",
+            "type": "number"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "winning_side": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winning Side"
+          }
+        },
+        "required": [
+          "id",
+          "market_id",
+          "ticker",
+          "market_title",
+          "side",
+          "action",
+          "suggested_price",
+          "edge",
+          "confidence",
+          "model_name",
+          "rationale",
+          "settlement_status",
+          "prediction_outcome",
+          "captured_at"
+        ],
+        "title": "PredictionRead",
+        "type": "object"
+      },
+      "PredictionSettlementResponse": {
+        "properties": {
+          "cancelled": {
+            "title": "Cancelled",
+            "type": "integer"
+          },
+          "errors": {
+            "default": 0,
+            "title": "Errors",
+            "type": "integer"
+          },
+          "lost": {
+            "title": "Lost",
+            "type": "integer"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "processed": {
+            "title": "Processed",
+            "type": "integer"
+          },
+          "push": {
+            "title": "Push",
+            "type": "integer"
+          },
+          "unresolved": {
+            "title": "Unresolved",
+            "type": "integer"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          },
+          "won": {
+            "title": "Won",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "processed",
+          "updated",
+          "won",
+          "lost",
+          "push",
+          "cancelled",
+          "pending",
+          "unresolved"
+        ],
+        "title": "PredictionSettlementResponse",
+        "type": "object"
+      },
+      "PredictionSummaryRead": {
+        "properties": {
+          "average_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Confidence"
+          },
+          "average_edge": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Edge"
+          },
+          "average_realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Realized Pnl"
+          },
+          "by_market_family": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Market Family",
+            "type": "object"
+          },
+          "by_outcome": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Outcome",
+            "type": "object"
+          },
+          "by_sport": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Sport",
+            "type": "object"
+          },
+          "cancelled_predictions": {
+            "title": "Cancelled Predictions",
+            "type": "integer"
+          },
+          "loss_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss Rate"
+          },
+          "lost_predictions": {
+            "title": "Lost Predictions",
+            "type": "integer"
+          },
+          "pending_predictions": {
+            "title": "Pending Predictions",
+            "type": "integer"
+          },
+          "push_predictions": {
+            "title": "Push Predictions",
+            "type": "integer"
+          },
+          "settled_predictions": {
+            "title": "Settled Predictions",
+            "type": "integer"
+          },
+          "total_predictions": {
+            "title": "Total Predictions",
+            "type": "integer"
+          },
+          "unresolved_predictions": {
+            "title": "Unresolved Predictions",
+            "type": "integer"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "won_predictions": {
+            "title": "Won Predictions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_predictions",
+          "settled_predictions",
+          "pending_predictions",
+          "unresolved_predictions",
+          "won_predictions",
+          "lost_predictions",
+          "push_predictions",
+          "cancelled_predictions"
+        ],
+        "title": "PredictionSummaryRead",
+        "type": "object"
+      },
+      "ProductFreshnessResponse": {
+        "description": "Product-facing freshness gauge.\n\nPopulated by reading the latest row of ``current_slate_snapshots`` per\nscope. Because the snapshot store is versioned and append-only, this\nendpoint is side-effect-free: the product read path never blocks on,\nand never fails because of, the write path. ``overall_status`` is the\nworst status across all scopes (missing > stale > fresh).",
+        "properties": {
+          "overall_status": {
+            "enum": [
+              "fresh",
+              "stale",
+              "missing"
+            ],
+            "title": "Overall Status",
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/ProductScopeFreshnessRead"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "overall_status"
+        ],
+        "title": "ProductFreshnessResponse",
+        "type": "object"
+      },
+      "ProductScopeFreshnessRead": {
+        "description": "Per-scope freshness status for the product read path.\n\n``scope`` is either ``\"all\"`` (full cross-sport slate) or a sport key\nsuch as ``\"NBA\"``/``\"MLB\"``. ``generated_at`` is the ``persisted_at`` of\nthe latest snapshot row for that scope. ``status`` follows the same\nvocabulary as ``TradeDeskResponse.freshness_status`` with an extra\n``\"missing\"`` state for scopes that have never been snapshotted.",
+        "properties": {
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "fresh",
+              "stale",
+              "missing"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "status"
+        ],
+        "title": "ProductScopeFreshnessRead",
+        "type": "object"
+      },
+      "ProductSportsResponse": {
+        "description": "Runtime sport scope for product pickers.\n\nSlice 4: replaces the hardcoded ``SportKey`` TS union in\n``apps/web/lib/types.ts`` with a runtime list sourced from\n``config.py:enabled_sports``. The frontend consumes this so changing\nenabled sports on the backend does not require a frontend redeploy.",
+        "properties": {
+          "sports": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sports",
+            "type": "array"
+          }
+        },
+        "title": "ProductSportsResponse",
+        "type": "object"
+      },
+      "ReadinessBucketRead": {
+        "properties": {
+          "average_realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Realized Pnl"
+          },
+          "cancelled_count": {
+            "title": "Cancelled Count",
+            "type": "integer"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "lost_count": {
+            "title": "Lost Count",
+            "type": "integer"
+          },
+          "push_count": {
+            "title": "Push Count",
+            "type": "integer"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "win_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win Rate"
+          },
+          "won_count": {
+            "title": "Won Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "total_count",
+          "won_count",
+          "lost_count",
+          "push_count",
+          "cancelled_count"
+        ],
+        "title": "ReadinessBucketRead",
+        "type": "object"
+      },
+      "RecommendationRead": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "calibration_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Version"
+          },
+          "captured_at": {
+            "title": "Captured At",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "context_coverage_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Coverage Score"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "display_market_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Market Title"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "event_name": {
+            "title": "Event Name",
+            "type": "string"
+          },
+          "feature_set_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Set Version"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "invalidation": {
+            "title": "Invalidation",
+            "type": "string"
+          },
+          "market_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Family"
+          },
+          "market_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Kind"
+          },
+          "market_title": {
+            "title": "Market Title",
+            "type": "string"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "quality_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Tier"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "selected_side_probability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Side Probability"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "source_badge_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Badge Label"
+          },
+          "source_market_ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Market Ticker"
+          },
+          "source_market_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Market Title"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "starts_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts At"
+          },
+          "stat_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Key"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "subject_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Team"
+          },
+          "suggested_price": {
+            "title": "Suggested Price",
+            "type": "number"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ticker",
+          "sport_key",
+          "market_title",
+          "event_name",
+          "side",
+          "action",
+          "suggested_price",
+          "edge",
+          "confidence",
+          "invalidation",
+          "rationale",
+          "captured_at"
+        ],
+        "title": "RecommendationRead",
+        "type": "object"
+      },
+      "RefreshJobRead": {
+        "properties": {
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "queued_at": {
+            "title": "Queued At",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "scope",
+          "reason",
+          "status",
+          "queued_at"
+        ],
+        "title": "RefreshJobRead",
+        "type": "object"
+      },
+      "RunDetailRead": {
+        "properties": {
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "records_processed": {
+            "title": "Records Processed",
+            "type": "integer"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "summary_counts": {
+            "$ref": "#/components/schemas/RunSummaryCounts"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "started_at",
+          "records_processed",
+          "summary_counts"
+        ],
+        "title": "RunDetailRead",
+        "type": "object"
+      },
+      "RunRead": {
+        "properties": {
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "records_processed": {
+            "title": "Records Processed",
+            "type": "integer"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "summary_counts": {
+            "$ref": "#/components/schemas/RunSummaryCounts"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "started_at",
+          "records_processed",
+          "summary_counts"
+        ],
+        "title": "RunRead",
+        "type": "object"
+      },
+      "RunSummaryCounts": {
+        "properties": {
+          "combo_prop_candidates_emitted": {
+            "default": 0,
+            "title": "Combo Prop Candidates Emitted",
+            "type": "integer"
+          },
+          "combo_prop_candidates_suppressed": {
+            "default": 0,
+            "title": "Combo Prop Candidates Suppressed",
+            "type": "integer"
+          },
+          "combo_prop_legs_discovered": {
+            "default": 0,
+            "title": "Combo Prop Legs Discovered",
+            "type": "integer"
+          },
+          "combo_prop_legs_refreshed": {
+            "default": 0,
+            "title": "Combo Prop Legs Refreshed",
+            "type": "integer"
+          },
+          "critical_context_suppressed": {
+            "default": 0,
+            "title": "Critical Context Suppressed",
+            "type": "integer"
+          },
+          "gamelog_cache_hits": {
+            "default": 0,
+            "title": "Gamelog Cache Hits",
+            "type": "integer"
+          },
+          "gamelog_cache_misses": {
+            "default": 0,
+            "title": "Gamelog Cache Misses",
+            "type": "integer"
+          },
+          "heuristic_longshots_suppressed": {
+            "default": 0,
+            "title": "Heuristic Longshots Suppressed",
+            "type": "integer"
+          },
+          "inverse_winner_duplicates_collapsed": {
+            "default": 0,
+            "title": "Inverse Winner Duplicates Collapsed",
+            "type": "integer"
+          },
+          "mapped_markets": {
+            "default": 0,
+            "title": "Mapped Markets",
+            "type": "integer"
+          },
+          "mapped_prop_markets": {
+            "default": 0,
+            "title": "Mapped Prop Markets",
+            "type": "integer"
+          },
+          "parlay_prediction_outcomes": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Parlay Prediction Outcomes",
+            "type": "object"
+          },
+          "parlay_prediction_settlement_updated": {
+            "default": 0,
+            "title": "Parlay Prediction Settlement Updated",
+            "type": "integer"
+          },
+          "parlay_predictions_captured": {
+            "default": 0,
+            "title": "Parlay Predictions Captured",
+            "type": "integer"
+          },
+          "parlay_recommendations_emitted": {
+            "default": 0,
+            "title": "Parlay Recommendations Emitted",
+            "type": "integer"
+          },
+          "parlay_watchlist_counts_by_leg_count": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Parlay Watchlist Counts By Leg Count",
+            "type": "object"
+          },
+          "parlay_watchlist_counts_by_scope": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Parlay Watchlist Counts By Scope",
+            "type": "object"
+          },
+          "player_search_cache_hits": {
+            "default": 0,
+            "title": "Player Search Cache Hits",
+            "type": "integer"
+          },
+          "player_search_cache_misses": {
+            "default": 0,
+            "title": "Player Search Cache Misses",
+            "type": "integer"
+          },
+          "prediction_outcomes": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Prediction Outcomes",
+            "type": "object"
+          },
+          "prediction_settlement_updated": {
+            "default": 0,
+            "title": "Prediction Settlement Updated",
+            "type": "integer"
+          },
+          "predictions_captured": {
+            "default": 0,
+            "title": "Predictions Captured",
+            "type": "integer"
+          },
+          "prop_subjects_warmed": {
+            "default": 0,
+            "title": "Prop Subjects Warmed",
+            "type": "integer"
+          },
+          "quality_tier_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Quality Tier Counts",
+            "type": "object"
+          },
+          "recommendations_emitted": {
+            "default": 0,
+            "title": "Recommendations Emitted",
+            "type": "integer"
+          },
+          "sports_records_ingested": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Sports Records Ingested",
+            "type": "object"
+          },
+          "stale_gamelog_fallbacks": {
+            "default": 0,
+            "title": "Stale Gamelog Fallbacks",
+            "type": "integer"
+          },
+          "supported_markets_kept": {
+            "default": 0,
+            "title": "Supported Markets Kept",
+            "type": "integer"
+          },
+          "supported_mlb_props_seen": {
+            "default": 0,
+            "title": "Supported Mlb Props Seen",
+            "type": "integer"
+          },
+          "supported_nba_props_seen": {
+            "default": 0,
+            "title": "Supported Nba Props Seen",
+            "type": "integer"
+          },
+          "total_kalshi_markets_seen": {
+            "default": 0,
+            "title": "Total Kalshi Markets Seen",
+            "type": "integer"
+          },
+          "unsupported_prop_category_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Unsupported Prop Category Counts",
+            "type": "object"
+          },
+          "watchlist_counts_by_prop_category": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Watchlist Counts By Prop Category",
+            "type": "object"
+          },
+          "watchlist_counts_by_sport": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Watchlist Counts By Sport",
+            "type": "object"
+          }
+        },
+        "title": "RunSummaryCounts",
+        "type": "object"
+      },
+      "SignalSnapshotRead": {
+        "properties": {
+          "calibration_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Version"
+          },
+          "captured_at": {
+            "title": "Captured At",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "fair_no_price": {
+            "title": "Fair No Price",
+            "type": "number"
+          },
+          "fair_yes_price": {
+            "title": "Fair Yes Price",
+            "type": "number"
+          },
+          "feature_set_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Set Version"
+          },
+          "features": {
+            "additionalProperties": true,
+            "title": "Features",
+            "type": "object"
+          },
+          "model_name": {
+            "title": "Model Name",
+            "type": "string"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "scoring_diagnostics": {
+            "additionalProperties": true,
+            "title": "Scoring Diagnostics",
+            "type": "object"
+          }
+        },
+        "required": [
+          "captured_at",
+          "model_name",
+          "confidence",
+          "fair_yes_price",
+          "fair_no_price",
+          "edge",
+          "reasons",
+          "features"
+        ],
+        "title": "SignalSnapshotRead",
+        "type": "object"
+      },
+      "SportAvailabilityRead": {
+        "properties": {
+          "availability_mode": {
+            "enum": [
+              "live",
+              "research_only"
+            ],
+            "title": "Availability Mode",
+            "type": "string"
+          },
+          "events_count": {
+            "default": 0,
+            "title": "Events Count",
+            "type": "integer"
+          },
+          "last_refresh_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Refresh At"
+          },
+          "recommendations_count": {
+            "default": 0,
+            "title": "Recommendations Count",
+            "type": "integer"
+          },
+          "sport_key": {
+            "title": "Sport Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sport_key",
+          "availability_mode"
+        ],
+        "title": "SportAvailabilityRead",
+        "type": "object"
+      },
+      "SportRead": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name"
+        ],
+        "title": "SportRead",
+        "type": "object"
+      },
+      "StatsGameLogRead": {
+        "properties": {
+          "competition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Competition"
+          },
+          "game_date": {
+            "title": "Game Date",
+            "type": "string"
+          },
+          "game_id": {
+            "title": "Game Id",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Metrics",
+            "type": "object"
+          },
+          "opponent": {
+            "title": "Opponent",
+            "type": "string"
+          },
+          "opponent_abbreviation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opponent Abbreviation"
+          },
+          "opponent_score": {
+            "title": "Opponent Score",
+            "type": "number"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "stat_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Line"
+          },
+          "team_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Name"
+          },
+          "team_score": {
+            "title": "Team Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "game_id",
+          "game_date",
+          "location",
+          "opponent",
+          "team_score",
+          "opponent_score",
+          "metrics"
+        ],
+        "title": "StatsGameLogRead",
+        "type": "object"
+      },
+      "StatsQueryRead": {
+        "properties": {
+          "coverage_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Note"
+          },
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "entity_name": {
+            "title": "Entity Name",
+            "type": "string"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "game_logs": {
+            "items": {
+              "$ref": "#/components/schemas/StatsGameLogRead"
+            },
+            "title": "Game Logs",
+            "type": "array"
+          },
+          "games_analyzed": {
+            "title": "Games Analyzed",
+            "type": "integer"
+          },
+          "games_requested": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Games Requested"
+          },
+          "metric_labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Metric Labels",
+            "type": "object"
+          },
+          "opponent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opponent"
+          },
+          "query_type": {
+            "title": "Query Type",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "season": {
+            "title": "Season",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "split": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Split"
+          },
+          "sport_key": {
+            "title": "Sport Key",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/StatsSummaryRead"
+          },
+          "team_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Name"
+          }
+        },
+        "required": [
+          "question",
+          "sport_key",
+          "entity_name",
+          "entity_id",
+          "query_type",
+          "season",
+          "games_analyzed",
+          "summary",
+          "game_logs",
+          "explanation",
+          "source"
+        ],
+        "title": "StatsQueryRead",
+        "type": "object"
+      },
+      "StatsQueryRequest": {
+        "properties": {
+          "question": {
+            "minLength": 3,
+            "title": "Question",
+            "type": "string"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season"
+          },
+          "sport_key": {
+            "default": "NBA",
+            "title": "Sport Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "StatsQueryRequest",
+        "type": "object"
+      },
+      "StatsSummaryRead": {
+        "properties": {
+          "draws": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draws"
+          },
+          "games": {
+            "title": "Games",
+            "type": "integer"
+          },
+          "losses": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Losses"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Metrics",
+            "type": "object"
+          },
+          "stat_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Line"
+          },
+          "wins": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wins"
+          }
+        },
+        "required": [
+          "games",
+          "metrics"
+        ],
+        "title": "StatsSummaryRead",
+        "type": "object"
+      },
+      "TradeDeskEventRead": {
+        "properties": {
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "event_name": {
+            "title": "Event Name",
+            "type": "string"
+          },
+          "event_status": {
+            "title": "Event Status",
+            "type": "string"
+          },
+          "game_lines": {
+            "items": {
+              "$ref": "#/components/schemas/TradeDeskGameLineRead"
+            },
+            "title": "Game Lines",
+            "type": "array"
+          },
+          "player_props": {
+            "items": {
+              "$ref": "#/components/schemas/TradeDeskPlayerPropRead"
+            },
+            "title": "Player Props",
+            "type": "array"
+          },
+          "sport_key": {
+            "title": "Sport Key",
+            "type": "string"
+          },
+          "starts_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts At"
+          }
+        },
+        "required": [
+          "event_id",
+          "event_name",
+          "event_status",
+          "sport_key"
+        ],
+        "title": "TradeDeskEventRead",
+        "type": "object"
+      },
+      "TradeDeskGameLineRead": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "display_label": {
+            "title": "Display Label",
+            "type": "string"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "entry_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Price"
+          },
+          "kalshi_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kalshi Url"
+          },
+          "market_kind": {
+            "title": "Market Kind",
+            "type": "string"
+          },
+          "market_title": {
+            "title": "Market Title",
+            "type": "string"
+          },
+          "projected_side_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projected Side Label"
+          },
+          "selected_side": {
+            "title": "Selected Side",
+            "type": "string"
+          },
+          "selected_side_probability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Side Probability"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "market_title",
+          "display_label",
+          "market_kind",
+          "selected_side",
+          "edge",
+          "confidence"
+        ],
+        "title": "TradeDeskGameLineRead",
+        "type": "object"
+      },
+      "TradeDeskPlayerPropRead": {
+        "properties": {
+          "best_edge": {
+            "title": "Best Edge",
+            "type": "number"
+          },
+          "best_win_prob": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Win Prob"
+          },
+          "stat_groups": {
+            "items": {
+              "$ref": "#/components/schemas/TradeDeskStatGroupRead"
+            },
+            "title": "Stat Groups",
+            "type": "array"
+          },
+          "subject_name": {
+            "title": "Subject Name",
+            "type": "string"
+          },
+          "subject_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Team"
+          }
+        },
+        "required": [
+          "subject_name",
+          "best_edge"
+        ],
+        "title": "TradeDeskPlayerPropRead",
+        "type": "object"
+      },
+      "TradeDeskResponse": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TradeDeskEventRead"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "freshness_status": {
+            "default": "fresh",
+            "enum": [
+              "fresh",
+              "stale"
+            ],
+            "title": "Freshness Status",
+            "type": "string"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "research_sports": {
+            "items": {
+              "$ref": "#/components/schemas/SportAvailabilityRead"
+            },
+            "title": "Research Sports",
+            "type": "array"
+          }
+        },
+        "title": "TradeDeskResponse",
+        "type": "object"
+      },
+      "TradeDeskStatGroupRead": {
+        "properties": {
+          "stat_key": {
+            "title": "Stat Key",
+            "type": "string"
+          },
+          "thresholds": {
+            "items": {
+              "$ref": "#/components/schemas/TradeDeskThresholdRead"
+            },
+            "title": "Thresholds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stat_key"
+        ],
+        "title": "TradeDeskStatGroupRead",
+        "type": "object"
+      },
+      "TradeDeskThresholdRead": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "entry_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Price"
+          },
+          "is_best": {
+            "default": false,
+            "title": "Is Best",
+            "type": "boolean"
+          },
+          "kalshi_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kalshi Url"
+          },
+          "probability_yes": {
+            "title": "Probability Yes",
+            "type": "number"
+          },
+          "selected_side": {
+            "title": "Selected Side",
+            "type": "string"
+          },
+          "selected_side_probability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Side Probability"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "threshold",
+          "probability_yes",
+          "selected_side",
+          "edge",
+          "confidence"
+        ],
+        "title": "TradeDeskThresholdRead",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WatchlistCoverageRowRead": {
+        "properties": {
+          "coverage_status": {
+            "enum": [
+              "recommendation",
+              "prediction",
+              "market"
+            ],
+            "title": "Coverage Status",
+            "type": "string"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Direction"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "event_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Status"
+          },
+          "latest_prediction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredictionRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_recommendation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecommendationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarketSnapshotRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "market_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Family"
+          },
+          "market_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Kind"
+          },
+          "market_title": {
+            "title": "Market Title",
+            "type": "string"
+          },
+          "prop_context_stale": {
+            "default": false,
+            "title": "Prop Context Stale",
+            "type": "boolean"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "starts_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts At"
+          },
+          "stat_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Key"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "subject_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Team"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "market_title",
+          "coverage_status"
+        ],
+        "title": "WatchlistCoverageRowRead",
+        "type": "object"
+      },
+      "WatchlistDiagnosticsRead": {
+        "properties": {
+          "active_prop_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "active_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_recommendation_count": {
+            "default": 0,
+            "title": "Current Recommendation Count",
+            "type": "integer"
+          },
+          "data_stale": {
+            "title": "Data Stale",
+            "type": "boolean"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "last_prop_refresh_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Prop Refresh At"
+          },
+          "last_successful_refresh_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Successful Refresh At"
+          },
+          "latest_prop_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_recommendations_emitted": {
+            "default": 0,
+            "title": "Latest Recommendations Emitted",
+            "type": "integer"
+          },
+          "latest_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_refresh_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_refresh_succeeded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Refresh Succeeded"
+          },
+          "latest_supported_markets_kept": {
+            "default": 0,
+            "title": "Latest Supported Markets Kept",
+            "type": "integer"
+          },
+          "latest_watchlist_counts_by_sport": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Latest Watchlist Counts By Sport",
+            "type": "object"
+          },
+          "prop_data_stale": {
+            "title": "Prop Data Stale",
+            "type": "boolean"
+          },
+          "prop_refresh_error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prop Refresh Error Message"
+          },
+          "prop_refresh_reason": {
+            "enum": [
+              "none",
+              "startup",
+              "interval",
+              "manual"
+            ],
+            "title": "Prop Refresh Reason",
+            "type": "string"
+          },
+          "prop_refresh_status": {
+            "enum": [
+              "idle",
+              "queued",
+              "running",
+              "failed"
+            ],
+            "title": "Prop Refresh Status",
+            "type": "string"
+          },
+          "refresh_error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Error Message"
+          },
+          "refresh_reason": {
+            "enum": [
+              "none",
+              "startup",
+              "interval",
+              "manual",
+              "pregame"
+            ],
+            "title": "Refresh Reason",
+            "type": "string"
+          },
+          "refresh_status": {
+            "enum": [
+              "idle",
+              "queued",
+              "running",
+              "failed"
+            ],
+            "title": "Refresh Status",
+            "type": "string"
+          },
+          "scheduler_enabled": {
+            "title": "Scheduler Enabled",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "watchlist_min_confidence": {
+            "title": "Watchlist Min Confidence",
+            "type": "number"
+          },
+          "watchlist_min_edge": {
+            "title": "Watchlist Min Edge",
+            "type": "number"
+          }
+        },
+        "required": [
+          "status",
+          "environment",
+          "scheduler_enabled",
+          "refresh_status",
+          "refresh_reason",
+          "data_stale",
+          "prop_refresh_status",
+          "prop_refresh_reason",
+          "prop_data_stale",
+          "watchlist_min_edge",
+          "watchlist_min_confidence"
+        ],
+        "title": "WatchlistDiagnosticsRead",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Kalshi Sports Copilot API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/demo-orders": {
+      "post": {
+        "operationId": "submit_demo_order_demo_orders_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoOrderCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoOrderRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Demo Order"
+      }
+    },
+    "/demo-orders/{order_id}/cancel": {
+      "post": {
+        "operationId": "cancel_order_demo_orders__order_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "title": "Order Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoOrderRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Order"
+      }
+    },
+    "/events": {
+      "get": {
+        "operationId": "list_events_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sport"
+            }
+          },
+          {
+            "in": "query",
+            "name": "day",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EventRead"
+                  },
+                  "title": "Response List Events Events Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Events"
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/markets": {
+      "get": {
+        "operationId": "list_markets_markets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sport"
+            }
+          },
+          {
+            "in": "query",
+            "name": "family",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Family"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MarketListRead"
+                  },
+                  "title": "Response List Markets Markets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Markets"
+      }
+    },
+    "/markets/{ticker}": {
+      "get": {
+        "operationId": "get_market_detail_markets__ticker__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ticker",
+            "required": true,
+            "schema": {
+              "title": "Ticker",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketDetailRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Market Detail"
+      }
+    },
+    "/markets/{ticker}/history": {
+      "get": {
+        "operationId": "get_market_history_markets__ticker__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ticker",
+            "required": true,
+            "schema": {
+              "title": "Ticker",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "1D",
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketHistoryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Market History"
+      }
+    },
+    "/ops/jobs/refresh": {
+      "post": {
+        "operationId": "refresh_jobs_ops_jobs_refresh_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRefreshResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Refresh Jobs",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/jobs/settle-predictions": {
+      "post": {
+        "operationId": "settle_prediction_job_ops_jobs_settle_predictions_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictionSettlementResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Settle Prediction Job",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/jobs/{job_id}": {
+      "get": {
+        "operationId": "refresh_job_detail_ops_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Job Detail",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/models/readiness": {
+      "get": {
+        "operationId": "model_readiness_summary_ops_models_readiness_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelReadinessSummaryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Model Readiness Summary",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/models/readiness/{family_key}": {
+      "get": {
+        "operationId": "model_readiness_detail_ops_models_readiness__family_key__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "family_key",
+            "required": true,
+            "schema": {
+              "title": "Family Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelFamilyReadinessRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Model Readiness Detail",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/runs": {
+      "get": {
+        "operationId": "list_runs_ops_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunRead"
+                  },
+                  "title": "Response List Runs Ops Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Runs",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_detail_ops_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Detail",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/watchlist/diagnostics": {
+      "get": {
+        "operationId": "get_watchlist_diagnostics_ops_watchlist_diagnostics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistDiagnosticsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Watchlist Diagnostics",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/paper-positions": {
+      "post": {
+        "operationId": "open_paper_position_paper_positions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperPositionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperPositionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Open Paper Position"
+      }
+    },
+    "/paper-positions/{position_id}/exit": {
+      "post": {
+        "operationId": "exit_paper_position_paper_positions__position_id__exit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "position_id",
+            "required": true,
+            "schema": {
+              "title": "Position Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperPositionExit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperPositionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exit Paper Position"
+      }
+    },
+    "/parlays/predictions": {
+      "get": {
+        "operationId": "list_parlay_predictions_parlays_predictions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport_scope",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "title": "Sport Scope",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "leg_count",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Leg Count"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ParlayPredictionRead"
+                  },
+                  "title": "Response List Parlay Predictions Parlays Predictions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Parlay Predictions"
+      }
+    },
+    "/parlays/predictions/summary": {
+      "get": {
+        "operationId": "parlay_prediction_summary_parlays_predictions_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport_scope",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "title": "Sport Scope",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "leg_count",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Leg Count"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParlayPredictionSummaryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Parlay Prediction Summary"
+      }
+    },
+    "/parlays/watchlist": {
+      "get": {
+        "operationId": "get_parlay_watchlist_parlays_watchlist_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport_scope",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "title": "Sport Scope",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "leg_count",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Leg Count"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ParlayRecommendationRead"
+                  },
+                  "title": "Response Get Parlay Watchlist Parlays Watchlist Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Parlay Watchlist"
+      }
+    },
+    "/positions": {
+      "get": {
+        "operationId": "get_positions_positions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Positions"
+      }
+    },
+    "/predictions": {
+      "get": {
+        "operationId": "list_predictions_predictions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sport"
+            }
+          },
+          {
+            "in": "query",
+            "name": "market_family",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Market Family"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stat_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stat Key"
+            }
+          },
+          {
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "in": "query",
+            "name": "captured_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Captured From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "captured_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Captured To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PredictionRead"
+                  },
+                  "title": "Response List Predictions Predictions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Predictions"
+      }
+    },
+    "/predictions/summary": {
+      "get": {
+        "operationId": "prediction_summary_predictions_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sport"
+            }
+          },
+          {
+            "in": "query",
+            "name": "market_family",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Market Family"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stat_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stat Key"
+            }
+          },
+          {
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "in": "query",
+            "name": "captured_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Captured From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "captured_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Captured To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictionSummaryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prediction Summary"
+      }
+    },
+    "/product/freshness": {
+      "get": {
+        "description": "Product-facing freshness gauge.\n\nSlice 3: replaces the v1 shell-level ``/health`` gate. Surfaces that\nrender product data should consult this endpoint (or the\n``freshness_status`` field of their own payload) to decide whether to\nrender a \"stale\" pill \u2014 they must NOT blank themselves on a failed\nrequest here, because this endpoint is read-only over the append-only\nsnapshot store and has no coupling to the write path. The per-sport\nscopes plus the cross-sport ``\"all\"`` scope let the UI differentiate\n\"NBA is stale but MLB is fresh\" from a whole-slate outage.",
+        "operationId": "get_product_freshness_product_freshness_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductFreshnessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Product Freshness"
+      }
+    },
+    "/product/sports": {
+      "get": {
+        "description": "Runtime sport scope for product pickers (Slice 4).\n\nSourced from ``config.py:enabled_sports`` so runtime configuration\nchanges do not require a frontend redeploy. The list is uppercased and\nfiltered to match ``_visible_sports()`` \u2014 i.e. UFC is hidden even if it\nis in ``enabled_sports`` \u2014 so all product surfaces agree on scope.",
+        "operationId": "get_product_sports_product_sports_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductSportsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Product Sports"
+      }
+    },
+    "/research/stats/query": {
+      "post": {
+        "operationId": "query_stats_research_stats_query_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatsQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsQueryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Stats",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/sports": {
+      "get": {
+        "operationId": "list_sports_sports_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SportRead"
+                  },
+                  "title": "Response List Sports Sports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Sports"
+      }
+    },
+    "/sports/availability": {
+      "get": {
+        "operationId": "list_sport_availability_sports_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SportAvailabilityRead"
+                  },
+                  "title": "Response List Sport Availability Sports Availability Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Sport Availability"
+      }
+    },
+    "/trade-desk": {
+      "get": {
+        "operationId": "get_trade_desk_trade_desk_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sport"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradeDeskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Trade Desk"
+      }
+    },
+    "/watchlist": {
+      "get": {
+        "operationId": "get_watchlist_watchlist_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sport"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RecommendationRead"
+                  },
+                  "title": "Response Get Watchlist Watchlist Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Watchlist"
+      }
+    },
+    "/watchlist/coverage": {
+      "get": {
+        "operationId": "get_watchlist_coverage_watchlist_coverage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sport",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sport"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 250,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WatchlistCoverageRowRead"
+                  },
+                  "title": "Response Get Watchlist Coverage Watchlist Coverage Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Watchlist Coverage"
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, PlainSerializer
@@ -318,6 +318,49 @@ class TradeDeskEventRead(BaseModel):
 class TradeDeskResponse(BaseModel):
     events: list[TradeDeskEventRead] = Field(default_factory=list)
     research_sports: list[SportAvailabilityRead] = Field(default_factory=list)
+    generated_at: UTCDateTime | None = None
+    freshness_status: Literal["fresh", "stale"] = "fresh"
+
+
+class ProductScopeFreshnessRead(BaseModel):
+    """Per-scope freshness status for the product read path.
+
+    ``scope`` is either ``"all"`` (full cross-sport slate) or a sport key
+    such as ``"NBA"``/``"MLB"``. ``generated_at`` is the ``persisted_at`` of
+    the latest snapshot row for that scope. ``status`` follows the same
+    vocabulary as ``TradeDeskResponse.freshness_status`` with an extra
+    ``"missing"`` state for scopes that have never been snapshotted.
+    """
+
+    scope: str
+    generated_at: UTCDateTime | None = None
+    status: Literal["fresh", "stale", "missing"]
+
+
+class ProductFreshnessResponse(BaseModel):
+    """Product-facing freshness gauge.
+
+    Populated by reading the latest row of ``current_slate_snapshots`` per
+    scope. Because the snapshot store is versioned and append-only, this
+    endpoint is side-effect-free: the product read path never blocks on,
+    and never fails because of, the write path. ``overall_status`` is the
+    worst status across all scopes (missing > stale > fresh).
+    """
+
+    scopes: list[ProductScopeFreshnessRead] = Field(default_factory=list)
+    overall_status: Literal["fresh", "stale", "missing"]
+
+
+class ProductSportsResponse(BaseModel):
+    """Runtime sport scope for product pickers.
+
+    Slice 4: replaces the hardcoded ``SportKey`` TS union in
+    ``apps/web/lib/types.ts`` with a runtime list sourced from
+    ``config.py:enabled_sports``. The frontend consumes this so changing
+    enabled sports on the backend does not require a frontend redeploy.
+    """
+
+    sports: list[str] = Field(default_factory=list)
 
 
 class RunSummaryCounts(BaseModel):
@@ -728,11 +771,6 @@ class PredictionSettlementResponse(BaseModel):
     pending: int
     unresolved: int
     errors: int = 0
-
-
-class EventQuery(BaseModel):
-    sport: str | None = None
-    day: date | None = None
 
 
 class StatsQueryRequest(BaseModel):

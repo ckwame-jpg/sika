@@ -28,7 +28,6 @@ class Settings(BaseSettings):
         ]
     )
     scheduler_enabled: bool = True
-    app_role: str = "web"
     refresh_interval_minutes: int = 5
     prop_refresh_interval_minutes: int = 20
     queue_poll_interval_seconds: int = 5

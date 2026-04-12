@@ -182,13 +182,14 @@ def test_current_slate_shadow_capture_is_idempotent_and_source_linked(db_session
     source_run = Run(kind="refresh", status="completed")
     db_session.add(source_run)
     db_session.flush()
+    base_captured_at = datetime.now(timezone.utc) - timedelta(days=1)
     for index in range(3):
         _seed_prediction(
             db_session,
             ticker=f"NBA-CURRENT-{index}",
             market_id=index + 1,
             run_id=source_run.id,
-            captured_at=datetime(2026, 4, 3, 10, 0, tzinfo=timezone.utc) + timedelta(minutes=index),
+            captured_at=base_captured_at + timedelta(minutes=index),
         )
     db_session.commit()
 
@@ -310,7 +311,7 @@ def test_shadow_backfill_skips_legacy_unlinked_duplicates(db_session, monkeypatc
         family_scopes={"nba_singles": "single", "nba_parlay_2leg": "parlay"},
     )
 
-    now = datetime(2026, 4, 3, 12, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     run = Run(kind="refresh", status="completed")
     db_session.add(run)
     db_session.flush()
@@ -404,7 +405,7 @@ def test_shadow_backfill_respects_oldest_first_prediction_cap(db_session, monkey
     run = Run(kind="refresh", status="completed")
     db_session.add(run)
     db_session.flush()
-    base_time = datetime(2026, 4, 3, 12, 0, tzinfo=timezone.utc)
+    base_time = datetime.now(timezone.utc) - timedelta(hours=1)
     for index in range(260):
         _seed_prediction(
             db_session,

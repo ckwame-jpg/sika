@@ -114,6 +114,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _ensure_runtime_schema()
+    _drop_legacy_current_slate_scope_uniqueness()
     _ensure_performance_indexes()
 
 
@@ -125,6 +126,9 @@ _PERFORMANCE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS ix_prediction_coverage_daily_lookup ON predictions(market_id, capture_scope, captured_at DESC)",
     "CREATE INDEX IF NOT EXISTS ix_shadow_inference_source_prediction ON shadow_inferences(source_prediction_id)",
     "CREATE INDEX IF NOT EXISTS ix_shadow_parlay_inference_source_prediction ON shadow_parlay_inferences(source_parlay_prediction_id)",
+    # Slice 2: the snapshot store is append-only per scope, queried by latest
+    # generated_at. This composite supports ``WHERE scope = ? ORDER BY generated_at DESC``.
+    "CREATE INDEX IF NOT EXISTS ix_current_slate_snapshots_scope_generated_at ON current_slate_snapshots(scope, generated_at)",
 ]
 
 
@@ -146,3 +150,104 @@ def _ensure_runtime_schema() -> None:
                 if column_name in existing_columns:
                     continue
                 conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}"))
+
+
+def _drop_legacy_current_slate_scope_uniqueness() -> None:
+    """Slice 2: the ``current_slate_snapshots`` table was originally keyed by
+    ``scope`` alone (``unique=True``) and mutated in place on every refresh.
+    v2 makes the table append-only so the latest payload is always visible
+    even when a write fails mid-phase. For DBs that predate this change the
+    legacy unique constraint/index must be dropped here — ``create_all`` is
+    a no-op on existing tables and won't remove it on its own.
+
+    Fresh DBs: ``Base.metadata.create_all`` already creates the new shape
+    (no unique on scope), so this function is a no-op for them.
+    """
+    table_name = "current_slate_snapshots"
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        if table_name not in inspector.get_table_names():
+            return
+
+        legacy_constraint_on_scope = False
+
+        # Postgres-style: column-level ``unique=True`` creates a named
+        # ``UniqueConstraint``. Drop it by name.
+        for constraint in inspector.get_unique_constraints(table_name):
+            cols = list(constraint.get("column_names") or [])
+            if cols != ["scope"]:
+                continue
+            legacy_constraint_on_scope = True
+            name = constraint.get("name")
+            if name and not is_sqlite:
+                conn.execute(
+                    text(f'ALTER TABLE {table_name} DROP CONSTRAINT IF EXISTS "{name}"')
+                )
+
+        # SQLite (and Postgres fallback): column-level unique becomes a
+        # unique index. Drop any unique index keyed on scope alone.
+        for index in inspector.get_indexes(table_name):
+            cols = list(index.get("column_names") or [])
+            if cols != ["scope"] or not index.get("unique"):
+                continue
+            legacy_constraint_on_scope = True
+            name = index.get("name")
+            if name and not is_sqlite:
+                conn.execute(text(f'DROP INDEX IF EXISTS "{name}"'))
+
+        if legacy_constraint_on_scope and is_sqlite:
+            # SQLite has no ALTER TABLE DROP CONSTRAINT/INDEX for column-level
+            # UNIQUE embedded in the original CREATE TABLE. Rebuild the table.
+            _rebuild_current_slate_snapshots_sqlite(conn)
+
+
+def _rebuild_current_slate_snapshots_sqlite(conn) -> None:
+    """SQLite-only: recreate the table without the column-level unique on
+    ``scope`` and copy existing rows across. Called from
+    ``_drop_legacy_current_slate_scope_uniqueness``.
+    """
+    conn.execute(text("PRAGMA foreign_keys = OFF"))
+    conn.execute(
+        text(
+            """
+            CREATE TABLE current_slate_snapshots__v2 (
+                id INTEGER PRIMARY KEY,
+                scope VARCHAR NOT NULL,
+                source_run_id INTEGER REFERENCES runs(id),
+                generated_at DATETIME NOT NULL,
+                payload JSON
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            """
+            INSERT INTO current_slate_snapshots__v2 (id, scope, source_run_id, generated_at, payload)
+            SELECT id, scope, source_run_id, generated_at, payload FROM current_slate_snapshots
+            """
+        )
+    )
+    conn.execute(text("DROP TABLE current_slate_snapshots"))
+    conn.execute(
+        text("ALTER TABLE current_slate_snapshots__v2 RENAME TO current_slate_snapshots")
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_current_slate_snapshots_scope "
+            "ON current_slate_snapshots(scope)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_current_slate_snapshots_generated_at "
+            "ON current_slate_snapshots(generated_at)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_current_slate_snapshots_source_run_id "
+            "ON current_slate_snapshots(source_run_id)"
+        )
+    )
+    conn.execute(text("PRAGMA foreign_keys = ON"))

@@ -343,6 +343,7 @@ def test_prune_runtime_artifacts_cleans_old_runtime_rows(db_session, monkeypatch
         "player_gamelog_cache_deleted": 1,
         "parlay_recommendation_run_links_cleared": 1,
         "runs_deleted": 1,
+        "current_slate_snapshots_deleted": 0,
     }
     assert db_session.get(Prediction, old_prediction_id) is None
     assert db_session.get(Prediction, recent_prediction_id) is not None
