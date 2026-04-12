@@ -451,7 +451,12 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
         for row in availability_rows
         if row.availability_mode == "research_only" and (normalized_sport is None or row.sport_key == normalized_sport)
     ]
-    return TradeDeskResponse(events=events, research_sports=research_sports)
+    return TradeDeskResponse(
+        events=events,
+        research_sports=research_sports,
+        generated_at=None,
+        freshness_status="fresh",
+    )
 
 
 def persist_current_slate_snapshots(
@@ -460,34 +465,77 @@ def persist_current_slate_snapshots(
     source_run_id: int | None,
     generated_at: datetime | None = None,
 ) -> dict[str, datetime]:
+    """Append a new snapshot row per scope.
+
+    Slice 2 made this table versioned and append-only: every call inserts a
+    fresh ``CurrentSlateSnapshot`` row and leaves the prior row in place. The
+    read path (``load_trade_desk_snapshot``) selects the latest row by
+    ``generated_at``, so a mid-phase crash on the write side can never empty
+    the product — readers continue serving the previous snapshot until a
+    newer one lands. Retention of old rows lives in ``prune_runtime_artifacts``.
+    """
     timestamp = generated_at or datetime.now(timezone.utc)
     persisted: dict[str, datetime] = {}
     for scope in (SNAPSHOT_SCOPE_ALL, *sorted(CURRENT_WATCHLIST_SPORTS)):
         response = build_trade_desk_response(db, sport=None if scope == SNAPSHOT_SCOPE_ALL else scope)
-        snapshot = db.scalar(select(CurrentSlateSnapshot).where(CurrentSlateSnapshot.scope == scope))
-        if snapshot is None:
-            snapshot = CurrentSlateSnapshot(scope=scope)
-            db.add(snapshot)
-        snapshot.source_run_id = source_run_id
-        snapshot.generated_at = timestamp
-        snapshot.payload = response.model_dump(mode="json")
+        # Stamp freshness metadata directly into the persisted payload so that
+        # the stored snapshot is self-describing regardless of DB-row fields.
+        response.generated_at = timestamp
+        response.freshness_status = "fresh"
+        snapshot = CurrentSlateSnapshot(
+            scope=scope,
+            source_run_id=source_run_id,
+            generated_at=timestamp,
+            payload=response.model_dump(mode="json"),
+        )
+        db.add(snapshot)
         persisted[scope] = timestamp
     db.flush()
     return persisted
 
 
 def load_trade_desk_snapshot(db: Session, *, sport: str | None = None) -> TradeDeskResponse | None:
+    """Return the most recent snapshotted trade-desk response for ``sport``.
+
+    Unlike earlier versions of this function, a snapshot that contains stale
+    events is still returned — with ``freshness_status="stale"`` — instead of
+    being suppressed. Suppression here previously caused the route handler to
+    fall back to a live ``Recommendation`` read, which is precisely the
+    behaviour we want to avoid when the refresh pipeline is stuck: stale data
+    with a visible freshness flag is strictly better than silently serving
+    whatever the write path has left behind on the live tables.
+    """
     normalized_sport = (sport or "").upper().strip() or None
     if normalized_sport and normalized_sport not in CURRENT_WATCHLIST_SPORTS:
         return build_trade_desk_response(db, sport=normalized_sport)
     scope = normalize_snapshot_scope(normalized_sport)
-    snapshot = db.scalar(select(CurrentSlateSnapshot).where(CurrentSlateSnapshot.scope == scope))
+    # Slice 2: the table is versioned per scope. Read the latest row by
+    # generated_at, breaking ties on id so two writes at the same instant
+    # still return a deterministic winner.
+    snapshot = db.scalar(
+        select(CurrentSlateSnapshot)
+        .where(CurrentSlateSnapshot.scope == scope)
+        .order_by(CurrentSlateSnapshot.generated_at.desc(), CurrentSlateSnapshot.id.desc())
+        .limit(1)
+    )
     if snapshot is None or not snapshot.payload:
         return None
     response = TradeDeskResponse.model_validate(snapshot.payload)
+    # Back-fill generated_at for rows persisted before this field existed on
+    # TradeDeskResponse. The DB row always has a trustworthy timestamp. Some
+    # backends (SQLite) return naive datetimes on round-trip, so normalize to
+    # UTC before assigning to the response.
+    if response.generated_at is None and snapshot.generated_at is not None:
+        row_generated_at = snapshot.generated_at
+        if row_generated_at.tzinfo is None:
+            row_generated_at = row_generated_at.replace(tzinfo=timezone.utc)
+        response.generated_at = row_generated_at
+    is_stale = False
     for event in response.events:
         if event.sport_key not in CURRENT_WATCHLIST_SPORTS:
             continue
         if not is_current_watchlist_status(event.event_status, event.starts_at):
-            return None
+            is_stale = True
+            break
+    response.freshness_status = "stale" if is_stale else "fresh"
     return response

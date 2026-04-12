@@ -1,6 +1,17 @@
 from datetime import datetime, timedelta, timezone
 
-from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, Recommendation, RefreshJob, Run
+from app.models import (
+    CurrentSlateSnapshot,
+    Event,
+    EventParticipant,
+    Market,
+    MarketSnapshot,
+    Participant,
+    Prediction,
+    Recommendation,
+    RefreshJob,
+    Run,
+)
 
 
 def _seed_trade_event(
@@ -186,7 +197,7 @@ def test_watchlist_and_positions_endpoints(client, db_session):
 
 
 def test_watchlist_diagnostics_endpoint_reports_no_refresh_runs(client):
-    diagnostics = client.get("/watchlist/diagnostics")
+    diagnostics = client.get("/ops/watchlist/diagnostics")
 
     assert diagnostics.status_code == 200
     payload = diagnostics.json()
@@ -383,7 +394,7 @@ def test_current_slate_endpoints_hide_stale_in_progress_events(client, db_sessio
 
 
 def test_refresh_jobs_enqueues_current_slate_job(client, db_session):
-    response = client.post("/jobs/refresh")
+    response = client.post("/ops/jobs/refresh")
 
     assert response.status_code == 202
     payload = response.json()
@@ -398,7 +409,7 @@ def test_refresh_jobs_enqueues_current_slate_job(client, db_session):
     assert job.reason == "manual"
     assert job.status == "queued"
 
-    detail = client.get(f"/jobs/{job.id}")
+    detail = client.get(f"/ops/jobs/{job.id}")
     assert detail.status_code == 200
     assert detail.json()["id"] == job.id
     assert detail.json()["status"] == "queued"
@@ -415,7 +426,7 @@ def test_refresh_job_detail_reconciles_stale_running_job(client, db_session):
     db_session.add(job)
     db_session.commit()
 
-    detail = client.get(f"/jobs/{job.id}")
+    detail = client.get(f"/ops/jobs/{job.id}")
 
     assert detail.status_code == 200
     payload = detail.json()
@@ -439,7 +450,7 @@ def test_watchlist_diagnostics_endpoint_reports_zero_emission_refresh(client, db
     db_session.add(run)
     db_session.commit()
 
-    diagnostics = client.get("/watchlist/diagnostics")
+    diagnostics = client.get("/ops/watchlist/diagnostics")
 
     assert diagnostics.status_code == 200
     payload = diagnostics.json()
@@ -467,7 +478,7 @@ def test_watchlist_diagnostics_endpoint_reports_failed_refresh(client, db_sessio
     db_session.add(run)
     db_session.commit()
 
-    diagnostics = client.get("/watchlist/diagnostics")
+    diagnostics = client.get("/ops/watchlist/diagnostics")
 
     assert diagnostics.status_code == 200
     payload = diagnostics.json()
@@ -555,11 +566,11 @@ def test_runs_and_market_history_endpoints(client, db_session):
     )
     db_session.commit()
 
-    runs = client.get("/runs")
+    runs = client.get("/ops/runs")
     assert runs.status_code == 200
     assert runs.json()[0]["summary_counts"]["supported_mlb_props_seen"] == 12
 
-    run_detail = client.get(f"/runs/{runs.json()[0]['id']}")
+    run_detail = client.get(f"/ops/runs/{runs.json()[0]['id']}")
     assert run_detail.status_code == 200
     assert run_detail.json()["details"]["total_kalshi_markets_seen"] == 50
 
@@ -930,3 +941,103 @@ def test_sports_availability_reports_live_and_research_only_modes(client, db_ses
     assert payload["NFL"]["events_count"] == 1
     assert payload["MLB"]["availability_mode"] == "live"
     assert "UFC" not in payload
+
+
+def _seed_snapshot(
+    db_session,
+    *,
+    scope: str,
+    generated_at: datetime,
+    events: list[dict] | None = None,
+) -> None:
+    db_session.add(
+        CurrentSlateSnapshot(
+            scope=scope,
+            generated_at=generated_at,
+            payload={
+                "events": events or [],
+                "research_sports": [],
+                "generated_at": generated_at.isoformat().replace("+00:00", "Z"),
+                "freshness_status": "fresh",
+            },
+        )
+    )
+
+
+def test_product_freshness_reports_missing_when_no_snapshots_exist(client):
+    """Slice 3: with an empty snapshot store, every scope is ``missing`` and
+    the overall_status aggregates to ``missing``. This is the "never been
+    written" baseline — not an error, just zero state."""
+    response = client.get("/product/freshness")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["overall_status"] == "missing"
+    assert {row["scope"] for row in payload["scopes"]} == {"all", "NBA", "MLB"}
+    for row in payload["scopes"]:
+        assert row["status"] == "missing"
+        assert row["generated_at"] is None
+
+
+def test_product_freshness_reports_fresh_when_all_scopes_are_current(client, db_session):
+    """Slice 3: a fresh snapshot for every scope yields ``overall_status="fresh"``
+    and echoes the ``generated_at`` timestamp per scope."""
+    now = datetime.now(timezone.utc)
+    for scope in ("all", "NBA", "MLB"):
+        _seed_snapshot(db_session, scope=scope, generated_at=now)
+    db_session.commit()
+
+    response = client.get("/product/freshness")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["overall_status"] == "fresh"
+    for row in payload["scopes"]:
+        assert row["status"] == "fresh"
+        assert row["generated_at"] is not None
+
+
+def test_product_freshness_marks_overall_stale_when_any_scope_has_stale_events(
+    client,
+    db_session,
+):
+    """Slice 3: the worst-status-wins aggregation rule. NBA has events that
+    aged past the current-watchlist window, so its scope is ``stale`` and the
+    overall status promotes to ``stale`` even though "all" and "MLB" are still
+    fresh. Surfaces should render their per-scope pill regardless, but the
+    gauge endpoint collapses to one worst-case for top-level indicators."""
+    now = datetime.now(timezone.utc)
+    # Fresh scopes for ALL + MLB
+    _seed_snapshot(db_session, scope="all", generated_at=now)
+    _seed_snapshot(db_session, scope="MLB", generated_at=now)
+    # Stale NBA: an in_progress NBA event whose start time is deep in the
+    # past will flip the loader's freshness flag to "stale".
+    stale_starts = datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc)
+    _seed_snapshot(
+        db_session,
+        scope="NBA",
+        generated_at=now,
+        events=[
+            {
+                "event_id": 42,
+                "event_name": "Knicks at Hawks",
+                "sport_key": "NBA",
+                "event_status": "in_progress",
+                "starts_at": stale_starts.isoformat().replace("+00:00", "Z"),
+                "home_team": "Atlanta Hawks",
+                "away_team": "New York Knicks",
+                "home_short": "ATL",
+                "away_short": "NYK",
+                "game_lines": [],
+                "player_props": [],
+            }
+        ],
+    )
+    db_session.commit()
+
+    response = client.get("/product/freshness")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["overall_status"] == "stale"
+    per_scope = {row["scope"]: row["status"] for row in payload["scopes"]}
+    assert per_scope["NBA"] == "stale"
+    assert per_scope["MLB"] == "fresh"
+    assert per_scope["all"] == "fresh"

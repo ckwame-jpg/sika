@@ -1,4 +1,5 @@
 import base64
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -12,6 +13,59 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from app.config import get_settings
 
 
+# Process-level token bucket for Kalshi public API calls. One limiter per
+# process serializes read traffic across all KalshiPublicClient instances,
+# which matters because the refresh worker makes bursts of market fetches and
+# Kalshi will 429 aggressively otherwise. Tunables:
+#   _RATE_LIMIT_RPS    — steady-state request rate
+#   _RATE_LIMIT_BURST  — instantaneous burst size (tokens)
+_RATE_LIMIT_RPS = 5.0
+_RATE_LIMIT_BURST = 10.0
+
+
+class _TokenBucket:
+    def __init__(self, rate_per_second: float, burst: float) -> None:
+        self._rate = float(rate_per_second)
+        self._capacity = float(burst)
+        self._tokens = float(burst)
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                elapsed = now - self._last
+                self._last = now
+                self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                deficit = 1.0 - self._tokens
+                wait = deficit / self._rate if self._rate > 0 else 0.1
+            time.sleep(max(wait, 0.0))
+
+
+_KALSHI_RATE_LIMITER = _TokenBucket(_RATE_LIMIT_RPS, _RATE_LIMIT_BURST)
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parse a ``Retry-After`` header value into seconds, supporting both the
+    integer-seconds form (``"5"``) and a bounded fallback for unparseable
+    values (returns ``None`` so the caller can pick its own backoff).
+    HTTP-date form is deliberately unsupported because Kalshi sends seconds.
+    """
+    if value is None:
+        return None
+    try:
+        seconds = float(value.strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < 0:
+        return None
+    return seconds
+
+
 def parse_price_dollars(raw_value: Any) -> float | None:
     if raw_value in (None, ""):
         return None
@@ -19,25 +73,63 @@ def parse_price_dollars(raw_value: Any) -> float | None:
 
 
 class KalshiPublicClient:
+    _MAX_ATTEMPTS = 4
+    _BACKOFF_SCHEDULE_SECONDS: tuple[float, ...] = (0.5, 1.0, 2.0, 4.0)
+    _MAX_BACKOFF_SECONDS = 4.0
+
     def __init__(self, base_url: str | None = None, http_client: httpx.Client | None = None) -> None:
         settings = get_settings()
         self.base_url = (base_url or settings.kalshi_public_base_url).rstrip("/")
         self._http_client = http_client
 
     def _get(self, path: str, **kwargs):
+        """Fetch a Kalshi public endpoint with retries.
+
+        Retries on two conditions, with independent attempt counts bounded by
+        ``_MAX_ATTEMPTS``:
+          1. ``httpx.TransportError`` — transient network failure.
+          2. HTTP ``429 Too Many Requests`` — rate-limited by Kalshi. Honors
+             ``Retry-After`` when present, otherwise uses an exponential
+             backoff schedule.
+
+        All other HTTP status codes are returned unraised so callers retain
+        control of ``raise_for_status()`` semantics at the call-site.
+
+        Note: previously this method only caught ``httpx.TransportError``, and
+        ``raise_for_status()`` was called OUTSIDE this method by every
+        call-site — so 429 responses bypassed the retry entirely, which was
+        the root cause of the "Kalshi 429" maintenance stalls.
+        """
         url = path if path.startswith("http") else f"{self.base_url}{path}"
-        attempts = 3
         last_error: httpx.HTTPError | None = None
-        for attempt in range(1, attempts + 1):
+        for attempt in range(1, self._MAX_ATTEMPTS + 1):
+            _KALSHI_RATE_LIMITER.acquire()
             try:
                 if self._http_client is not None:
-                    return self._http_client.get(url, **kwargs)
-                return httpx.get(url, **kwargs)
-            except httpx.HTTPError as exc:
+                    response = self._http_client.get(url, **kwargs)
+                else:
+                    response = httpx.get(url, **kwargs)
+            except httpx.TransportError as exc:
                 last_error = exc
-                if attempt >= attempts or not isinstance(exc, httpx.TransportError):
+                if attempt >= self._MAX_ATTEMPTS:
                     raise
                 time.sleep(0.25 * attempt)
+                continue
+            except httpx.HTTPError as exc:
+                # Non-transport HTTPError (e.g. InvalidURL) — do not retry.
+                raise exc
+
+            if response.status_code == 429 and attempt < self._MAX_ATTEMPTS:
+                retry_after = _parse_retry_after(response.headers.get("Retry-After"))
+                if retry_after is None:
+                    retry_after = self._BACKOFF_SCHEDULE_SECONDS[
+                        min(attempt - 1, len(self._BACKOFF_SCHEDULE_SECONDS) - 1)
+                    ]
+                time.sleep(min(retry_after, self._MAX_BACKOFF_SECONDS))
+                continue
+
+            return response
+
         assert last_error is not None
         raise last_error
 

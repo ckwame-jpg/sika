@@ -8,13 +8,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-export const PARLAY_SPORT_OPTIONS = [
+const PARLAY_SPORT_OPTIONS = [
   { value: "all", label: "All" },
   { value: "NBA", label: "NBA" },
   { value: "MLB", label: "MLB" },
 ] as const;
 
-export const PARLAY_SIZE_OPTIONS = [
+const PARLAY_SIZE_OPTIONS = [
   { value: "all", label: "All sizes" },
   { value: "2", label: "2 legs" },
   { value: "3", label: "3 legs" },

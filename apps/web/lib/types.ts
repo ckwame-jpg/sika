@@ -298,6 +298,8 @@ export interface TradeDeskEvent {
 export interface TradeDeskResponse {
   events: TradeDeskEvent[];
   research_sports: SportAvailabilityRead[];
+  generated_at: string | null;
+  freshness_status: "fresh" | "stale";
 }
 
 export interface MarketHistoryPointRead {

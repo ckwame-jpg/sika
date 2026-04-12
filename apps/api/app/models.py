@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -563,9 +563,17 @@ class CurrentSlateSnapshot(Base):
     __tablename__ = "current_slate_snapshots"
 
     id = Column(Integer, primary_key=True, index=True)
-    scope = Column(String, nullable=False, unique=True, index=True)
+    scope = Column(String, nullable=False, index=True)
     source_run_id = Column(Integer, ForeignKey("runs.id"), nullable=True, index=True)
     generated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
     payload = Column(JSON, default=dict)
 
     source_run = relationship("Run")
+
+    __table_args__ = (
+        Index(
+            "ix_current_slate_snapshots_scope_generated_at",
+            "scope",
+            "generated_at",
+        ),
+    )

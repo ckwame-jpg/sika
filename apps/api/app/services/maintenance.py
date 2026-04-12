@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import engine, is_sqlite
 from app.models import (
+    CurrentSlateSnapshot,
     EspnPlayerGamelogCache,
     EspnPlayerSearchCache,
     MarketSnapshot,
@@ -25,6 +26,12 @@ from app.services.ml.study_progress import retained_study_cutoff
 
 
 TERMINAL_RUN_STATUSES = ("completed", "failed")
+
+# Slice 2: the snapshot store is append-only per scope. Retain the most
+# recent N rows per scope so a new freshness regression is debuggable, but
+# prune everything older than that to bound table growth. Small enough to
+# keep the latest-row lookup cheap, large enough to see "yesterday's shape".
+_CURRENT_SLATE_SNAPSHOT_KEEP_PER_SCOPE = 10
 
 
 def _ids_for(session: Session, stmt) -> list[int]:
@@ -152,6 +159,8 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
         else 0
     )
 
+    current_slate_snapshots_deleted = _prune_current_slate_snapshots(db)
+
     return {
         "market_snapshots_deleted": int(market_snapshots_deleted or 0),
         "signal_snapshots_deleted": int(signal_snapshots_deleted or 0),
@@ -168,7 +177,38 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
         "player_gamelog_cache_deleted": int(player_gamelog_cache_deleted or 0),
         "parlay_recommendation_run_links_cleared": int(parlay_recommendation_run_links_cleared or 0),
         "runs_deleted": int(runs_deleted or 0),
+        "current_slate_snapshots_deleted": int(current_slate_snapshots_deleted or 0),
     }
+
+
+def _prune_current_slate_snapshots(db: Session) -> int:
+    """Keep the most recent ``_CURRENT_SLATE_SNAPSHOT_KEEP_PER_SCOPE`` rows
+    per scope; delete everything older. Works on both Postgres and SQLite by
+    computing the survivor set in Python rather than a windowed subquery —
+    the table is tiny (one row per scope per refresh), so two round trips
+    are cheaper than a dialect-specific CTE.
+    """
+    all_scopes = db.scalars(select(CurrentSlateSnapshot.scope).distinct()).all()
+    survivor_ids: list[int] = []
+    for scope in all_scopes:
+        ids_to_keep = db.scalars(
+            select(CurrentSlateSnapshot.id)
+            .where(CurrentSlateSnapshot.scope == scope)
+            .order_by(
+                CurrentSlateSnapshot.generated_at.desc(),
+                CurrentSlateSnapshot.id.desc(),
+            )
+            .limit(_CURRENT_SLATE_SNAPSHOT_KEEP_PER_SCOPE)
+        ).all()
+        survivor_ids.extend(int(x) for x in ids_to_keep)
+    if not survivor_ids:
+        return 0
+    deleted = (
+        db.query(CurrentSlateSnapshot)
+        .filter(~CurrentSlateSnapshot.id.in_(tuple(survivor_ids)))
+        .delete(synchronize_session=False)
+    )
+    return int(deleted or 0)
 
 
 def vacuum_analyze_database() -> None:

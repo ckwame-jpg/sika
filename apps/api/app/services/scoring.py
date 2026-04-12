@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from math import exp, tanh
 from statistics import NormalDist, pstdev
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, joinedload
@@ -71,6 +71,22 @@ class ScoredRecommendation:
     recommendation: Recommendation | None
     signal: SignalSnapshot
     metadata: dict[str, Any]
+
+
+# Slice 6: ``_score_watchlist_markets_batch`` was previously responsible for
+# both producing scored recommendations *and* persisting them via
+# ``db.add(scored.signal)`` + ``capture_prediction(...)``. That made the
+# scoring kernel impossible to test in isolation: any unit test that wanted
+# to exercise the scoring math also got a database write. The split now
+# returns a list of ``ScoredWatchlistCapture`` records describing what the
+# persist step *would* do, and a separate ``_persist_scored_watchlist_captures``
+# helper handles the side effects. The ``stage_*_watchlist_batch`` wrappers
+# call the two in sequence so external behavior is unchanged.
+@dataclass(slots=True)
+class ScoredWatchlistCapture:
+    market: Market
+    scored: ScoredRecommendation
+    capture_scope: Literal["recommendation", "coverage"] | None
 
 
 @dataclass(slots=True)
@@ -1133,7 +1149,7 @@ def _score_player_prop(
     season_logs = resolved.game_logs
     recent_logs = season_logs[:10]
     short_term_logs = recent_logs[:3]
-    is_eligible, gate_reason = _player_prop_participation_gate(sport_key, recent_logs)
+    is_eligible, _ = _player_prop_participation_gate(sport_key, recent_logs)
     if not is_eligible:
         return None
 
@@ -1881,7 +1897,7 @@ def _dedupe_winner_recommendations(
             deduped[str(thesis_key)] = (market, scored)
             continue
 
-        existing_market, existing_scored = current
+        _, existing_scored = current
         existing_recommendation = existing_scored.recommendation
         assert existing_recommendation is not None
 
@@ -2030,14 +2046,23 @@ def _annotate_current_watchlist_flag(scored: ScoredRecommendation, *, current_wa
 def _score_watchlist_markets_batch(
     db: Session,
     *,
-    run_id: int,
     markets: list[Market],
     resolver: PropStatsResolver | None = None,
-) -> WatchlistGenerationSummary:
+) -> tuple[WatchlistGenerationSummary, list[ScoredWatchlistCapture]]:
+    """Score a batch of markets without persisting anything.
+
+    Slice 6: this is the pure half of the watchlist batch pipeline. It
+    consults the latest market snapshots, runs ``_build_scored_recommendation``
+    over each market, and updates the summary's diagnostic counters based
+    on the scored output. It does **not** call ``db.add`` or
+    ``capture_prediction``; the caller is responsible for handing the
+    returned captures to ``_persist_scored_watchlist_captures``.
+    """
     summary = WatchlistGenerationSummary()
-    active_resolver = resolver or PropStatsResolver(db, allow_network=False)
+    captures: list[ScoredWatchlistCapture] = []
     if not markets:
-        return summary
+        return summary, captures
+    active_resolver = resolver or PropStatsResolver(db, allow_network=False)
 
     latest_snapshots = latest_snapshot_by_market_id(db, [market.id for market in markets])
     for market in markets:
@@ -2049,17 +2074,13 @@ def _score_watchlist_markets_batch(
             continue
         current_watchlist_market = is_current_watchlist_market(market)
         _annotate_current_watchlist_flag(scored, current_watchlist_market=current_watchlist_market)
-        db.add(scored.signal)
         if scored.recommendation is not None:
-            capture_prediction(
-                db,
-                run_id=run_id,
-                event=market.event,
-                market=market,
-                recommendation=scored.recommendation,
-                signal=scored.signal,
-                metadata=scored.metadata,
-                capture_scope="recommendation",
+            captures.append(
+                ScoredWatchlistCapture(
+                    market=market,
+                    scored=scored,
+                    capture_scope="recommendation",
+                )
             )
             summary.prediction_count += 1
             continue
@@ -2070,19 +2091,60 @@ def _score_watchlist_markets_batch(
         if "critical_market_snapshot_missing" in suppression_reasons:
             summary.critical_context_suppressed += 1
         if current_watchlist_market:
-            capture_prediction(
-                db,
-                run_id=run_id,
-                event=market.event,
-                market=market,
-                recommendation=None,
-                signal=scored.signal,
-                metadata=scored.metadata,
-                capture_scope="coverage",
+            captures.append(
+                ScoredWatchlistCapture(
+                    market=market,
+                    scored=scored,
+                    capture_scope="coverage",
+                )
             )
             summary.prediction_count += 1
+        else:
+            # The scored signal still needs to be persisted even when no
+            # prediction is captured — production behavior pre-Slice-6 always
+            # called ``db.add(scored.signal)`` for every successfully-scored
+            # market regardless of whether ``capture_prediction`` ran.
+            captures.append(
+                ScoredWatchlistCapture(
+                    market=market,
+                    scored=scored,
+                    capture_scope=None,
+                )
+            )
+    return summary, captures
+
+
+def _persist_scored_watchlist_captures(
+    db: Session,
+    *,
+    run_id: int,
+    captures: list[ScoredWatchlistCapture],
+) -> None:
+    """Persist the side-effect tail of ``_score_watchlist_markets_batch``.
+
+    Slice 6: split out so the scoring kernel above is unit-testable as a
+    pure function. Iterates the captures, stages each ``SignalSnapshot``
+    via ``db.add``, and routes ``capture_prediction`` calls to either the
+    ``"recommendation"`` or ``"coverage"`` scope (or skips it for captures
+    that were emitted purely for signal persistence).
+    """
+    if not captures:
+        return
+    for capture in captures:
+        db.add(capture.scored.signal)
+        if capture.capture_scope is None:
+            continue
+        capture_prediction(
+            db,
+            run_id=run_id,
+            event=capture.market.event,
+            market=capture.market,
+            recommendation=capture.scored.recommendation,
+            signal=capture.scored.signal,
+            metadata=capture.scored.metadata,
+            capture_scope=capture.capture_scope,
+        )
     db.flush()
-    return summary
 
 
 def stage_maintenance_watchlist_batch(
@@ -2101,12 +2163,12 @@ def stage_maintenance_watchlist_batch(
     if not markets:
         return WatchlistGenerationSummary(), None, True
 
-    summary = _score_watchlist_markets_batch(
+    summary, captures = _score_watchlist_markets_batch(
         db,
-        run_id=run_id,
         markets=markets,
         resolver=resolver,
     )
+    _persist_scored_watchlist_captures(db, run_id=run_id, captures=captures)
     return summary, markets[-1].id if markets else cursor_market_id, len(markets) < batch_size
 
 
@@ -2127,12 +2189,12 @@ def stage_current_slate_watchlist_batch(
     )
     if not markets:
         return WatchlistGenerationSummary(), None, True
-    summary = _score_watchlist_markets_batch(
+    summary, captures = _score_watchlist_markets_batch(
         db,
-        run_id=run_id,
         markets=markets,
         resolver=resolver,
     )
+    _persist_scored_watchlist_captures(db, run_id=run_id, captures=captures)
     return summary, next_index, complete
 
 

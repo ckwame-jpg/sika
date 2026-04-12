@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Recommendation, SignalSnapshot
+from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, Recommendation, Run, SignalSnapshot
 from app.services.scoring import (
     ResolvedPropSubject,
     ScoredRecommendation,
@@ -12,10 +12,12 @@ from app.services.scoring import (
     _enforce_prop_monotonicity,
     _games_in_recent_window,
     _latest_home_state,
+    _persist_scored_watchlist_captures,
     _recent_first_five_results,
     _recent_participant_results,
     _recent_score_pairs,
     _schedule_context,
+    _score_watchlist_markets_batch,
     regenerate_watchlist,
     score_event,
 )
@@ -928,3 +930,137 @@ def test_capture_prediction_defaults_captured_at_when_signal_missing(db_session)
     assert prediction.captured_at.tzinfo is not None
     # Signal should have been backfilled so downstream code never sees None.
     assert signal.captured_at is not None
+
+
+def _setup_scorable_winner_market(db_session, *, key: str) -> Market:
+    """Build a winner market with enough history to score a recommendation."""
+    home = Participant(
+        external_id=f"home-{key}",
+        sport_key="NBA",
+        display_name="Atlanta Hawks",
+        short_name="Atlanta",
+        participant_type="team",
+    )
+    away = Participant(
+        external_id=f"away-{key}",
+        sport_key="NBA",
+        display_name="Boston Celtics",
+        short_name="Boston",
+        participant_type="team",
+    )
+    db_session.add_all([home, away])
+    db_session.flush()
+
+    for index in range(4):
+        past_event = Event(
+            external_id=f"{key}-past-{index}",
+            sport_key="NBA",
+            name="Boston Celtics at Atlanta Hawks",
+            status="completed",
+            starts_at=datetime(2026, 3, 20 + index, 0, 0, tzinfo=timezone.utc),
+        )
+        db_session.add(past_event)
+        db_session.flush()
+        db_session.add_all(
+            [
+                EventParticipant(event_id=past_event.id, participant_id=home.id, role="home", is_home=True, score=118, result="win"),
+                EventParticipant(event_id=past_event.id, participant_id=away.id, role="away", is_home=False, score=104, result="loss"),
+            ]
+        )
+
+    event = Event(
+        external_id=f"{key}-future",
+        sport_key="NBA",
+        name="Boston Celtics at Atlanta Hawks",
+        status="scheduled",
+        starts_at=datetime(2026, 3, 31, 0, 0, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+    db_session.add_all(
+        [
+            EventParticipant(event_id=event.id, participant_id=home.id, role="home", is_home=True),
+            EventParticipant(event_id=event.id, participant_id=away.id, role="away", is_home=False),
+        ]
+    )
+
+    market = Market(
+        ticker=f"KXNBAGAME-{key}-BOS",
+        sport_key="NBA",
+        event_id=event.id,
+        title="Boston at Atlanta Winner?",
+        status="active",
+        raw_data={
+            "event_ticker": f"KXNBAGAME-{key}",
+            "yes_sub_title": "Boston",
+            "copilot_market_kind": "game_winner",
+        },
+    )
+    snapshot = MarketSnapshot(
+        market=market,
+        yes_ask=0.45,
+        no_ask=0.56,
+        last_price=0.45,
+    )
+    db_session.add_all([market, snapshot])
+    db_session.flush()
+    return market
+
+
+def test_score_watchlist_markets_batch_is_pure(db_session):
+    # Slice 6: ``_score_watchlist_markets_batch`` must not write to the
+    # session. Constructing a real scorable market and calling the function
+    # directly should produce captures *without* persisting any
+    # SignalSnapshot or Prediction rows. The persist step is the caller's
+    # responsibility.
+    market = _setup_scorable_winner_market(db_session, key="purity")
+    db_session.commit()
+
+    initial_signals = db_session.scalar(select(func.count()).select_from(SignalSnapshot))
+    initial_predictions = db_session.scalar(select(func.count()).select_from(Prediction))
+
+    summary, captures = _score_watchlist_markets_batch(db_session, markets=[market])
+    db_session.flush()
+
+    after_pure_signals = db_session.scalar(select(func.count()).select_from(SignalSnapshot))
+    after_pure_predictions = db_session.scalar(select(func.count()).select_from(Prediction))
+
+    assert after_pure_signals == initial_signals
+    assert after_pure_predictions == initial_predictions
+    assert len(captures) >= 1
+    # The scorable winner market should have produced a recommendation-scoped
+    # capture (and the corresponding summary increment).
+    assert any(capture.capture_scope == "recommendation" for capture in captures)
+    assert summary.prediction_count == sum(
+        1 for capture in captures if capture.capture_scope is not None
+    )
+
+
+def test_persist_scored_watchlist_captures_writes_signals_and_predictions(db_session):
+    # Slice 6: the persist helper is the side-effect tail of the watchlist
+    # batch pipeline. Given the captures returned by the pure scorer, it
+    # should db.add every signal and call capture_prediction once per
+    # capture whose scope is non-null. The total prediction count must
+    # match the summary that the pure function reported.
+    market = _setup_scorable_winner_market(db_session, key="persist")
+    run = Run(kind="test-slice-6", status="running")
+    db_session.add(run)
+    db_session.commit()
+
+    summary, captures = _score_watchlist_markets_batch(db_session, markets=[market])
+    captured_signal_count = len(captures)
+    expected_predictions = summary.prediction_count
+
+    initial_signals = db_session.scalar(select(func.count()).select_from(SignalSnapshot))
+    initial_predictions = db_session.scalar(select(func.count()).select_from(Prediction))
+
+    _persist_scored_watchlist_captures(db_session, run_id=run.id, captures=captures)
+    db_session.flush()
+
+    after_signals = db_session.scalar(select(func.count()).select_from(SignalSnapshot))
+    after_predictions = db_session.scalar(select(func.count()).select_from(Prediction))
+
+    assert after_signals == initial_signals + captured_signal_count
+    assert after_predictions == initial_predictions + expected_predictions
+
+

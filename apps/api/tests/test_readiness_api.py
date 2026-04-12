@@ -62,6 +62,8 @@ def _write_manifest(tmp_path, *, family_key: str, artifact_path: str, mode: str)
 
 
 def _seed_nba_single_predictions(db_session, *, total: int, settled: int, run_id: int = 1, market_id_offset: int = 0):
+    captured_at = datetime.now(timezone.utc) - timedelta(days=1)
+    settled_at_value = captured_at + timedelta(hours=2)
     for index in range(total):
         outcome = "pending"
         settlement_status = "pending"
@@ -70,7 +72,7 @@ def _seed_nba_single_predictions(db_session, *, total: int, settled: int, run_id
         if index < settled:
             outcome = "won" if index % 2 == 0 else "lost"
             settlement_status = "settled"
-            settled_at = datetime(2026, 4, 3, 12, 0, tzinfo=timezone.utc)
+            settled_at = settled_at_value
             realized_pnl = 0.18 if outcome == "won" else -0.42
 
         db_session.add(
@@ -106,13 +108,15 @@ def _seed_nba_single_predictions(db_session, *, total: int, settled: int, run_id
                 prediction_outcome=outcome,
                 settled_at=settled_at,
                 realized_pnl=realized_pnl,
-                captured_at=datetime(2026, 4, 3, 10, 0, tzinfo=timezone.utc),
+                captured_at=captured_at,
             )
         )
     db_session.flush()
 
 
 def _seed_nba_coverage_predictions(db_session, *, total: int, settled: int):
+    captured_at = datetime.now(timezone.utc) - timedelta(days=1)
+    settled_at_value = captured_at + timedelta(hours=2)
     for index in range(total):
         outcome = "pending"
         settlement_status = "pending"
@@ -121,7 +125,7 @@ def _seed_nba_coverage_predictions(db_session, *, total: int, settled: int):
         if index < settled:
             outcome = "won" if index % 2 == 0 else "lost"
             settlement_status = "settled"
-            settled_at = datetime(2026, 4, 3, 12, 0, tzinfo=timezone.utc)
+            settled_at = settled_at_value
             realized_pnl = 0.18 if outcome == "won" else -0.42
 
         db_session.add(
@@ -154,7 +158,7 @@ def _seed_nba_coverage_predictions(db_session, *, total: int, settled: int):
                 prediction_outcome=outcome,
                 settled_at=settled_at,
                 realized_pnl=realized_pnl,
-                captured_at=datetime(2026, 4, 3, 10, 0, tzinfo=timezone.utc),
+                captured_at=captured_at,
             )
         )
     db_session.flush()
@@ -202,7 +206,7 @@ def _seed_shadow_singles(db_session, *, count: int):
 
 
 def test_models_readiness_endpoint_reports_insufficient_history_for_active_study_with_no_history(client):
-    response = client.get("/models/readiness")
+    response = client.get("/ops/models/readiness")
 
     assert response.status_code == 200
     payload = response.json()
@@ -212,7 +216,7 @@ def test_models_readiness_endpoint_reports_insufficient_history_for_active_study
 
 
 def test_models_readiness_endpoint_marks_locked_and_heuristic_families(client):
-    response = client.get("/models/readiness")
+    response = client.get("/ops/models/readiness")
 
     assert response.status_code == 200
     payload = response.json()
@@ -243,7 +247,7 @@ def test_models_readiness_endpoint_reports_insufficient_history(client, db_sessi
     _seed_nba_single_predictions(db_session, total=10, settled=10)
     db_session.commit()
 
-    response = client.get("/models/readiness/nba_singles")
+    response = client.get("/ops/models/readiness/nba_singles")
 
     assert response.status_code == 200
     payload = response.json()
@@ -255,7 +259,7 @@ def test_models_readiness_endpoint_reports_shadow_not_started_for_active_study_f
     _seed_nba_single_predictions(db_session, total=40, settled=40)
     db_session.commit()
 
-    response = client.get("/models/readiness/nba_singles")
+    response = client.get("/ops/models/readiness/nba_singles")
 
     assert response.status_code == 200
     payload = response.json()
@@ -269,7 +273,7 @@ def test_models_readiness_endpoint_separates_coverage_history_from_recommendatio
     _seed_nba_coverage_predictions(db_session, total=12, settled=8)
     db_session.commit()
 
-    response = client.get("/models/readiness/nba_props")
+    response = client.get("/ops/models/readiness/nba_props")
 
     assert response.status_code == 200
     payload = response.json()
@@ -291,7 +295,7 @@ def test_models_readiness_endpoint_reports_shadowing_with_low_coverage(client, d
     sync_family_runtime_health(db_session)
     db_session.commit()
 
-    response = client.get("/models/readiness/nba_singles")
+    response = client.get("/ops/models/readiness/nba_singles")
 
     assert response.status_code == 200
     payload = response.json()
@@ -312,7 +316,7 @@ def test_models_readiness_endpoint_reports_ready_for_review(client, db_session, 
     sync_family_runtime_health(db_session)
     db_session.commit()
 
-    response = client.get("/models/readiness/nba_singles")
+    response = client.get("/ops/models/readiness/nba_singles")
 
     assert response.status_code == 200
     payload = response.json()
@@ -329,7 +333,7 @@ def test_models_readiness_endpoint_explains_missing_shadow_manifest_entry(client
     _seed_nba_single_predictions(db_session, total=40, settled=40)
     db_session.commit()
 
-    response = client.get("/models/readiness/nba_singles")
+    response = client.get("/ops/models/readiness/nba_singles")
 
     assert response.status_code == 200
     payload = response.json()
@@ -370,7 +374,7 @@ def test_shadow_capture_cycle_uses_only_the_source_refresh_run_and_advances_read
     assert all(ticker.startswith(f"NBA-READINESS-{source_run.id}-") for ticker in captured_tickers)
     assert all(item.source_prediction_id is not None for item in captured_rows)
 
-    response = client.get("/models/readiness/nba_singles")
+    response = client.get("/ops/models/readiness/nba_singles")
 
     assert response.status_code == 200
     payload = response.json()
@@ -456,7 +460,7 @@ def test_models_readiness_endpoint_uses_retained_study_window_for_shadow_coverag
     sync_family_runtime_health(db_session)
     db_session.commit()
 
-    response = client.get("/models/readiness/nba_singles")
+    response = client.get("/ops/models/readiness/nba_singles")
 
     assert response.status_code == 200
     payload = response.json()
@@ -476,7 +480,7 @@ def test_models_readiness_endpoint_reports_serving_with_fallback_active(client, 
     sync_family_runtime_health(db_session)
     db_session.commit()
 
-    response = client.get("/models/readiness/nba_singles")
+    response = client.get("/ops/models/readiness/nba_singles")
 
     assert response.status_code == 200
     payload = response.json()
@@ -503,7 +507,7 @@ def test_models_readiness_endpoint_does_not_mutate_runtime_health_on_get(client,
       "runtime_health": before.runtime_health,
     }
 
-    response = client.get("/models/readiness/nba_singles")
+    response = client.get("/ops/models/readiness/nba_singles")
 
     assert response.status_code == 200
     after = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one()

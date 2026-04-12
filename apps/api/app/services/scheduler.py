@@ -293,12 +293,6 @@ def queue_current_slate_refresh_if_due(*, reason: str = "interval") -> bool:
     return _queue_current_slate_refresh(reason)
 
 
-def queue_prop_refresh_if_due(*, reason: str = "manual") -> bool:
-    if not prop_refresh_needed():
-        return False
-    return _queue_maintenance_refresh(reason)
-
-
 def queue_maintenance_refresh_if_due(*, reason: str = "interval") -> bool:
     if _current_slate_job_pending():
         return False

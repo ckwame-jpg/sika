@@ -3,7 +3,18 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./openapi": "./generated/api.d.ts"
+  },
   "scripts": {
-    "generate": "echo \"Export OpenAPI from apps/api, then generate TS contracts in this package.\""
+    "dump": "../../.venv/bin/python scripts/dump_openapi.py openapi.json",
+    "generate:types": "openapi-typescript openapi.json --output generated/api.d.ts",
+    "generate": "npm run dump && npm run generate:types",
+    "check": "node scripts/check_drift.mjs"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0"
   }
 }

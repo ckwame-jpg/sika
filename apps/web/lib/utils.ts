@@ -90,19 +90,6 @@ export const SPORT_OPTIONS = [
   { value: "TENNIS", label: "Tennis", colorClass: "text-sport-tennis" },
 ] as const;
 
-export const SPORT_COLOR: Record<string, string> = {
-  NBA: "sport-nba",
-  NFL: "sport-nfl",
-  MLB: "sport-mlb",
-  SOCCER: "sport-soccer",
-  TENNIS: "sport-tennis",
-};
-
-export function sportColorClass(sportKey: string | null | undefined): string {
-  if (!sportKey) return "text-muted-foreground";
-  return `text-${SPORT_COLOR[sportKey.toUpperCase()] ?? "muted-foreground"}`;
-}
-
 export function sportLabel(sportKey: string | null | undefined): string {
   if (!sportKey) return "All sports";
   return SPORT_OPTIONS.find((option) => option.value === sportKey)?.label ?? sportKey;
@@ -123,7 +110,7 @@ export function isLive(status: string): boolean {
   return status === "in_progress";
 }
 
-export function isFinishedEventStatus(status: string): boolean {
+function isFinishedEventStatus(status: string): boolean {
   return status === "completed" || status === "cancelled";
 }
 
@@ -209,6 +196,3 @@ export function edgeClass(edge: number): string {
   return "text-muted-foreground";
 }
 
-export function confidenceWidth(confidence: number): string {
-  return `${Math.round(confidence * 100)}%`;
-}

@@ -471,7 +471,7 @@ def test_runtime_state_summarizes_pending_combo_legs_for_health_payloads(db_sess
     assert health_cursor["pending_combo_leg_count"] == 4
     assert "pending_combo_legs" not in health_cursor
 
-    diagnostics = client.get("/watchlist/diagnostics")
+    diagnostics = client.get("/ops/watchlist/diagnostics")
     assert diagnostics.status_code == 200
     diagnostics_cursor = diagnostics.json()["active_prop_refresh_job"]["details"]["cursor"]
     assert diagnostics_cursor["pending_combo_leg_count"] == 4

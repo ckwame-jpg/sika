@@ -8,6 +8,7 @@
   "scripts": {
     "api:dev": "bash ./scripts/api-dev.sh",
     "contracts:generate": "npm --workspace @kalshi-sports-copilot/contracts run generate",
+    "contracts:check": "npm --workspace @kalshi-sports-copilot/contracts run check",
     "dev": "bash ./scripts/dev.sh",
     "dev:doctor": "bash ./scripts/dev-doctor.sh",
     "web:dev": "npm --workspace @kalshi-sports-copilot/web run dev",

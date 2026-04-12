@@ -5,10 +5,10 @@ import { fetchHealth, keys } from "@/lib/api";
 import type { HealthResponse } from "@/lib/types";
 import { fmtRelative } from "@/lib/utils";
 
-export type SyncState = "refreshing" | "stalled" | "failed" | "stale" | "synced";
-export type SyncBadgeVariant = "positive" | "warning" | "negative";
+type SyncState = "refreshing" | "stalled" | "failed" | "stale" | "synced";
+type SyncBadgeVariant = "positive" | "warning" | "negative";
 
-export interface SyncBadge {
+interface SyncBadge {
   text: string;
   title: string;
   variant: SyncBadgeVariant;
@@ -177,12 +177,19 @@ function getUserSafeRefreshErrorMessage(message?: string | null) {
   return trimmed.length > 140 ? `${trimmed.slice(0, 137)}...` : trimmed;
 }
 
-export function getFreshnessBanner(health?: HealthResponse | null) {
+// Slice 5: ``getFreshnessBanner`` was renamed to ``getOperatorBanner`` to
+// match the OperatorBanner / ProductFreshnessBanner split. The semantics
+// are the same (it reports on the refresh state machine, which IS an
+// operator concern), but the name no longer suggests this is the
+// product-facing freshness gauge. Product-facing freshness lives on
+// ``/product/freshness`` and on the per-payload ``freshness_status`` field
+// of the surfaces themselves.
+export function getOperatorBanner(health?: HealthResponse | null) {
   if (!health) return null;
   if (isAnyJobStalled(health)) {
     return {
       tone: "warning" as const,
-      message: "A refresh job appears stalled (running over 30 minutes). Cached data may be outdated. See Runs for details.",
+      message: "A refresh job appears stalled (running over 30 minutes). See Runs for details.",
     };
   }
   const refreshError = getUserSafeRefreshErrorMessage(health.refresh_error_message);
@@ -194,32 +201,32 @@ export function getFreshnessBanner(health?: HealthResponse | null) {
       tone: "neutral" as const,
       message:
         activeRefreshScope === "current_slate"
-          ? "Refreshing the current NBA/MLB slate in background; cached data may be shown briefly."
+          ? "Refreshing the current NBA/MLB slate in background."
           : health.prop_refresh_status === "queued" || health.prop_refresh_status === "running"
-            ? "Refreshing markets and props in background; cached data may be shown briefly."
-            : "Refreshing market data in background; cached data may be shown briefly.",
+            ? "Refreshing markets and props in background."
+            : "Refreshing market data in background.",
     };
   }
-  if (health.refresh_status === "failed" && health.data_stale) {
+  if (health.refresh_status === "failed") {
     return {
       tone: "warning" as const,
       message: refreshError
-        ? `Refresh failed; cached data may be stale. ${refreshError} See Runs for details.`
-        : "Refresh failed; cached data may be stale until the next retry. See Runs for details.",
+        ? `Refresh failed. ${refreshError} See Runs for details.`
+        : "Refresh failed. See Runs for details.",
     };
   }
   if (health.prop_refresh_status === "queued" || health.prop_refresh_status === "running") {
     return {
       tone: "neutral" as const,
-      message: "Markets are synced; prop context is refreshing in background.",
+      message: "Maintenance refresh running in background.",
     };
   }
-  if (health.prop_data_stale) {
+  if (health.prop_refresh_status === "failed") {
     return {
       tone: "warning" as const,
       message: propRefreshError
-        ? `Markets are synced, but prop context is stale. ${propRefreshError} See Runs for details.`
-        : "Markets are synced, but prop context is stale while the next prop refresh catches up.",
+        ? `Maintenance refresh failed. ${propRefreshError} See Runs for details.`
+        : "Maintenance refresh failed. See Runs for details.",
     };
   }
   return null;

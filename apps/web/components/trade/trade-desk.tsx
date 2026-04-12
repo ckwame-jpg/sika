@@ -10,7 +10,7 @@ import type {
   TradeDeskResponse,
   TradeDeskThreshold,
 } from "@/lib/types";
-import { cn, fmtEdge, fmtPercent, fmtStartsAt, sportLabel } from "@/lib/utils";
+import { cn, fmtEdge, fmtPercent, fmtRelative, fmtStartsAt, sportLabel } from "@/lib/utils";
 import { PlayerPropGroup } from "@/components/trade/player-prop-group";
 import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
 
@@ -35,6 +35,29 @@ function sectionOrder(marketKind: string) {
   if (marketKind === "spread") return 1;
   if (marketKind === "total") return 2;
   return 99;
+}
+
+/**
+ * Slice 3: per-surface freshness banner. Driven by ``freshness_status`` on
+ * the trade-desk payload itself — no coupling to ``/health`` or any global
+ * boundary. If the snapshot is stale the surface keeps rendering (the whole
+ * point of the versioned, append-only snapshot store from Slice 2) and this
+ * pill tells the user what they're looking at.
+ */
+function StaleSlatePill({ generatedAt }: { generatedAt: string | null }) {
+  const relative = generatedAt ? fmtRelative(generatedAt) : null;
+  return (
+    <div
+      className="flex items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning"
+      role="status"
+      data-testid="trade-desk-stale-pill"
+    >
+      <span className="font-medium">
+        Showing last known slate
+        {relative ? ` (snapshot ${relative})` : ""}. Refresh is behind.
+      </span>
+    </div>
+  );
 }
 
 function GameLineRow({
@@ -248,6 +271,9 @@ export function TradeDesk({ sport }: { sport?: string }) {
 
   return (
     <div className="space-y-4">
+      {data.freshness_status === "stale" && (
+        <StaleSlatePill generatedAt={data.generated_at ?? null} />
+      )}
       <MarketSummaryStrip kpis={kpis} />
 
       {showFilterTabs && (

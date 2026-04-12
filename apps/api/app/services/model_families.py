@@ -62,10 +62,6 @@ def family_definition(key: str) -> ModelFamilyDefinition:
     )
 
 
-def study_track_for_family(key: str) -> StudyTrack:
-    return family_definition(key).study_track
-
-
 def single_family_key(sport_key: str | None, market_family: str | None) -> str:
     sport = (sport_key or "").upper()
     family = (market_family or "").lower()

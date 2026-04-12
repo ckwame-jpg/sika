@@ -16,7 +16,7 @@ interface PriceDisplayContextValue {
 
 const PriceDisplayContext = createContext<PriceDisplayContextValue | null>(null);
 
-export function americanOddsFromPrice(price: number | null | undefined): string {
+function americanOddsFromPrice(price: number | null | undefined): string {
   if (price == null) return "—";
   const value = Math.min(0.99, Math.max(0.01, price));
   if (value >= 0.5) {
@@ -32,14 +32,14 @@ export function formatMarketPrice(price: number | null | undefined, mode: PriceD
   return `${Math.round(price * 100)}¢`;
 }
 
-export function formatEditableMarketPrice(price: number | null | undefined, mode: PriceDisplayMode): string {
+function formatEditableMarketPrice(price: number | null | undefined, mode: PriceDisplayMode): string {
   if (price == null) return "";
   if (mode === "american") return americanOddsFromPrice(price);
   if (mode === "prediction") return (price * 100).toFixed(1);
   return (price * 100).toFixed(0);
 }
 
-export function parseMarketPriceInput(input: string, mode: PriceDisplayMode): number | null {
+function parseMarketPriceInput(input: string, mode: PriceDisplayMode): number | null {
   const normalized = input.trim().replace(/¢/g, "").replace(/%/g, "");
   if (!normalized) return null;
   const value = Number.parseFloat(normalized);

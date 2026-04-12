@@ -53,7 +53,6 @@ SPORT_LABELS = {
     "TENNIS": "TENNIS",
 }
 
-FREE_PROVIDER_SPORTS = {"SOCCER", "TENNIS"}
 PUBLIC_MAJOR_SPORTS = {"NBA", "NFL", "MLB"}
 PROP_REFRESH_COMBO_PAGE_SIZE = 50
 PROP_REFRESH_COMBO_LEG_BATCH_SIZE = 100
@@ -488,7 +487,6 @@ def refresh_kalshi_markets(
     discover_combo_props: bool = True,
 ) -> dict[str, object]:
     client = client or KalshiPublicClient()
-    settings = get_settings()
     processed = 0
     total_seen = 0
     supported_nba_props = 0

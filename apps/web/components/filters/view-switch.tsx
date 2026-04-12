@@ -4,7 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type ContentView = "singles" | "parlays";
+type ContentView = "singles" | "parlays";
 
 export function useViewQueryParam(defaultView: ContentView = "singles") {
   const pathname = usePathname();
