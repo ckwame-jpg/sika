@@ -29,7 +29,12 @@ from app.services.model_families import single_family_key
 from app.services.parlays import ParlayCandidateInput, capture_parlay_artifacts, clear_active_parlay_watchlist
 from app.services.predictions import MODEL_NAME, OPEN_MARKET_STATUSES, capture_prediction
 from app.services.stats_query import _build_game_logs, default_season_for_sport
-from app.services.watchlist_coverage import is_current_watchlist_market, latest_snapshot_by_market_id, load_current_watchlist_markets
+from app.services.watchlist_coverage import (
+    CURRENT_WATCHLIST_SPORTS,
+    current_watchlist_event_ids,
+    is_current_watchlist_market,
+    latest_snapshot_by_market_id,
+)
 from app.sports.base import alias_tokens
 
 
@@ -95,6 +100,8 @@ class WatchlistGenerationSummary:
     prediction_count: int = 0
     parlay_recommendation_count: int = 0
     parlay_prediction_count: int = 0
+    loaded_candidate_market_count: int = 0
+    filtered_candidate_market_count: int = 0
     scored_market_count: int = 0
     coverage_prediction_count: int = 0
     heuristic_longshots_suppressed: int = 0
@@ -102,12 +109,25 @@ class WatchlistGenerationSummary:
     combo_prop_candidates_emitted: int = 0
     combo_prop_candidates_suppressed: int = 0
     critical_context_suppressed: int = 0
+    candidate_filter_reason_counts: dict[str, int] = field(default_factory=dict)
     outcome_reason_counts: dict[str, int] = field(default_factory=dict)
     quality_tier_counts: dict[str, int] = field(default_factory=dict)
 
 
 def _record_scorer_outcome(summary: WatchlistGenerationSummary, reason: str) -> None:
     summary.outcome_reason_counts[reason] = summary.outcome_reason_counts.get(reason, 0) + 1
+
+
+def _record_candidate_filter(summary: WatchlistGenerationSummary, reason: str) -> None:
+    summary.filtered_candidate_market_count += 1
+    summary.candidate_filter_reason_counts[reason] = summary.candidate_filter_reason_counts.get(reason, 0) + 1
+
+
+def _merge_count_maps(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
+    merged = dict(left)
+    for key, value in right.items():
+        merged[key] = merged.get(key, 0) + int(value or 0)
+    return merged
 
 
 def _scoring_none_reason(market: Market) -> str:
@@ -2057,18 +2077,44 @@ def _explicit_watchlist_market_batch(
     market_ids: list[int],
     cursor_index: int = 0,
     batch_size: int = 100,
-) -> tuple[list[Market], int | None, bool]:
+) -> tuple[list[Market], WatchlistGenerationSummary, int | None, bool]:
+    summary = WatchlistGenerationSummary()
     batch_ids = market_ids[cursor_index : cursor_index + batch_size]
-    if not batch_ids:
-        return [], None, True
-    rows = load_current_watchlist_markets(
-        db,
-        market_ids=set(batch_ids),
-    )
-    by_id = {market.id: market for market in rows}
-    ordered = [by_id[market_id] for market_id in batch_ids if market_id in by_id]
     next_index = cursor_index + len(batch_ids)
-    return ordered, (None if next_index >= len(market_ids) else next_index), next_index >= len(market_ids)
+    complete = next_index >= len(market_ids)
+    if not batch_ids:
+        return [], summary, None, True
+
+    current_event_ids = set(current_watchlist_event_ids(db))
+    rows = db.scalars(
+        select(Market)
+        .options(joinedload(Market.event).selectinload(Event.participants).joinedload(EventParticipant.participant))
+        .where(Market.id.in_(tuple(sorted(batch_ids))))
+    ).all()
+    by_id = {market.id: market for market in rows}
+    loaded_by_id: dict[int, Market] = {}
+    for market_id in batch_ids:
+        market = by_id.get(market_id)
+        if market is None:
+            _record_candidate_filter(summary, "not_found")
+            continue
+        if market.event_id is None or market.event is None:
+            _record_candidate_filter(summary, "event_missing")
+            continue
+        if (market.sport_key or "").upper() not in CURRENT_WATCHLIST_SPORTS:
+            _record_candidate_filter(summary, "sport_not_supported")
+            continue
+        if (market.status or "").lower() not in OPEN_MARKET_STATUSES:
+            _record_candidate_filter(summary, "status_not_open")
+            continue
+        if market.event_id not in current_event_ids:
+            _record_candidate_filter(summary, "not_current_event")
+            continue
+        loaded_by_id[market_id] = market
+
+    ordered = [loaded_by_id[market_id] for market_id in batch_ids if market_id in loaded_by_id]
+    summary.loaded_candidate_market_count = len(ordered)
+    return ordered, summary, (None if complete else next_index), complete
 
 
 def _annotate_current_watchlist_flag(scored: ScoredRecommendation, *, current_watchlist_market: bool) -> None:
@@ -2228,21 +2274,27 @@ def stage_current_slate_watchlist_batch(
     cursor_index: int = 0,
     batch_size: int = 100,
 ) -> tuple[WatchlistGenerationSummary, int | None, bool]:
-    markets, next_index, complete = _explicit_watchlist_market_batch(
+    markets, batch_summary, next_index, complete = _explicit_watchlist_market_batch(
         db,
         market_ids=market_ids,
         cursor_index=cursor_index,
         batch_size=batch_size,
     )
     if not markets:
-        return WatchlistGenerationSummary(), None, True
-    summary, captures = _score_watchlist_markets_batch(
+        return batch_summary, next_index, complete
+    scoring_summary, captures = _score_watchlist_markets_batch(
         db,
         markets=markets,
         resolver=resolver,
     )
+    scoring_summary.loaded_candidate_market_count += batch_summary.loaded_candidate_market_count
+    scoring_summary.filtered_candidate_market_count += batch_summary.filtered_candidate_market_count
+    scoring_summary.candidate_filter_reason_counts = _merge_count_maps(
+        scoring_summary.candidate_filter_reason_counts,
+        batch_summary.candidate_filter_reason_counts,
+    )
     _persist_scored_watchlist_captures(db, run_id=run_id, captures=captures)
-    return summary, next_index, complete
+    return scoring_summary, next_index, complete
 
 
 def _apply_prediction_monotonicity(predictions: list[Prediction]) -> None:

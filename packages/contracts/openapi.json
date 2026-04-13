@@ -3730,6 +3730,13 @@
             ],
             "title": "Current Slate Blocking Reason"
           },
+          "current_slate_candidate_filter_reason_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Current Slate Candidate Filter Reason Counts",
+            "type": "object"
+          },
           "current_slate_candidate_market_count": {
             "default": 0,
             "title": "Current Slate Candidate Market Count",
@@ -3743,6 +3750,16 @@
           "current_slate_event_count": {
             "default": 0,
             "title": "Current Slate Event Count",
+            "type": "integer"
+          },
+          "current_slate_filtered_candidate_market_count": {
+            "default": 0,
+            "title": "Current Slate Filtered Candidate Market Count",
+            "type": "integer"
+          },
+          "current_slate_loaded_candidate_market_count": {
+            "default": 0,
+            "title": "Current Slate Loaded Candidate Market Count",
             "type": "integer"
           },
           "current_slate_scored_market_count": {
@@ -5091,6 +5108,13 @@
             ],
             "title": "Latest Current Slate Blocking Reason"
           },
+          "latest_current_slate_candidate_filter_reason_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Latest Current Slate Candidate Filter Reason Counts",
+            "type": "object"
+          },
           "latest_current_slate_candidate_market_count": {
             "default": 0,
             "title": "Latest Current Slate Candidate Market Count",
@@ -5104,6 +5128,16 @@
           "latest_current_slate_event_count": {
             "default": 0,
             "title": "Latest Current Slate Event Count",
+            "type": "integer"
+          },
+          "latest_current_slate_filtered_candidate_market_count": {
+            "default": 0,
+            "title": "Latest Current Slate Filtered Candidate Market Count",
+            "type": "integer"
+          },
+          "latest_current_slate_loaded_candidate_market_count": {
+            "default": 0,
+            "title": "Latest Current Slate Loaded Candidate Market Count",
             "type": "integer"
           },
           "latest_current_slate_scored_market_count": {

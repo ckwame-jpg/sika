@@ -1679,6 +1679,10 @@ export interface components {
             critical_context_suppressed: number;
             /** Current Slate Blocking Reason */
             current_slate_blocking_reason?: string | null;
+            /** Current Slate Candidate Filter Reason Counts */
+            current_slate_candidate_filter_reason_counts?: {
+                [key: string]: number;
+            };
             /**
              * Current Slate Candidate Market Count
              * @default 0
@@ -1694,6 +1698,16 @@ export interface components {
              * @default 0
              */
             current_slate_event_count: number;
+            /**
+             * Current Slate Filtered Candidate Market Count
+             * @default 0
+             */
+            current_slate_filtered_candidate_market_count: number;
+            /**
+             * Current Slate Loaded Candidate Market Count
+             * @default 0
+             */
+            current_slate_loaded_candidate_market_count: number;
             /**
              * Current Slate Scored Market Count
              * @default 0
@@ -2202,6 +2216,10 @@ export interface components {
             last_successful_refresh_at?: string | null;
             /** Latest Current Slate Blocking Reason */
             latest_current_slate_blocking_reason?: string | null;
+            /** Latest Current Slate Candidate Filter Reason Counts */
+            latest_current_slate_candidate_filter_reason_counts?: {
+                [key: string]: number;
+            };
             /**
              * Latest Current Slate Candidate Market Count
              * @default 0
@@ -2217,6 +2235,16 @@ export interface components {
              * @default 0
              */
             latest_current_slate_event_count: number;
+            /**
+             * Latest Current Slate Filtered Candidate Market Count
+             * @default 0
+             */
+            latest_current_slate_filtered_candidate_market_count: number;
+            /**
+             * Latest Current Slate Loaded Candidate Market Count
+             * @default 0
+             */
+            latest_current_slate_loaded_candidate_market_count: number;
             /**
              * Latest Current Slate Scored Market Count
              * @default 0

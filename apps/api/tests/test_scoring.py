@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
@@ -8,6 +8,7 @@ from app.models import Event, EventParticipant, Market, MarketSnapshot, Particip
 from app.services.scoring import (
     ResolvedPropSubject,
     ScoredRecommendation,
+    WatchlistGenerationSummary,
     _days_since_latest_log,
     _days_since_participant_game,
     _enforce_prop_monotonicity,
@@ -21,6 +22,7 @@ from app.services.scoring import (
     _score_watchlist_markets_batch,
     regenerate_watchlist,
     score_event,
+    stage_current_slate_watchlist_batch,
 )
 
 
@@ -1156,3 +1158,131 @@ def test_score_watchlist_markets_batch_counts_scoring_returned_none(db_session, 
     assert captures == []
     assert summary.scored_market_count == 0
     assert summary.outcome_reason_counts["scoring_returned_none"] == 1
+
+
+def test_stage_current_slate_watchlist_batch_advances_past_empty_filtered_batch(db_session, monkeypatch):
+    stale_event = Event(
+        external_id="mlb-stale-candidate",
+        sport_key="MLB",
+        name="New York Yankees at Seattle Mariners",
+        status="scheduled",
+        starts_at=datetime.now(timezone.utc) - timedelta(days=2),
+    )
+    current_event = Event(
+        external_id="mlb-current-candidate",
+        sport_key="MLB",
+        name="New York Yankees at Seattle Mariners",
+        status="scheduled",
+        starts_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([stale_event, current_event])
+    db_session.flush()
+    stale_market = Market(
+        ticker="KXMLBGAME-STALE",
+        sport_key="MLB",
+        event_id=stale_event.id,
+        title="Old MLB candidate",
+        status="active",
+        raw_data={"copilot_market_family": "winner", "copilot_market_kind": "game_winner"},
+    )
+    current_market = Market(
+        ticker="KXMLBGAME-CURRENT",
+        sport_key="MLB",
+        event_id=current_event.id,
+        title="Current MLB candidate",
+        status="active",
+        raw_data={"copilot_market_family": "winner", "copilot_market_kind": "game_winner"},
+    )
+    db_session.add_all([stale_market, current_market])
+    db_session.commit()
+
+    scored_market_ids: list[int] = []
+
+    def fake_score_batch(db, *, markets, resolver=None):
+        scored_market_ids.extend(market.id for market in markets)
+        return WatchlistGenerationSummary(scored_market_count=len(markets), outcome_reason_counts={"scoring_returned_none": len(markets)}), []
+
+    monkeypatch.setattr(scoring_module, "_score_watchlist_markets_batch", fake_score_batch)
+
+    first_summary, next_index, complete = stage_current_slate_watchlist_batch(
+        db_session,
+        run_id=1,
+        market_ids=[stale_market.id, current_market.id],
+        cursor_index=0,
+        batch_size=1,
+    )
+
+    assert complete is False
+    assert next_index == 1
+    assert first_summary.loaded_candidate_market_count == 0
+    assert first_summary.filtered_candidate_market_count == 1
+    assert first_summary.candidate_filter_reason_counts == {"not_current_event": 1}
+    assert scored_market_ids == []
+
+    second_summary, next_index, complete = stage_current_slate_watchlist_batch(
+        db_session,
+        run_id=1,
+        market_ids=[stale_market.id, current_market.id],
+        cursor_index=next_index or 0,
+        batch_size=1,
+    )
+
+    assert complete is True
+    assert next_index is None
+    assert second_summary.loaded_candidate_market_count == 1
+    assert second_summary.filtered_candidate_market_count == 0
+    assert second_summary.scored_market_count == 1
+    assert scored_market_ids == [current_market.id]
+
+
+def test_stage_current_slate_watchlist_batch_reports_filtered_terminal_batch(db_session):
+    current_event = Event(
+        external_id="mlb-current-closed-market",
+        sport_key="MLB",
+        name="New York Yankees at Seattle Mariners",
+        status="scheduled",
+        starts_at=datetime.now(timezone.utc),
+    )
+    db_session.add(current_event)
+    db_session.flush()
+    closed_market = Market(
+        ticker="KXMLBGAME-CLOSED",
+        sport_key="MLB",
+        event_id=current_event.id,
+        title="Closed MLB candidate",
+        status="closed",
+        raw_data={"copilot_market_family": "winner", "copilot_market_kind": "game_winner"},
+    )
+    db_session.add(closed_market)
+    db_session.commit()
+
+    summary, next_index, complete = stage_current_slate_watchlist_batch(
+        db_session,
+        run_id=1,
+        market_ids=[closed_market.id],
+        cursor_index=0,
+        batch_size=100,
+    )
+
+    assert complete is True
+    assert next_index is None
+    assert summary.loaded_candidate_market_count == 0
+    assert summary.filtered_candidate_market_count == 1
+    assert summary.candidate_filter_reason_counts == {"status_not_open": 1}
+    assert summary.outcome_reason_counts == {}
+
+
+def test_stage_current_slate_watchlist_batch_completes_empty_candidate_list(db_session):
+    summary, next_index, complete = stage_current_slate_watchlist_batch(
+        db_session,
+        run_id=1,
+        market_ids=[],
+        cursor_index=0,
+        batch_size=100,
+    )
+
+    assert complete is True
+    assert next_index is None
+    assert summary.loaded_candidate_market_count == 0
+    assert summary.filtered_candidate_market_count == 0
+    assert summary.candidate_filter_reason_counts == {}

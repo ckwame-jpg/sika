@@ -391,6 +391,9 @@ class RunSummaryCounts(BaseModel):
     mapped_prop_markets: int = 0
     current_slate_event_count: int = 0
     current_slate_candidate_market_count: int = 0
+    current_slate_loaded_candidate_market_count: int = 0
+    current_slate_filtered_candidate_market_count: int = 0
+    current_slate_candidate_filter_reason_counts: dict[str, int] = Field(default_factory=dict)
     current_slate_scored_market_count: int = 0
     current_slate_coverage_prediction_count: int = 0
     current_slate_blocking_reason: str | None = None
@@ -459,6 +462,9 @@ class WatchlistDiagnosticsRead(BaseModel):
     latest_recommendations_emitted: int = 0
     latest_current_slate_event_count: int = 0
     latest_current_slate_candidate_market_count: int = 0
+    latest_current_slate_loaded_candidate_market_count: int = 0
+    latest_current_slate_filtered_candidate_market_count: int = 0
+    latest_current_slate_candidate_filter_reason_counts: dict[str, int] = Field(default_factory=dict)
     latest_current_slate_scored_market_count: int = 0
     latest_current_slate_coverage_prediction_count: int = 0
     latest_current_slate_blocking_reason: str | None = None

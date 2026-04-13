@@ -430,6 +430,13 @@ def _run_summary_counts(details: dict | None) -> RunSummaryCounts:
         mapped_prop_markets=int(payload.get("mapped_prop_markets") or 0),
         current_slate_event_count=int(payload.get("current_slate_event_count") or payload.get("affected_event_count") or 0),
         current_slate_candidate_market_count=int(payload.get("current_slate_candidate_market_count") or payload.get("candidate_market_count") or 0),
+        current_slate_loaded_candidate_market_count=int(payload.get("current_slate_loaded_candidate_market_count") or payload.get("loaded_candidate_market_count") or 0),
+        current_slate_filtered_candidate_market_count=int(
+            payload.get("current_slate_filtered_candidate_market_count") or payload.get("filtered_candidate_market_count") or 0
+        ),
+        current_slate_candidate_filter_reason_counts=payload.get("current_slate_candidate_filter_reason_counts")
+        or payload.get("candidate_filter_reason_counts")
+        or {},
         current_slate_scored_market_count=int(payload.get("current_slate_scored_market_count") or payload.get("scored_market_count") or 0),
         current_slate_coverage_prediction_count=int(payload.get("current_slate_coverage_prediction_count") or payload.get("coverage_prediction_count") or 0),
         current_slate_blocking_reason=payload.get("current_slate_blocking_reason"),
@@ -1003,6 +1010,9 @@ def get_watchlist_diagnostics(db: Session = Depends(get_db)) -> WatchlistDiagnos
         latest_recommendations_emitted=summary_counts.recommendations_emitted if summary_counts else 0,
         latest_current_slate_event_count=summary_counts.current_slate_event_count if summary_counts else 0,
         latest_current_slate_candidate_market_count=summary_counts.current_slate_candidate_market_count if summary_counts else 0,
+        latest_current_slate_loaded_candidate_market_count=summary_counts.current_slate_loaded_candidate_market_count if summary_counts else 0,
+        latest_current_slate_filtered_candidate_market_count=summary_counts.current_slate_filtered_candidate_market_count if summary_counts else 0,
+        latest_current_slate_candidate_filter_reason_counts=summary_counts.current_slate_candidate_filter_reason_counts if summary_counts else {},
         latest_current_slate_scored_market_count=summary_counts.current_slate_scored_market_count if summary_counts else 0,
         latest_current_slate_coverage_prediction_count=summary_counts.current_slate_coverage_prediction_count if summary_counts else 0,
         latest_current_slate_blocking_reason=summary_counts.current_slate_blocking_reason if summary_counts else None,

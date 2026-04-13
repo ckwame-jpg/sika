@@ -60,6 +60,9 @@ KALSHI_PROP_CATEGORY_SLUGS = {
 SNAPSHOT_SCOPE_ALL = "all"
 PRODUCT_SLATE_EMPTY_REASON = "Current slate scored successfully, but no markets cleared recommendation thresholds."
 PRODUCT_SLATE_NO_CANDIDATES_REASON = "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+PRODUCT_SLATE_FILTERED_BEFORE_SCORING_REASON = (
+    "Current slate candidate markets were filtered before scoring; no current open supported markets reached the scorer."
+)
 PRODUCT_SLATE_UNSCORED_REASON = "Current slate markets exist, but none were scored successfully."
 
 
@@ -303,11 +306,19 @@ def _classify_product_slate(
     scored_market_count: int,
     recommendation_count: int,
     coverage_prediction_count: int,
+    loaded_candidate_market_count: int | None = None,
+    filtered_candidate_market_count: int = 0,
 ) -> tuple[str, str | None]:
     if event_count <= 0:
         return "fresh", None
     if candidate_market_count <= 0:
         return "degraded", PRODUCT_SLATE_NO_CANDIDATES_REASON
+    if (
+        loaded_candidate_market_count is not None
+        and loaded_candidate_market_count <= 0
+        and filtered_candidate_market_count > 0
+    ):
+        return "degraded", PRODUCT_SLATE_FILTERED_BEFORE_SCORING_REASON
     if scored_market_count <= 0:
         return "degraded", PRODUCT_SLATE_UNSCORED_REASON
     if recommendation_count <= 0:
@@ -315,6 +326,22 @@ def _classify_product_slate(
             return "empty", PRODUCT_SLATE_EMPTY_REASON
         return "degraded", PRODUCT_SLATE_UNSCORED_REASON
     return "fresh", None
+
+
+def _candidate_loading_counts_for_run(db: Session, *, run_id: int | None) -> tuple[int | None, int]:
+    if run_id is None:
+        return None, 0
+    run = db.get(Run, run_id)
+    if run is None:
+        return None, 0
+    details = dict(run.details or {})
+    watchlist_summary = dict(details.get("watchlist_summary") or {})
+    loaded_raw = details.get("current_slate_loaded_candidate_market_count", watchlist_summary.get("loaded_candidate_market_count"))
+    filtered_raw = details.get(
+        "current_slate_filtered_candidate_market_count",
+        watchlist_summary.get("filtered_candidate_market_count"),
+    )
+    return (int(loaded_raw) if loaded_raw is not None else None), int(filtered_raw or 0)
 
 
 def _apply_product_slate_health(
@@ -332,6 +359,10 @@ def _apply_product_slate_health(
         run_id=source_run_id,
         sport=sport,
     )
+    loaded_candidate_market_count, filtered_candidate_market_count = _candidate_loading_counts_for_run(
+        db,
+        run_id=source_run_id,
+    )
     recommendation_count = _recommendation_count_from_events(response.events)
     if scored_market_count <= 0 and source_run_id is None and recommendation_count > 0:
         scored_market_count = recommendation_count
@@ -342,6 +373,8 @@ def _apply_product_slate_health(
         scored_market_count=scored_market_count,
         recommendation_count=recommendation_count,
         coverage_prediction_count=coverage_prediction_count,
+        loaded_candidate_market_count=loaded_candidate_market_count,
+        filtered_candidate_market_count=filtered_candidate_market_count,
     )
     response.event_count = event_count
     response.candidate_market_count = candidate_market_count

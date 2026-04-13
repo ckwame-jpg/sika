@@ -337,6 +337,9 @@ export interface RunSummaryCounts {
   mapped_prop_markets: number;
   current_slate_event_count: number;
   current_slate_candidate_market_count: number;
+  current_slate_loaded_candidate_market_count: number;
+  current_slate_filtered_candidate_market_count: number;
+  current_slate_candidate_filter_reason_counts: Record<string, number>;
   current_slate_scored_market_count: number;
   current_slate_coverage_prediction_count: number;
   current_slate_blocking_reason: string | null;
@@ -405,6 +408,9 @@ export interface WatchlistDiagnosticsRead {
   latest_recommendations_emitted: number;
   latest_current_slate_event_count: number;
   latest_current_slate_candidate_market_count: number;
+  latest_current_slate_loaded_candidate_market_count: number;
+  latest_current_slate_filtered_candidate_market_count: number;
+  latest_current_slate_candidate_filter_reason_counts: Record<string, number>;
   latest_current_slate_scored_market_count: number;
   latest_current_slate_coverage_prediction_count: number;
   latest_current_slate_blocking_reason: string | null;

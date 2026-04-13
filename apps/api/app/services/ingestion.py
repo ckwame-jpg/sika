@@ -732,6 +732,9 @@ def _build_watchlist_run_details(
         "mapped_prop_markets": mapped_prop_markets,
         "current_slate_event_count": int((extra_details or {}).get("current_slate_event_count") or 0),
         "current_slate_candidate_market_count": int((extra_details or {}).get("current_slate_candidate_market_count") or 0),
+        "current_slate_loaded_candidate_market_count": watchlist_summary.loaded_candidate_market_count,
+        "current_slate_filtered_candidate_market_count": watchlist_summary.filtered_candidate_market_count,
+        "current_slate_candidate_filter_reason_counts": dict(watchlist_summary.candidate_filter_reason_counts or {}),
         "current_slate_scored_market_count": watchlist_summary.scored_market_count,
         "current_slate_coverage_prediction_count": watchlist_summary.coverage_prediction_count,
         "current_slate_blocking_reason": (extra_details or {}).get("current_slate_blocking_reason"),
@@ -784,6 +787,8 @@ def _watchlist_summary_to_payload(summary: WatchlistGenerationSummary) -> dict[s
         "prediction_count": summary.prediction_count,
         "parlay_recommendation_count": summary.parlay_recommendation_count,
         "parlay_prediction_count": summary.parlay_prediction_count,
+        "loaded_candidate_market_count": summary.loaded_candidate_market_count,
+        "filtered_candidate_market_count": summary.filtered_candidate_market_count,
         "scored_market_count": summary.scored_market_count,
         "coverage_prediction_count": summary.coverage_prediction_count,
         "heuristic_longshots_suppressed": summary.heuristic_longshots_suppressed,
@@ -791,6 +796,7 @@ def _watchlist_summary_to_payload(summary: WatchlistGenerationSummary) -> dict[s
         "combo_prop_candidates_emitted": summary.combo_prop_candidates_emitted,
         "combo_prop_candidates_suppressed": summary.combo_prop_candidates_suppressed,
         "critical_context_suppressed": summary.critical_context_suppressed,
+        "candidate_filter_reason_counts": dict(summary.candidate_filter_reason_counts or {}),
         "outcome_reason_counts": dict(summary.outcome_reason_counts or {}),
         "quality_tier_counts": dict(summary.quality_tier_counts or {}),
     }
@@ -803,6 +809,8 @@ def _watchlist_summary_from_payload(payload: dict[str, object] | None) -> Watchl
         prediction_count=int(payload.get("prediction_count") or 0),
         parlay_recommendation_count=int(payload.get("parlay_recommendation_count") or 0),
         parlay_prediction_count=int(payload.get("parlay_prediction_count") or 0),
+        loaded_candidate_market_count=int(payload.get("loaded_candidate_market_count") or 0),
+        filtered_candidate_market_count=int(payload.get("filtered_candidate_market_count") or 0),
         scored_market_count=int(payload.get("scored_market_count") or 0),
         coverage_prediction_count=int(payload.get("coverage_prediction_count") or 0),
         heuristic_longshots_suppressed=int(payload.get("heuristic_longshots_suppressed") or 0),
@@ -810,6 +818,7 @@ def _watchlist_summary_from_payload(payload: dict[str, object] | None) -> Watchl
         combo_prop_candidates_emitted=int(payload.get("combo_prop_candidates_emitted") or 0),
         combo_prop_candidates_suppressed=int(payload.get("combo_prop_candidates_suppressed") or 0),
         critical_context_suppressed=int(payload.get("critical_context_suppressed") or 0),
+        candidate_filter_reason_counts={str(key): int(value or 0) for key, value in dict(payload.get("candidate_filter_reason_counts") or {}).items()},
         outcome_reason_counts={str(key): int(value or 0) for key, value in dict(payload.get("outcome_reason_counts") or {}).items()},
         quality_tier_counts={str(key): int(value or 0) for key, value in dict(payload.get("quality_tier_counts") or {}).items()},
     )
@@ -824,6 +833,8 @@ def _merge_watchlist_summaries(
         prediction_count=left.prediction_count + right.prediction_count,
         parlay_recommendation_count=left.parlay_recommendation_count + right.parlay_recommendation_count,
         parlay_prediction_count=left.parlay_prediction_count + right.parlay_prediction_count,
+        loaded_candidate_market_count=left.loaded_candidate_market_count + right.loaded_candidate_market_count,
+        filtered_candidate_market_count=left.filtered_candidate_market_count + right.filtered_candidate_market_count,
         scored_market_count=left.scored_market_count + right.scored_market_count,
         coverage_prediction_count=left.coverage_prediction_count + right.coverage_prediction_count,
         heuristic_longshots_suppressed=left.heuristic_longshots_suppressed + right.heuristic_longshots_suppressed,
@@ -831,6 +842,7 @@ def _merge_watchlist_summaries(
         combo_prop_candidates_emitted=left.combo_prop_candidates_emitted + right.combo_prop_candidates_emitted,
         combo_prop_candidates_suppressed=left.combo_prop_candidates_suppressed + right.combo_prop_candidates_suppressed,
         critical_context_suppressed=left.critical_context_suppressed + right.critical_context_suppressed,
+        candidate_filter_reason_counts=_merge_count_maps(left.candidate_filter_reason_counts, right.candidate_filter_reason_counts),
         outcome_reason_counts=_merge_count_maps(left.outcome_reason_counts, right.outcome_reason_counts),
         quality_tier_counts=_merge_count_maps(left.quality_tier_counts, right.quality_tier_counts),
     )
@@ -847,6 +859,8 @@ def _current_slate_blocking_reason(
         return None
     if candidate_market_count <= 0:
         return "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+    if summary.loaded_candidate_market_count <= 0 and summary.filtered_candidate_market_count > 0:
+        return "Current slate candidate markets were filtered before scoring; no current open supported markets reached the scorer."
     if summary.scored_market_count <= 0:
         return "Current slate markets exist, but none were scored successfully."
     if summary.recommendation_count <= 0 and summary.coverage_prediction_count > 0:
@@ -1358,6 +1372,12 @@ def advance_current_slate_refresh_job(
             )
             batch_summary.heuristic_longshots_suppressed += staged_watchlist_summary.heuristic_longshots_suppressed
             batch_summary.critical_context_suppressed += staged_watchlist_summary.critical_context_suppressed
+            batch_summary.loaded_candidate_market_count += staged_watchlist_summary.loaded_candidate_market_count
+            batch_summary.filtered_candidate_market_count += staged_watchlist_summary.filtered_candidate_market_count
+            batch_summary.candidate_filter_reason_counts = _merge_count_maps(
+                batch_summary.candidate_filter_reason_counts,
+                staged_watchlist_summary.candidate_filter_reason_counts,
+            )
             batch_summary.scored_market_count = max(
                 batch_summary.scored_market_count,
                 staged_watchlist_summary.scored_market_count,
@@ -1400,6 +1420,9 @@ def advance_current_slate_refresh_job(
             "candidate_market_ids": candidate_market_ids,
             "candidate_market_count": candidate_market_count,
             "affected_event_count": affected_event_count,
+            "current_slate_loaded_candidate_market_count": staged_watchlist_summary.loaded_candidate_market_count,
+            "current_slate_filtered_candidate_market_count": staged_watchlist_summary.filtered_candidate_market_count,
+            "current_slate_candidate_filter_reason_counts": dict(staged_watchlist_summary.candidate_filter_reason_counts or {}),
             "current_slate_blocking_reason": _current_slate_blocking_reason(
                 event_count=affected_event_count,
                 candidate_market_count=candidate_market_count,
@@ -1429,6 +1452,9 @@ def advance_current_slate_refresh_job(
         "candidate_market_count": candidate_market_count,
         "affected_event_count": affected_event_count,
         "current_slate_blocking_reason": details.get("current_slate_blocking_reason"),
+        "current_slate_loaded_candidate_market_count": staged_watchlist_summary.loaded_candidate_market_count,
+        "current_slate_filtered_candidate_market_count": staged_watchlist_summary.filtered_candidate_market_count,
+        "current_slate_candidate_filter_reason_counts": dict(staged_watchlist_summary.candidate_filter_reason_counts or {}),
         "processed_so_far": run.records_processed,
         "batch_size": batch_size,
         "last_batch_seconds": details["last_batch_seconds"],
@@ -1459,6 +1485,9 @@ def advance_current_slate_refresh_job(
             "affected_event_count": affected_event_count,
             "current_slate_event_count": affected_event_count,
             "current_slate_candidate_market_count": candidate_market_count,
+            "current_slate_loaded_candidate_market_count": staged_watchlist_summary.loaded_candidate_market_count,
+            "current_slate_filtered_candidate_market_count": staged_watchlist_summary.filtered_candidate_market_count,
+            "current_slate_candidate_filter_reason_counts": dict(staged_watchlist_summary.candidate_filter_reason_counts or {}),
             "current_slate_blocking_reason": details.get("current_slate_blocking_reason"),
             "snapshot_generated_at": snapshot_generated_at,
         },

@@ -237,6 +237,57 @@ def test_persist_current_slate_snapshots_marks_current_events_without_candidates
     assert response.blocking_reason == "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
 
 
+def test_persist_current_slate_snapshots_marks_prefiltered_candidates_degraded(db_session):
+    run = Run(
+        kind="refresh",
+        status="running",
+        details={
+            "current_slate_loaded_candidate_market_count": 0,
+            "current_slate_filtered_candidate_market_count": 1,
+            "current_slate_candidate_filter_reason_counts": {"not_current_event": 1},
+        },
+    )
+    event = Event(
+        external_id="degraded-prefiltered-candidates",
+        sport_key="MLB",
+        name="New York Yankees at Seattle Mariners",
+        status="scheduled",
+        starts_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([run, event])
+    db_session.flush()
+    db_session.add(
+        Market(
+            ticker="KXMLBGAME-PREFILTERED",
+            sport_key="MLB",
+            event_id=event.id,
+            title="New York at Seattle Winner?",
+            status="active",
+            raw_data={
+                "copilot_market_family": "winner",
+                "copilot_market_kind": "game_winner",
+                "event_ticker": "KXMLBGAME-PREFILTERED",
+            },
+        )
+    )
+    db_session.commit()
+
+    persist_current_slate_snapshots(db_session, source_run_id=run.id, generated_at=datetime.now(timezone.utc))
+    db_session.commit()
+
+    response = load_trade_desk_snapshot(db_session, sport="MLB")
+
+    assert response is not None
+    assert response.freshness_status == "degraded"
+    assert response.event_count == 1
+    assert response.candidate_market_count == 1
+    assert response.scored_market_count == 0
+    assert (
+        response.blocking_reason
+        == "Current slate candidate markets were filtered before scoring; no current open supported markets reached the scorer."
+    )
+
+
 def test_persist_current_slate_snapshots_marks_scored_zero_recommendation_slate_empty(db_session):
     run = Run(kind="refresh", status="running")
     event = Event(

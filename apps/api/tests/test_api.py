@@ -444,6 +444,9 @@ def test_watchlist_diagnostics_endpoint_reports_zero_emission_refresh(client, db
         details={
             "supported_markets_kept": 64,
             "recommendations_emitted": 0,
+            "current_slate_loaded_candidate_market_count": 0,
+            "current_slate_filtered_candidate_market_count": 3,
+            "current_slate_candidate_filter_reason_counts": {"not_current_event": 2, "status_not_open": 1},
             "watchlist_counts_by_sport": {},
         },
     )
@@ -458,6 +461,10 @@ def test_watchlist_diagnostics_endpoint_reports_zero_emission_refresh(client, db
     assert payload["latest_refresh_succeeded"] is True
     assert payload["latest_supported_markets_kept"] == 64
     assert payload["latest_recommendations_emitted"] == 0
+    assert payload["latest_current_slate_loaded_candidate_market_count"] == 0
+    assert payload["latest_current_slate_filtered_candidate_market_count"] == 3
+    assert payload["latest_current_slate_candidate_filter_reason_counts"] == {"not_current_event": 2, "status_not_open": 1}
+    assert payload["latest_refresh_run"]["summary_counts"]["current_slate_filtered_candidate_market_count"] == 3
     assert payload["latest_watchlist_counts_by_sport"] == {}
 
 
