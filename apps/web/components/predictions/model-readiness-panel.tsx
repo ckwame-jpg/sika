@@ -10,8 +10,6 @@ import type {
   ReadinessStatus,
   RuntimeHealthStatus,
 } from "@/lib/types";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
@@ -24,20 +22,20 @@ const STUDY_LADDER = [
   "serving",
 ] as const;
 
-function readinessVariant(status: ReadinessStatus): "positive" | "warning" | "negative" | "default" {
-  if (status === "serving" || status === "ready_for_review") return "positive";
-  if (status === "shadowing" || status === "shadow_not_started" || status === "insufficient_history") return "warning";
-  return "default";
+function readinessPillClass(status: ReadinessStatus): string {
+  if (status === "serving" || status === "ready_for_review") return "settled";
+  if (status === "shadowing" || status === "shadow_not_started" || status === "insufficient_history") return "pending";
+  return "";
 }
 
-function runtimeVariant(status: RuntimeHealthStatus): "positive" | "warning" | "negative" | "default" {
-  if (status === "healthy") return "positive";
-  if (status === "degraded") return "warning";
-  return "negative";
+function runtimePillClass(status: RuntimeHealthStatus): string {
+  if (status === "healthy") return "settled";
+  if (status === "degraded") return "pending";
+  return "lost";
 }
 
-function studyTrackVariant(studyTrack: ModelFamilyReadinessRead["study_track"]): "warning" | "default" {
-  return studyTrack === "active" ? "warning" : "default";
+function studyTrackPillClass(studyTrack: ModelFamilyReadinessRead["study_track"]): string {
+  return studyTrack === "active" ? "pending" : "";
 }
 
 function studyTrackLabel(studyTrack: ModelFamilyReadinessRead["study_track"]): string {
@@ -80,22 +78,22 @@ function FamilyCard({
             {family.settled_predictions} settled · {family.shadow_predictions} shadow · {family.coverage_predictions} coverage
           </p>
         </div>
-        <Badge variant={readinessVariant(family.readiness_status)}>
+        <span className={cn("outcome-pill", readinessPillClass(family.readiness_status))}>
           {family.readiness_status.replaceAll("_", " ")}
-        </Badge>
+        </span>
       </div>
       <div className="mt-3 flex flex-wrap gap-2 text-xs">
-        <Badge variant={studyTrackVariant(family.study_track)}>
+        <span className={cn("outcome-pill", studyTrackPillClass(family.study_track))}>
           {studyTrackLabel(family.study_track)}
-        </Badge>
-        <Badge variant={runtimeVariant(family.runtime.runtime_health)}>
+        </span>
+        <span className={cn("outcome-pill", runtimePillClass(family.runtime.runtime_health))}>
           {family.runtime.runtime_health}
-        </Badge>
-        <Badge variant="default">
+        </span>
+        <span className="outcome-pill">
           {family.runtime.desired_mode}{" -> "}{family.runtime.effective_mode}
-        </Badge>
+        </span>
         {family.runtime.fallback_active ? (
-          <Badge variant="negative">fallback active</Badge>
+          <span className="outcome-pill lost">fallback active</span>
         ) : null}
       </div>
     </button>
@@ -110,11 +108,11 @@ function BucketTable({
   rows: ModelFamilyReadinessRead["confidence_buckets"];
 }) {
   return (
-    <div className="rounded-xl border border-border bg-surface">
-      <div className="border-b border-border px-3 py-2">
-        <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
+    <div className="overflow-hidden rounded-[10px] border border-white/[0.06] bg-white/[0.03]">
+      <div className="border-b border-white/[0.06] px-3 py-2">
+        <p className="stats-tile-label">{title}</p>
       </div>
-      <div className="divide-y divide-border">
+      <div className="divide-y divide-white/[0.06]">
         {rows.map((row) => (
           <div key={row.label} className="grid grid-cols-[1.2fr_0.8fr_0.8fr] gap-2 px-3 py-2 text-xs">
             <span className="text-foreground">{row.label}</span>
@@ -182,8 +180,8 @@ export function ModelReadinessPanel() {
 
   if (error || !summary) {
     return (
-      <Card className="border-negative/40 bg-negative/5">
-        <CardContent className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 text-sm text-negative">
+      <section className="cosmos-panel">
+        <div className="cosmos-panel-body flex flex-wrap items-center justify-between gap-3 text-sm text-negative">
           <div className="flex items-center gap-3">
             <AlertTriangle size={16} />
             Failed to load model readiness.
@@ -198,8 +196,8 @@ export function ModelReadinessPanel() {
             <RefreshCw size={13} className={cn(refreshing && "animate-spin")} />
             Retry
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     );
   }
 
@@ -207,34 +205,34 @@ export function ModelReadinessPanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card className="overflow-hidden">
-        <CardHeader className="gap-2 border-b border-border/80 bg-surface-hover px-4 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <FlaskConical size={16} className="text-muted-foreground" />
-              <CardTitle className="text-base">Model Readiness</CardTitle>
+      <section className="cosmos-panel overflow-hidden">
+        <div className="cosmos-panel-head">
+          <div className="cosmos-panel-head-text">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <FlaskConical size={16} className="text-muted-foreground" />
+                <h2 className="cosmos-panel-title">Model Readiness</h2>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-2"
+                onClick={() => void handleRefresh()}
+                disabled={refreshing}
+              >
+                <RefreshCw size={13} className={cn(refreshing && "animate-spin")} />
+                Refresh
+              </Button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-2"
-              onClick={() => void handleRefresh()}
-              disabled={refreshing}
-            >
-              <RefreshCw size={13} className={cn(refreshing && "animate-spin")} />
-              Refresh
-            </Button>
+            <div className="mt-2 flex flex-col gap-2 text-sm text-muted-foreground">
+              <p>Study ladder: {STUDY_LADDER.join(" -> ")}.</p>
+              <p>
+                Runtime stays separate: <span className="font-mono">desired -&gt; effective</span> shows what is configured versus what is actually serving live. Only families with effective mode <span className="font-mono">ml</span> are serving calibrated probabilities.
+              </p>
+            </div>
           </div>
-          <div className="flex flex-col gap-2 text-sm text-muted-foreground">
-            <p>
-              Study ladder: {STUDY_LADDER.join(" -> ")}.
-            </p>
-            <p>
-              Runtime stays separate: <span className="font-mono">desired -&gt; effective</span> shows what is configured versus what is actually serving live. Only families with effective mode <span className="font-mono">ml</span> are serving calibrated probabilities.
-            </p>
-          </div>
-        </CardHeader>
-        <CardContent className="px-4 py-4">
+        </div>
+        <div className="cosmos-panel-body">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {summary.families.map((family) => (
               <FamilyCard
@@ -245,50 +243,52 @@ export function ModelReadinessPanel() {
               />
             ))}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {selected ? (
-        <Card>
-          <CardHeader className="gap-2 border-b border-border/80 px-4 py-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <CardTitle className="text-base">{selected.label}</CardTitle>
-              <Badge variant={studyTrackVariant(selected.study_track)}>
-                {studyTrackLabel(selected.study_track)}
-              </Badge>
-              <Badge variant={readinessVariant(selected.readiness_status)}>
-                {selected.readiness_status.replaceAll("_", " ")}
-              </Badge>
-              <Badge variant={runtimeVariant(selected.runtime.runtime_health)}>
-                {selected.runtime.runtime_health}
-              </Badge>
-              {selected.runtime.fallback_active ? (
-                <Badge variant="negative">ML requested, heuristic serving</Badge>
-              ) : null}
+        <section className="cosmos-panel">
+          <div className="cosmos-panel-head">
+            <div className="cosmos-panel-head-text">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="cosmos-panel-title">{selected.label}</h2>
+                <span className={cn("outcome-pill", studyTrackPillClass(selected.study_track))}>
+                  {studyTrackLabel(selected.study_track)}
+                </span>
+                <span className={cn("outcome-pill", readinessPillClass(selected.readiness_status))}>
+                  {selected.readiness_status.replaceAll("_", " ")}
+                </span>
+                <span className={cn("outcome-pill", runtimePillClass(selected.runtime.runtime_health))}>
+                  {selected.runtime.runtime_health}
+                </span>
+                {selected.runtime.fallback_active ? (
+                  <span className="outcome-pill lost">ML requested, heuristic serving</span>
+                ) : null}
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">{selected.why_not_ready}</p>
             </div>
-            <p className="text-sm text-muted-foreground">{selected.why_not_ready}</p>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 px-4 py-4">
+          </div>
+          <div className="cosmos-panel-body flex flex-col gap-4">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
-              <div className="rounded-xl border border-border bg-surface px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Runtime</p>
-                <p className="mt-1 font-mono text-sm text-foreground">
+              <div className="stats-tile">
+                <p className="stats-tile-label">Runtime</p>
+                <p className="stats-tile-value font-mono">
                   {selected.runtime.desired_mode}{" -> "}{selected.runtime.effective_mode}
                 </p>
                 <p className="text-xs text-muted-foreground">Configured versus actually serving</p>
               </div>
-              <div className="rounded-xl border border-border bg-surface px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Settled Recs</p>
-                <p className="mt-1 font-mono text-sm text-foreground">{selected.settled_predictions}</p>
+              <div className="stats-tile">
+                <p className="stats-tile-label">Settled Recs</p>
+                <p className="stats-tile-value font-mono">{selected.settled_predictions}</p>
               </div>
-              <div className="rounded-xl border border-border bg-surface px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Coverage</p>
-                <p className="mt-1 font-mono text-sm text-foreground">{selected.coverage_predictions}</p>
+              <div className="stats-tile">
+                <p className="stats-tile-label">Coverage</p>
+                <p className="stats-tile-value font-mono">{selected.coverage_predictions}</p>
                 <p className="text-xs text-muted-foreground">{selected.coverage_settled_predictions} settled daily samples</p>
               </div>
-              <div className="rounded-xl border border-border bg-surface px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Shadow</p>
-                <p className="mt-1 font-mono text-sm text-foreground">{selected.shadow_predictions}</p>
+              <div className="stats-tile">
+                <p className="stats-tile-label">Shadow</p>
+                <p className="stats-tile-value font-mono">{selected.shadow_predictions}</p>
                 <p className="text-xs text-muted-foreground">
                   {fmtPercent(selected.shadow_coverage_ratio)} coverage · {shadowBacklogLabel(selected)}
                 </p>
@@ -296,20 +296,20 @@ export function ModelReadinessPanel() {
                   {selected.last_shadow_capture_at ? `Last capture ${fmtDatetime(selected.last_shadow_capture_at)}` : "No shadow capture recorded yet"}
                 </p>
               </div>
-              <div className="rounded-xl border border-border bg-surface px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Avg Edge</p>
-                <p className="mt-1 font-mono text-sm text-foreground">
+              <div className="stats-tile">
+                <p className="stats-tile-label">Avg Edge</p>
+                <p className="stats-tile-value font-mono">
                   {selected.average_edge != null ? fmtEdge(selected.average_edge) : "—"}
                 </p>
               </div>
-              <div className="rounded-xl border border-border bg-surface px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Avg Confidence</p>
-                <p className="mt-1 font-mono text-sm text-foreground">{fmtPercent(selected.average_confidence)}</p>
+              <div className="stats-tile">
+                <p className="stats-tile-label">Avg Confidence</p>
+                <p className="stats-tile-value font-mono">{fmtPercent(selected.average_confidence)}</p>
               </div>
-              <div className="rounded-xl border border-border bg-surface px-3 py-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Avg PnL</p>
+              <div className="stats-tile">
+                <p className="stats-tile-label">Avg PnL</p>
                 <p className={cn(
-                  "mt-1 font-mono text-sm",
+                  "stats-tile-value font-mono",
                   selected.average_realized_pnl != null && selected.average_realized_pnl < 0 ? "text-negative" : "text-positive",
                 )}>
                   {fmtContractPnl(selected.average_realized_pnl)}
@@ -317,7 +317,7 @@ export function ModelReadinessPanel() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-border bg-surface px-4 py-4">
+            <div className="stats-tile">
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <Cpu size={15} className="text-muted-foreground" />
                 <span className="font-medium text-foreground">
@@ -340,8 +340,8 @@ export function ModelReadinessPanel() {
             </div>
 
             <div className="grid gap-4 xl:grid-cols-3">
-              <div className="rounded-xl border border-border bg-surface px-4 py-4">
-                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Feature Coverage</p>
+              <div className="stats-tile">
+                <p className="stats-tile-label">Feature Coverage</p>
                 <div className="mt-3 flex flex-col gap-2 text-sm">
                   {Object.entries(selected.feature_coverage_rates).length === 0 ? (
                     <span className="text-muted-foreground">No coverage diagnostics yet.</span>
@@ -353,8 +353,8 @@ export function ModelReadinessPanel() {
                   ))}
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-surface px-4 py-4">
-                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Missing Context</p>
+              <div className="stats-tile">
+                <p className="stats-tile-label">Missing Context</p>
                 <div className="mt-3 flex flex-col gap-2 text-sm">
                   {Object.entries(selected.missing_context_rates).length === 0 ? (
                     <span className="text-muted-foreground">No missing-context flags recorded.</span>
@@ -366,15 +366,15 @@ export function ModelReadinessPanel() {
                   ))}
                 </div>
               </div>
-              <div className="rounded-xl border border-border bg-surface px-4 py-4">
-                <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Top Failure Reasons</p>
+              <div className="stats-tile">
+                <p className="stats-tile-label">Top Failure Reasons</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {Object.entries(selected.top_failure_reasons).length === 0 ? (
                     <span className="text-sm text-muted-foreground">No settled-loss diagnostics yet.</span>
                   ) : Object.entries(selected.top_failure_reasons).map(([key, value]) => (
-                    <Badge key={key} variant="default">
+                    <span key={key} className="outcome-pill">
                       {key.replaceAll("_", " ")} · {value}
-                    </Badge>
+                    </span>
                   ))}
                 </div>
               </div>
@@ -388,8 +388,8 @@ export function ModelReadinessPanel() {
                 </div>
               </div>
             ) : null}
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       ) : null}
     </div>
   );

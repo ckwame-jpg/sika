@@ -4,18 +4,16 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { fetchRun, fetchRuns, keys } from "@/lib/api";
 import type { RunDetailRead, RunRead } from "@/lib/types";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fmtDatetime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { useHealthStatus } from "@/lib/health-status";
 
-function statusVariant(status: string) {
-  if (status === "completed") return "positive";
-  if (status === "failed") return "negative";
-  return "warning";
+function statusPillClass(status: string): string {
+  if (status === "completed") return "settled";
+  if (status === "failed") return "lost";
+  return "pending";
 }
 
 function countEntries(details: Record<string, unknown>, key: string) {
@@ -28,6 +26,15 @@ function runKindLabel(kind: string): string {
   if (kind === "prop_refresh") return "Maintenance Refresh";
   if (kind === "shadow_capture") return "Shadow Capture";
   return "Refresh";
+}
+
+function MetricTile({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="stats-tile">
+      <p className="stats-tile-label">{label}</p>
+      <p className="stats-tile-value font-mono text-lg">{value}</p>
+    </div>
+  );
 }
 
 export function RunsDesk() {
@@ -62,16 +69,18 @@ export function RunsDesk() {
 
   return (
     <div className="grid h-full min-h-0 gap-4 overflow-auto xl:grid-cols-[360px_minmax(0,1fr)]">
-      <Card className="relative z-10 min-h-0 overflow-hidden">
-        <CardHeader className="flex-col items-start gap-1 border-none">
-          <CardTitle>Recent Runs</CardTitle>
-          <CardDescription>Refresh history, diagnostics, and emitted recommendations</CardDescription>
-        </CardHeader>
-        <CardContent className="min-h-0 pb-0">
+      <section className="cosmos-panel relative z-10 min-h-0 overflow-hidden">
+        <div className="cosmos-panel-head">
+          <div className="cosmos-panel-head-text">
+            <h2 className="cosmos-panel-title">Recent Runs</h2>
+            <p className="cosmos-panel-desc">Refresh history, diagnostics, and emitted recommendations</p>
+          </div>
+        </div>
+        <div className="cosmos-panel-body min-h-0 pb-0">
           {health?.active_refresh_job && (
             <div className="mb-3 rounded-xl border border-warning/20 bg-warning/8 px-3 py-3 text-sm">
               <div className="flex items-center gap-2">
-                <Badge variant="warning">{health.active_refresh_job.status}</Badge>
+                <span className="outcome-pill pending">{health.active_refresh_job.status}</span>
                 <span className="text-foreground">
                   {health.active_refresh_job.scope === "current_slate" ? "Current-slate refresh" : "Refresh job"} #{health.active_refresh_job.id}
                 </span>
@@ -102,7 +111,7 @@ export function RunsDesk() {
                         <p className="text-sm font-medium text-foreground">
                           {runKindLabel(run.kind)} #{run.id}
                         </p>
-                        <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
+                        <span className={cn("outcome-pill", statusPillClass(run.status))}>{run.status}</span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {fmtDatetime(run.started_at)}
@@ -128,17 +137,21 @@ export function RunsDesk() {
                   ))}
             </div>
           </ScrollArea>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      <Card className="min-h-0 overflow-hidden">
-        <CardHeader className="flex-col items-start gap-1 border-none">
-          <CardTitle>{detail ? `${runKindLabel(detail.kind)} #${detail.id}` : "Run Detail"}</CardTitle>
-          <CardDescription>
-            {detail ? `${fmtDatetime(detail.started_at)} · ${detail.records_processed} processed` : "Select a run to inspect details"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="min-h-0">
+      <section className="cosmos-panel min-h-0 overflow-hidden">
+        <div className="cosmos-panel-head">
+          <div className="cosmos-panel-head-text">
+            <h2 className="cosmos-panel-title">
+              {detail ? `${runKindLabel(detail.kind)} #${detail.id}` : "Run Detail"}
+            </h2>
+            <p className="cosmos-panel-desc">
+              {detail ? `${fmtDatetime(detail.started_at)} · ${detail.records_processed} processed` : "Select a run to inspect details"}
+            </p>
+          </div>
+        </div>
+        <div className="cosmos-panel-body min-h-0">
           {detailLoading || !detail ? (
             <div className="space-y-3">
               <Skeleton className="h-16 w-full rounded-xl" />
@@ -148,114 +161,59 @@ export function RunsDesk() {
             <div className="grid gap-4">
               {detail.kind === "shadow_capture" ? (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Scope</p>
-                      <p className="mt-1 font-mono text-lg text-foreground">{shadowScope || "shadow_capture"}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Shadow Singles</p>
-                      <p className="mt-1 font-mono text-lg text-foreground">{shadowPredictionsCaptured}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Shadow Parlays</p>
-                      <p className="mt-1 font-mono text-lg text-foreground">{shadowParlaysCaptured}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Source Run</p>
-                      <p className="mt-1 font-mono text-lg text-foreground">{shadowSourceRunId ?? "backfill"}</p>
-                    </CardContent>
-                  </Card>
+                  <MetricTile label="Scope" value={shadowScope || "shadow_capture"} />
+                  <MetricTile label="Shadow Singles" value={shadowPredictionsCaptured} />
+                  <MetricTile label="Shadow Parlays" value={shadowParlaysCaptured} />
+                  <MetricTile label="Source Run" value={shadowSourceRunId ?? "backfill"} />
                 </div>
               ) : (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Markets Seen</p>
-                      <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.total_kalshi_markets_seen}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Supported Kept</p>
-                      <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.supported_markets_kept}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Mapped Props</p>
-                      <p className="mt-1 font-mono text-lg text-foreground">{detail.summary_counts.mapped_prop_markets}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                        {detail.kind === "prop_refresh" ? "Props Warmed" : "Recommendations"}
-                      </p>
-                      <p className="mt-1 font-mono text-lg text-foreground">
-                        {detail.kind === "prop_refresh"
-                          ? detail.summary_counts.prop_subjects_warmed
-                          : detail.summary_counts.recommendations_emitted}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                        {detail.kind === "prop_refresh" ? "Search Cache" : "Predictions Captured"}
-                      </p>
-                      <p className="mt-1 font-mono text-lg text-foreground">
-                        {detail.kind === "prop_refresh"
-                          ? `${detail.summary_counts.player_search_cache_hits}/${detail.summary_counts.player_search_cache_misses}`
-                          : detail.summary_counts.predictions_captured}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card className="bg-surface-hover shadow-none">
-                    <CardContent className="px-3 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                        {detail.kind === "prop_refresh" ? "Gamelog Cache" : "Settlements Updated"}
-                      </p>
-                      <p className="mt-1 font-mono text-lg text-foreground">
-                        {detail.kind === "prop_refresh"
-                          ? `${detail.summary_counts.gamelog_cache_hits}/${detail.summary_counts.gamelog_cache_misses}`
-                          : detail.summary_counts.prediction_settlement_updated}
-                      </p>
-                    </CardContent>
-                  </Card>
+                  <MetricTile label="Markets Seen" value={detail.summary_counts.total_kalshi_markets_seen} />
+                  <MetricTile label="Supported Kept" value={detail.summary_counts.supported_markets_kept} />
+                  <MetricTile label="Mapped Props" value={detail.summary_counts.mapped_prop_markets} />
+                  <MetricTile
+                    label={detail.kind === "prop_refresh" ? "Props Warmed" : "Recommendations"}
+                    value={
+                      detail.kind === "prop_refresh"
+                        ? detail.summary_counts.prop_subjects_warmed
+                        : detail.summary_counts.recommendations_emitted
+                    }
+                  />
+                  <MetricTile
+                    label={detail.kind === "prop_refresh" ? "Search Cache" : "Predictions Captured"}
+                    value={
+                      detail.kind === "prop_refresh"
+                        ? `${detail.summary_counts.player_search_cache_hits}/${detail.summary_counts.player_search_cache_misses}`
+                        : detail.summary_counts.predictions_captured
+                    }
+                  />
+                  <MetricTile
+                    label={detail.kind === "prop_refresh" ? "Gamelog Cache" : "Settlements Updated"}
+                    value={
+                      detail.kind === "prop_refresh"
+                        ? `${detail.summary_counts.gamelog_cache_hits}/${detail.summary_counts.gamelog_cache_misses}`
+                        : detail.summary_counts.prediction_settlement_updated
+                    }
+                  />
                 </div>
               )}
 
               <div className="grid gap-4 xl:grid-cols-3">
-                <Card className="bg-surface-hover shadow-none">
-                  <CardHeader className="flex-col items-start gap-1 border-none px-3 py-3">
-                    <CardTitle className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                      Sports Ingested
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2 px-3 pt-0">
+                <div className="stats-tile">
+                  <p className="stats-tile-label">Sports Ingested</p>
+                  <div className="mt-2 space-y-2">
                     {Object.entries(detail.summary_counts.sports_records_ingested).map(([sport, count]) => (
                       <div key={sport} className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
                         <span className="text-foreground">{sport}</span>
                         <span className="font-mono text-muted-foreground">{count}</span>
                       </div>
                     ))}
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
 
-                <Card className="bg-surface-hover shadow-none">
-                  <CardHeader className="flex-col items-start gap-1 border-none px-3 py-3">
-                    <CardTitle className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                      Watchlist By Sport
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2 px-3 pt-0">
+                <div className="stats-tile">
+                  <p className="stats-tile-label">Watchlist By Sport</p>
+                  <div className="mt-2 space-y-2">
                     {watchlistCounts.length === 0 ? (
                       <p className="text-xs text-muted-foreground">No watchlist recommendations emitted.</p>
                     ) : (
@@ -266,16 +224,12 @@ export function RunsDesk() {
                         </div>
                       ))
                     )}
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
 
-                <Card className="bg-surface-hover shadow-none">
-                  <CardHeader className="flex-col items-start gap-1 border-none px-3 py-3">
-                    <CardTitle className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                      Prediction Outcomes
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2 px-3 pt-0">
+                <div className="stats-tile">
+                  <p className="stats-tile-label">Prediction Outcomes</p>
+                  <div className="mt-2 space-y-2">
                     {predictionOutcomes.length === 0 ? (
                       <p className="text-xs text-muted-foreground">No settlements this run.</p>
                     ) : (
@@ -286,39 +240,33 @@ export function RunsDesk() {
                         </div>
                       ))
                     )}
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               </div>
 
               {fetchErrors.length > 0 && (
-                <Card className="border-warning/20 bg-warning/8 shadow-none">
-                  <CardHeader className="flex-col items-start gap-1 border-none px-3 py-3">
-                    <CardTitle className="text-xs uppercase tracking-[0.14em] text-warning">
-                      Sports Fetch Errors
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2 px-3 pt-0">
+                <div className="rounded-xl border border-warning/20 bg-warning/8 px-3 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.14em] text-warning">Sports Fetch Errors</p>
+                  <div className="mt-2 space-y-2">
                     {fetchErrors.map(([sport, value]) => (
                       <div key={sport} className="rounded-lg border border-warning/20 px-3 py-2 text-sm text-warning">
                         <p className="font-medium">{sport}</p>
                         <p className="mt-1 text-xs">{JSON.stringify(value)}</p>
                       </div>
                     ))}
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               )}
 
               {detail.error_message && (
-                <Card className="border-negative/20 bg-negative/8 shadow-none">
-                  <CardContent className="px-3 py-3 text-sm text-negative">
-                    {detail.error_message}
-                  </CardContent>
-                </Card>
+                <div className="rounded-xl border border-negative/20 bg-negative/8 px-3 py-3 text-sm text-negative">
+                  {detail.error_message}
+                </div>
               )}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   );
 }

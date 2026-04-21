@@ -12,9 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
 import { MarketDetailSheet } from "@/components/markets/market-detail-sheet";
 import {
@@ -35,6 +33,12 @@ import {
 } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { usePriceDisplay } from "@/lib/price-display";
+
+function statusPillClass(status: string): string {
+  if (status === "open") return "pending";
+  if (status === "closed") return "settled";
+  return "";
+}
 
 function PnlCell({ pnl, status }: { pnl: number | null; status: string }) {
   if (status === "open") return <span className="font-mono text-xs text-muted-foreground">Open</span>;
@@ -181,9 +185,9 @@ function PositionRow({
         <PnlCell pnl={position.pnl} status={position.status} />
       </TableCell>
       <TableCell>
-        <Badge variant={isOpen ? "positive" : "default"}>
+        <span className={cn("outcome-pill", statusPillClass(position.status))}>
           {position.status}
-        </Badge>
+        </span>
       </TableCell>
       <TableCell>
         <span className="font-mono text-xs text-muted-foreground">
@@ -214,59 +218,57 @@ function PositionCard({
   const isOpen = position.status === "open";
 
   return (
-    <Card className="bg-surface-hover shadow-none">
-      <CardContent className="space-y-3 px-4 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <button
-            className="min-w-0 cursor-pointer text-left"
-            onClick={onViewMarket}
-          >
-            <p className="truncate font-mono text-xs text-accent hover:underline">
-              {position.ticker}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Opened {fmtDatetime(position.opened_at)}
-            </p>
-          </button>
-          <Badge variant={isOpen ? "positive" : "default"}>
-            {position.status}
-          </Badge>
-        </div>
+    <article className="pred-card">
+      <div className="pred-card-head">
+        <button
+          className="min-w-0 cursor-pointer text-left"
+          onClick={onViewMarket}
+        >
+          <p className="truncate font-mono text-xs text-accent hover:underline">
+            {position.ticker}
+          </p>
+          <p className="pred-card-time mt-1">
+            Opened {fmtDatetime(position.opened_at)}
+          </p>
+        </button>
+        <span className={cn("outcome-pill", statusPillClass(position.status))}>
+          {position.status}
+        </span>
+      </div>
 
-        <div className="grid grid-cols-2 gap-3 text-xs">
-          <div>
-            <p className="text-muted-foreground">Side</p>
-            <p className={cn("mt-1 font-mono font-medium", sideClass(position.side))}>
-              {position.side.toUpperCase()}
-            </p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Qty</p>
-            <p className="mt-1 font-mono text-foreground">{position.quantity}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Entry</p>
-            <p className="mt-1 font-mono text-foreground">{formatPrice(position.entry_price)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Exit</p>
-            <p className="mt-1 font-mono text-muted-foreground">{formatPrice(position.exit_price)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">PnL</p>
-            <div className="mt-1">
-              <PnlCell pnl={position.pnl} status={position.status} />
-            </div>
+      <div className="pred-card-grid">
+        <div>
+          <p className="pred-card-stat-label">Side</p>
+          <p className={cn("pred-card-stat-value", sideClass(position.side))}>
+            {position.side.toUpperCase()}
+          </p>
+        </div>
+        <div>
+          <p className="pred-card-stat-label">Qty</p>
+          <p className="pred-card-stat-value">{position.quantity}</p>
+        </div>
+        <div>
+          <p className="pred-card-stat-label">Entry</p>
+          <p className="pred-card-stat-value">{formatPrice(position.entry_price)}</p>
+        </div>
+        <div>
+          <p className="pred-card-stat-label">Exit</p>
+          <p className="pred-card-stat-value text-muted-foreground">{formatPrice(position.exit_price)}</p>
+        </div>
+        <div>
+          <p className="pred-card-stat-label">PnL</p>
+          <div className="mt-1">
+            <PnlCell pnl={position.pnl} status={position.status} />
           </div>
         </div>
+      </div>
 
-        {isOpen && (
-          <Button variant="danger" size="sm" onClick={onExit} className="w-full">
-            Exit Position
-          </Button>
-        )}
-      </CardContent>
-    </Card>
+      {isOpen && (
+        <Button variant="danger" size="sm" onClick={onExit} className="w-full">
+          Exit Position
+        </Button>
+      )}
+    </article>
   );
 }
 
@@ -378,21 +380,19 @@ export function PaperPositionsTable({ maxHeight }: PaperPositionsTableProps) {
           <div className="space-y-3 lg:hidden">
             {isLoading
               ? Array.from({ length: 4 }).map((_, index) => (
-                  <Card key={index} className="bg-surface-hover shadow-none">
-                    <CardContent className="space-y-3 px-4 py-4">
-                      <Skeleton className="h-4 w-40" />
-                      <div className="grid grid-cols-2 gap-3">
-                        <Skeleton className="h-10 w-full" />
-                        <Skeleton className="h-10 w-full" />
-                        <Skeleton className="h-10 w-full" />
-                        <Skeleton className="h-10 w-full" />
-                      </div>
-                    </CardContent>
-                  </Card>
+                  <article key={index} className="pred-card">
+                    <Skeleton className="h-4 w-40" />
+                    <div className="pred-card-grid">
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                      <Skeleton className="h-10 w-full" />
+                    </div>
+                  </article>
                 ))
               : positions.length === 0
                 ? (
-                  <div className="flex h-24 items-center justify-center rounded-xl border border-border bg-surface text-center text-xs text-muted-foreground">
+                  <div className="cosmos-table-empty">
                     No paper positions yet
                   </div>
                 )
@@ -407,7 +407,7 @@ export function PaperPositionsTable({ maxHeight }: PaperPositionsTableProps) {
           </div>
 
           <div className="hidden lg:block">
-            <div className="overflow-x-auto">
+            <div className="cosmos-table-wrap">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -428,7 +428,7 @@ export function PaperPositionsTable({ maxHeight }: PaperPositionsTableProps) {
                     : positions.length === 0
                       ? (
                         <TableRow>
-                          <TableCell colSpan={9} className="py-8 text-center text-xs text-muted-foreground">
+                          <TableCell colSpan={9} className="cosmos-table-empty">
                             No paper positions yet
                           </TableCell>
                         </TableRow>

@@ -20,6 +20,8 @@
   --color-negative: var(--negative);
   --color-negative-dim: var(--negative-dim);
   --color-warning: var(--warning);
+  --color-cosmos-violet: var(--cosmos-violet);
+  --color-cosmos-cyan: var(--cosmos-cyan);
   --color-sport-nba: var(--sport-nba);
   --color-sport-nfl: var(--sport-nfl);
   --color-sport-mlb: var(--sport-mlb);
@@ -44,6 +46,7 @@
   --shadow-elevated: 0 4px 12px 0 rgb(0 0 0 / 0.5), 0 1px 3px -1px rgb(0 0 0 / 0.3);
   --shadow-glow-accent: 0 0 16px 0 hsl(217 91% 60% / 0.2);
   --shadow-glow-positive: 0 0 12px 0 hsl(160 72% 46% / 0.25);
+  --shadow-glow-cosmos: 0 0 24px 0 hsl(262 60% 58% / 0.35);
 
   /* Animations */
   --animate-fade-in: fade-in 150ms ease-out;
@@ -67,6 +70,20 @@
     from { opacity: 0; transform: translateX(-12px); }
     to { opacity: 1; transform: translateX(0); }
   }
+  @keyframes lo-spin {
+    to { transform: rotateX(68deg) rotateZ(360deg); }
+  }
+  @keyframes nav-orbit {
+    to { transform: rotateX(65deg) rotateZ(360deg); }
+  }
+  @keyframes live-pulse {
+    0% { transform: scale(0.6); opacity: 0.9; }
+    100% { transform: scale(1.9); opacity: 0; }
+  }
+  @keyframes stats-orb-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.8; }
+    50% { transform: scale(1.12); opacity: 1; }
+  }
 }
 
 /* ── Light mode CSS variables ── */
@@ -88,15 +105,118 @@
   --negative-dim: hsl(0 78% 55% / 0.12);
   --warning: hsl(40 95% 48%);
 
+  --cosmos-violet: hsl(262 60% 48%);
+  --cosmos-cyan: hsl(190 80% 50%);
+
   --sport-nba: hsl(25 95% 53%);
   --sport-nfl: hsl(218 75% 45%);
   --sport-mlb: hsl(0 75% 50%);
   --sport-soccer: hsl(142 71% 38%);
   --sport-tennis: hsl(78 80% 42%);
   --sport-ufc: hsl(0 90% 52%);
+
+  /* Cosmos feature-surface tokens (shared by light/dark feature cards) */
+  --color-cosmos-text-bright: hsl(258 100% 96%);
+  --color-cosmos-text-muted: hsl(215 18% 58%);
+  --color-cosmos-title-hl: hsl(258 100% 86%);
+
+  --color-cosmos-surface-dim: hsl(0 0% 0% / 0.35);
+  --color-cosmos-surface-dimmer: hsl(0 0% 0% / 0.42);
+  --color-cosmos-surface-table: hsl(0 0% 0% / 0.2);
+  --color-cosmos-surface-thead: hsl(0 0% 0% / 0.4);
+  --color-cosmos-border-soft: hsl(0 0% 100% / 0.08);
+  --color-cosmos-border-softer: hsl(0 0% 100% / 0.06);
+  --color-cosmos-border-panel: hsl(220 25% 24% / 0.5);
+  --color-cosmos-border-panel-faint: hsl(220 25% 24% / 0.3);
+  --color-cosmos-surface-prop: hsl(220 25% 12% / 0.35);
+  --color-cosmos-surface-prop-hover: hsl(220 25% 14% / 0.5);
+  --color-cosmos-surface-ticket-stat: hsl(220 25% 12% / 0.4);
+  --color-cosmos-surface-stats-input: hsl(220 42% 6% / 0.6);
+  --color-cosmos-surface-stats-metric: hsl(220 42% 6% / 0.4);
+
+  --color-cosmos-violet-edge: hsl(262 60% 70% / 0.14);
+  --color-cosmos-violet-edge-hover: hsl(262 60% 70% / 0.22);
+  --color-cosmos-violet-hairline: hsl(262 60% 70% / 0.4);
+  --color-cosmos-violet-hairline-strong: hsl(262 60% 70% / 0.45);
+  --color-cosmos-violet-row-tint: hsl(262 60% 70% / 0.05);
+  --color-cosmos-violet-dashed: hsl(262 60% 70% / 0.35);
+  --color-cosmos-violet-glow: hsl(262 60% 70% / 0.8);
+  --color-cosmos-violet-default-tint: hsl(262 60% 70% / 0.6);
+  --color-cosmos-violet-hero-peak: hsl(262 70% 50% / 0.2);
+  --color-cosmos-violet-avatar-top: hsl(262 60% 70% / 0.25);
+  --color-cosmos-violet-avatar-bottom: hsl(190 80% 70% / 0.12);
+  --color-cosmos-violet-orb-inner: hsl(262 60% 40%);
+  --color-cosmos-violet-ticker-glow: hsl(262 60% 58% / 0.35);
+  --color-cosmos-violet-icon-bg: hsl(262 60% 58% / 0.14);
+  --color-cosmos-violet-icon-border: hsl(262 60% 58% / 0.3);
+  --color-cosmos-violet-icon-fg: hsl(262 80% 78%);
+  --color-cosmos-violet-run-top: hsl(262 60% 58%);
+  --color-cosmos-violet-run-bottom: hsl(262 60% 48%);
+  --color-cosmos-violet-run-top-hover: hsl(262 68% 62%);
+  --color-cosmos-violet-run-bottom-hover: hsl(262 65% 52%);
+  --color-cosmos-violet-run-border: hsl(262 60% 58% / 0.6);
+  --color-cosmos-violet-orb-core-top: hsl(262 80% 72%);
+  --color-cosmos-violet-orb-core-mid: hsl(262 60% 45%);
+  --color-cosmos-violet-orb-core-bot: hsl(262 55% 25%);
+  --color-cosmos-violet-orb-glow: hsl(262 70% 55% / 0.55);
+  --color-cosmos-violet-orb-inner-shadow: hsl(262 55% 20% / 0.7);
+  --color-cosmos-violet-orb-inner-hi: hsl(262 100% 90% / 0.25);
+  --color-cosmos-violet-orb-halo: hsl(262 70% 55% / 0.22);
+
+  --color-cosmos-cyan-edge: hsl(190 80% 50% / 0.14);
+  --color-cosmos-cyan-hairline: hsl(190 80% 70% / 0.3);
+  --color-cosmos-cyan-hairline-strong: hsl(190 80% 70% / 0.35);
+  --color-cosmos-cyan-kpi-orb: hsl(190 80% 70% / 0.35);
+  --color-cosmos-cyan-tab-bg: hsl(190 80% 60% / 0.15);
+  --color-cosmos-cyan-tab-fg: hsl(190 80% 65%);
+
+  --color-cosmos-hero-ink: hsl(250 55% 4% / 0.55);
+  --color-cosmos-hero-ink-mid: hsl(250 55% 4% / 0.25);
+  --color-cosmos-hero-ink-faint: hsl(250 55% 4% / 0.08);
+  --color-cosmos-hero-ink-strong: hsl(250 55% 4% / 0.72);
+  --color-cosmos-hero-shadow: hsl(0 0% 0% / 0.45);
+
+  --color-cosmos-accent-select: hsl(217 91% 60% / 0.08);
+  --color-cosmos-accent-select-strong: hsl(217 91% 60% / 0.12);
+
+  --color-cosmos-pos: hsl(150 65% 60%);
+  --color-cosmos-pos-accent: hsl(190 80% 65%);
+  --color-cosmos-neg: hsl(0 70% 65%);
+
+  --color-cosmos-outcome-won-border: hsl(150 60% 50% / 0.35);
+  --color-cosmos-outcome-won-bg: hsl(150 60% 50% / 0.1);
+  --color-cosmos-outcome-won-fg: hsl(150 60% 70%);
+  --color-cosmos-outcome-lost-border: hsl(355 70% 55% / 0.35);
+  --color-cosmos-outcome-lost-bg: hsl(355 70% 55% / 0.1);
+  --color-cosmos-outcome-lost-fg: hsl(355 70% 75%);
+  --color-cosmos-outcome-pending-border: hsl(38 90% 60% / 0.35);
+  --color-cosmos-outcome-pending-bg: hsl(38 90% 50% / 0.1);
+  --color-cosmos-outcome-pending-fg: hsl(38 90% 75%);
+  --color-cosmos-outcome-cancel-border: hsl(220 15% 50% / 0.3);
+  --color-cosmos-outcome-cancel-bg: hsl(220 15% 30% / 0.15);
+
+  --color-cosmos-ready-border: hsl(160 72% 46% / 0.35);
+  --color-cosmos-ready-bg: hsl(160 72% 46% / 0.1);
+  --color-cosmos-ready-fg: hsl(160 72% 66%);
+  --color-cosmos-ready-dot: hsl(160 72% 56%);
+  --color-cosmos-ready-dot-glow: hsl(160 72% 56% / 0.8);
+
+  --color-cosmos-coverage-border: hsl(40 95% 58% / 0.3);
+  --color-cosmos-coverage-bg: hsl(40 95% 58% / 0.08);
+  --color-cosmos-coverage-fg: hsl(40 95% 78%);
+
+  --color-cosmos-log-pos-border: hsl(160 72% 46% / 0.35);
+  --color-cosmos-log-neg-border: hsl(0 85% 65% / 0.35);
+
+  --color-cosmos-stats-white: hsl(0 0% 100%);
+
+  --color-cosmos-tile-border: rgba(255, 255, 255, 0.06);
+  --color-cosmos-tile-bg: rgba(255, 255, 255, 0.03);
+
+  --color-cosmos-table-hover: hsl(262 60% 70% / 0.05);
 }
 
-/* ── Dark mode CSS variables ── */
+/* ── Dark mode CSS variables (product default) ── */
 .dark {
   --background: hsl(222 47% 4%);
   --surface: hsl(220 42% 8%);
@@ -115,6 +235,9 @@
   --negative-dim: hsl(0 85% 65% / 0.12);
   --warning: hsl(40 95% 58%);
 
+  --cosmos-violet: hsl(262 60% 58%);
+  --cosmos-cyan: hsl(190 80% 60%);
+
   --sport-nba: hsl(25 95% 58%);
   --sport-nfl: hsl(210 80% 62%);
   --sport-mlb: hsl(0 80% 62%);
@@ -125,7 +248,6 @@
 
 @layer base {
   * {
-    /* Direct CSS — avoids @apply on a token that hasn't been registered yet */
     border-color: var(--border);
     box-sizing: border-box;
   }
@@ -145,7 +267,16 @@
     line-height: 1.5;
   }
 
-  /* Subtle scrollbars */
+  /* Cosmos bloom backdrop — only active in dark mode.
+     Sits UNDER the starfield canvas; starfield handles stars + nebulae. */
+  .dark body {
+    background:
+      radial-gradient(1200px 900px at 72% 8%, hsl(262 60% 40% / 0.22), transparent 55%),
+      radial-gradient(1000px 900px at 15% 92%, hsl(190 75% 45% / 0.14), transparent 55%),
+      radial-gradient(800px 600px at 50% 40%, hsl(272 70% 60% / 0.06), transparent 60%),
+      hsl(250 55% 4%);
+  }
+
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
@@ -187,4 +318,1485 @@
   .live-dot {
     @apply inline-block w-1.5 h-1.5 rounded-full bg-positive animate-pulse;
   }
+
+  /* Cosmos orbit — used by sidebar brand mark + topbar crumb.
+     Compose: <span class="orbit"><span class="orbit-core"/><span class="orbit-ring"/><span class="orbit-ring orbit-ring-2"/></span> */
+  .orbit {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    transform-style: preserve-3d;
+  }
+  .orbit-core {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 6px; height: 6px;
+    margin: -3px 0 0 -3px;
+    border-radius: 999px;
+    background: radial-gradient(circle at 30% 30%, #fff, hsl(262 80% 78%) 40%, hsl(262 60% 48%) 100%);
+    box-shadow: 0 0 8px hsl(262 80% 70% / 0.8);
+  }
+  .orbit-ring {
+    position: absolute;
+    inset: 3px;
+    border: 1px solid hsl(262 70% 70% / 0.55);
+    border-radius: 999px;
+    transform: rotateX(68deg);
+    animation: lo-spin 4.5s linear infinite;
+  }
+  .orbit-ring-2 {
+    inset: 5px;
+    border-color: hsl(190 75% 70% / 0.45);
+    transform: rotateX(30deg) rotateY(60deg);
+    animation-duration: 6.5s;
+    animation-direction: reverse;
+  }
+
+  /* Cosmos live-dot (positive pulse) */
+  .cosmos-live-dot {
+    position: relative;
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 999px;
+    background: radial-gradient(circle at 30% 30%, #fff, hsl(160 72% 60%) 60%, hsl(160 72% 36%));
+    box-shadow: 0 0 6px hsl(160 72% 50% / 0.7);
+    vertical-align: middle;
+  }
+  .cosmos-live-dot::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 999px;
+    border: 1px solid hsl(160 72% 55% / 0.5);
+    animation: live-pulse 2.2s ease-out infinite;
+  }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Phase 5 — final cosmos polish
+   Appended to globals.css. Safe to remove this entire block to revert.
+   ──────────────────────────────────────────────────────────────── */
+
+@layer utilities {
+  /* Translucent panel used by KPI strips, feature hero cards, etc.
+     Composes on top of existing layout utilities. */
+  .cosmos-panel {
+    position: relative;
+    border-radius: 12px;
+    background: linear-gradient(
+      180deg,
+      hsl(262 40% 12% / 0.55),
+      hsl(222 45% 7% / 0.55)
+    );
+    border: 1px solid hsl(262 40% 40% / 0.35);
+    box-shadow:
+      inset 0 1px 0 hsl(262 80% 80% / 0.08),
+      0 8px 28px hsl(250 60% 4% / 0.45);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .cosmos-panel-muted {
+    background: linear-gradient(
+      180deg,
+      hsl(222 45% 8% / 0.6),
+      hsl(222 45% 5% / 0.6)
+    );
+    border-color: hsl(220 25% 28% / 0.5);
+  }
+
+  /* Chip-style toggle used in settings, filters, mode pickers */
+  .cosmos-chip {
+    border-radius: 12px;
+    border: 1px solid hsl(220 25% 22%);
+    background: hsl(222 42% 9% / 0.6);
+    transition: all 0.18s ease;
+  }
+  .cosmos-chip:hover {
+    border-color: hsl(262 50% 55% / 0.6);
+    background: hsl(262 40% 14% / 0.5);
+  }
+  .cosmos-chip[data-active="true"],
+  .cosmos-chip.is-active {
+    border-color: hsl(190 75% 55% / 0.75);
+    background: linear-gradient(
+      135deg,
+      hsl(262 60% 30% / 0.55),
+      hsl(222 50% 12% / 0.55)
+    );
+    box-shadow:
+      0 0 0 1px hsl(262 70% 55% / 0.4),
+      0 6px 20px hsl(262 70% 40% / 0.25),
+      inset 0 1px 0 hsl(262 80% 80% / 0.12);
+  }
+
+  /* Soft violet edge glow — compose on top of any block */
+  .cosmos-glow-edge {
+    box-shadow:
+      0 0 0 1px hsl(262 50% 40% / 0.4),
+      0 10px 40px hsl(262 70% 30% / 0.3);
+  }
+
+  /* KPI value — big tabular number */
+  .cosmos-kpi-value {
+    font-family: var(--font-geist-mono), ui-monospace, monospace;
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: hsl(213 31% 96%);
+    font-variant-numeric: tabular-nums;
+  }
+  .cosmos-kpi-label {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: hsl(215 18% 58%);
+  }
+  .cosmos-kpi-accent {
+    background: linear-gradient(
+      135deg,
+      hsl(190 80% 65%),
+      hsl(262 70% 70%)
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* ── Dark-mode Card override ──
+   Every <Card> across the app uses
+   `rounded-lg border border-border bg-surface` as its base. In dark
+   mode we retint that combo to the cosmos palette. Only applies to
+   elements that carry ALL four classes, so we don't clobber arbitrary
+   surfaces. */
+.dark .rounded-lg.border.border-border.bg-surface,
+.dark [data-slot="card"] {
+  background: linear-gradient(
+    180deg,
+    hsl(222 42% 9% / 0.7),
+    hsl(222 45% 6% / 0.7)
+  );
+  border-color: hsl(262 35% 35% / 0.35);
+  box-shadow:
+    inset 0 1px 0 hsl(262 70% 80% / 0.05),
+    0 6px 22px hsl(250 60% 4% / 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Nested cards (rare — e.g. card-inside-card) keep a subtler treatment */
+.dark .rounded-lg.border.border-border.bg-surface
+  .rounded-lg.border.border-border.bg-surface {
+  background: hsl(222 42% 10% / 0.5);
+  border-color: hsl(220 25% 24% / 0.5);
+  box-shadow: none;
+}
+
+/* ================================================================
+   Feature-surface utilities (non-shell)
+   Appended from the thompson reskin. Used by trade desk, predictions,
+   parlays, runs desk, stats workspace, positions tables, and the
+   ops settings / research stats / product positions pages. Colors
+   reference --color-cosmos-* tokens declared in :root above.
+   ================================================================ */
+
+/* ── Sparkline (decorative micro-trend) ── */
+.spark {
+  color: var(--spark-color, var(--color-cosmos-text-muted));
+  display: block;
+  overflow: visible;
+}
+.spark.up {
+  color: var(--spark-color, var(--color-cosmos-pos));
+}
+.spark.down {
+  color: var(--spark-color, var(--color-cosmos-neg));
+}
+.spark-wrap {
+  position: relative;
+  display: block;
+  margin-top: 8px;
+  height: 22px;
+}
+.spark-wrap .spark {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.spark-wrap::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, var(--color-cosmos-hero-ink));
+  pointer-events: none;
+}
+
+/* ── Trade page hero (probability surface) ── */
+.trade-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-cosmos-violet-edge);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(120% 80% at 10% 0%, var(--color-cosmos-violet-hero-peak), transparent 60%),
+    radial-gradient(100% 70% at 90% 100%, var(--color-cosmos-cyan-edge), transparent 60%),
+    var(--color-cosmos-hero-ink);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  min-height: 240px;
+  display: grid;
+  grid-template-columns: 1fr;
+  isolation: isolate;
+}
+.trade-hero-canvas-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.trade-hero-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0.9;
+}
+.trade-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    var(--color-cosmos-hero-ink-strong) 0%,
+    var(--color-cosmos-hero-ink-mid) 55%,
+    var(--color-cosmos-hero-ink-faint) 100%
+  );
+}
+.trade-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(120% 70% at 50% 100%, transparent 45%, var(--color-cosmos-hero-shadow) 100%);
+}
+.trade-hero-inner {
+  position: relative;
+  z-index: 2;
+  padding: 22px 26px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 620px;
+}
+.th-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-cosmos-text-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+.th-title {
+  font-size: 26px;
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--color-cosmos-text-bright);
+}
+.th-title .th-hl {
+  color: var(--color-cosmos-title-hl);
+}
+.th-sub {
+  color: var(--color-cosmos-text-muted);
+  font-size: 12.5px;
+  max-width: 560px;
+}
+@media (max-width: 720px) {
+  .trade-hero { min-height: 210px; }
+  .trade-hero-inner { padding: 18px; }
+  .th-title { font-size: 22px; }
+}
+
+/* ── KPI strips (trade / predictions / parlays) ── */
+.trade-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .trade-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+.pred-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+}
+@media (max-width: 1280px) {
+  .pred-kpis { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 700px) {
+  .pred-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+.parlay-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+@media (max-width: 1280px) {
+  .parlay-kpis { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 700px) {
+  .parlay-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+
+.trade-kpi {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-cosmos-border-soft);
+  border-radius: var(--radius);
+  background: var(--color-cosmos-surface-dim);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  padding: 12px 14px;
+}
+.trade-kpi-label {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-cosmos-text-muted);
+}
+.trade-kpi-value {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 4px;
+  letter-spacing: -0.02em;
+  color: var(--color-cosmos-text-bright);
+  font-variant-numeric: tabular-nums;
+}
+.trade-kpi-value.pos { color: var(--color-cosmos-outcome-won-fg); }
+.trade-kpi-value.neg { color: var(--color-cosmos-outcome-lost-fg); }
+.trade-kpi-value.warn { color: var(--color-cosmos-outcome-pending-fg); }
+.trade-kpi-sub {
+  font-size: 11px;
+  color: var(--color-cosmos-text-muted);
+  margin-top: 2px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+.trade-kpi-orb {
+  position: absolute;
+  right: -20px;
+  top: -20px;
+  width: 80px;
+  height: 80px;
+  pointer-events: none;
+  opacity: 0.35;
+}
+.trade-kpi-orb::before,
+.trade-kpi-orb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px solid var(--color-cosmos-violet-hairline);
+  transform: rotateX(68deg);
+  animation: lo-spin 12s linear infinite;
+}
+.trade-kpi-orb::after {
+  inset: 10px;
+  border-color: var(--color-cosmos-cyan-kpi-orb);
+  transform: rotateX(35deg) rotateY(50deg);
+  animation-duration: 18s;
+  animation-direction: reverse;
+}
+.trade-kpi-spark {
+  margin-top: 6px;
+  height: 16px;
+  opacity: 0.65;
+}
+
+/* ── Event card (trade desk) ── */
+.event-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--color-cosmos-border-soft);
+  border-radius: var(--radius);
+  background: var(--color-cosmos-surface-dim);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  transition: border-color 0.25s, transform 0.25s;
+}
+.event-card:hover {
+  border-color: var(--color-cosmos-violet-edge-hover);
+}
+.event-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--sport-tint, var(--color-cosmos-violet-default-tint)) 20%,
+    var(--sport-tint, var(--color-cosmos-violet-default-tint)) 80%,
+    transparent
+  );
+  opacity: 0.7;
+}
+.event-card-head {
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.event-card-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  flex: 1;
+  min-width: 0;
+  color: var(--color-cosmos-text-bright);
+}
+.event-card-when {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  margin-left: auto;
+}
+.event-card-markets {
+  display: flex;
+  flex-direction: column;
+}
+
+.sport-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex: 0 0 auto;
+}
+.sport-pill .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--tint, var(--accent));
+}
+
+.market-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.market-section:last-child { border-bottom: none; }
+.market-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.market-section-head h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.market-section-head .count {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+/* ── Game line row (trade desk) ── */
+.line-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto 72px auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 0;
+  cursor: pointer;
+  background: transparent;
+  text-align: left;
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.18s;
+  color: inherit;
+}
+.line-row:last-child { border-bottom: none; }
+.line-row:hover { background: var(--surface-hover); }
+.line-row.selected { background: var(--color-cosmos-accent-select); }
+.line-row .line-row-spark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  opacity: 0.85;
+}
+.line-row .line-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-bright);
+}
+.line-row .line-row-lean {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+}
+.line-row .line-row-price {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-cosmos-text-bright);
+  text-align: right;
+  min-width: 52px;
+  font-variant-numeric: tabular-nums;
+}
+.line-row .line-row-prob {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  text-align: right;
+  min-width: 56px;
+  font-variant-numeric: tabular-nums;
+}
+.line-row .line-row-edge {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+  min-width: 54px;
+  font-variant-numeric: tabular-nums;
+}
+.line-row .line-row-edge.pos { color: var(--positive); }
+.line-row .line-row-edge.neg { color: var(--negative); }
+
+/* ── Player prop group ── */
+.prop-group {
+  border: 1px solid var(--color-cosmos-border-panel);
+  border-radius: 10px;
+  background: var(--color-cosmos-surface-prop);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.prop-group:last-child { margin-bottom: 0; }
+.prop-head {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  transition: background 0.15s;
+  color: inherit;
+}
+.prop-head:hover { background: var(--color-cosmos-surface-prop-hover); }
+.prop-head .prop-chev {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.2s;
+  color: var(--color-cosmos-text-muted);
+  flex: 0 0 16px;
+}
+.prop-group.open .prop-head .prop-chev { transform: rotate(90deg); }
+.prop-head-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.prop-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: linear-gradient(
+    135deg,
+    var(--color-cosmos-violet-avatar-top),
+    var(--color-cosmos-violet-avatar-bottom)
+  );
+  border: 1px solid var(--color-cosmos-border-panel);
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  color: var(--color-cosmos-text-bright);
+  flex: 0 0 28px;
+}
+.prop-pname {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-bright);
+}
+.prop-psub {
+  font-size: 11px;
+  color: var(--color-cosmos-text-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+.prop-best-edge {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.prop-best-edge .label { color: var(--color-cosmos-text-muted); }
+.prop-best-edge .pos { color: var(--color-cosmos-pos); font-weight: 600; }
+.prop-best-edge .neg { color: var(--color-cosmos-neg); }
+.prop-ladder {
+  padding: 4px 20px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.ladder-row {
+  display: grid;
+  grid-template-columns: 44px 1fr 60px 60px 60px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  transition: background 0.15s;
+}
+.ladder-row:last-child { border-bottom: none; }
+.ladder-row:hover { background: var(--surface-hover); }
+.ladder-row.selected { background: var(--color-cosmos-accent-select-strong); }
+.ladder-row .side-pill {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-align: center;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  letter-spacing: 0.04em;
+}
+.ladder-row.over .side-pill {
+  background: var(--positive-dim);
+  color: var(--positive);
+}
+.ladder-row.under .side-pill {
+  background: var(--negative-dim);
+  color: var(--negative);
+}
+.ladder-row .thresh {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--color-cosmos-text-bright);
+}
+.ladder-row .thresh .u {
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  margin-right: 6px;
+  text-transform: capitalize;
+}
+.ladder-row .p,
+.ladder-row .wp,
+.ladder-row .ed {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ladder-row .p {
+  color: var(--color-cosmos-text-bright);
+  font-weight: 600;
+}
+.ladder-row .wp { color: var(--muted-foreground); }
+.ladder-row .ed.pos { color: var(--positive); font-weight: 600; }
+.ladder-row .ed.neg { color: var(--negative); }
+
+/* ── Trade ticket (right rail) ── */
+.trade-ticket {
+  border: 1px solid var(--color-cosmos-border-soft);
+  border-radius: var(--radius);
+  background: var(--color-cosmos-surface-dimmer);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: relative;
+  overflow: hidden;
+}
+.trade-ticket::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-cosmos-violet-hairline-strong),
+    var(--color-cosmos-cyan-hairline-strong),
+    transparent
+  );
+}
+.trade-ticket.empty {
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  text-align: center;
+  padding: 24px;
+}
+.trade-ticket-empty-orb {
+  width: 90px;
+  height: 90px;
+  margin-bottom: 10px;
+  position: relative;
+}
+.trade-ticket-empty-orb::before,
+.trade-ticket-empty-orb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px dashed var(--color-cosmos-violet-dashed);
+  animation: lo-spin 14s linear infinite;
+  transform: rotateX(65deg);
+}
+.trade-ticket-empty-orb::after {
+  inset: 14px;
+  border-color: var(--color-cosmos-cyan-hairline);
+  animation-duration: 22s;
+  animation-direction: reverse;
+  transform: rotateX(30deg) rotateY(50deg);
+}
+.trade-ticket-empty-orb-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle at 30% 30%,
+    var(--color-cosmos-stats-white),
+    var(--color-cosmos-title-hl) 50%,
+    var(--color-cosmos-violet-orb-inner)
+  );
+  box-shadow: 0 0 12px var(--color-cosmos-violet-glow);
+}
+.trade-ticket .ticket-eyebrow {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-cosmos-text-muted);
+}
+.trade-ticket .ticket-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--color-cosmos-text-bright);
+}
+.trade-ticket .ticket-lean {
+  font-size: 12px;
+  color: var(--color-cosmos-text-muted);
+}
+.trade-ticket .ticket-meta {
+  font-size: 11px;
+  color: var(--color-cosmos-text-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+.trade-ticket .ticket-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.trade-ticket .ticket-stat {
+  border: 1px solid var(--color-cosmos-border-panel);
+  border-radius: 10px;
+  background: var(--color-cosmos-surface-ticket-stat);
+  padding: 10px 12px;
+}
+.trade-ticket .ticket-stat-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-cosmos-text-muted);
+}
+.trade-ticket .ticket-stat-value {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 4px;
+  color: var(--color-cosmos-text-bright);
+  font-variant-numeric: tabular-nums;
+}
+.trade-ticket .ticket-stat-value.pos { color: var(--color-cosmos-pos); }
+.trade-ticket .ticket-stat-value.neg { color: var(--color-cosmos-neg); }
+.trade-ticket .ticket-stat-value.accent { color: var(--color-cosmos-pos-accent); }
+
+/* ── Slate status pill (warning banner inside trade desk) ── */
+.slate-status-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--color-cosmos-outcome-pending-border);
+  background: var(--color-cosmos-outcome-pending-bg);
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--color-cosmos-outcome-pending-fg);
+}
+
+/* ── Trade market filter tabs ── */
+.market-filter-tabs {
+  display: flex;
+  gap: 4px;
+  border: 1px solid var(--color-cosmos-border-soft);
+  border-radius: 12px;
+  background: var(--color-cosmos-surface-dim);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  padding: 4px;
+}
+.market-filter-tabs button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.market-filter-tabs button:hover { color: var(--color-cosmos-text-bright); }
+.market-filter-tabs button.active {
+  background: var(--color-cosmos-cyan-tab-bg);
+  color: var(--color-cosmos-cyan-tab-fg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trade-kpi-orb::before,
+  .trade-kpi-orb::after,
+  .trade-ticket-empty-orb::before,
+  .trade-ticket-empty-orb::after {
+    animation: none;
+  }
+}
+
+/* ── Cosmos panel sub-parts (heading / body) ── */
+.cosmos-panel::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 18px;
+  right: 18px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-cosmos-violet-hairline),
+    var(--color-cosmos-cyan-hairline-strong),
+    transparent
+  );
+  pointer-events: none;
+}
+.cosmos-panel-head {
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--color-cosmos-border-panel);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.cosmos-panel-head-text { min-width: 0; }
+.cosmos-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-cosmos-text-bright);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.cosmos-panel-desc {
+  font-size: 12px;
+  color: var(--color-cosmos-text-muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.cosmos-panel-body { padding: 14px 18px; }
+.cosmos-panel-body.flush { padding: 0; }
+
+/* ── Cosmos toolbar (translucent filter bar) ── */
+.cosmos-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-cosmos-border-soft);
+  border-radius: var(--radius);
+  background: var(--color-cosmos-surface-dim);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.cosmos-toolbar-spacer {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.cosmos-toolbar-meta {
+  font-size: 11.5px;
+  color: var(--color-cosmos-text-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* ── Cosmos table wrap ── */
+.cosmos-table-wrap {
+  position: relative;
+  overflow-x: auto;
+  border-radius: 12px;
+  border: 1px solid var(--color-cosmos-border-softer);
+  background: var(--color-cosmos-surface-table);
+}
+.cosmos-table-wrap th {
+  background: var(--color-cosmos-surface-thead);
+  border-bottom: 1px solid var(--color-cosmos-border-panel);
+  color: var(--color-cosmos-text-muted);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+  padding: 10px 12px;
+  text-align: left;
+}
+.cosmos-table-wrap td {
+  border-bottom: 1px solid var(--color-cosmos-border-panel-faint);
+  padding: 10px 12px;
+  vertical-align: middle;
+  color: var(--color-cosmos-text-bright);
+}
+.cosmos-table-wrap tr { transition: background 0.15s; }
+.cosmos-table-wrap tbody tr:hover { background: var(--color-cosmos-table-hover); }
+.cosmos-table-wrap tbody tr:last-child td { border-bottom: none; }
+.cosmos-table-empty {
+  padding: 32px 18px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-cosmos-text-muted);
+}
+
+/* ── Outcome pill (status chip) ── */
+.outcome-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid hsl(0 0% 100% / 0.1);
+  background: hsl(0 0% 100% / 0.04);
+  color: var(--color-cosmos-text-muted);
+  white-space: nowrap;
+}
+.outcome-pill.won,
+.outcome-pill.settled {
+  border-color: var(--color-cosmos-outcome-won-border);
+  background: var(--color-cosmos-outcome-won-bg);
+  color: var(--color-cosmos-outcome-won-fg);
+}
+.outcome-pill.lost {
+  border-color: var(--color-cosmos-outcome-lost-border);
+  background: var(--color-cosmos-outcome-lost-bg);
+  color: var(--color-cosmos-outcome-lost-fg);
+}
+.outcome-pill.push,
+.outcome-pill.pending,
+.outcome-pill.unresolved {
+  border-color: var(--color-cosmos-outcome-pending-border);
+  background: var(--color-cosmos-outcome-pending-bg);
+  color: var(--color-cosmos-outcome-pending-fg);
+}
+.outcome-pill.cancelled {
+  border-color: var(--color-cosmos-outcome-cancel-border);
+  background: var(--color-cosmos-outcome-cancel-bg);
+  color: var(--color-cosmos-text-muted);
+}
+
+/* ── Prediction ledger mobile card ── */
+.pred-card {
+  position: relative;
+  border: 1px solid var(--color-cosmos-border-soft);
+  border-radius: var(--radius);
+  background: var(--color-cosmos-surface-dim);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pred-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.pred-card-title {
+  font-size: 13.5px;
+  color: var(--color-cosmos-text-bright);
+  font-weight: 500;
+  line-height: 1.3;
+}
+.pred-card-sub {
+  font-size: 11.5px;
+  color: var(--color-cosmos-text-muted);
+  margin-top: 2px;
+}
+.pred-card-time {
+  font-size: 10.5px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  color: var(--color-cosmos-text-muted);
+  white-space: nowrap;
+}
+.pred-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.pred-card-stat-label {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-cosmos-text-muted);
+}
+.pred-card-stat-value {
+  margin-top: 2px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--color-cosmos-text-bright);
+}
+.pred-card-stat-value.pos { color: var(--color-cosmos-outcome-won-fg); }
+.pred-card-stat-value.neg { color: var(--color-cosmos-outcome-lost-fg); }
+.pred-card-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Stats tile (runs desk + model readiness) ── */
+.stats-tile {
+  border-radius: 10px;
+  border: 1px solid var(--color-cosmos-tile-border);
+  background: var(--color-cosmos-tile-bg);
+  padding: 10px 12px;
+}
+.stats-tile-label {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-cosmos-text-muted);
+}
+.stats-tile-value {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-bright);
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Stats Assistant — research desk layout (Zones A / B)
+   ──────────────────────────────────────────────────────────────── */
+
+.stats-card {
+  position: relative;
+  border-radius: 14px;
+  border: 1px solid hsl(262 35% 35% / 0.35);
+  background: linear-gradient(180deg, hsl(222 42% 9% / 0.7), hsl(222 45% 6% / 0.7));
+  box-shadow:
+    inset 0 1px 0 hsl(262 70% 80% / 0.05),
+    0 6px 22px hsl(250 60% 4% / 0.4);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  padding: 24px;
+}
+
+/* Zone A — header card */
+.stats-header-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.stats-header-meta {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+.stats-header-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-cosmos-violet-icon-bg);
+  border: 1px solid var(--color-cosmos-violet-icon-border);
+  color: var(--color-cosmos-violet-icon-fg);
+}
+.stats-header-meta-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stats-header-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.stats-header-eyebrow .path {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted-foreground);
+  opacity: 0.8;
+}
+.stats-header-title {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+}
+.stats-header-desc {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  max-width: 60ch;
+}
+.stats-ready-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-cosmos-ready-border);
+  background: var(--color-cosmos-ready-bg);
+  color: var(--color-cosmos-ready-fg);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.stats-ready-pill .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-cosmos-ready-dot);
+  box-shadow: 0 0 6px var(--color-cosmos-ready-dot-glow);
+}
+
+.stats-suggestion-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.stats-suggest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+.stats-suggest-chip:hover {
+  border-color: var(--border-bright);
+  background: var(--surface-hover);
+}
+.stats-suggest-chip svg {
+  color: var(--color-cosmos-violet-icon-fg);
+  opacity: 0.9;
+}
+
+.stats-query-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 120px auto;
+  gap: 8px;
+  align-items: center;
+}
+.stats-query-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--color-cosmos-surface-stats-input);
+  height: 40px;
+}
+.stats-query-input svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.stats-query-input input {
+  border: 0;
+  background: transparent;
+  height: 38px;
+  padding: 0;
+  box-shadow: none;
+}
+.stats-query-input input:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+.stats-select-trigger {
+  height: 40px;
+  border-radius: 10px;
+}
+.stats-run-btn {
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--color-cosmos-violet-run-top), var(--color-cosmos-violet-run-bottom));
+  border: 1px solid var(--color-cosmos-violet-run-border);
+  color: var(--color-cosmos-stats-white);
+  font-weight: 600;
+}
+.stats-run-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--color-cosmos-violet-run-top-hover), var(--color-cosmos-violet-run-bottom-hover));
+}
+
+/* Zone B — empty state + result */
+.stats-result-card {
+  min-height: 320px;
+}
+.stats-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 60px 24px;
+  text-align: center;
+}
+.stats-orb {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.stats-orb-core {
+  position: absolute;
+  inset: 24px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle at 35% 35%,
+    var(--color-cosmos-violet-orb-core-top) 0%,
+    var(--color-cosmos-violet-orb-core-mid) 45%,
+    var(--color-cosmos-violet-orb-core-bot) 100%
+  );
+  box-shadow:
+    0 0 24px var(--color-cosmos-violet-orb-glow),
+    inset -4px -6px 14px var(--color-cosmos-violet-orb-inner-shadow),
+    inset 2px 3px 8px var(--color-cosmos-violet-orb-inner-hi);
+}
+.stats-orb-halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: radial-gradient(circle, var(--color-cosmos-violet-orb-halo), transparent 70%);
+  animation: stats-orb-pulse 3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stats-orb-halo { animation: none; }
+}
+.stats-empty-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.stats-empty-desc {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  max-width: 52ch;
+}
+
+.stats-result {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.stats-result-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.stats-result-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.stats-result-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.stats-result-source {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.stats-result-line {
+  font-size: 14px;
+  color: var(--foreground);
+}
+.stats-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (min-width: 960px) {
+  .stats-metric-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}
+.stats-metric {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--color-cosmos-surface-stats-metric);
+}
+.stats-metric-label {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.stats-metric-value {
+  margin-top: 2px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 16px;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.stats-result-explain {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.stats-coverage-note {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-cosmos-coverage-border);
+  background: var(--color-cosmos-coverage-bg);
+  color: var(--color-cosmos-coverage-fg);
+  font-size: 12px;
+}
+.stats-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stats-log-label {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-bottom: 4px;
+}
+.stats-log-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--color-cosmos-surface-stats-metric);
+}
+.stats-log-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--foreground);
+}
+.stats-log-meta .stats-log-date,
+.stats-log-meta .stats-log-loc {
+  color: var(--muted-foreground);
+}
+.stats-log-score {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.stats-log-result {
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+}
+.stats-log-result.pos { color: var(--positive); border-color: var(--color-cosmos-log-pos-border); }
+.stats-log-result.neg { color: var(--negative); border-color: var(--color-cosmos-log-neg-border); }

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { PriceDisplayMode, formatMarketPrice, usePriceDisplay } from "@/lib/price-display";
 
@@ -41,14 +40,16 @@ export default function SettingsPage() {
       />
       <main className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-3xl space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Price Display</CardTitle>
-              <CardDescription>
-                Choose how prices render across watchlist, markets, predictions, parlays, and trade dialogs.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
+          <section className="cosmos-panel">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">Price Display</h2>
+                <p className="cosmos-panel-desc">
+                  Choose how prices render across watchlist, markets, predictions, parlays, and trade dialogs.
+                </p>
+              </div>
+            </div>
+            <div className="cosmos-panel-body space-y-3">
               {DISPLAY_MODES.map((option) => {
                 const active = option.value === mode;
                 return (
@@ -78,16 +79,16 @@ export default function SettingsPage() {
                   </button>
                 );
               })}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
-          <Card>
-            <CardHeader>
-              <div>
-                <CardTitle>Models</CardTitle>
-                <CardDescription>
+          <section className="cosmos-panel">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">Models</h2>
+                <p className="cosmos-panel-desc">
                   Review ML family readiness, runtime health, shadow coverage, and fallback state.
-                </CardDescription>
+                </p>
               </div>
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/settings/models" className="flex items-center gap-1">
@@ -95,8 +96,8 @@ export default function SettingsPage() {
                   <ArrowRight size={12} />
                 </Link>
               </Button>
-            </CardHeader>
-          </Card>
+            </div>
+          </section>
         </div>
       </main>
     </>

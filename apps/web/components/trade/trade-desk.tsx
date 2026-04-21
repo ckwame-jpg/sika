@@ -10,9 +10,11 @@ import type {
   TradeDeskResponse,
   TradeDeskThreshold,
 } from "@/lib/types";
-import { cn, fmtEdge, fmtPercent, fmtRelative, fmtStartsAt, sportLabel } from "@/lib/utils";
+import { cn, fmtEdge, fmtPercent, fmtPrice, fmtRelative, fmtStartsAt, sportLabel } from "@/lib/utils";
 import { PlayerPropGroup } from "@/components/trade/player-prop-group";
 import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
+import { ProbabilitySurfaceHero } from "@/components/trade/probability-surface-hero";
+import { Sparkline, randomWalk } from "@/components/ui/sparkline";
 
 type MarketFilter = "all" | "player_props" | "game_lines";
 
@@ -23,11 +25,17 @@ interface TradeKpis {
   thresholds: number;
 }
 
-function gameLineSectionLabel(marketKind: string) {
-  if (marketKind === "spread") return "Spread";
-  if (marketKind === "total") return "Total";
-  if (marketKind === "first_five_winner") return "First 5";
-  return "Winner";
+const SPORT_TINTS: Record<string, string> = {
+  nba: "var(--sport-nba)",
+  nfl: "var(--sport-nfl)",
+  mlb: "var(--sport-mlb)",
+  soccer: "var(--sport-soccer)",
+  tennis: "var(--sport-tennis)",
+  ufc: "var(--sport-ufc)",
+};
+
+function sportTint(sport: string): string {
+  return SPORT_TINTS[sport.toLowerCase()] ?? "hsl(262 60% 70% / 0.6)";
 }
 
 function sectionOrder(marketKind: string) {
@@ -37,13 +45,14 @@ function sectionOrder(marketKind: string) {
   return 99;
 }
 
-/**
- * Slice 3: per-surface freshness banner. Driven by ``freshness_status`` on
- * the trade-desk payload itself — no coupling to ``/health`` or any global
- * boundary. If the snapshot is stale the surface keeps rendering (the whole
- * point of the versioned, append-only snapshot store from Slice 2) and this
- * pill tells the user what they're looking at.
- */
+function seedFromString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) || 1;
+}
+
 function SlateStatusPill({ data }: { data: TradeDeskResponse }) {
   if (data.freshness_status === "fresh") return null;
   const generatedAt = data.generated_at ?? null;
@@ -56,11 +65,7 @@ function SlateStatusPill({ data }: { data: TradeDeskResponse }) {
           ? "Current slate scored successfully, but no markets cleared recommendation thresholds."
           : "Current slate refresh did not produce a usable trade desk.");
   return (
-    <div
-      className="flex items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-2 text-xs text-warning"
-      role="status"
-      data-testid="trade-desk-status-pill"
-    >
+    <div className="slate-status-pill" role="status" data-testid="trade-desk-status-pill">
       <span className="font-medium">{message}</span>
     </div>
   );
@@ -75,7 +80,10 @@ function SlateHealthDetails({ data }: { data: TradeDeskResponse }) {
         ["Scored markets", data.scored_market_count],
         ["Recommendations", data.recommendation_count],
       ].map(([label, value]) => (
-        <div key={label} className="rounded-xl border border-border bg-background/40 px-3 py-2">
+        <div
+          key={label}
+          className="rounded-xl border border-border bg-background/40 px-3 py-2"
+        >
           <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
           <p className="mt-1 font-mono text-base text-foreground">{value}</p>
         </div>
@@ -93,29 +101,29 @@ function GameLineRow({
   selectedTicker?: string;
   onSelect: () => void;
 }) {
+  const isSelected = selectedTicker === line.ticker;
+  const up = line.edge >= 0;
+  const series = randomWalk(20, up, seedFromString(line.ticker));
   return (
     <button
       type="button"
       onClick={onSelect}
-      className={cn(
-        "flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-3 text-left transition-colors",
-        selectedTicker === line.ticker
-          ? "border-accent bg-accent/10"
-          : "border-border bg-surface hover:bg-surface-hover",
-      )}
+      className={cn("line-row", isSelected && "selected")}
     >
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-foreground">{line.display_label}</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {line.projected_side_label ? `Model leans ${line.projected_side_label}` : `Selected side ${line.selected_side.toUpperCase()}`}
-        </p>
+        <div className="line-row-label truncate">{line.display_label}</div>
+        <div className="line-row-lean">
+          {line.projected_side_label
+            ? `Model leans ${line.projected_side_label}`
+            : `Selected side ${line.selected_side.toUpperCase()}`}
+        </div>
       </div>
-      <div className="shrink-0 text-right">
-        <p className="font-mono text-lg font-semibold text-foreground">{fmtPercent(line.selected_side_probability)}</p>
-        <p className={cn("font-mono text-xs font-medium", line.edge >= 0 ? "text-positive" : "text-negative")}>
-          {fmtEdge(line.edge)}
-        </p>
+      <div className="line-row-price">{fmtPrice(line.entry_price)}</div>
+      <div className="line-row-prob">{fmtPercent(line.selected_side_probability)}</div>
+      <div className="line-row-spark">
+        <Sparkline values={series} width={64} height={24} trend={up ? "up" : "down"} />
       </div>
+      <div className={cn("line-row-edge", up ? "pos" : "neg")}>{fmtEdge(line.edge)}</div>
     </button>
   );
 }
@@ -155,25 +163,62 @@ function computeTradeKpis(events: TradeDeskEvent[], marketFilter: MarketFilter):
   };
 }
 
+interface KpiCardProps {
+  label: string;
+  value: number;
+  testIdRoot: string;
+  testIdValue: string;
+  seed: number;
+  trend?: "up" | "down";
+}
+
+function KpiCard({ label, value, testIdRoot, testIdValue, seed, trend = "up" }: KpiCardProps) {
+  const series = randomWalk(24, trend === "up", seed);
+  return (
+    <div className="trade-kpi" data-testid={testIdRoot}>
+      <div className="trade-kpi-orb" aria-hidden />
+      <div className="trade-kpi-label">{label}</div>
+      <div className="trade-kpi-value" data-testid={testIdValue}>
+        {value}
+      </div>
+      <div className="spark-wrap">
+        <Sparkline values={series} width={140} height={22} trend={trend} />
+      </div>
+    </div>
+  );
+}
+
 function MarketSummaryStrip({ kpis }: { kpis: TradeKpis }) {
   return (
-    <div className="grid gap-3 md:grid-cols-4">
-      <div className="rounded-2xl border border-border bg-surface px-4 py-3" data-testid="trade-kpi-card-events">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Events</p>
-        <p className="mt-1 font-mono text-xl font-semibold text-foreground" data-testid="trade-kpi-events">{kpis.events}</p>
-      </div>
-      <div className="rounded-2xl border border-border bg-surface px-4 py-3" data-testid="trade-kpi-card-game-lines">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Game Lines</p>
-        <p className="mt-1 font-mono text-xl font-semibold text-foreground" data-testid="trade-kpi-game-lines">{kpis.gameLines}</p>
-      </div>
-      <div className="rounded-2xl border border-border bg-surface px-4 py-3" data-testid="trade-kpi-card-prop-ladders">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Prop Ladders</p>
-        <p className="mt-1 font-mono text-xl font-semibold text-foreground" data-testid="trade-kpi-prop-ladders">{kpis.propLadders}</p>
-      </div>
-      <div className="rounded-2xl border border-border bg-surface px-4 py-3" data-testid="trade-kpi-card-thresholds">
-        <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Thresholds</p>
-        <p className="mt-1 font-mono text-xl font-semibold text-foreground" data-testid="trade-kpi-thresholds">{kpis.thresholds}</p>
-      </div>
+    <div className="trade-kpis">
+      <KpiCard
+        label="Events"
+        value={kpis.events}
+        testIdRoot="trade-kpi-card-events"
+        testIdValue="trade-kpi-events"
+        seed={11}
+      />
+      <KpiCard
+        label="Game Lines"
+        value={kpis.gameLines}
+        testIdRoot="trade-kpi-card-game-lines"
+        testIdValue="trade-kpi-game-lines"
+        seed={31}
+      />
+      <KpiCard
+        label="Prop Ladders"
+        value={kpis.propLadders}
+        testIdRoot="trade-kpi-card-prop-ladders"
+        testIdValue="trade-kpi-prop-ladders"
+        seed={47}
+      />
+      <KpiCard
+        label="Thresholds"
+        value={kpis.thresholds}
+        testIdRoot="trade-kpi-card-thresholds"
+        testIdValue="trade-kpi-thresholds"
+        seed={73}
+      />
     </div>
   );
 }
@@ -292,14 +337,19 @@ export function TradeDesk({ sport }: { sport?: string }) {
   const hasPlayerProps = data.events.some((event) => event.player_props.length > 0);
   const showFilterTabs = hasGameLines && hasPlayerProps;
   const kpis = computeTradeKpis(data.events, marketFilter);
+  const scoredCount = data.scored_market_count || data.candidate_market_count;
 
   return (
     <div className="space-y-4">
       <SlateStatusPill data={data} />
+      <ProbabilitySurfaceHero
+        scoredCount={scoredCount}
+        recommendationCount={data.recommendation_count}
+      />
       <MarketSummaryStrip kpis={kpis} />
 
       {showFilterTabs && (
-        <div className="flex gap-1 rounded-2xl border border-border bg-surface p-1">
+        <div className="market-filter-tabs">
           {[
             { value: "all", label: "All" },
             { value: "player_props", label: "Player Props" },
@@ -307,13 +357,9 @@ export function TradeDesk({ sport }: { sport?: string }) {
           ].map((tab) => (
             <button
               key={tab.value}
+              type="button"
               onClick={() => setMarketFilter(tab.value as MarketFilter)}
-              className={cn(
-                "flex-1 rounded-xl px-3 py-2 text-xs font-medium transition-colors",
-                marketFilter === tab.value
-                  ? "bg-accent/15 text-accent"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
+              className={cn(marketFilter === tab.value && "active")}
             >
               {tab.label}
             </button>
@@ -322,7 +368,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
       )}
 
       <div className="flex gap-6">
-        <div className="flex min-w-0 flex-1 flex-col gap-6">
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
           {data.events.map((event) => {
             const showGameLines = marketFilter !== "player_props" && event.game_lines.length > 0;
             const showPlayerProps = marketFilter !== "game_lines" && event.player_props.length > 0;
@@ -333,29 +379,33 @@ export function TradeDesk({ sport }: { sport?: string }) {
             const groupedGameLines = [...event.game_lines].sort(
               (left, right) => sectionOrder(left.market_kind) - sectionOrder(right.market_kind),
             );
-            const sectionLabels = Array.from(new Set(groupedGameLines.map((line) => gameLineSectionLabel(line.market_kind))));
 
             return (
-              <section key={event.event_id} className="space-y-3">
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-semibold text-foreground">{event.event_name}</h3>
-                    <span className="text-xs text-muted-foreground">{sportLabel(event.sport_key)}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {fmtStartsAt(event.starts_at)} · {event.event_status.replace(/_/g, " ")}
-                  </p>
-                </div>
+              <article
+                key={event.event_id}
+                className="event-card"
+                style={{ ["--sport-tint" as string]: sportTint(event.sport_key) }}
+              >
+                <header className="event-card-head">
+                  <span
+                    className="sport-pill"
+                    style={{ ["--tint" as string]: sportTint(event.sport_key) }}
+                  >
+                    <span className="dot" aria-hidden />
+                    {sportLabel(event.sport_key)}
+                  </span>
+                  <h2>{event.event_name}</h2>
+                  <span className="event-card-when">{fmtStartsAt(event.starts_at)}</span>
+                </header>
 
-                {showGameLines && sectionLabels.map((sectionLabel) => {
-                  const lines = groupedGameLines.filter((line) => gameLineSectionLabel(line.market_kind) === sectionLabel);
-                  if (lines.length === 0) {
-                    return null;
-                  }
-                  return (
-                    <div key={`${event.event_id}-${sectionLabel}`} className="space-y-2">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{sectionLabel}</p>
-                      {lines.map((line) => (
+                <div className="event-card-markets">
+                  {showGameLines && (
+                    <div className="market-section">
+                      <div className="market-section-head">
+                        <h3>Game Lines</h3>
+                        <span className="count">{groupedGameLines.length} markets</span>
+                      </div>
+                      {groupedGameLines.map((line) => (
                         <GameLineRow
                           key={line.ticker}
                           line={line}
@@ -368,29 +418,32 @@ export function TradeDesk({ sport }: { sport?: string }) {
                         />
                       ))}
                     </div>
-                  );
-                })}
+                  )}
 
-                {showPlayerProps && (
-                  <div className="space-y-2">
-                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Player Props</p>
-                    {event.player_props.map((player) => (
-                      <PlayerPropGroup
-                        key={`${event.event_id}-${player.subject_name}`}
-                        player={player}
-                        selectedTicker={selected?.ticker}
-                        onSelectThreshold={(subjectName, subjectTeam, statKey, threshold) =>
-                          setSelected((current) =>
-                            current?.ticker === threshold.ticker
-                              ? null
-                              : buildPlayerPropSelection(event, subjectName, subjectTeam, statKey, threshold),
-                          )
-                        }
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
+                  {showPlayerProps && (
+                    <div className="market-section">
+                      <div className="market-section-head">
+                        <h3>Player Props</h3>
+                        <span className="count">{event.player_props.length} ladders</span>
+                      </div>
+                      {event.player_props.map((player) => (
+                        <PlayerPropGroup
+                          key={`${event.event_id}-${player.subject_name}`}
+                          player={player}
+                          selectedTicker={selected?.ticker}
+                          onSelectThreshold={(subjectName, subjectTeam, statKey, threshold) =>
+                            setSelected((current) =>
+                              current?.ticker === threshold.ticker
+                                ? null
+                                : buildPlayerPropSelection(event, subjectName, subjectTeam, statKey, threshold),
+                            )
+                          }
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </article>
             );
           })}
 
