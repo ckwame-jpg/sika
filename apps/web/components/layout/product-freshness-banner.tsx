@@ -1,23 +1,9 @@
 "use client";
 
-// Slice 5: split of the v1 ``FreshnessBanner``. The product half.
-//
-// This banner reads ``/product/freshness`` — the side-effect-free gauge
-// that aggregates the per-scope ``current_slate_snapshots`` rows and
-// returns an ``overall_status`` of ``"fresh" | "stale" | "missing"``.
-// It is the only banner that speaks the *product* freshness vocabulary;
-// the per-surface stale pills (e.g. ``StaleSlatePill`` on the trade
-// desk) remain the canonical indicator and this banner is the fallback
-// for surfaces that don't yet own a pill of their own.
-//
-// The banner stays silent when everything is fresh — the product is
-// healthy and there's nothing to surface. It also never blocks the
-// shell: a ``/product/freshness`` failure simply hides the banner.
-
 import useSWR from "swr";
 import { fetchProductFreshness, keys } from "@/lib/api";
 import type { ProductFreshnessResponse, ProductScopeFreshnessRead } from "@/lib/api";
-import { cn, fmtRelative } from "@/lib/utils";
+import { fmtRelative } from "@/lib/utils";
 
 function pickWorstScope(
   scopes: ProductScopeFreshnessRead[],
@@ -68,6 +54,19 @@ function getMessage(data: ProductFreshnessResponse): string | null {
   return "Product data is stale.";
 }
 
+function getShortLabel(status: ProductFreshnessResponse["overall_status"]): string {
+  switch (status) {
+    case "missing":
+      return "Awaiting slate";
+    case "degraded":
+      return "Slate degraded";
+    case "empty":
+      return "Empty slate";
+    default:
+      return "Stale slate";
+  }
+}
+
 export function ProductFreshnessBanner() {
   const { data } = useSWR<ProductFreshnessResponse>(
     keys.productFreshness,
@@ -79,20 +78,20 @@ export function ProductFreshnessBanner() {
   const message = getMessage(data);
   if (!message) return null;
 
-  const tone = data.overall_status === "missing" || data.overall_status === "degraded" ? "warning" : "muted";
+  const className =
+    data.overall_status === "missing" || data.overall_status === "degraded"
+      ? "topbar-chip chip-operator"
+      : "topbar-chip chip-product";
 
   return (
-    <div
-      className={cn(
-        "border-b px-3 py-2 text-xs sm:px-5",
-        tone === "warning"
-          ? "border-warning/20 bg-warning/10 text-warning"
-          : "border-border bg-surface text-muted-foreground",
-      )}
+    <span
+      className={className}
       role="status"
       data-testid="product-freshness-banner"
+      title={message}
     >
-      {message}
-    </div>
+      <span className="dot" />
+      {getShortLabel(data.overall_status)}
+    </span>
   );
 }

@@ -37,8 +37,11 @@ describe("ProductFreshnessBanner", () => {
 
     renderWithProviders(<ProductFreshnessBanner />);
 
-    expect(await screen.findByTestId("product-freshness-banner")).toHaveTextContent(
-      "Current NBA/MLB events exist",
+    const banner = await screen.findByTestId("product-freshness-banner");
+    expect(banner).toHaveTextContent("Slate degraded");
+    expect(banner).toHaveAttribute(
+      "title",
+      expect.stringContaining("Current NBA/MLB events exist"),
     );
   });
 

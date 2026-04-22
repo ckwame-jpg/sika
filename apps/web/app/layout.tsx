@@ -21,7 +21,7 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${GeistSans.variable} ${GeistMono.variable}`}
     >
-      <body>
+      <body className="variant-E lg-orbit">
         <Providers>
           <Shell>{children}</Shell>
         </Providers>
