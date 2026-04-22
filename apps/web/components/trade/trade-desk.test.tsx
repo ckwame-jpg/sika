@@ -29,16 +29,41 @@ function expectAnyTicketTitleToContain(expected: string) {
 }
 
 describe("TradeDesk", () => {
-  it("renders market KPIs from trade-desk data and never depends on positions", async () => {
+  it("renders the Phase 1 KPI quad and hero chips from trade-desk data", async () => {
     mockFetchTradeDesk.mockResolvedValue(tradeDeskFixture);
 
     renderWithProviders(<TradeDesk sport="NBA" />);
 
     await screen.findByText("Miami Heat at Toronto Raptors");
+
+    // KPI quad — 4 cards, new labels + sub-lines
     expect(screen.getByTestId("trade-kpi-events")).toHaveTextContent("1");
-    expect(screen.getByTestId("trade-kpi-game-lines")).toHaveTextContent("3");
-    expect(screen.getByTestId("trade-kpi-prop-ladders")).toHaveTextContent("2");
-    expect(screen.getByTestId("trade-kpi-thresholds")).toHaveTextContent("4");
+    expect(screen.getByTestId("trade-kpi-card-events")).toHaveTextContent("Events on the board");
+    expect(screen.getByTestId("trade-kpi-card-events")).toHaveTextContent("0 live · 1 upcoming");
+
+    expect(screen.getByTestId("trade-kpi-candidate-markets")).toHaveTextContent("7");
+    expect(screen.getByTestId("trade-kpi-card-candidate-markets")).toHaveTextContent("Candidate markets");
+    expect(screen.getByTestId("trade-kpi-card-candidate-markets")).toHaveTextContent("scored");
+
+    expect(screen.getByTestId("trade-kpi-recommendations")).toHaveTextContent("7");
+    expect(screen.getByTestId("trade-kpi-card-recommendations")).toHaveTextContent("Recommendations");
+    expect(screen.getByTestId("trade-kpi-card-recommendations")).toHaveTextContent("past edge threshold");
+
+    // Fixture edges: [0.08, 0.09, 0.10, 0.321, 0.098, 0.044, 0.051]
+    // mean = 0.1120 → "+11.2%"; nearest-rank p75 = sorted[5] = 0.10 → "+10.0%"
+    expect(screen.getByTestId("trade-kpi-avg-edge")).toHaveTextContent("+11.2%");
+    expect(screen.getByTestId("trade-kpi-card-avg-edge")).toHaveTextContent("Avg edge");
+    expect(screen.getByTestId("trade-kpi-card-avg-edge")).toHaveTextContent("top-quartile +10.0%");
+
+    // Hero: two-clause headline + chip row
+    expect(screen.getByText(/markets scored tonight\./)).toBeInTheDocument();
+    expect(screen.getByText(/past edge\./)).toBeInTheDocument();
+    expect(screen.getByTestId("trade-hero-chip-avg-edge")).toHaveTextContent("+11.2%");
+    expect(screen.getByTestId("trade-hero-chip-top-quartile")).toHaveTextContent("+10.0%");
+
+    // Filter tabs removed; positions never fetched
+    expect(screen.queryByRole("button", { name: "Player Props" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Game Lines" })).not.toBeInTheDocument();
     expect(screen.queryByText("Your Exposure")).not.toBeInTheDocument();
     expect(screen.queryByText("Event Context")).not.toBeInTheDocument();
 
@@ -90,7 +115,8 @@ describe("TradeDesk", () => {
     await screen.findByText("Current slate is degraded for NBA.");
     expect(screen.getByTestId("trade-desk-status-pill")).toHaveTextContent("Current NBA/MLB events exist");
     expect(screen.getByText("Current events")).toBeInTheDocument();
-    expect(screen.getByText("Candidate markets")).toBeInTheDocument();
+    // "Candidate markets" now appears both in SlateHealthDetails and the KPI quad label.
+    expect(screen.getAllByText("Candidate markets").length).toBeGreaterThanOrEqual(2);
   });
 
   it("renders empty scored slate state when no markets clear thresholds", async () => {

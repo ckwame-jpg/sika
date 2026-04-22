@@ -16,13 +16,14 @@ import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
 import { ProbabilitySurfaceHero } from "@/components/trade/probability-surface-hero";
 import { Sparkline, randomWalk } from "@/components/ui/sparkline";
 
-type MarketFilter = "all" | "player_props" | "game_lines";
-
 interface TradeKpis {
   events: number;
-  gameLines: number;
-  propLadders: number;
-  thresholds: number;
+  live: number;
+  upcoming: number;
+  candidateMarkets: number;
+  recommendations: number;
+  avgEdge: number | null;
+  topQuartileEdge: number | null;
 }
 
 const SPORT_TINTS: Record<string, string> = {
@@ -51,6 +52,40 @@ function seedFromString(value: string): number {
     hash = (hash * 31 + value.charCodeAt(i)) | 0;
   }
   return Math.abs(hash) || 1;
+}
+
+/** Flat pool of every scored edge in the slate. */
+function collectAllEdges(events: TradeDeskEvent[]): number[] {
+  const edges: number[] = [];
+  for (const event of events) {
+    for (const line of event.game_lines) edges.push(line.edge);
+    for (const player of event.player_props) {
+      for (const group of player.stat_groups) {
+        for (const threshold of group.thresholds) edges.push(threshold.edge);
+      }
+    }
+  }
+  return edges;
+}
+
+function mean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  let sum = 0;
+  for (const v of values) sum += v;
+  return sum / values.length;
+}
+
+/**
+ * Nearest-rank quantile (NIST method C1).
+ * For q=0.75, n=7: index = ceil(0.75 * 7) - 1 = 5.
+ * Deterministic; matches Phase 1 test fixture expectation "+10.0%".
+ */
+function quantileNearestRank(values: number[], q: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.ceil(q * sorted.length) - 1;
+  const idx = Math.max(0, Math.min(sorted.length - 1, rank));
+  return sorted[idx];
 }
 
 function SlateStatusPill({ data }: { data: TradeDeskResponse }) {
@@ -121,6 +156,7 @@ function GameLineRow({
       <div className="line-row-price">{fmtPrice(line.entry_price)}</div>
       <div className="line-row-prob">{fmtPercent(line.selected_side_probability)}</div>
       <div className="line-row-spark">
+        {/* TODO(phase5): wire real price history via batched /api/market-history endpoint */}
         <Sparkline values={series} width={64} height={24} trend={up ? "up" : "down"} />
       </div>
       <div className={cn("line-row-edge", up ? "pos" : "neg")}>{fmtEdge(line.edge)}</div>
@@ -128,51 +164,33 @@ function GameLineRow({
   );
 }
 
-function computeTradeKpis(events: TradeDeskEvent[], marketFilter: MarketFilter): TradeKpis {
-  const visibleEvents = events.filter(
-    (event) =>
-      (marketFilter !== "player_props" && event.game_lines.length > 0) ||
-      (marketFilter !== "game_lines" && event.player_props.length > 0),
-  );
-  const gameLines = marketFilter === "player_props"
-    ? 0
-    : visibleEvents.reduce((total, event) => total + event.game_lines.length, 0);
-  const propLadders = marketFilter === "game_lines"
-    ? 0
-    : visibleEvents.reduce(
-      (total, event) => total + event.player_props.reduce((eventTotal, player) => eventTotal + player.stat_groups.length, 0),
-      0,
-    );
-  const thresholds = marketFilter === "game_lines"
-    ? 0
-    : visibleEvents.reduce(
-      (total, event) =>
-        total + event.player_props.reduce(
-          (eventTotal, player) =>
-            eventTotal + player.stat_groups.reduce((groupTotal, group) => groupTotal + group.thresholds.length, 0),
-          0,
-        ),
-      0,
-    );
-
+function computeTradeKpis(data: TradeDeskResponse): TradeKpis {
+  const events = data.events;
+  const live = events.filter((event) => event.event_status === "in_progress").length;
+  const upcoming = events.filter((event) => event.event_status === "scheduled").length;
+  const allEdges = collectAllEdges(events);
   return {
-    events: visibleEvents.length,
-    gameLines,
-    propLadders,
-    thresholds,
+    events: events.length,
+    live,
+    upcoming,
+    candidateMarkets: data.candidate_market_count,
+    recommendations: data.recommendation_count,
+    avgEdge: mean(allEdges),
+    topQuartileEdge: quantileNearestRank(allEdges, 0.75),
   };
 }
 
 interface KpiCardProps {
   label: string;
-  value: number;
+  value: string | number;
+  sub?: string;
   testIdRoot: string;
   testIdValue: string;
   seed: number;
   trend?: "up" | "down";
 }
 
-function KpiCard({ label, value, testIdRoot, testIdValue, seed, trend = "up" }: KpiCardProps) {
+function KpiCard({ label, value, sub, testIdRoot, testIdValue, seed, trend = "up" }: KpiCardProps) {
   const series = randomWalk(24, trend === "up", seed);
   return (
     <div className="trade-kpi" data-testid={testIdRoot}>
@@ -181,6 +199,7 @@ function KpiCard({ label, value, testIdRoot, testIdValue, seed, trend = "up" }: 
       <div className="trade-kpi-value" data-testid={testIdValue}>
         {value}
       </div>
+      {sub && <div className="trade-kpi-sub">{sub}</div>}
       <div className="spark-wrap">
         <Sparkline values={series} width={140} height={22} trend={trend} />
       </div>
@@ -192,31 +211,39 @@ function MarketSummaryStrip({ kpis }: { kpis: TradeKpis }) {
   return (
     <div className="trade-kpis">
       <KpiCard
-        label="Events"
+        label="Events on the board"
         value={kpis.events}
+        sub={`${kpis.live} live · ${kpis.upcoming} upcoming`}
         testIdRoot="trade-kpi-card-events"
         testIdValue="trade-kpi-events"
         seed={11}
       />
       <KpiCard
-        label="Game Lines"
-        value={kpis.gameLines}
-        testIdRoot="trade-kpi-card-game-lines"
-        testIdValue="trade-kpi-game-lines"
+        label="Candidate markets"
+        value={kpis.candidateMarkets}
+        sub="scored"
+        testIdRoot="trade-kpi-card-candidate-markets"
+        testIdValue="trade-kpi-candidate-markets"
         seed={31}
       />
       <KpiCard
-        label="Prop Ladders"
-        value={kpis.propLadders}
-        testIdRoot="trade-kpi-card-prop-ladders"
-        testIdValue="trade-kpi-prop-ladders"
+        label="Recommendations"
+        value={kpis.recommendations}
+        sub="past edge threshold"
+        testIdRoot="trade-kpi-card-recommendations"
+        testIdValue="trade-kpi-recommendations"
         seed={47}
       />
       <KpiCard
-        label="Thresholds"
-        value={kpis.thresholds}
-        testIdRoot="trade-kpi-card-thresholds"
-        testIdValue="trade-kpi-thresholds"
+        label="Avg edge"
+        value={kpis.avgEdge != null ? fmtEdge(kpis.avgEdge) : "—"}
+        sub={
+          kpis.topQuartileEdge != null
+            ? `top-quartile ${fmtEdge(kpis.topQuartileEdge)}`
+            : "top-quartile —"
+        }
+        testIdRoot="trade-kpi-card-avg-edge"
+        testIdValue="trade-kpi-avg-edge"
         seed={73}
       />
     </div>
@@ -275,25 +302,11 @@ function buildPlayerPropSelection(
 
 export function TradeDesk({ sport }: { sport?: string }) {
   const [selected, setSelected] = useState<TradeSelection | null>(null);
-  const [marketFilter, setMarketFilter] = useState<MarketFilter>("all");
   const { data, error, isLoading } = useSWR<TradeDeskResponse>(
     keys.tradeDesk(sport),
     () => fetchTradeDesk(sport),
     { refreshInterval: 30_000 },
   );
-
-  useEffect(() => {
-    if (!selected) {
-      return;
-    }
-    if (marketFilter === "player_props" && selected.kind === "game_line") {
-      setSelected(null);
-      return;
-    }
-    if (marketFilter === "game_lines" && selected.kind === "player_prop") {
-      setSelected(null);
-    }
-  }, [marketFilter, selected]);
 
   useEffect(() => {
     if (!selected || !data) {
@@ -333,10 +346,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
     return null;
   }
 
-  const hasGameLines = data.events.some((event) => event.game_lines.length > 0);
-  const hasPlayerProps = data.events.some((event) => event.player_props.length > 0);
-  const showFilterTabs = hasGameLines && hasPlayerProps;
-  const kpis = computeTradeKpis(data.events, marketFilter);
+  const kpis = computeTradeKpis(data);
   const scoredCount = data.scored_market_count || data.candidate_market_count;
 
   return (
@@ -345,33 +355,16 @@ export function TradeDesk({ sport }: { sport?: string }) {
       <ProbabilitySurfaceHero
         scoredCount={scoredCount}
         recommendationCount={data.recommendation_count}
+        avgEdge={kpis.avgEdge}
+        topQuartileEdge={kpis.topQuartileEdge}
       />
       <MarketSummaryStrip kpis={kpis} />
-
-      {showFilterTabs && (
-        <div className="market-filter-tabs">
-          {[
-            { value: "all", label: "All" },
-            { value: "player_props", label: "Player Props" },
-            { value: "game_lines", label: "Game Lines" },
-          ].map((tab) => (
-            <button
-              key={tab.value}
-              type="button"
-              onClick={() => setMarketFilter(tab.value as MarketFilter)}
-              className={cn(marketFilter === tab.value && "active")}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      )}
 
       <div className="flex gap-6">
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           {data.events.map((event) => {
-            const showGameLines = marketFilter !== "player_props" && event.game_lines.length > 0;
-            const showPlayerProps = marketFilter !== "game_lines" && event.player_props.length > 0;
+            const showGameLines = event.game_lines.length > 0;
+            const showPlayerProps = event.player_props.length > 0;
             if (!showGameLines && !showPlayerProps) {
               return null;
             }

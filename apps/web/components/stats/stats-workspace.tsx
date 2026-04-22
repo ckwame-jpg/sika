@@ -1,19 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { BarChart3, Plus, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { queryStats } from "@/lib/api";
 import { SPORT_LABELS, type SportKey, type StatsQueryRead } from "@/lib/types";
-import { fmtDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
 const SUGGESTIONS = [
@@ -24,6 +13,7 @@ const SUGGESTIONS = [
   "Mahomes vs top-10 defenses",
 ];
 
+// Keys MUST match SPORT_LABELS / SportKey exactly (uppercase).
 const EXAMPLES: Record<SportKey, string[]> = {
   NBA: ["Jalen Brunson last 10 games", "Jayson Tatum this season"],
   NFL: ["Patrick Mahomes this season", "Josh Allen last 5 games"],
@@ -33,6 +23,7 @@ const EXAMPLES: Record<SportKey, string[]> = {
 };
 
 const CURRENT_SEASON = "2025-26";
+const SEASON_OPTIONS = ["2025-26", "2024-25", "2023-24", "2022-23"];
 
 interface StatsWorkspaceProps {
   initialSport?: SportKey;
@@ -71,103 +62,117 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <section className="stats-card stats-header-card">
-        <div className="stats-header-meta">
-          <div className="stats-header-icon" aria-hidden>
-            <BarChart3 size={18} />
+    <div className="stats-assistant-wrap" data-testid="stats-workspace">
+      <section className="stats-assistant" data-testid="stats-assistant-card">
+        <div className="sa-header">
+          <div className="sa-icon" aria-hidden>
+            <svg viewBox="0 0 24 24" width="18" height="18">
+              <path d="M3 3v18h18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M7 15l3-4 3 2 4-6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx="17" cy="7" r="1.5" fill="currentColor" />
+            </svg>
           </div>
-          <div className="stats-header-meta-text">
-            <div className="stats-header-eyebrow">
-              <span className="eyebrow">Research desk</span>
-              <span className="path">/research/stats/query</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sa-title-row">
+              <span className="sa-eyebrow">Research desk</span>
+              <span className="sa-dot" />
+              <span className="sa-endpoint">/research/stats/query</span>
             </div>
-            <h2 className="stats-header-title">Stats Assistant</h2>
-            <p className="stats-header-desc">
+            <div className="sa-title">Stats Assistant</div>
+            <div className="sa-sub">
               Cross-sport player query desk. Ask for recent form, season totals, or matchup context
-              across NBA, NFL, MLB, Soccer, Tennis, and UFC.
-            </p>
+              across NBA, NFL, MLB, Soccer, and Tennis.
+            </div>
           </div>
-          <span className="stats-ready-pill">
-            <span className="dot" />
-            READY
+          <span className="sa-status">
+            <span className="sa-live-dot" />
+            <span>ready</span>
           </span>
         </div>
 
-        <div className="stats-suggestion-row">
+        <div className="sa-prompts" role="list">
           {SUGGESTIONS.map((chip) => (
             <button
               key={chip}
               type="button"
-              className="stats-suggest-chip"
+              className="sa-prompt"
               onClick={() => runSearch(chip)}
+              data-testid="sa-prompt"
             >
-              <Plus size={11} aria-hidden />
+              <span className="sa-prompt-mark" aria-hidden>✦</span>
               <span>{chip}</span>
             </button>
           ))}
         </div>
 
-        <div className="stats-query-row">
-          <label className="stats-query-input">
-            <Search size={14} aria-hidden />
-            <Input
+        <div className="sa-input-row">
+          <label className="sa-input">
+            <span className="sa-input-icon" aria-hidden>
+              <svg viewBox="0 0 24 24" width="14" height="14">
+                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                <path d="M20 20l-4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </span>
+            <input
+              type="text"
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ask for player form, season output, or last N games"
+              placeholder="Ask about a player, team, or matchup…"
               onKeyDown={(event) => {
                 if (event.key === "Enter") runSearch();
               }}
+              data-testid="sa-input"
+              aria-label="Stats question"
             />
+            <span className="sa-kbd" aria-hidden>↵</span>
           </label>
-          <Select
-            value={sportKey}
-            onValueChange={(value) => {
-              const nextSport = value as SportKey;
-              setSportKey(nextSport);
-              const nextExample = EXAMPLES[nextSport][0];
-              if (nextExample) setQuestion(nextExample);
-            }}
-          >
-            <SelectTrigger className="stats-select-trigger">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(SPORT_LABELS).map(([key, label]) => (
-                <SelectItem key={key} value={key}>
-                  {label}
-                </SelectItem>
+          <div className="sa-select">
+            <select
+              value={sportKey}
+              onChange={(event) => {
+                const nextSport = event.target.value as SportKey;
+                setSportKey(nextSport);
+                const nextExample = EXAMPLES[nextSport]?.[0];
+                if (nextExample) setQuestion(nextExample);
+              }}
+              aria-label="Sport"
+              data-testid="sa-sport"
+            >
+              {(Object.entries(SPORT_LABELS) as Array<[SportKey, string]>).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
               ))}
-            </SelectContent>
-          </Select>
-          <Select value={season} onValueChange={setSeason}>
-            <SelectTrigger className="stats-select-trigger">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {["2025-26", "2024-25", "2023-24", "2022-23"].map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
+            </select>
+          </div>
+          <div className="sa-select">
+            <select
+              value={season}
+              onChange={(event) => setSeason(event.target.value)}
+              aria-label="Season"
+              data-testid="sa-season"
+            >
+              {SEASON_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s}</option>
               ))}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="primary"
-            size="sm"
-            className="stats-run-btn"
+            </select>
+          </div>
+          <button
+            className="sa-run"
+            type="button"
             onClick={() => runSearch()}
             disabled={loading}
+            data-testid="sa-run"
           >
             {loading ? "Querying…" : "Run query"}
-          </Button>
+          </button>
         </div>
-        {error && <p className="mt-2 text-xs text-negative">{error}</p>}
+        {error && <p className="mt-2 text-xs text-negative" role="alert">{error}</p>}
       </section>
 
-      <section className="stats-card stats-result-card">
-        {result ? (
-          <StatsResult result={result} />
+      <section className="sa-result" data-testid="sa-result">
+        {loading ? (
+          <LoadingState sportKey={sportKey} />
+        ) : result ? (
+          <StatsAnswer result={result} />
         ) : (
           <EmptyOrbState />
         )}
@@ -178,77 +183,114 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
 
 function EmptyOrbState() {
   return (
-    <div className="stats-empty">
-      <div className="stats-orb" aria-hidden>
-        <span className="stats-orb-core" />
-        <span className="stats-orb-halo" />
+    <div className="sa-result-empty" data-testid="sa-result-empty">
+      <div className="sa-result-orb" aria-hidden />
+      <div className="sa-result-title">Run a player stats query</div>
+      <div className="sa-result-sub">
+        Answers appear here with a compact splits table, a mini trend chart,
+        and the exact source the assistant used.
       </div>
-      <h3 className="stats-empty-title">Run a player stats query</h3>
-      <p className="stats-empty-desc">
-        Answers appear here with a compact splits table, a mini trend
-        chart, and the exact source the assistant used.
-      </p>
     </div>
   );
 }
 
-function StatsResult({ result }: { result: StatsQueryRead }) {
+function LoadingState({ sportKey }: { sportKey: SportKey }) {
+  return (
+    <div className="sa-result-loading" data-testid="sa-result-loading">
+      <span className="sa-result-bar" />
+      <span className="sa-result-bar" />
+      <span className="sa-result-bar" />
+      <div className="sa-result-scan">scanning {sportKey} logs…</div>
+    </div>
+  );
+}
+
+function StatsAnswer({ result }: { result: StatsQueryRead }) {
+  // Query-aware primary metric: first key in metric_labels, if any.
+  const metricKeys = Object.keys(result.metric_labels);
+  const primaryKey = metricKeys[0];
+
+  // Metric grid: up to 6 populated metrics, labels from backend.
   const metricEntries = Object.entries(result.summary.metrics)
     .filter(([, value]) => value != null)
     .slice(0, 6);
 
+  // Chart data: plot primary metric across first 10 logs.
+  // Skip chart entirely if we have no primaryKey or no logs.
+  const chartPoints: Array<{ value: number; label: string }> = [];
+  if (primaryKey && result.game_logs.length > 0) {
+    for (const g of result.game_logs.slice(0, 10)) {
+      const v = g.metrics?.[primaryKey];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        chartPoints.push({ value: v, label: g.opponent ?? "" });
+      }
+    }
+  }
+  const showChart = chartPoints.length > 0;
+
   return (
-    <div className="stats-result">
-      <header className="stats-result-head">
+    <div className="sa-answer" data-testid="sa-answer">
+      <header className="sa-answer-header">
         <div>
-          <h3 className="stats-result-title">{result.entity_name}</h3>
-          <p className="stats-result-sub">
-            {result.team_name ?? SPORT_LABELS[result.sport_key as SportKey] ?? result.sport_key}
-            {" · "}
-            {result.query_type.replaceAll("_", " ")}
-            {" · "}
-            {result.games_analyzed} analyzed
-          </p>
+          <div className="sa-answer-eyebrow">ANSWER · {result.sport_key}</div>
+          <div className="sa-answer-title">{result.entity_name}</div>
         </div>
-        <span className="stats-result-source">{result.source}</span>
+        <span className="sa-answer-source">
+          <span className="sa-live-dot" aria-hidden />
+          <span>
+            {result.games_analyzed} games · {result.query_type.replaceAll("_", " ")}
+          </span>
+        </span>
       </header>
 
       {result.summary.stat_line && (
-        <p className="stats-result-line">{result.summary.stat_line}</p>
+        <div className="sa-answer-line">{result.summary.stat_line}</div>
       )}
 
-      <div className="stats-metric-grid">
+      <div className="sa-answer-grid">
         {metricEntries.map(([key, value]) => (
-          <div key={key} className="stats-metric">
-            <p className="stats-metric-label">{result.metric_labels[key] ?? key}</p>
-            <p className="stats-metric-value">
+          <div key={key} className="sa-stat">
+            <div className="sa-stat-l">{result.metric_labels[key] ?? key}</div>
+            <div className="sa-stat-v">
               {value == null ? "—" : Number.isInteger(value) ? String(value) : value.toFixed(2)}
-            </p>
+            </div>
+            {/* sa-stat-s reserved for backend-provided delta copy when available */}
           </div>
         ))}
       </div>
 
+      {showChart && (
+        <div className="sa-answer-chart" data-testid="sa-answer-chart">
+          <div className="sa-answer-chart-label">
+            <span>{result.metric_labels[primaryKey!] ?? primaryKey} · last {chartPoints.length}</span>
+            <span className="sa-answer-chart-meta">
+              avg {(chartPoints.reduce((s, p) => s + p.value, 0) / chartPoints.length).toFixed(1)}
+            </span>
+          </div>
+          <MiniBars points={chartPoints.map((p) => p.value)} />
+        </div>
+      )}
+
       {result.explanation && (
-        <p className="stats-result-explain">{result.explanation}</p>
+        <p className="sa-answer-explain">{result.explanation}</p>
       )}
 
       {result.coverage_note && (
-        <p className="stats-coverage-note">{result.coverage_note}</p>
+        <p className="sa-answer-coverage">{result.coverage_note}</p>
       )}
 
       {result.game_logs.length > 0 && (
-        <div className="stats-log-list">
-          <p className="stats-log-label">Latest {result.game_logs.length} games</p>
+        <div className="sa-log-list">
           {result.game_logs.slice(0, 8).map((game) => (
-            <div key={game.game_id} className="stats-log-row">
-              <div className="stats-log-meta">
-                <span className="stats-log-date">{fmtDate(game.game_date)}</span>
-                <span className="stats-log-opp">vs {game.opponent}</span>
-                <span className="stats-log-loc">{game.location}</span>
+            <div key={game.game_id} className="sa-log-row">
+              <div className="sa-log-meta">
+                <span className="sa-log-date">{game.game_date}</span>
+                <span className="sa-log-opp">vs {game.opponent}</span>
+                <span className="sa-log-loc">{game.location}</span>
               </div>
-              <div className="stats-log-score">
+              <div className="sa-log-score">
                 {game.team_score}–{game.opponent_score}
-                <span className={cn("stats-log-result", game.result === "W" && "pos", game.result === "L" && "neg")}>
+                <span className={cn("sa-log-result", game.result === "W" && "pos", game.result === "L" && "neg")}>
                   {game.result ?? "—"}
                 </span>
               </div>
@@ -256,6 +298,67 @@ function StatsResult({ result }: { result: StatsQueryRead }) {
           ))}
         </div>
       )}
+
+      <div className="sa-answer-foot">
+        <span>Source: /research/stats/query</span>
+        <span className="sa-dot" />
+        <span>{result.source}</span>
+      </div>
     </div>
+  );
+}
+
+function MiniBars({ points }: { points: number[] }) {
+  if (points.length === 0) return null;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = Math.max(1, max - min);
+  const mean = points.reduce((s, v) => s + v, 0) / points.length;
+  const W = 400;
+  const H = 90;
+  const PAD_X = 20;
+  const BAR_Y_TOP = 10;
+  const BAR_AREA = 75;
+  const yFor = (v: number) => BAR_Y_TOP + BAR_AREA - ((v - min) / range) * (BAR_AREA - 5);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" width="100%" height="90" role="img" aria-label="Trend chart">
+      <line
+        x1={0}
+        x2={W}
+        y1={yFor(mean)}
+        y2={yFor(mean)}
+        stroke="rgba(255,180,100,0.45)"
+        strokeWidth={1}
+        strokeDasharray="4 4"
+      />
+      {points.map((v, i) => {
+        const x = PAD_X + (i / Math.max(1, points.length - 1)) * (W - 2 * PAD_X);
+        const y = yFor(v);
+        const h = BAR_Y_TOP + BAR_AREA - y;
+        return (
+          <g key={i}>
+            <rect
+              x={x - 10}
+              y={y}
+              width={20}
+              height={h}
+              rx={2}
+              fill={v >= mean ? "rgba(80,220,160,0.7)" : "rgba(255,120,120,0.55)"}
+            />
+            <text
+              x={x}
+              y={y - 5}
+              textAnchor="middle"
+              fill="rgba(210,220,240,0.85)"
+              fontSize="10"
+              fontFamily="JetBrains Mono, monospace"
+            >
+              {Number.isInteger(v) ? v : v.toFixed(1)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
