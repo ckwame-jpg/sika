@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { fmtEdge } from "@/lib/utils";
 
 interface ProbabilitySurfaceHeroProps {
   scoredCount: number;
   recommendationCount: number;
+  avgEdge: number | null;
+  topQuartileEdge: number | null;
 }
 
 interface SkyReadState {
@@ -46,6 +49,8 @@ function buildHeightMap(): number[][] {
 export function ProbabilitySurfaceHero({
   scoredCount,
   recommendationCount,
+  avgEdge,
+  topQuartileEdge,
 }: ProbabilitySurfaceHeroProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -55,6 +60,13 @@ export function ProbabilitySurfaceHero({
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    // Cache CSS var values for canvas — ctx.fillStyle / addColorStop don't parse var().
+    // Resolved once per mount; cascade updates would require a resize/re-run anyway.
+    const rootStyles = getComputedStyle(document.documentElement);
+    const violet500Hsl = rootStyles.getPropertyValue("--color-cosmos-violet-500-hsl").trim();
+    const cyan500Hsl = rootStyles.getPropertyValue("--color-cosmos-cyan-500-hsl").trim();
+    const textBright = rootStyles.getPropertyValue("--color-cosmos-text-bright").trim();
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let width = 0;
@@ -102,7 +114,7 @@ export function ProbabilitySurfaceHero({
       for (let i = 0; i <= ROWS; i++) {
         const v = i / ROWS;
         const alpha = 0.18 + v * 0.62;
-        ctx.strokeStyle = `rgba(180,140,255,${alpha * 0.55})`;
+        ctx.strokeStyle = `hsl(${violet500Hsl} / ${alpha * 0.55})`;
         ctx.lineWidth = 1 * dpr;
         ctx.beginPath();
         for (let j = 0; j <= COLS; j++) {
@@ -118,7 +130,7 @@ export function ProbabilitySurfaceHero({
         for (let i = 0; i <= ROWS; i++) {
           const v = i / ROWS;
           const alpha = 0.08 + v * 0.35;
-          ctx.strokeStyle = `rgba(140,220,255,${alpha * 0.45})`;
+          ctx.strokeStyle = `hsl(${cyan500Hsl} / ${alpha * 0.45})`;
           const [x, y] = project(j / COLS, v, wave(j, i, t), skew, tilt);
           if (i === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
@@ -131,14 +143,15 @@ export function ProbabilitySurfaceHero({
         const i = Math.round(py * ROWS);
         const [x, y] = project(px, py, heightMap[i][j] + pa, skew, tilt);
         const glow = ctx.createRadialGradient(x, y, 0, x, y, 14 * dpr);
+        // TODO(phase4): "rgba(200,160,255,0.85)" is an unmapped violet mid-tone — flag to CD for naming.
         glow.addColorStop(0, "rgba(200,160,255,0.85)");
-        glow.addColorStop(0.4, "rgba(180,140,255,0.35)");
-        glow.addColorStop(1, "rgba(180,140,255,0)");
+        glow.addColorStop(0.4, `hsl(${violet500Hsl} / 0.35)`);
+        glow.addColorStop(1, "transparent");
         ctx.fillStyle = glow;
         ctx.beginPath();
         ctx.arc(x, y, 14 * dpr, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = "#fff";
+        ctx.fillStyle = textBright;
         ctx.beginPath();
         ctx.arc(x, y, 1.6 * dpr, 0, Math.PI * 2);
         ctx.fill();
@@ -171,11 +184,23 @@ export function ProbabilitySurfaceHero({
       <div className="trade-hero-inner">
         <div className="th-eyebrow">Trade desk · probability surface</div>
         <div className="th-title">
-          <span>{scoredCount} markets scored. </span>
+          <span>{scoredCount} markets scored tonight. </span>
           <span className="th-hl">{recommendationCount} past edge.</span>
         </div>
         <div className="th-sub">
           Peaks are markets where the model most disagrees with Kalshi. Drag the sky to explore.
+        </div>
+        <div className="th-chips" data-testid="trade-hero-chips">
+          <div className="th-chip" data-testid="trade-hero-chip-avg-edge">
+            <span className="th-chip-label">AVG EDGE</span>
+            <span className="th-chip-value">{avgEdge != null ? fmtEdge(avgEdge) : "—"}</span>
+          </div>
+          <div className="th-chip" data-testid="trade-hero-chip-top-quartile">
+            <span className="th-chip-label">TOP QUARTILE</span>
+            <span className="th-chip-value">
+              {topQuartileEdge != null ? fmtEdge(topQuartileEdge) : "—"}
+            </span>
+          </div>
         </div>
       </div>
     </section>
