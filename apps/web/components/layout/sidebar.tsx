@@ -4,7 +4,6 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Activity,
   CandlestickChart,
   BarChart3,
   ChevronRight,
@@ -24,18 +23,19 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { getMarketSyncBadge, getPropSyncBadge, getSyncState, useHealthStatus } from "@/lib/health-status";
+import {
+  getMarketSyncBadge,
+  getSyncState,
+  useHealthStatus,
+} from "@/lib/health-status";
+
+type SyncState = "refreshing" | "stalled" | "failed" | "stale" | "synced";
 import { triggerRefreshAndRevalidate } from "@/lib/refresh";
 import { SPORT_OPTIONS, cn } from "@/lib/utils";
 import { useSportQueryParam } from "@/components/filters/sport-filter-select";
+import { OrbitMark } from "./orbit-mark";
 
-// Slice 5: primary nav is product-only — the surfaces a trader hits every
-// session. Research (Stats) and operator surfaces (Runs / Settings) move
-// to a secondary nav block below the primary list. They are still
-// accessible via direct URL and via the secondary nav; they're just
-// visually de-emphasized so the product surface is the obvious default.
 const PRIMARY_NAV = [
   { href: "/trade", label: "Trade", icon: CandlestickChart },
   { href: "/predictions", label: "Predictions", icon: Target },
@@ -76,19 +76,17 @@ function NavItem({
     <Link
       href={href}
       onClick={onNavigate}
-      className={cn(
-        "flex items-center gap-2.5 rounded px-2.5 py-1.5 text-sm",
-        "transition-colors duration-[120ms]",
-        active
-          ? "bg-accent/10 font-medium text-accent"
-          : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-      )}
+      className={cn("nav-item", active && "active")}
     >
       <Icon size={14} className="shrink-0" />
       <span>{label}</span>
-      {active && <ChevronRight size={12} className="ml-auto opacity-60" />}
+      {active && <ChevronRight size={12} className="chev" />}
     </Link>
   );
+}
+
+function sportTint(value: string): string {
+  return `var(--sport-${value.toLowerCase()})`;
 }
 
 function SportFilter({ onNavigate }: { onNavigate?: () => void }) {
@@ -101,82 +99,63 @@ function SportFilter({ onNavigate }: { onNavigate?: () => void }) {
   }
 
   return (
-    <div className="space-y-0.5">
+    <div className="nav-section">
+      <div className="nav-label">Sport</div>
       <button
+        type="button"
         onClick={() => handleSelect("")}
-        className={cn(
-          "flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-sm",
-          "transition-colors duration-[120ms]",
-          currentSport === ""
-            ? "font-medium text-foreground"
-            : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-        )}
+        className={cn("nav-item", currentSport === "" && "active")}
       >
-        <Activity size={13} />
-        All Sports
+        <span className="dot" />
+        <span>All Sports</span>
       </button>
-      {SPORT_OPTIONS.map((option) => (
-        <button
-          key={option.value}
-          onClick={() => handleSelect(option.value)}
-          className={cn(
-            "flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-sm",
-            "transition-colors duration-[120ms]",
-            currentSport === option.value
-              ? cn("font-medium", option.colorClass)
-              : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-          )}
-        >
-          <span
-            className={cn(
-              "inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-current",
-              currentSport === option.value ? option.colorClass : "opacity-40",
-            )}
-          />
-          {option.label}
-        </button>
-      ))}
+      {SPORT_OPTIONS.map((option) => {
+        const isActive = currentSport === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => handleSelect(option.value)}
+            className={cn("nav-item", isActive && "active")}
+          >
+            <span
+              className="dot"
+              style={isActive ? undefined : { color: sportTint(option.value) }}
+            />
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-function SyncStatusBadges() {
-  const { data: health } = useHealthStatus();
-  const syncState = getSyncState(health);
-  const marketBadge = getMarketSyncBadge(health);
-  const propBadge = getPropSyncBadge(health);
-  if (!marketBadge) return propBadge ? (
-    <Badge variant={propBadge.variant} className="max-w-full" title={propBadge.title}>
-      {propBadge.text}
-    </Badge>
-  ) : null;
-
-  const variant = marketBadge.variant;
-
-  let label = "Live";
-  if (syncState === "stalled") {
-    label = "Refresh stalled";
-  } else if (syncState === "refreshing") {
-    label = "Refreshing...";
-  } else if (variant === "negative" || variant === "warning") {
-    label = marketBadge.text;
-  } else {
-    label = marketBadge.text;
+function syncLabel(state: SyncState | null): string {
+  switch (state) {
+    case "refreshing":
+      return "Refreshing…";
+    case "stalled":
+      return "Refresh stalled";
+    case "failed":
+      return "Refresh failed";
+    case "stale":
+      return "Stale data";
+    case "synced":
+      return "Orbits aligned";
+    default:
+      return "Awaiting sync";
   }
-
-  const title = [marketBadge?.title, propBadge?.title].filter(Boolean).join(" ");
-
-  return (
-    <Badge variant={variant} className="max-w-full" title={title}>
-      {label}
-    </Badge>
-  );
 }
 
-function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
+function SyncFoot() {
   const [refreshing, setRefreshing] = useState(false);
   const { data: health } = useHealthStatus();
   const syncState = getSyncState(health);
+  const marketBadge = getMarketSyncBadge(health);
+
+  const label = syncLabel(syncState);
+  const sub = marketBadge?.text ?? "markets";
+  const title = marketBadge?.title ?? "";
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -189,80 +168,73 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
     }
   }
 
+  const isBusy = refreshing || syncState === "refreshing";
+
+  return (
+    <div className="sync-pill" title={title}>
+      <div className="sync-orb">
+        <div className="sync-core" />
+      </div>
+      <div className="sync-meta">
+        <span className="sync-label">{label}</span>
+        <span className="sync-sub">{sub}</span>
+      </div>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className={cn("sync-refresh", isBusy && "spin")}
+            onClick={handleRefresh}
+            disabled={isBusy}
+            aria-label="Queue fast refresh"
+          >
+            <RefreshCw size={12} />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          {isBusy
+            ? "A current-slate refresh is already queued or running."
+            : "Queue a fast current-slate refresh."}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
+function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <>
-      <div className="flex items-center gap-2.5 border-b border-border px-4 py-4">
-        <div className="flex h-6 w-6 items-center justify-center rounded border border-accent/25 bg-accent/15">
-          <Activity size={12} className="text-accent" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold tracking-tight text-foreground">
-            sika
-          </span>
-        </div>
+      <div className="sidebar-cosmos-brand">
+        <OrbitMark />
+        <span className="brand-name">sika</span>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto px-2 py-3">
-        <nav className="space-y-0.5">
+      <div className="sidebar-cosmos-body">
+        <div className="nav-section">
           {PRIMARY_NAV.map((item) => (
             <NavItem key={item.href} {...item} onNavigate={onNavigate} />
           ))}
-        </nav>
-
-        <div>
-          <p className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Sport
-          </p>
-          <SportFilter onNavigate={onNavigate} />
         </div>
 
-        <div>
-          <p className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Research
-          </p>
-          <nav className="space-y-0.5">
-            {RESEARCH_NAV.map((item) => (
-              <NavItem key={item.href} {...item} onNavigate={onNavigate} />
-            ))}
-          </nav>
+        <SportFilter onNavigate={onNavigate} />
+
+        <div className="nav-section">
+          <div className="nav-label">Research</div>
+          {RESEARCH_NAV.map((item) => (
+            <NavItem key={item.href} {...item} onNavigate={onNavigate} />
+          ))}
         </div>
 
-        <div>
-          <p className="px-2.5 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Operator
-          </p>
-          <nav className="space-y-0.5">
-            {OPS_NAV.map((item) => (
-              <NavItem key={item.href} {...item} onNavigate={onNavigate} />
-            ))}
-          </nav>
+        <div className="nav-section">
+          <div className="nav-label">Operator</div>
+          {OPS_NAV.map((item) => (
+            <NavItem key={item.href} {...item} onNavigate={onNavigate} />
+          ))}
         </div>
       </div>
 
-      <div className="space-y-2 border-t border-border px-3 py-3">
-        <SyncStatusBadges />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start gap-2 text-muted-foreground"
-              onClick={handleRefresh}
-              disabled={refreshing || syncState === "refreshing"}
-            >
-              <RefreshCw
-                size={13}
-                className={cn((refreshing || syncState === "refreshing") && "animate-spin")}
-              />
-              {syncState === "refreshing" ? "Refreshing" : "Run refresh"}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">
-            {syncState === "refreshing"
-              ? "A current-slate refresh is already queued or running."
-              : "Queue a fast current-slate refresh."}
-          </TooltipContent>
-        </Tooltip>
+      <div className="sidebar-cosmos-foot">
+        <SyncFoot />
       </div>
     </>
   );
@@ -270,7 +242,7 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
 
 export function Sidebar() {
   return (
-    <aside className="hidden h-full w-56 shrink-0 flex-col border-r border-border bg-surface lg:flex">
+    <aside className="sidebar hidden lg:flex">
       <SidebarBody />
     </aside>
   );
@@ -298,7 +270,7 @@ export function MobileSidebarTrigger() {
             Open the app navigation, switch sections, and trigger a refresh.
           </SheetDescription>
         </SheetHeader>
-        <div className="flex h-full flex-col bg-surface">
+        <div className="sidebar flex h-full flex-col">
           <SidebarBody onNavigate={() => setOpen(false)} />
         </div>
       </SheetContent>

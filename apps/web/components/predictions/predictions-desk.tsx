@@ -13,13 +13,6 @@ import { QualityFilterSelect, type RecommendationViewMode } from "@/components/f
 import { ParlayFilterControls } from "@/components/parlays/parlay-filter-controls";
 import { ParlayPredictionsSection } from "@/components/parlays/parlay-predictions-section";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   Table,
   TableBody,
   TableCell,
@@ -38,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Badge, SportBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
+import { Sparkline, randomWalk } from "@/components/ui/sparkline";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
 import { EDGE_EXPLANATION, ENTRY_LABEL, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
 import { RefreshCw } from "lucide-react";
@@ -46,93 +40,105 @@ import { SportFilterSelect, useSportQueryParam } from "@/components/filters/spor
 import { usePriceDisplay } from "@/lib/price-display";
 import { matchesRecommendationViewMode } from "@/lib/recommendation-quality";
 
-function outcomeVariant(
-  outcome: string,
-): "positive" | "negative" | "warning" | "default" {
-  if (outcome === "won") return "positive";
-  if (outcome === "lost") return "negative";
-  if (outcome === "push") return "warning";
-  return "default";
+function outcomePillClass(outcome: string): string {
+  const key = outcome.toLowerCase();
+  if (key === "won" || key === "lost" || key === "push" || key === "cancelled") {
+    return key;
+  }
+  return "";
 }
 
-function settlementVariant(
-  status: string,
-): "positive" | "warning" | "default" {
-  if (status === "settled") return "positive";
-  if (status === "pending" || status === "unresolved") return "warning";
-  return "default";
+function settlementPillClass(status: string): string {
+  const key = status.toLowerCase();
+  if (key === "settled" || key === "pending" || key === "unresolved") {
+    return key;
+  }
+  return "";
 }
 
-function SummaryCards({ summary }: { summary: PredictionSummaryRead }) {
+function seedFromString(value: string): number {
+  let h = 0;
+  for (let i = 0; i < value.length; i++) {
+    h = (h * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return h || 1;
+}
+
+interface KpiSpec {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "pos" | "neg" | "warn";
+  trendUp: boolean;
+}
+
+function KpiCard({ spec }: { spec: KpiSpec }) {
+  const seed = seedFromString(spec.label);
+  const series = randomWalk(14, spec.trendUp, seed);
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Total</p>
-          <p className="mt-1 font-mono text-lg text-foreground">{summary.total_predictions}</p>
-          <p className="text-xs text-muted-foreground">{summary.settled_predictions} settled</p>
-        </CardContent>
-      </Card>
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Pending</p>
-          <p className="mt-1 font-mono text-lg text-foreground">{summary.pending_predictions}</p>
-          <p className="text-xs text-muted-foreground">{summary.unresolved_predictions} unresolved</p>
-        </CardContent>
-      </Card>
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Win Rate</p>
-          <p className={cn(
-            "mt-1 font-mono text-lg",
-            summary.win_rate == null
-              ? "text-muted-foreground"
-              : summary.win_rate >= 0.55
-                ? "text-positive"
-                : summary.win_rate >= 0.45
-                  ? "text-warning"
-                  : "text-negative",
-          )}>
-            {fmtPercent(summary.win_rate)}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {summary.won_predictions}W / {summary.lost_predictions}L / {summary.push_predictions}P
-          </p>
-        </CardContent>
-      </Card>
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Avg Edge</p>
-          <p className="mt-1 font-mono text-lg text-foreground">
-            {summary.average_edge != null ? fmtEdge(summary.average_edge) : "—"}
-          </p>
-        </CardContent>
-      </Card>
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Avg Confidence</p>
-          <p className="mt-1 font-mono text-lg text-foreground">
-            {fmtPercent(summary.average_confidence)}
-          </p>
-        </CardContent>
-      </Card>
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Avg PnL</p>
-          <p className={cn(
-            "mt-1 font-mono text-lg",
-            summary.average_realized_pnl == null
-              ? "text-muted-foreground"
-              : summary.average_realized_pnl >= 0
-                ? "text-positive"
-                : "text-negative",
-          )}>
-            {fmtContractPnl(summary.average_realized_pnl)}
-          </p>
-        </CardContent>
-      </Card>
+    <div className="trade-kpi">
+      <div className="trade-kpi-orb" aria-hidden />
+      <p className="trade-kpi-label">{spec.label}</p>
+      <p className={cn("trade-kpi-value", spec.tone)}>{spec.value}</p>
+      {spec.sub && <p className="trade-kpi-sub">{spec.sub}</p>}
+      <Sparkline values={series} width={120} height={16} className="trade-kpi-spark" />
     </div>
   );
+}
+
+function buildSummaryKpis(summary: PredictionSummaryRead): KpiSpec[] {
+  const winRateTone =
+    summary.win_rate == null
+      ? undefined
+      : summary.win_rate >= 0.55
+        ? "pos"
+        : summary.win_rate >= 0.45
+          ? "warn"
+          : "neg";
+  const pnlTone =
+    summary.average_realized_pnl == null
+      ? undefined
+      : summary.average_realized_pnl >= 0
+        ? "pos"
+        : "neg";
+
+  return [
+    {
+      label: "Total",
+      value: String(summary.total_predictions),
+      sub: `${summary.settled_predictions} settled`,
+      trendUp: true,
+    },
+    {
+      label: "Pending",
+      value: String(summary.pending_predictions),
+      sub: `${summary.unresolved_predictions} unresolved`,
+      trendUp: false,
+    },
+    {
+      label: "Win Rate",
+      value: fmtPercent(summary.win_rate),
+      sub: `${summary.won_predictions}W / ${summary.lost_predictions}L / ${summary.push_predictions}P`,
+      tone: winRateTone,
+      trendUp: (summary.win_rate ?? 0) >= 0.5,
+    },
+    {
+      label: "Avg Edge",
+      value: summary.average_edge != null ? fmtEdge(summary.average_edge) : "—",
+      trendUp: (summary.average_edge ?? 0) >= 0,
+    },
+    {
+      label: "Avg Confidence",
+      value: fmtPercent(summary.average_confidence),
+      trendUp: true,
+    },
+    {
+      label: "Avg PnL",
+      value: fmtContractPnl(summary.average_realized_pnl),
+      tone: pnlTone,
+      trendUp: (summary.average_realized_pnl ?? 0) >= 0,
+    },
+  ];
 }
 
 function PredictionRow({ row }: { row: PredictionRead }) {
@@ -187,14 +193,14 @@ function PredictionRow({ row }: { row: PredictionRead }) {
         </div>
       </TableCell>
       <TableCell>
-        <Badge variant={settlementVariant(row.settlement_status)}>
+        <span className={cn("outcome-pill", settlementPillClass(row.settlement_status))}>
           {row.settlement_status}
-        </Badge>
+        </span>
       </TableCell>
       <TableCell>
-        <Badge variant={outcomeVariant(row.prediction_outcome)}>
+        <span className={cn("outcome-pill", outcomePillClass(row.prediction_outcome))}>
           {row.prediction_outcome}
-        </Badge>
+        </span>
       </TableCell>
       <TableCell className="font-mono text-xs text-muted-foreground">
         {fmtDatetime(row.settled_at)}
@@ -210,66 +216,56 @@ function PredictionCard({ row }: { row: PredictionRead }) {
   const label = row.subject_name
     ? `${row.subject_name}${row.stat_key ? ` · ${row.stat_key}` : ""}${row.threshold != null ? ` ${row.threshold}` : ""}`
     : displayTitle;
+  const sideTone = row.side.toLowerCase() === "yes" ? "pos" : "neg";
 
   return (
-    <Card className="bg-surface-hover shadow-none">
-      <CardContent className="space-y-3 px-4 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm text-foreground">{label}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              {row.subject_name && (
-                <p className="text-xs text-muted-foreground">{displayTitle}</p>
-              )}
-              {row.source_badge_label && <Badge variant="outline">{row.source_badge_label}</Badge>}
-              {row.sport_key && <SportBadge sport={row.sport_key} />}
-            </div>
+    <article className="pred-card">
+      <div className="pred-card-head">
+        <div className="min-w-0">
+          <p className="pred-card-title truncate">{label}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            {row.subject_name && (
+              <p className="pred-card-sub truncate">{displayTitle}</p>
+            )}
+            {row.source_badge_label && <Badge variant="outline">{row.source_badge_label}</Badge>}
+            {row.sport_key && <SportBadge sport={row.sport_key} />}
           </div>
-          <p className="shrink-0 font-mono text-[11px] text-muted-foreground">
-            {fmtDatetime(row.captured_at)}
+        </div>
+        <p className="pred-card-time">{fmtDatetime(row.captured_at)}</p>
+      </div>
+
+      <div className="pred-card-grid">
+        <div>
+          <p className="pred-card-stat-label">Side</p>
+          <p className={cn("pred-card-stat-value", sideTone)}>{row.side.toUpperCase()}</p>
+        </div>
+        <div>
+          <p className="pred-card-stat-label">{ENTRY_LABEL}</p>
+          <p className="pred-card-stat-value">{formatPrice(row.suggested_price)}</p>
+        </div>
+        <div>
+          <p className="pred-card-stat-label">Edge</p>
+          <p className="pred-card-stat-value">{fmtEdge(row.edge)}</p>
+        </div>
+        <div>
+          <p className="pred-card-stat-label">{WIN_PROB_LABEL}</p>
+          <p className="pred-card-stat-value">{fmtPercent(winProbability)}</p>
+          <p className="pred-card-sub mt-1">
+            {RELIABILITY_LABEL} {fmtPercent(row.confidence)}
           </p>
         </div>
+      </div>
 
-        <div className="grid grid-cols-2 gap-3 text-xs">
-          <div>
-            <p className="text-muted-foreground">Side</p>
-            <p className={cn(
-              "mt-1 font-mono font-medium",
-              row.side.toLowerCase() === "yes" ? "text-positive" : "text-negative",
-            )}>
-              {row.side.toUpperCase()}
-            </p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">{ENTRY_LABEL}</p>
-            <p className="mt-1 font-mono text-foreground">{formatPrice(row.suggested_price)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Edge</p>
-            <p className="mt-1 font-mono text-foreground">{fmtEdge(row.edge)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">{WIN_PROB_LABEL}</p>
-            <p className="mt-1 font-mono text-foreground">{fmtPercent(winProbability)}</p>
-            <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-              {RELIABILITY_LABEL} {fmtPercent(row.confidence)}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={settlementVariant(row.settlement_status)}>
-            {row.settlement_status}
-          </Badge>
-          <Badge variant={outcomeVariant(row.prediction_outcome)}>
-            {row.prediction_outcome}
-          </Badge>
-          <span className="text-xs text-muted-foreground">
-            Settled {fmtDatetime(row.settled_at)}
-          </span>
-        </div>
-      </CardContent>
-    </Card>
+      <div className="pred-card-pills">
+        <span className={cn("outcome-pill", settlementPillClass(row.settlement_status))}>
+          {row.settlement_status}
+        </span>
+        <span className={cn("outcome-pill", outcomePillClass(row.prediction_outcome))}>
+          {row.prediction_outcome}
+        </span>
+        <span className="pred-card-sub">Settled {fmtDatetime(row.settled_at)}</span>
+      </div>
+    </article>
   );
 }
 
@@ -336,11 +332,11 @@ export function PredictionsDesk() {
     ? predsError.message
     : "Unknown error";
   const filteredPredictions = (predictions ?? []).filter((item) => matchesRecommendationViewMode(item, qualityMode));
+  const summaryKpis = summary ? buildSummaryKpis(summary) : null;
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-xl border border-border bg-surface px-3 py-3 sm:px-4">
-        <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+      <div className="cosmos-toolbar">
         <ViewSwitch view={view} onChange={setView} />
         {view === "singles" ? (
           <>
@@ -407,14 +403,14 @@ export function PredictionsDesk() {
           />
         )}
 
-        <div className="flex flex-col gap-2 pt-1 sm:ml-auto sm:flex-row sm:items-center sm:pt-0">
-          <span className="text-xs text-muted-foreground">
+        <div className="cosmos-toolbar-spacer">
+          <span className="cosmos-toolbar-meta">
             {view === "singles" && predictions != null ? `${filteredPredictions.length} predictions · ` : ""}30s refresh
           </span>
           <Button
             variant="ghost"
             size="sm"
-            className="gap-2 justify-start text-muted-foreground sm:justify-center"
+            className="gap-2 text-muted-foreground"
             onClick={handleSettle}
             disabled={settling}
           >
@@ -422,51 +418,54 @@ export function PredictionsDesk() {
             Settle predictions
           </Button>
         </div>
-        </div>
       </div>
 
       {view === "singles" ? (
         <>
           {summaryLoading ? (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="pred-kpis">
               {Array.from({ length: 6 }).map((_, index) => (
-                <Skeleton key={index} className="h-20 w-full rounded-xl" />
+                <Skeleton key={index} className="h-24 w-full rounded-xl" />
               ))}
             </div>
-          ) : summary ? (
-            <SummaryCards summary={summary} />
+          ) : summaryKpis ? (
+            <div className="pred-kpis">
+              {summaryKpis.map((spec) => (
+                <KpiCard key={spec.label} spec={spec} />
+              ))}
+            </div>
           ) : null}
 
-          <Card>
-            <CardHeader className="flex-col items-start gap-1 border-none">
-              <CardTitle>Prediction Ledger</CardTitle>
-              <CardDescription>{EDGE_EXPLANATION}</CardDescription>
-            </CardHeader>
-            <CardContent className="pb-0">
+          <section className="cosmos-panel">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">Prediction Ledger</h2>
+                <p className="cosmos-panel-desc">{EDGE_EXPLANATION}</p>
+              </div>
+            </div>
+            <div className="cosmos-panel-body flush">
               {predsError ? (
-                <div className="flex h-24 items-center justify-center text-center text-xs text-negative">
+                <div className="cosmos-table-empty">
                   Failed to load predictions: {predictionErrorMessage}
                 </div>
               ) : (
                 <>
-                  <div className="space-y-3 lg:hidden">
+                  <div className="space-y-3 p-4 lg:hidden">
                     {predsLoading
                       ? Array.from({ length: 4 }).map((_, index) => (
-                          <Card key={index} className="bg-surface-hover shadow-none">
-                            <CardContent className="space-y-3 px-4 py-4">
-                              <Skeleton className="h-4 w-40" />
-                              <div className="grid grid-cols-2 gap-3">
-                                <Skeleton className="h-10 w-full" />
-                                <Skeleton className="h-10 w-full" />
-                                <Skeleton className="h-10 w-full" />
-                                <Skeleton className="h-10 w-full" />
-                              </div>
-                            </CardContent>
-                          </Card>
+                          <div key={index} className="pred-card">
+                            <Skeleton className="h-4 w-40" />
+                            <div className="pred-card-grid">
+                              <Skeleton className="h-10 w-full" />
+                              <Skeleton className="h-10 w-full" />
+                              <Skeleton className="h-10 w-full" />
+                              <Skeleton className="h-10 w-full" />
+                            </div>
+                          </div>
                         ))
                       : filteredPredictions.length === 0
                         ? (
-                          <div className="flex h-24 items-center justify-center rounded-xl border border-border bg-surface text-center text-xs text-muted-foreground">
+                          <div className="cosmos-table-empty">
                             {hasFilters
                               ? "No predictions matched the current filters."
                               : "No predictions matched the current view yet."}
@@ -477,49 +476,51 @@ export function PredictionsDesk() {
                           ))}
                   </div>
 
-                  <div className="hidden lg:block overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-32">Captured</TableHead>
-                          <TableHead>Market / Subject</TableHead>
-                          <TableHead className="w-20">Sport</TableHead>
-                          <TableHead className="w-24">Side / {ENTRY_LABEL}</TableHead>
-                          <TableHead className="w-20">Edge</TableHead>
-                          <TableHead className="w-24">{WIN_PROB_LABEL}</TableHead>
-                          <TableHead className="w-28">Settlement</TableHead>
-                          <TableHead className="w-24">Outcome</TableHead>
-                          <TableHead className="w-32">Settled At</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {predsLoading
-                          ? Array.from({ length: 8 }).map((_, index) => (
-                              <SkeletonRow key={index} cols={9} />
-                            ))
-                          : filteredPredictions.length === 0
-                            ? (
-                              <TableRow>
-                                <TableCell
-                                  colSpan={9}
-                                  className="py-10 text-center text-xs text-muted-foreground"
-                                >
-                                  {hasFilters
-                                    ? "No predictions matched the current filters."
-                                    : "No predictions matched the current view yet."}
-                                </TableCell>
-                              </TableRow>
-                            )
-                            : filteredPredictions.map((row) => (
-                                <PredictionRow key={row.id} row={row} />
-                              ))}
-                      </TableBody>
-                    </Table>
+                  <div className="hidden lg:block">
+                    <div className="cosmos-table-wrap">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-32">Captured</TableHead>
+                            <TableHead>Market / Subject</TableHead>
+                            <TableHead className="w-20">Sport</TableHead>
+                            <TableHead className="w-24">Side / {ENTRY_LABEL}</TableHead>
+                            <TableHead className="w-20">Edge</TableHead>
+                            <TableHead className="w-24">{WIN_PROB_LABEL}</TableHead>
+                            <TableHead className="w-28">Settlement</TableHead>
+                            <TableHead className="w-24">Outcome</TableHead>
+                            <TableHead className="w-32">Settled At</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {predsLoading
+                            ? Array.from({ length: 8 }).map((_, index) => (
+                                <SkeletonRow key={index} cols={9} />
+                              ))
+                            : filteredPredictions.length === 0
+                              ? (
+                                <TableRow>
+                                  <TableCell
+                                    colSpan={9}
+                                    className="cosmos-table-empty"
+                                  >
+                                    {hasFilters
+                                      ? "No predictions matched the current filters."
+                                      : "No predictions matched the current view yet."}
+                                  </TableCell>
+                                </TableRow>
+                              )
+                              : filteredPredictions.map((row) => (
+                                  <PredictionRow key={row.id} row={row} />
+                                ))}
+                        </TableBody>
+                      </Table>
+                    </div>
                   </div>
                 </>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </>
       ) : (
         <ParlayPredictionsSection

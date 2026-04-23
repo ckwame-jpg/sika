@@ -6,11 +6,8 @@ import { StatsWorkspace } from "@/components/stats/stats-workspace";
 export default function StatsPage() {
   return (
     <>
-      <Header
-        title="Stats"
-        description="Global player query desk across NBA, MLB, NFL, Soccer, and Tennis"
-      />
-      <main className="flex-1 overflow-hidden p-4">
+      <Header title="Stats" description="How sharp has the sky been?" />
+      <main className="flex-1 overflow-y-auto p-4">
         <StatsWorkspace />
       </main>
     </>

@@ -41,25 +41,35 @@ export function TradeTicket({
 
   if (!selection) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-border bg-surface p-6 text-center">
-        <p className="text-sm text-muted-foreground">Select a player prop or game line to start.</p>
+      <div className="trade-ticket empty">
+        <div className="trade-ticket-empty-orb" aria-hidden>
+          <div className="trade-ticket-empty-orb-core" />
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Pick a market to chart its course.
+        </p>
+        <p className="mt-1 text-xs italic text-muted-foreground">
+          The sky is quiet — for now.
+        </p>
       </div>
     );
   }
 
   return (
     <>
-      <div className="flex flex-col gap-4 rounded-2xl border border-border bg-surface p-4" data-testid="trade-ticket">
+      <div className="trade-ticket" data-testid="trade-ticket">
         <div className="space-y-1">
-          <p className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{selection.eventName}</p>
-          <h3 className="text-lg font-semibold text-foreground" data-testid="trade-ticket-title">{selection.displayLabel}</h3>
-          <p className="text-sm text-muted-foreground">
+          <p className="ticket-eyebrow">{selection.eventName}</p>
+          <h3 className="ticket-title" data-testid="trade-ticket-title">
+            {selection.displayLabel}
+          </h3>
+          <p className="ticket-lean">
             {selection.projectedSideLabel
               ? `Model leans ${selection.projectedSideLabel}`
               : `Selected side: ${selection.selectedSide.toUpperCase()}`}
           </p>
           {selection.subjectName && selection.statKey && selection.threshold != null && (
-            <p className="text-xs capitalize text-muted-foreground">
+            <p className="ticket-meta capitalize">
               {selection.subjectName}
               {selection.subjectTeam ? ` · ${selection.subjectTeam}` : ""}
               {` · ${selection.statKey.replace(/_/g, " ")} ${selection.threshold}+`}
@@ -67,32 +77,24 @@ export function TradeTicket({
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-xl border border-border bg-surface-hover px-3 py-2.5">
-            <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-              {selection.selectedSide.toUpperCase()}
-            </p>
-            <p className="mt-1 font-mono text-lg font-semibold text-foreground">
-              {fmtPrice(selection.entryPrice)}
-            </p>
+        <div className="ticket-pair">
+          <div className="ticket-stat">
+            <p className="ticket-stat-label">{selection.selectedSide.toUpperCase()}</p>
+            <p className="ticket-stat-value">{fmtPrice(selection.entryPrice)}</p>
           </div>
-          <div className="rounded-xl border border-border bg-surface-hover px-3 py-2.5">
-            <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Win Prob</p>
-            <p className="mt-1 font-mono text-lg font-semibold text-foreground">
-              {fmtPercent(selection.selectedSideProbability)}
-            </p>
+          <div className="ticket-stat">
+            <p className="ticket-stat-label">Win Prob</p>
+            <p className="ticket-stat-value">{fmtPercent(selection.selectedSideProbability)}</p>
           </div>
-          <div className="rounded-xl border border-border bg-surface-hover px-3 py-2.5">
-            <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Edge</p>
-            <p className={cn("mt-1 font-mono text-lg font-semibold", selection.edge >= 0 ? "text-positive" : "text-negative")}>
+          <div className="ticket-stat">
+            <p className="ticket-stat-label">Edge</p>
+            <p className={cn("ticket-stat-value", selection.edge >= 0 ? "pos" : "neg")}>
               {fmtEdge(selection.edge)}
             </p>
           </div>
-          <div className="rounded-xl border border-border bg-surface-hover px-3 py-2.5">
-            <p className="text-xs uppercase tracking-[0.12em] text-muted-foreground">Confidence</p>
-            <p className="mt-1 font-mono text-lg font-semibold text-foreground">
-              {fmtPercent(selection.confidence)}
-            </p>
+          <div className="ticket-stat">
+            <p className="ticket-stat-label">Confidence</p>
+            <p className="ticket-stat-value accent">{fmtPercent(selection.confidence)}</p>
           </div>
         </div>
 

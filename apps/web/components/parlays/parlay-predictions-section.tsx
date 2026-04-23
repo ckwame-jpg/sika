@@ -4,7 +4,6 @@ import useSWR from "swr";
 import { fetchParlayPredictionSummary, fetchParlayPredictions, keys } from "@/lib/api";
 import type { ParlayPredictionRead, ParlayPredictionSummaryRead } from "@/lib/types";
 import { Badge, SportBadge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
 import {
   Table,
@@ -14,20 +13,24 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Sparkline, randomWalk } from "@/components/ui/sparkline";
 import { cn, edgeClass, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
 import { parseParlayLegCount } from "@/components/parlays/parlay-filter-controls";
 
-function settlementVariant(status: string): "positive" | "warning" | "default" {
-  if (status === "settled") return "positive";
-  if (status === "pending" || status === "unresolved") return "warning";
-  return "default";
+function settlementPillClass(status: string): string {
+  const key = status.toLowerCase();
+  if (key === "settled" || key === "pending" || key === "unresolved") {
+    return key;
+  }
+  return "";
 }
 
-function outcomeVariant(outcome: string): "positive" | "negative" | "warning" | "default" {
-  if (outcome === "won") return "positive";
-  if (outcome === "lost") return "negative";
-  if (outcome === "push") return "warning";
-  return "default";
+function outcomePillClass(outcome: string): string {
+  const key = outcome.toLowerCase();
+  if (key === "won" || key === "lost" || key === "push" || key === "cancelled") {
+    return key;
+  }
+  return "";
 }
 
 function sportScopeLabel(value: string) {
@@ -35,72 +38,84 @@ function sportScopeLabel(value: string) {
   return value;
 }
 
-function ParlaySummaryCards({ summary }: { summary: ParlayPredictionSummaryRead }) {
+function seedFromString(value: string): number {
+  let h = 0;
+  for (let i = 0; i < value.length; i++) {
+    h = (h * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return h || 1;
+}
+
+interface KpiSpec {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "pos" | "neg" | "warn";
+  trendUp: boolean;
+}
+
+function KpiCard({ spec }: { spec: KpiSpec }) {
+  const seed = seedFromString(`parlay-${spec.label}`);
+  const series = randomWalk(14, spec.trendUp, seed);
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Total</p>
-          <p className="mt-1 font-mono text-lg text-foreground">{summary.total_predictions}</p>
-          <p className="text-xs text-muted-foreground">{summary.settled_predictions} settled</p>
-        </CardContent>
-      </Card>
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Pending</p>
-          <p className="mt-1 font-mono text-lg text-foreground">{summary.pending_predictions}</p>
-          <p className="text-xs text-muted-foreground">{summary.unresolved_predictions} unresolved</p>
-        </CardContent>
-      </Card>
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Win Rate</p>
-          <p
-            className={cn(
-              "mt-1 font-mono text-lg",
-              summary.win_rate == null
-                ? "text-muted-foreground"
-                : summary.win_rate >= 0.55
-                  ? "text-positive"
-                  : summary.win_rate >= 0.45
-                    ? "text-warning"
-                    : "text-negative",
-            )}
-          >
-            {fmtPercent(summary.win_rate)}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {summary.won_predictions}W / {summary.lost_predictions}L / {summary.cancelled_predictions}C
-          </p>
-        </CardContent>
-      </Card>
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Avg Edge</p>
-          <p className="mt-1 font-mono text-lg text-foreground">
-            {summary.average_edge != null ? fmtEdge(summary.average_edge) : "—"}
-          </p>
-        </CardContent>
-      </Card>
-      <Card className="bg-surface-hover shadow-none">
-        <CardContent className="px-3 py-3">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Avg PnL</p>
-          <p
-            className={cn(
-              "mt-1 font-mono text-lg",
-              summary.average_realized_pnl == null
-                ? "text-muted-foreground"
-                : summary.average_realized_pnl >= 0
-                  ? "text-positive"
-                  : "text-negative",
-            )}
-          >
-            {fmtContractPnl(summary.average_realized_pnl)}
-          </p>
-        </CardContent>
-      </Card>
+    <div className="trade-kpi">
+      <div className="trade-kpi-orb" aria-hidden />
+      <p className="trade-kpi-label">{spec.label}</p>
+      <p className={cn("trade-kpi-value", spec.tone)}>{spec.value}</p>
+      {spec.sub && <p className="trade-kpi-sub">{spec.sub}</p>}
+      <Sparkline values={series} width={120} height={16} className="trade-kpi-spark" />
     </div>
   );
+}
+
+function buildParlayKpis(summary: ParlayPredictionSummaryRead): KpiSpec[] {
+  const winRateTone =
+    summary.win_rate == null
+      ? undefined
+      : summary.win_rate >= 0.55
+        ? "pos"
+        : summary.win_rate >= 0.45
+          ? "warn"
+          : "neg";
+  const pnlTone =
+    summary.average_realized_pnl == null
+      ? undefined
+      : summary.average_realized_pnl >= 0
+        ? "pos"
+        : "neg";
+
+  return [
+    {
+      label: "Total",
+      value: String(summary.total_predictions),
+      sub: `${summary.settled_predictions} settled`,
+      trendUp: true,
+    },
+    {
+      label: "Pending",
+      value: String(summary.pending_predictions),
+      sub: `${summary.unresolved_predictions} unresolved`,
+      trendUp: false,
+    },
+    {
+      label: "Win Rate",
+      value: fmtPercent(summary.win_rate),
+      sub: `${summary.won_predictions}W / ${summary.lost_predictions}L / ${summary.cancelled_predictions}C`,
+      tone: winRateTone,
+      trendUp: (summary.win_rate ?? 0) >= 0.5,
+    },
+    {
+      label: "Avg Edge",
+      value: summary.average_edge != null ? fmtEdge(summary.average_edge) : "—",
+      trendUp: (summary.average_edge ?? 0) >= 0,
+    },
+    {
+      label: "Avg PnL",
+      value: fmtContractPnl(summary.average_realized_pnl),
+      tone: pnlTone,
+      trendUp: (summary.average_realized_pnl ?? 0) >= 0,
+    },
+  ];
 }
 
 function ParlayPredictionRow({ row }: { row: ParlayPredictionRead }) {
@@ -147,14 +162,14 @@ function ParlayPredictionRow({ row }: { row: ParlayPredictionRead }) {
         {fmtPercent(row.confidence)}
       </TableCell>
       <TableCell>
-        <Badge variant={settlementVariant(row.settlement_status)}>
+        <span className={cn("outcome-pill", settlementPillClass(row.settlement_status))}>
           {row.settlement_status}
-        </Badge>
+        </span>
       </TableCell>
       <TableCell>
-        <Badge variant={outcomeVariant(row.prediction_outcome)}>
+        <span className={cn("outcome-pill", outcomePillClass(row.prediction_outcome))}>
           {row.prediction_outcome}
-        </Badge>
+        </span>
       </TableCell>
       <TableCell className="font-mono text-xs text-muted-foreground">
         {fmtDatetime(row.settled_at)}
@@ -183,35 +198,40 @@ export function ParlayPredictionsSection({
   );
 
   const items = data ?? [];
+  const summaryKpis = summary ? buildParlayKpis(summary) : null;
 
   return (
     <div className="space-y-4">
       {summaryLoading ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="parlay-kpis">
           {Array.from({ length: 5 }).map((_, index) => (
-            <Skeleton key={index} className="h-20 w-full rounded-xl" />
+            <Skeleton key={index} className="h-24 w-full rounded-xl" />
           ))}
         </div>
-      ) : summary ? (
-        <ParlaySummaryCards summary={summary} />
+      ) : summaryKpis ? (
+        <div className="parlay-kpis">
+          {summaryKpis.map((spec) => (
+            <KpiCard key={spec.label} spec={spec} />
+          ))}
+        </div>
       ) : null}
 
-      <Card>
-        <CardHeader className="flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle>Parlay Ledger</CardTitle>
-            <CardDescription>
+      <section className="cosmos-panel">
+        <div className="cosmos-panel-head">
+          <div className="cosmos-panel-head-text">
+            <h2 className="cosmos-panel-title">Parlay Ledger</h2>
+            <p className="cosmos-panel-desc">
               Stored parlay predictions and settlement outcomes for NBA, MLB, and mixed combinations.
-            </CardDescription>
+            </p>
           </div>
-        </CardHeader>
-        <CardContent className="pt-0">
+        </div>
+        <div className="cosmos-panel-body flush">
           {error ? (
-            <div className="flex h-24 items-center justify-center text-xs text-negative">
+            <div className="cosmos-table-empty">
               Failed to load parlay predictions.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="cosmos-table-wrap">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -235,7 +255,7 @@ export function ParlayPredictionsSection({
                     : items.length === 0
                       ? (
                         <TableRow>
-                          <TableCell colSpan={10} className="py-10 text-center text-xs text-muted-foreground">
+                          <TableCell colSpan={10} className="cosmos-table-empty">
                             No parlay predictions matched the current filters.
                           </TableCell>
                         </TableRow>
@@ -247,8 +267,8 @@ export function ParlayPredictionsSection({
               </Table>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
     </div>
   );
 }

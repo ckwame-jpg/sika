@@ -6,7 +6,6 @@ import { DemoOrdersTable } from "@/components/positions/demo-orders-table";
 import { PaperPositionsTable } from "@/components/positions/paper-positions-table";
 import { TradeDialog } from "@/components/positions/trade-dialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus } from "lucide-react";
 
 export default function PaperPositionsPage() {
@@ -31,28 +30,28 @@ export default function PaperPositionsPage() {
       />
       <main className="flex-1 overflow-y-auto p-3 sm:p-4">
         <div className="grid gap-4 xl:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <div>
-                <CardTitle>Paper Positions</CardTitle>
-                <CardDescription>Simulated trades without real money</CardDescription>
+          <section className="cosmos-panel">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">Paper Positions</h2>
+                <p className="cosmos-panel-desc">Simulated trades without real money</p>
               </div>
-            </CardHeader>
-            <CardContent>
+            </div>
+            <div className="cosmos-panel-body flush">
               <PaperPositionsTable />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <div>
-                <CardTitle>Demo Orders</CardTitle>
-                <CardDescription>Orders routed through the Kalshi demo environment</CardDescription>
+            </div>
+          </section>
+          <section className="cosmos-panel">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">Demo Orders</h2>
+                <p className="cosmos-panel-desc">Orders routed through the Kalshi demo environment</p>
               </div>
-            </CardHeader>
-            <CardContent>
+            </div>
+            <div className="cosmos-panel-body flush">
               <DemoOrdersTable />
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </div>
       </main>
 

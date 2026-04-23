@@ -24,3 +24,6 @@ dist/
 coverage/
 .claude/
 .playwright-cli/
+*.tsbuildinfo
+apps/web/test-results/
+sika-handoff/

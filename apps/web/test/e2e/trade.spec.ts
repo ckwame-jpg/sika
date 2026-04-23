@@ -29,6 +29,15 @@ test("trade uses mocked market data and never requests positions", async ({ page
       await route.abort();
       return;
     }
+    if (url.pathname === "/api/product/freshness") {
+      // Shell-level freshness banner — not part of /trade regression scope.
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ overall_status: "fresh", scopes: [] }),
+      });
+      return;
+    }
     unexpectedApiRequests.push(`${url.pathname}${url.search}`);
     await route.fulfill({
       status: 500,
@@ -39,10 +48,16 @@ test("trade uses mocked market data and never requests positions", async ({ page
 
   await page.goto("/trade", { waitUntil: "domcontentloaded" });
 
+  // KPI quad — new Phase 1 testids + values
   await expect(page.getByTestId("trade-kpi-events")).toHaveText("1");
-  await expect(page.getByTestId("trade-kpi-game-lines")).toHaveText("3");
-  await expect(page.getByTestId("trade-kpi-prop-ladders")).toHaveText("2");
-  await expect(page.getByTestId("trade-kpi-thresholds")).toHaveText("4");
+  await expect(page.getByTestId("trade-kpi-candidate-markets")).toHaveText("7");
+  await expect(page.getByTestId("trade-kpi-recommendations")).toHaveText("7");
+  await expect(page.getByTestId("trade-kpi-avg-edge")).toHaveText("+11.2%");
+
+  // Hero chips
+  await expect(page.getByTestId("trade-hero-chip-avg-edge")).toContainText("+11.2%");
+  await expect(page.getByTestId("trade-hero-chip-top-quartile")).toContainText("+10.0%");
+
   await expect(page.getByText("Your Exposure")).toHaveCount(0);
   await expect(page.getByText("Event Context")).toHaveCount(0);
 

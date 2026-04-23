@@ -1,23 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { BarChart3, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { queryStats } from "@/lib/api";
 import { SPORT_LABELS, type SportKey, type StatsQueryRead } from "@/lib/types";
-import { fmtDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
+const SUGGESTIONS = [
+  "Jalen Brunson last 10 games",
+  "Jayson Tatum this season",
+  "LeBron vs BOS · lifetime",
+  "Curry on 2nd night B2B",
+  "Mahomes vs top-10 defenses",
+];
+
+// Keys MUST match SPORT_LABELS / SportKey exactly (uppercase).
 const EXAMPLES: Record<SportKey, string[]> = {
   NBA: ["Jalen Brunson last 10 games", "Jayson Tatum this season"],
   NFL: ["Patrick Mahomes this season", "Josh Allen last 5 games"],
@@ -26,41 +22,17 @@ const EXAMPLES: Record<SportKey, string[]> = {
   TENNIS: ["Novak Djokovic last 5 matches", "Carlos Alcaraz this season"],
 };
 
-function SummaryMetric({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-surface-hover px-3 py-2">
-      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-1 text-sm font-medium text-foreground">{value}</p>
-    </div>
-  );
-}
-
-function metricValue(value: number | null): string {
-  if (value == null) return "—";
-  if (Number.isInteger(value)) return String(value);
-  return value.toFixed(2);
-}
+const CURRENT_SEASON = "2025-26";
+const SEASON_OPTIONS = ["2025-26", "2024-25", "2023-24", "2022-23"];
 
 interface StatsWorkspaceProps {
   initialSport?: SportKey;
-  compact?: boolean;
 }
 
-export function StatsWorkspace({
-  initialSport = "NBA",
-  compact = false,
-}: StatsWorkspaceProps) {
+export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
   const [sportKey, setSportKey] = useState<SportKey>(initialSport);
-  const [question, setQuestion] = useState(EXAMPLES[initialSport][0]);
-  const [season, setSeason] = useState("");
+  const [question, setQuestion] = useState(SUGGESTIONS[0]);
+  const [season, setSeason] = useState(CURRENT_SEASON);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<StatsQueryRead | null>(null);
@@ -71,14 +43,14 @@ export function StatsWorkspace({
       setError("Question is required");
       return;
     }
-
     setLoading(true);
     setError(null);
     try {
+      const seasonYear = season ? Number(season.slice(0, 4)) : undefined;
       const next = await queryStats({
         question: finalQuestion,
         sport_key: sportKey,
-        season: season ? Number(season) : undefined,
+        season: Number.isFinite(seasonYear) ? seasonYear : undefined,
       });
       setQuestion(finalQuestion);
       setResult(next);
@@ -89,201 +61,304 @@ export function StatsWorkspace({
     }
   }
 
-  const examples = EXAMPLES[sportKey];
-  const metricEntries = result
-    ? Object.entries(result.summary.metrics)
-        .filter(([, value]) => value != null)
-        .slice(0, compact ? 4 : 8)
-    : [];
-
   return (
-    <div className="flex h-full flex-col gap-4">
-      <Card className="border-border-bright bg-[linear-gradient(180deg,rgba(19,24,35,0.98),rgba(12,16,24,0.98))]">
-        <CardHeader className="flex-col items-start gap-2 border-none">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-accent/20 bg-accent/10 text-accent">
-              <BarChart3 size={15} />
+    <div className="stats-assistant-wrap" data-testid="stats-workspace">
+      <section className="stats-assistant" data-testid="stats-assistant-card">
+        <div className="sa-header">
+          <div className="sa-icon" aria-hidden>
+            <svg viewBox="0 0 24 24" width="18" height="18">
+              <path d="M3 3v18h18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M7 15l3-4 3 2 4-6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx="17" cy="7" r="1.5" fill="currentColor" />
+            </svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sa-title-row">
+              <span className="sa-eyebrow">Research desk</span>
+              <span className="sa-dot" />
+              <span className="sa-endpoint">/research/stats/query</span>
             </div>
-            <div>
-              <CardTitle>Stats Assistant</CardTitle>
-              <CardDescription>
-                Cross-sport player query desk wired to `/research/stats/query`
-              </CardDescription>
+            <div className="sa-title">Stats Assistant</div>
+            <div className="sa-sub">
+              Cross-sport player query desk. Ask for recent form, season totals, or matchup context
+              across NBA, NFL, MLB, Soccer, and Tennis.
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {examples.map((example) => (
-              <Button
-                key={example}
-                variant="ghost"
-                size="xs"
-                onClick={() => runSearch(example)}
-                className="h-auto rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                <Sparkles size={11} />
-                {example}
-              </Button>
-            ))}
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className={cn("grid gap-3", compact ? "grid-cols-1" : "grid-cols-[minmax(0,1fr)_112px_112px]")}>
-            <Input
+          <span className="sa-status">
+            <span className="sa-live-dot" />
+            <span>ready</span>
+          </span>
+        </div>
+
+        <div className="sa-prompts" role="list">
+          {SUGGESTIONS.map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              className="sa-prompt"
+              onClick={() => runSearch(chip)}
+              data-testid="sa-prompt"
+            >
+              <span className="sa-prompt-mark" aria-hidden>✦</span>
+              <span>{chip}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="sa-input-row">
+          <label className="sa-input">
+            <span className="sa-input-icon" aria-hidden>
+              <svg viewBox="0 0 24 24" width="14" height="14">
+                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                <path d="M20 20l-4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              </svg>
+            </span>
+            <input
+              type="text"
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ask for player form, season output, or last N games"
-              className="h-10"
-            />
-            <Select
-              value={sportKey}
-              onValueChange={(value) => {
-                const nextSport = value as SportKey;
-                setSportKey(nextSport);
-                setQuestion(EXAMPLES[nextSport][0]);
+              placeholder="Ask about a player, team, or matchup…"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") runSearch();
               }}
+              data-testid="sa-input"
+              aria-label="Stats question"
+            />
+            <span className="sa-kbd" aria-hidden>↵</span>
+          </label>
+          <div className="sa-select">
+            <select
+              value={sportKey}
+              onChange={(event) => {
+                const nextSport = event.target.value as SportKey;
+                setSportKey(nextSport);
+                const nextExample = EXAMPLES[nextSport]?.[0];
+                if (nextExample) setQuestion(nextExample);
+              }}
+              aria-label="Sport"
+              data-testid="sa-sport"
             >
-              <SelectTrigger className="h-10">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(SPORT_LABELS).map(([key, label]) => (
-                  <SelectItem key={key} value={key}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input
+              {(Object.entries(SPORT_LABELS) as Array<[SportKey, string]>).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="sa-select">
+            <select
               value={season}
               onChange={(event) => setSeason(event.target.value)}
-              placeholder="Season"
-              className="h-10 font-mono"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => runSearch()}
-              disabled={loading}
+              aria-label="Season"
+              data-testid="sa-season"
             >
-              {loading ? "Querying…" : "Run Query"}
-            </Button>
-            {result && (
-              <p className="text-xs text-muted-foreground">
-                {result.entity_name} · {result.games_analyzed} analyzed · {result.source}
-              </p>
-            )}
+              {SEASON_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
           </div>
-          {error && <p className="text-xs text-negative">{error}</p>}
-        </CardContent>
-      </Card>
-
-      {result ? (
-        <div className={cn("grid flex-1 min-h-0 gap-4", compact ? "grid-cols-1" : "grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]")}>
-          <Card className="min-h-0">
-            <CardHeader className="flex-col items-start gap-1 border-none">
-              <CardTitle>{result.entity_name}</CardTitle>
-              <CardDescription>
-                {result.team_name ?? SPORT_LABELS[result.sport_key as SportKey] ?? result.sport_key} · {result.query_type.replaceAll("_", " ")}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className={cn("grid gap-2", compact ? "grid-cols-2" : "grid-cols-2 xl:grid-cols-4")}>
-                <SummaryMetric label="Games" value={String(result.summary.games)} />
-                <SummaryMetric label="Analyzed" value={String(result.games_analyzed)} />
-                <SummaryMetric label="Season" value={String(result.season)} />
-                <SummaryMetric label="Source" value={result.source} />
-              </div>
-
-              {result.summary.stat_line && (
-                <div className="rounded-lg border border-border bg-surface-hover px-3 py-2.5">
-                  <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
-                    Stat Line
-                  </p>
-                  <p className="mt-1 text-sm text-foreground">{result.summary.stat_line}</p>
-                </div>
-              )}
-
-              <div className={cn("grid gap-2", compact ? "grid-cols-2" : "grid-cols-2 xl:grid-cols-4")}>
-                {metricEntries.map(([key, value]) => (
-                  <SummaryMetric
-                    key={key}
-                    label={result.metric_labels[key] ?? key}
-                    value={metricValue(value)}
-                  />
-                ))}
-              </div>
-
-              <div className="space-y-2 text-sm text-muted-foreground">
-                <p>{result.explanation}</p>
-                {result.coverage_note && (
-                  <p className="rounded-lg border border-warning/20 bg-warning/8 px-3 py-2 text-warning">
-                    {result.coverage_note}
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="min-h-0">
-            <CardHeader className="flex-col items-start gap-1 border-none">
-              <CardTitle>Game Log</CardTitle>
-              <CardDescription>
-                Latest {result.game_logs.length} tracked results
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="min-h-0 pb-0">
-              <ScrollArea className={compact ? "h-[320px]" : "h-[460px]"}>
-                <div className="space-y-2 pr-3">
-                  {result.game_logs.map((game) => (
-                    <div
-                      key={game.game_id}
-                      className="rounded-lg border border-border bg-surface-hover px-3 py-2.5"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium text-foreground">
-                            {game.competition ?? `${game.team_name ?? result.entity_name} vs ${game.opponent}`}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {fmtDate(game.game_date)} · {game.location} · vs {game.opponent}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-mono text-xs text-foreground">
-                            {game.team_score} - {game.opponent_score}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {game.result ?? "—"}
-                          </p>
-                        </div>
-                      </div>
-                      {game.stat_line && (
-                        <p className="mt-2 text-xs text-foreground">{game.stat_line}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            </CardContent>
-          </Card>
+          <button
+            className="sa-run"
+            type="button"
+            onClick={() => runSearch()}
+            disabled={loading}
+            data-testid="sa-run"
+          >
+            {loading ? "Querying…" : "Run query"}
+          </button>
         </div>
-      ) : (
-        <Card className="border-dashed">
-          <CardContent className="flex h-full min-h-[220px] flex-col items-center justify-center gap-2 text-center">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface-hover text-accent">
-              <BarChart3 size={18} />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-foreground">Run a player stats query</p>
-              <p className="text-xs text-muted-foreground">
-                Ask for recent form, season totals, or matchup context across all supported sports.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+        {error && <p className="mt-2 text-xs text-negative" role="alert">{error}</p>}
+      </section>
+
+      <section className="sa-result" data-testid="sa-result">
+        {loading ? (
+          <LoadingState sportKey={sportKey} />
+        ) : result ? (
+          <StatsAnswer result={result} />
+        ) : (
+          <EmptyOrbState />
+        )}
+      </section>
     </div>
+  );
+}
+
+function EmptyOrbState() {
+  return (
+    <div className="sa-result-empty" data-testid="sa-result-empty">
+      <div className="sa-result-orb" aria-hidden />
+      <div className="sa-result-title">Run a player stats query</div>
+      <div className="sa-result-sub">
+        Answers appear here with a compact splits table, a mini trend chart,
+        and the exact source the assistant used.
+      </div>
+    </div>
+  );
+}
+
+function LoadingState({ sportKey }: { sportKey: SportKey }) {
+  return (
+    <div className="sa-result-loading" data-testid="sa-result-loading">
+      <span className="sa-result-bar" />
+      <span className="sa-result-bar" />
+      <span className="sa-result-bar" />
+      <div className="sa-result-scan">scanning {sportKey} logs…</div>
+    </div>
+  );
+}
+
+function StatsAnswer({ result }: { result: StatsQueryRead }) {
+  // Query-aware primary metric: first key in metric_labels, if any.
+  const metricKeys = Object.keys(result.metric_labels);
+  const primaryKey = metricKeys[0];
+
+  // Metric grid: up to 6 populated metrics, labels from backend.
+  const metricEntries = Object.entries(result.summary.metrics)
+    .filter(([, value]) => value != null)
+    .slice(0, 6);
+
+  // Chart data: plot primary metric across first 10 logs.
+  // Skip chart entirely if we have no primaryKey or no logs.
+  const chartPoints: Array<{ value: number; label: string }> = [];
+  if (primaryKey && result.game_logs.length > 0) {
+    for (const g of result.game_logs.slice(0, 10)) {
+      const v = g.metrics?.[primaryKey];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        chartPoints.push({ value: v, label: g.opponent ?? "" });
+      }
+    }
+  }
+  const showChart = chartPoints.length > 0;
+
+  return (
+    <div className="sa-answer" data-testid="sa-answer">
+      <header className="sa-answer-header">
+        <div>
+          <div className="sa-answer-eyebrow">ANSWER · {result.sport_key}</div>
+          <div className="sa-answer-title">{result.entity_name}</div>
+        </div>
+        <span className="sa-answer-source">
+          <span className="sa-live-dot" aria-hidden />
+          <span>
+            {result.games_analyzed} games · {result.query_type.replaceAll("_", " ")}
+          </span>
+        </span>
+      </header>
+
+      {result.summary.stat_line && (
+        <div className="sa-answer-line">{result.summary.stat_line}</div>
+      )}
+
+      <div className="sa-answer-grid">
+        {metricEntries.map(([key, value]) => (
+          <div key={key} className="sa-stat">
+            <div className="sa-stat-l">{result.metric_labels[key] ?? key}</div>
+            <div className="sa-stat-v">
+              {value == null ? "—" : Number.isInteger(value) ? String(value) : value.toFixed(2)}
+            </div>
+            {/* sa-stat-s reserved for backend-provided delta copy when available */}
+          </div>
+        ))}
+      </div>
+
+      {showChart && (
+        <div className="sa-answer-chart" data-testid="sa-answer-chart">
+          <div className="sa-answer-chart-label">
+            <span>{result.metric_labels[primaryKey!] ?? primaryKey} · last {chartPoints.length}</span>
+            <span className="sa-answer-chart-meta">
+              avg {(chartPoints.reduce((s, p) => s + p.value, 0) / chartPoints.length).toFixed(1)}
+            </span>
+          </div>
+          <MiniBars points={chartPoints.map((p) => p.value)} />
+        </div>
+      )}
+
+      {result.explanation && (
+        <p className="sa-answer-explain">{result.explanation}</p>
+      )}
+
+      {result.coverage_note && (
+        <p className="sa-answer-coverage">{result.coverage_note}</p>
+      )}
+
+      {result.game_logs.length > 0 && (
+        <div className="sa-log-list">
+          {result.game_logs.slice(0, 8).map((game) => (
+            <div key={game.game_id} className="sa-log-row">
+              <div className="sa-log-meta">
+                <span className="sa-log-date">{game.game_date}</span>
+                <span className="sa-log-opp">vs {game.opponent}</span>
+                <span className="sa-log-loc">{game.location}</span>
+              </div>
+              <div className="sa-log-score">
+                {game.team_score}–{game.opponent_score}
+                <span className={cn("sa-log-result", game.result === "W" && "pos", game.result === "L" && "neg")}>
+                  {game.result ?? "—"}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="sa-answer-foot">
+        <span>Source: /research/stats/query</span>
+        <span className="sa-dot" />
+        <span>{result.source}</span>
+      </div>
+    </div>
+  );
+}
+
+function MiniBars({ points }: { points: number[] }) {
+  if (points.length === 0) return null;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = Math.max(1, max - min);
+  const mean = points.reduce((s, v) => s + v, 0) / points.length;
+  const W = 400;
+  const H = 90;
+  const PAD_X = 20;
+  const BAR_Y_TOP = 10;
+  const BAR_AREA = 75;
+  const yFor = (v: number) => BAR_Y_TOP + BAR_AREA - ((v - min) / range) * (BAR_AREA - 5);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" width="100%" height="90" role="img" aria-label="Trend chart">
+      <line
+        x1={0}
+        x2={W}
+        y1={yFor(mean)}
+        y2={yFor(mean)}
+        stroke="rgba(255,180,100,0.45)"
+        strokeWidth={1}
+        strokeDasharray="4 4"
+      />
+      {points.map((v, i) => {
+        const x = PAD_X + (i / Math.max(1, points.length - 1)) * (W - 2 * PAD_X);
+        const y = yFor(v);
+        const h = BAR_Y_TOP + BAR_AREA - y;
+        return (
+          <g key={i}>
+            <rect
+              x={x - 10}
+              y={y}
+              width={20}
+              height={h}
+              rx={2}
+              fill={v >= mean ? "rgba(80,220,160,0.7)" : "rgba(255,120,120,0.55)"}
+            />
+            <text
+              x={x}
+              y={y - 5}
+              textAnchor="middle"
+              fill="rgba(210,220,240,0.85)"
+              fontSize="10"
+              fontFamily="JetBrains Mono, monospace"
+            >
+              {Number.isInteger(v) ? v : v.toFixed(1)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
   );
 }
