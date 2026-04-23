@@ -153,6 +153,13 @@ describe("EventsFeed", () => {
     // Score is rendered away – home, not home – away.
     expect(screen.getAllByText("2 – 1").length).toBeGreaterThan(0);
     expect(screen.queryByText("1 – 2")).toBeNull();
+
+    // Sport pill renders the sport label for each fixture row.
+    const sportPillTexts = Array.from(
+      container.querySelectorAll(".sport-pill"),
+    ).map((pill) => pill.textContent ?? "");
+    expect(sportPillTexts.some((text) => text.includes("Soccer"))).toBe(true);
+    expect(sportPillTexts.some((text) => text.includes("NBA"))).toBe(true);
   });
 
   it("renders the final status pill for completed events in day mode", async () => {
@@ -203,6 +210,15 @@ describe("EventsFeed", () => {
     await screen.findAllByText("Alcaraz vs Sinner");
 
     // Appears in the desktop table cell + the mobile card tile.
-    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    const emDashElements = screen.getAllByText("—");
+    expect(emDashElements.length).toBeGreaterThan(0);
+
+    // Em dash is rendered with muted styling in both layouts.
+    const hasMutedStyling = emDashElements.some(
+      (element) =>
+        element.className.includes("text-muted-foreground") ||
+        element.className.includes("muted"),
+    );
+    expect(hasMutedStyling).toBe(true);
   });
 });
