@@ -173,8 +173,21 @@ build_web() {
 }
 
 ensure_web_build() {
-  if [ ! -f "$web_root/.next/BUILD_ID" ]; then
+  local build_id="$web_root/.next/BUILD_ID"
+  if [ ! -f "$build_id" ]; then
     printf 'No local web build found; building once before start.\n'
+    build_web
+    return
+  fi
+  # Rebuild if any source file under apps/web is newer than the last build
+  # marker. Prunes node_modules/.next/.turbo/test-results to avoid self-match
+  # and noise; -print -quit short-circuits on first hit.
+  local newer
+  newer=$(find "$web_root" \
+    \( -path "$web_root/node_modules" -o -path "$web_root/.next" -o -path "$web_root/.turbo" -o -path "$web_root/test-results" \) -prune \
+    -o -type f -newer "$build_id" -print -quit 2>/dev/null)
+  if [ -n "$newer" ]; then
+    printf 'Web source changed since last build; rebuilding.\n'
     build_web
   fi
 }
