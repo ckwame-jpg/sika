@@ -11,7 +11,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge, SportBadge } from "@/components/ui/badge";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
 import {
   eventStatusLabel,
@@ -20,7 +19,51 @@ import {
   fmtDate,
   fmtTime,
   isLive,
+  sportLabel,
 } from "@/lib/utils";
+
+const SPORT_TINTS: Record<string, string> = {
+  nba: "var(--sport-nba)",
+  nfl: "var(--sport-nfl)",
+  mlb: "var(--sport-mlb)",
+  soccer: "var(--sport-soccer)",
+  tennis: "var(--sport-tennis)",
+  ufc: "var(--sport-ufc)",
+};
+
+function sportTint(sportKey: string | null | undefined): string {
+  if (!sportKey) return "var(--color-cosmos-violet-default-tint)";
+  return SPORT_TINTS[sportKey.toLowerCase()] ?? "var(--color-cosmos-violet-default-tint)";
+}
+
+function SportPill({ sportKey }: { sportKey: string }) {
+  const tint = sportTint(sportKey);
+  return (
+    <span
+      className="sport-pill"
+      style={{ ["--tint" as string]: tint }}
+    >
+      <span className="dot" aria-hidden />
+      <span>{sportLabel(sportKey)}</span>
+    </span>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const label = eventStatusLabel(status);
+  if (isLive(status)) {
+    return (
+      <span className="event-status-pill live">
+        <span className="live-dot" aria-hidden />
+        <span>{label}</span>
+      </span>
+    );
+  }
+  if (status === "completed") {
+    return <span className="event-status-pill final">{label}</span>;
+  }
+  return <span className="event-status-pill scheduled">{label}</span>;
+}
 
 function ParticipantScore({
   home,
@@ -29,13 +72,13 @@ function ParticipantScore({
   home: EventParticipantRead | undefined;
   away: EventParticipantRead | undefined;
 }) {
-  if (!home && !away) return <span className="text-muted-foreground">—</span>;
   const hasScore = home?.score != null || away?.score != null;
-  if (!hasScore) return <span className="text-muted-foreground">—</span>;
-
+  if (!hasScore) {
+    return <span className="font-mono text-xs text-muted-foreground">—</span>;
+  }
   return (
-    <span className="font-mono text-xs tabular-nums text-foreground">
-      {home?.score ?? "—"} – {away?.score ?? "—"}
+    <span className="font-mono text-[13px] font-semibold tabular-nums text-foreground tracking-[0.02em]">
+      {away?.score ?? "—"} – {home?.score ?? "—"}
     </span>
   );
 }
@@ -46,33 +89,32 @@ function EventRow({ event }: { event: EventRead }) {
   const live = isLive(event.status);
 
   return (
-    <TableRow>
+    <TableRow className={live ? "event-row-live" : undefined}>
       <TableCell>
-        <SportBadge sport={event.sport_key} />
+        <SportPill sportKey={event.sport_key} />
       </TableCell>
       <TableCell>
         <div className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium text-foreground">{event.name}</span>
-          <span className="text-xs text-muted-foreground">
-            {away?.display_name} @ {home?.display_name}
+          <span className="text-[13.5px] font-medium text-foreground tracking-[-0.005em]">
+            {event.name}
+          </span>
+          <span className="font-mono text-[11px] text-muted-foreground">
+            {away?.display_name ?? "—"} @ {home?.display_name ?? "—"}
           </span>
         </div>
       </TableCell>
-      <TableCell>
+      <TableCell className="text-right">
         <ParticipantScore home={home} away={away} />
       </TableCell>
       <TableCell>
-        <div className="flex items-center gap-1.5">
-          {live && <span className="live-dot" />}
-          <Badge variant={live ? "positive" : "default"}>
-            {eventStatusLabel(event.status)}
-          </Badge>
-        </div>
+        <StatusPill status={event.status} />
       </TableCell>
-      <TableCell>
-        <div className="font-mono text-xs text-muted-foreground">
-          <div>{fmtDate(event.starts_at)}</div>
-          <div>{fmtTime(event.starts_at)}</div>
+      <TableCell className="text-right">
+        <div className={`font-mono text-xs ${live ? "text-positive" : "text-foreground"}`}>
+          {fmtDate(event.starts_at)}
+        </div>
+        <div className="font-mono text-[11px] text-muted-foreground">
+          {fmtTime(event.starts_at)}
         </div>
       </TableCell>
     </TableRow>
@@ -83,38 +125,47 @@ function EventCard({ event }: { event: EventRead }) {
   const home = event.participants.find((participant) => participant.is_home);
   const away = event.participants.find((participant) => !participant.is_home);
   const live = isLive(event.status);
+  const tint = sportTint(event.sport_key);
+  const hasScore = home?.score != null || away?.score != null;
 
   return (
-    <div className="rounded-xl border border-border bg-surface p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <SportBadge sport={event.sport_key} />
-        <Badge variant={live ? "positive" : "default"}>
-          {eventStatusLabel(event.status)}
-        </Badge>
-        <span className="font-mono text-xs text-muted-foreground">
-          {fmtTime(event.starts_at)}
-        </span>
+    <article
+      className="event-card"
+      style={{ ["--sport-tint" as string]: tint }}
+    >
+      <header className="event-card-head">
+        <SportPill sportKey={event.sport_key} />
+        <StatusPill status={event.status} />
+        <span className="event-card-when">{fmtTime(event.starts_at)}</span>
+      </header>
+      <div className="event-card-body">
+        <div className="text-sm font-semibold text-foreground tracking-[-0.01em]">
+          {event.name}
+        </div>
+        <div className="mt-[3px] font-mono text-[11.5px] text-muted-foreground">
+          {away?.display_name ?? "—"} @ {home?.display_name ?? "—"}
+        </div>
       </div>
-      <div className="mt-3 space-y-1">
-        <p className="text-sm font-medium text-foreground">{event.name}</p>
-        <p className="text-xs text-muted-foreground">
-          {away?.display_name} @ {home?.display_name}
-        </p>
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-border bg-surface-hover px-3 py-2.5">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Score</p>
-          <div className="mt-1">
-            <ParticipantScore home={home} away={away} />
+      <div className="event-card-grid">
+        <div className="event-card-tile">
+          <div className="event-card-tile-label">Score</div>
+          <div
+            className={`event-card-tile-value ${hasScore ? "" : "muted"}`}
+          >
+            {hasScore ? `${away?.score ?? "—"} – ${home?.score ?? "—"}` : "—"}
           </div>
         </div>
-        <div className="rounded-lg border border-border bg-surface-hover px-3 py-2.5">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Starts</p>
-          <p className="mt-1 font-mono text-sm text-foreground">{fmtDate(event.starts_at)}</p>
-          <p className="font-mono text-xs text-muted-foreground">{fmtTime(event.starts_at)}</p>
+        <div className="event-card-tile">
+          <div className="event-card-tile-label">Starts</div>
+          <div
+            className={`event-card-tile-value ${live ? "live" : ""}`}
+          >
+            {fmtDate(event.starts_at)}
+          </div>
+          <div className="event-card-tile-sub">{fmtTime(event.starts_at)}</div>
         </div>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -139,8 +190,14 @@ export function EventsFeed({
 
   if (error) {
     return (
-      <div className="flex h-24 items-center justify-center text-xs text-negative">
-        Failed to load events. Is the API running?
+      <div className="rounded-xl border border-negative/30 bg-negative-dim px-4 py-8 text-center">
+        <div className="mx-auto flex h-2 w-2 items-center justify-center">
+          <span className="h-2 w-2 rounded-full bg-negative shadow-[0_0_8px_0_var(--negative)]" />
+        </div>
+        <p className="mt-3 text-sm font-medium text-foreground">Couldn&rsquo;t reach the events feed.</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          The API didn&rsquo;t respond. Check that the backend is running, then try again.
+        </p>
       </div>
     );
   }
@@ -157,14 +214,19 @@ export function EventsFeed({
 
   return (
     <>
-      <div className="space-y-3 lg:hidden">
+      <div className="flex flex-col gap-3 lg:hidden">
         {isLoading
           ? Array.from({ length: compact ? 4 : 6 }).map((_, index) => (
-              <div key={index} className="rounded-xl border border-border bg-surface p-4">
-                <Skeleton className="h-4 w-20" />
-                <Skeleton className="mt-3 h-4 w-3/4" />
-                <Skeleton className="mt-2 h-3 w-1/2" />
-                <div className="mt-4 grid grid-cols-2 gap-3">
+              <div key={index} className="event-card">
+                <div className="event-card-head">
+                  <Skeleton className="h-5 w-16" />
+                  <Skeleton className="h-5 w-14" />
+                </div>
+                <div className="event-card-body">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="mt-2 h-3 w-1/2" />
+                </div>
+                <div className="event-card-grid">
                   <Skeleton className="h-14 w-full" />
                   <Skeleton className="h-14 w-full" />
                 </div>
@@ -172,40 +234,40 @@ export function EventsFeed({
             ))
           : filtered.length === 0
             ? (
-              <div className="rounded-xl border border-dashed border-border bg-surface px-4 py-8 text-center text-sm text-muted-foreground">
-                {emptyMessage}
-              </div>
+              <div className="event-card-empty">{emptyMessage}</div>
             )
             : filtered.map((event) => <EventCard key={event.id} event={event} />)}
       </div>
 
-      <div className="hidden lg:block overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-20">Sport</TableHead>
-              <TableHead>Event</TableHead>
-              <TableHead className="w-20">Score</TableHead>
-              <TableHead className="w-28">Status</TableHead>
-              <TableHead className="w-28">Starts</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading
-              ? Array.from({ length: compact ? 5 : 8 }).map((_, index) => (
-                  <SkeletonRow key={index} cols={5} />
-                ))
-              : filtered.length === 0
-                ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="py-8 text-center text-xs text-muted-foreground">
-                      {emptyMessage}
-                    </TableCell>
-                  </TableRow>
-                )
-                : filtered.map((event) => <EventRow key={event.id} event={event} />)}
-          </TableBody>
-        </Table>
+      <div className="hidden lg:block">
+        <div className="cosmos-table-wrap">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-20">Sport</TableHead>
+                <TableHead>Event</TableHead>
+                <TableHead className="w-20 text-right">Score</TableHead>
+                <TableHead className="w-28">Status</TableHead>
+                <TableHead className="w-32 text-right">Starts</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading
+                ? Array.from({ length: compact ? 5 : 8 }).map((_, index) => (
+                    <SkeletonRow key={index} cols={5} />
+                  ))
+                : filtered.length === 0
+                  ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="cosmos-table-empty">
+                        {emptyMessage}
+                      </TableCell>
+                    </TableRow>
+                  )
+                  : filtered.map((event) => <EventRow key={event.id} event={event} />)}
+            </TableBody>
+          </Table>
+        </div>
       </div>
     </>
   );

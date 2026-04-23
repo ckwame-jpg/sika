@@ -14,21 +14,15 @@ function EventsContent() {
   const [day, setDay] = useState<string>(today);
 
   return (
-    <div className="flex min-h-full flex-col">
-      <div className="flex flex-col gap-2 border-b border-border bg-surface px-3 py-3 sm:px-5">
-        <div className="flex items-center justify-between gap-2 sm:justify-start">
-          <span className="text-xs text-muted-foreground">Sport</span>
-          <SportFilterSelect triggerClassName="h-8 w-[min(200px,60vw)] text-xs sm:w-[140px]" />
-        </div>
-        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground sm:justify-start">
-          <span>Date</span>
-          <Input
-            type="date"
-            className="h-8 w-[min(200px,60vw)] text-xs sm:w-40"
-            value={day}
-            onChange={(event) => setDay(event.target.value || today)}
-          />
-        </div>
+    <div className="flex min-h-full flex-col gap-4 p-3 sm:p-4">
+      <div className="cosmos-toolbar">
+        <SportFilterSelect triggerClassName="h-8 w-full text-xs sm:w-[140px]" />
+        <Input
+          type="date"
+          className="h-8 w-full text-xs sm:w-40"
+          value={day}
+          onChange={(event) => setDay(event.target.value || today)}
+        />
         <Button
           variant="ghost"
           size="sm"
@@ -37,14 +31,14 @@ function EventsContent() {
         >
           Today
         </Button>
-        <span className="text-xs text-muted-foreground lg:ml-auto">
-          Local date filter · 30s refresh
-        </span>
+        <div className="cosmos-toolbar-spacer">
+          <span className="cosmos-toolbar-meta">
+            Local date filter · 30s refresh
+          </span>
+        </div>
       </div>
 
-      <div className="p-3 sm:p-4">
-        <EventsFeed sport={sport} day={day} mode="day" />
-      </div>
+      <EventsFeed sport={sport} day={day} mode="day" />
     </div>
   );
 }

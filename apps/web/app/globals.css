@@ -873,6 +873,88 @@
   display: flex;
   flex-direction: column;
 }
+.event-card-body {
+  padding: 12px 16px 14px;
+}
+.event-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0 16px 14px;
+}
+.event-card-tile {
+  border: 1px solid var(--color-cosmos-border-soft);
+  border-radius: 8px;
+  background: var(--surface-hover);
+  padding: 10px 12px;
+}
+.event-card-tile-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-cosmos-text-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+.event-card-tile-value {
+  margin-top: 4px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-cosmos-text-bright);
+}
+.event-card-tile-value.muted { color: var(--color-cosmos-text-muted); font-weight: 500; }
+.event-card-tile-value.live { color: var(--color-cosmos-outcome-won-fg); }
+.event-card-tile-sub {
+  margin-top: 2px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--color-cosmos-text-muted);
+}
+.event-card-empty {
+  padding: 32px 14px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-cosmos-text-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  border: 1px dashed var(--color-cosmos-border-soft);
+  border-radius: 12px;
+  background: var(--color-cosmos-surface-dim);
+}
+
+.event-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--color-cosmos-border-soft);
+  background: var(--surface-hover);
+  color: var(--color-cosmos-text-muted);
+  white-space: nowrap;
+}
+.event-status-pill.live {
+  border-color: var(--color-cosmos-outcome-won-border);
+  background: var(--color-cosmos-outcome-won-bg);
+  color: var(--color-cosmos-outcome-won-fg);
+}
+.event-status-pill.final {
+  border-color: var(--color-cosmos-border-soft);
+  background: var(--surface-hover);
+  color: var(--color-cosmos-text-muted);
+}
+.event-status-pill.scheduled {
+  border-style: dashed;
+}
+.cosmos-table-wrap tbody tr.event-row-live {
+  background: var(--color-cosmos-outcome-won-bg);
+}
+.cosmos-table-wrap tbody tr.event-row-live:hover {
+  background: var(--color-cosmos-outcome-won-bg);
+}
 
 .sport-pill {
   display: inline-flex;
