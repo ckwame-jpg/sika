@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
+source_path="${BASH_SOURCE[0]}"
+while [ -L "$source_path" ]; do
+  source_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+  source_target="$(readlink "$source_path")"
+  if [[ "$source_target" == /* ]]; then
+    source_path="$source_target"
+  else
+    source_path="$source_dir/$source_target"
+  fi
+done
+
+script_dir="$(cd -P "$(dirname "$source_path")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd -P)"
+server_script="$repo_root/scripts/laptop-server.sh"
+
+usage() {
+  cat <<EOF
+Usage: sika [command] [args]
+
+Commands:
+  open, start    Start SIKA and open Trade/Runs. Default when no command is given.
+  stop          Stop the local SIKA server.
+  restart       Restart the local SIKA server.
+  status        Show server process and API health status.
+  health        Print API health and product freshness.
+  research      Ask the admin-only research endpoint.
+  refresh       Queue a current-slate refresh.
+  logs [name]   Tail logs. name: supervisor, api, web, all. Default: all.
+  storage       Show laptop/Docker/SIKA storage usage.
+  cleanup       Clean disposable local artifacts. Add --yes to make changes.
+  db:up         Start local Postgres.
+  build         Build the local web app.
+  help          Show this help.
+EOF
+}
+
+command="${1:-open}"
+case "$command" in
+  open|start)
+    shift || true
+    exec "$server_script" open "$@"
+    ;;
+  research)
+    shift || true
+    exec node "$repo_root/scripts/sika-research.mjs" "$@"
+    ;;
+  stop|restart|status|health|refresh|logs|storage|cleanup|db:up|build)
+    shift || true
+    exec "$server_script" "$command" "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    printf 'Unknown sika command: %s\n\n' "$command" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
