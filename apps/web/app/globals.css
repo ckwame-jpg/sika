@@ -2360,6 +2360,11 @@
   font-weight: 600;
 }
 .sa-log-result { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+/* §7.1 open: .pos resolves via --color-cosmos-success-hsl (Form A); .neg
+   literal has no sub-JND match in the cosmos palette (≥17-unit RGB
+   channel delta vs --color-cosmos-neg) and is single-use per §5.3 —
+   stays inline until CD decides on a parallel danger-role token or
+   accepts a visual shift. See DESIGN_SYSTEM.md §7.1. */
 .sa-log-result.pos { color: hsl(var(--color-cosmos-success-hsl) / 0.95); }
 .sa-log-result.neg { color: rgba(255, 120, 120, 0.9); }
 
