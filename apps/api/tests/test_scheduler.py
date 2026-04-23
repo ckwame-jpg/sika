@@ -434,6 +434,32 @@ def test_process_refresh_job_queue_once_requeues_prop_refresh_after_transient_ht
     assert "connection reset by peer" in job.details["last_transient_error"]
 
 
+def test_requeue_interrupted_jobs_releases_orphaned_running_work(db_session):
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="running",
+        started_at=datetime(2026, 4, 3, 12, 0, tzinfo=timezone.utc),
+        details={"phase": "combo_discovery_page"},
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    recovered = refresh_jobs.requeue_interrupted_jobs(
+        db_session,
+        now=datetime(2026, 4, 3, 12, 5, tzinfo=timezone.utc),
+    )
+
+    assert recovered == 1
+    assert job.status == "queued"
+    assert job.started_at is None
+    assert job.finished_at is None
+    assert job.error_message is None
+    assert job.details["phase"] == "combo_discovery_page"
+    assert job.details["interrupted_requeued_at"] == "2026-04-03T12:05:00+00:00"
+
+
 def test_runtime_state_summarizes_pending_combo_legs_for_health_payloads(db_session, monkeypatch, client):
     job = RefreshJob(
         kind="prop_refresh",

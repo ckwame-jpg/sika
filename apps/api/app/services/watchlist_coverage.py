@@ -41,7 +41,8 @@ def _coverage_day_window(now: datetime | None = None) -> tuple[datetime, datetim
     reference_now = _coerce_utc(_coverage_reference_now(now)) or datetime.now(timezone.utc)
     local_tz = _coverage_timezone()
     local_day_start = datetime.combine(reference_now.astimezone(local_tz).date(), time.min, tzinfo=local_tz)
-    local_day_end = local_day_start + timedelta(days=1)
+    lookahead_days = max(0, int(get_settings().current_slate_lookahead_days or 0))
+    local_day_end = local_day_start + timedelta(days=1 + lookahead_days)
     return local_day_start.astimezone(timezone.utc), local_day_end.astimezone(timezone.utc)
 
 
@@ -71,10 +72,8 @@ def is_current_watchlist_status(
     if normalized_status == "in_progress":
         return starts_at_utc >= _in_progress_cutoff(reference_now)
 
-    local_tz = _coverage_timezone()
-    event_local_date = starts_at_utc.astimezone(local_tz).date()
-    current_local_date = reference_now.astimezone(local_tz).date()
-    return event_local_date == current_local_date
+    day_start, day_end = _coverage_day_window(reference_now)
+    return starts_at_utc >= day_start and starts_at_utc < day_end
 
 
 def is_current_watchlist_event(event: Event | None, *, now: datetime | None = None) -> bool:

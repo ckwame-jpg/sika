@@ -343,6 +343,13 @@ export interface RunSummaryCounts {
   current_slate_scored_market_count: number;
   current_slate_coverage_prediction_count: number;
   current_slate_blocking_reason: string | null;
+  current_slate_matched_event_count: number;
+  current_slate_hydrated_event_ticker_count: number;
+  current_slate_open_markets_persisted: number;
+  current_slate_targeted_discovery_used: boolean;
+  current_slate_broad_market_fallback_used: boolean;
+  current_slate_unmatched_event_count: number;
+  current_slate_discovered_market_count: number;
   scorer_outcome_counts: Record<string, number>;
   recommendations_emitted: number;
   predictions_captured: number;
@@ -414,6 +421,13 @@ export interface WatchlistDiagnosticsRead {
   latest_current_slate_scored_market_count: number;
   latest_current_slate_coverage_prediction_count: number;
   latest_current_slate_blocking_reason: string | null;
+  latest_current_slate_matched_event_count: number;
+  latest_current_slate_hydrated_event_ticker_count: number;
+  latest_current_slate_open_markets_persisted: number;
+  latest_current_slate_targeted_discovery_used: boolean;
+  latest_current_slate_broad_market_fallback_used: boolean;
+  latest_current_slate_unmatched_event_count: number;
+  latest_current_slate_discovered_market_count: number;
   latest_scorer_outcome_counts: Record<string, number>;
   latest_watchlist_counts_by_sport: Record<string, number>;
   current_recommendation_count: number;
@@ -548,6 +562,137 @@ export interface DemoOrderRead {
 export interface PositionsRead {
   paper_positions: PaperPositionRead[];
   demo_orders: DemoOrderRead[];
+}
+
+export interface LiveFillRead {
+  id: number;
+  live_order_id: number;
+  kalshi_fill_id: string | null;
+  count: number;
+  price: number;
+  side: string;
+  created_at: string;
+  raw_data: Record<string, unknown>;
+}
+
+export interface LiveOrderRead {
+  id: number;
+  environment: string;
+  source: string;
+  auto_trade_run_id: number | null;
+  market_id: number | null;
+  ticker: string;
+  client_order_id: string;
+  kalshi_order_id: string | null;
+  side: string;
+  action: string;
+  quantity: number;
+  limit_price: number;
+  max_cost_cents: number;
+  time_in_force: string;
+  cancel_order_on_pause: boolean;
+  status: string;
+  submitted_at: string | null;
+  last_synced_at: string | null;
+  fills: LiveFillRead[];
+}
+
+export interface KalshiAccountSnapshotRead {
+  id: number;
+  environment: string;
+  balance_cents: number | null;
+  portfolio_value_cents: number | null;
+  open_positions_count: number;
+  open_orders_count: number;
+  payload: Record<string, unknown>;
+  captured_at: string;
+}
+
+export interface KalshiAccountRead {
+  environment: string;
+  credentials_configured: boolean;
+  snapshot: KalshiAccountSnapshotRead | null;
+  live_orders: LiveOrderRead[];
+  live_fills: LiveFillRead[];
+}
+
+export interface AutoTradeDecisionRead {
+  id: number;
+  run_id: number;
+  recommendation_id: number | null;
+  market_id: number | null;
+  live_order_id: number | null;
+  ticker: string;
+  sport_key: string | null;
+  side: string;
+  action: string;
+  limit_price: number | null;
+  quantity: number;
+  max_cost_cents: number;
+  edge: number | null;
+  confidence: number | null;
+  selection_score: number | null;
+  status: string;
+  skip_reason: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AutoTradeRunRead {
+  id: number;
+  strategy_key: string;
+  local_trade_date: string;
+  requested_by: string;
+  status: string;
+  budget_cents: number;
+  spent_cents: number;
+  candidate_count: number;
+  submitted_order_count: number;
+  skipped_reason: string | null;
+  error_message: string | null;
+  details: Record<string, unknown>;
+  started_at: string;
+  finished_at: string | null;
+  decisions: AutoTradeDecisionRead[];
+  orders: LiveOrderRead[];
+}
+
+export interface AutoTradingStatusRead {
+  enabled_by_env: boolean;
+  kill_switch_active: boolean;
+  effective_enabled: boolean;
+  daily_budget_cents: number;
+  spent_today_cents: number;
+  remaining_budget_cents: number;
+  max_orders_per_day: number;
+  local_trade_date: string;
+  local_run_time: string;
+  market_scope: string;
+  allow_parlays: boolean;
+  live_credentials_configured: boolean;
+  latest_run: AutoTradeRunRead | null;
+  latest_account_snapshot: KalshiAccountSnapshotRead | null;
+}
+
+export interface AnalystChatRequest {
+  message: string;
+  sport_key?: string;
+  season?: number;
+  include_web?: boolean;
+}
+
+export interface ResearchCitationRead {
+  title: string;
+  url: string;
+}
+
+export interface AnalystChatResponse {
+  message: string;
+  model: string;
+  context: Record<string, unknown>;
+  citations: ResearchCitationRead[];
+  used_web_search: boolean;
+  mode: "internal_only" | "internal_plus_web" | "internal_fallback";
 }
 
 export interface PaperPositionCreate {

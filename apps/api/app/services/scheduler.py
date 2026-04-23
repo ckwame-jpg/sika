@@ -13,12 +13,14 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.models import EspnPlayerGamelogCache, Event, RefreshJob, Run
 from app.services.ingestion import run_refresh_cycle
+from app.services.live_trading import parse_auto_trade_local_time
 from app.services.orders import reconcile_demo_state
 from app.services.refresh_jobs import (
     active_job_for_kind,
     enqueue_refresh_job,
     latest_job_for_kind,
     process_refresh_job_queue_once,
+    requeue_interrupted_jobs,
     reconcile_stale_jobs as reconcile_stale_refresh_jobs,
 )
 
@@ -243,6 +245,10 @@ def _queue_cleanup_job() -> bool:
     return _queue_job(kind="cleanup", scope="retention", reason="interval")
 
 
+def _queue_auto_trade_job(reason: str = "scheduled") -> bool:
+    return _queue_job(kind="auto_trade", scope="daily", reason=reason)
+
+
 def queue_startup_refresh_if_stale() -> bool:
     if not startup_refresh_needed():
         return False
@@ -357,6 +363,11 @@ def start_scheduler() -> None:
     settings = get_settings()
     if not settings.scheduler_enabled or scheduler.running:
         return
+    with SessionLocal() as db:
+        recovered = requeue_interrupted_jobs(db)
+        if recovered:
+            logger.warning("Requeued %s interrupted refresh job(s) after API startup", recovered)
+        db.commit()
     enqueue_check_seconds = max(settings.queue_poll_interval_seconds, 30)
     scheduler.add_job(
         _process_refresh_queue_job,
@@ -395,6 +406,15 @@ def start_scheduler() -> None:
         trigger=CronTrigger(minute="*/15"),
         id="demo_reconcile",
         replace_existing=True,
+    )
+    auto_trade_time = parse_auto_trade_local_time(settings)
+    scheduler.add_job(
+        lambda: _queue_auto_trade_job("scheduled"),
+        trigger=CronTrigger(hour=auto_trade_time.hour, minute=auto_trade_time.minute),
+        id="auto_trade_daily_enqueue",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
     )
     scheduler.start()
     schedule_event_refreshes()

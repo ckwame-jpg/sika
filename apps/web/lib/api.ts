@@ -1,11 +1,16 @@
 import type { Schema } from "@kalshi-sports-copilot/contracts";
 
 import type {
+  AnalystChatRequest,
+  AnalystChatResponse,
+  AutoTradeRunRead,
+  AutoTradingStatusRead,
   DemoOrderCreate,
   DemoOrderRead,
   EventRead,
   HealthResponse,
   JobRefreshResponse,
+  KalshiAccountRead,
   MarketDetailRead,
   MarketHistoryRead,
   ModelFamilyReadinessRead,
@@ -35,6 +40,22 @@ export type ProductFreshnessResponse = Schema<"ProductFreshnessResponse">;
 export type ProductScopeFreshnessRead = Schema<"ProductScopeFreshnessRead">;
 
 const BASE = "/api";
+
+type QueryValue = string | number | readonly (string | number)[] | undefined;
+
+function queryString(args?: Record<string, QueryValue>) {
+  return new URLSearchParams(
+    Object.entries(args ?? {}).flatMap(([key, value]) => {
+      if (value == null || value === "") return [];
+      if (Array.isArray(value)) {
+        return value.flatMap((entry) =>
+          entry == null || entry === "" ? [] : [[key, String(entry)]],
+        );
+      }
+      return [[key, String(value)]];
+    }),
+  ).toString();
+}
 
 async function request<T>(
   path: string,
@@ -85,6 +106,10 @@ async function request<T>(
   throw lastError ?? new Error("Request failed");
 }
 
+function adminHeaders(adminToken: string): HeadersInit {
+  return { "X-Sika-Admin-Token": adminToken };
+}
+
 export const fetchHealth = () => request<HealthResponse>("/health");
 export const fetchProductFreshness = () =>
   request<ProductFreshnessResponse>("/product/freshness");
@@ -125,6 +150,54 @@ export const submitDemoOrder = (body: DemoOrderCreate) =>
 
 export const cancelDemoOrder = (id: number) =>
   request<DemoOrderRead>(`/demo-orders/${id}/cancel`, { method: "POST" });
+
+export const fetchAutoTradingStatus = (adminToken: string) =>
+  request<AutoTradingStatusRead>("/ops/auto-trading/status", {
+    headers: adminHeaders(adminToken),
+  });
+
+export const fetchAutoTradeRuns = (adminToken: string, limit = 20) =>
+  request<AutoTradeRunRead[]>(`/ops/auto-trading/runs?limit=${limit}`, {
+    headers: adminHeaders(adminToken),
+  });
+
+export const fetchAutoTradeRun = (adminToken: string, id: number) =>
+  request<AutoTradeRunRead>(`/ops/auto-trading/runs/${id}`, {
+    headers: adminHeaders(adminToken),
+  });
+
+export const runAutoTradingNow = (adminToken: string) =>
+  request<AutoTradeRunRead>("/ops/auto-trading/run-now", {
+    method: "POST",
+    headers: adminHeaders(adminToken),
+  });
+
+export const disableAutoTrading = (adminToken: string) =>
+  request<AutoTradingStatusRead>("/ops/auto-trading/disable", {
+    method: "POST",
+    headers: adminHeaders(adminToken),
+  });
+
+export const enableAutoTrading = (adminToken: string) =>
+  request<AutoTradingStatusRead>("/ops/auto-trading/enable", {
+    method: "POST",
+    headers: adminHeaders(adminToken),
+  });
+
+export const fetchKalshiAccount = (adminToken: string, refresh = false) =>
+  request<KalshiAccountRead>(`/ops/kalshi/account?refresh=${refresh ? "true" : "false"}`, {
+    headers: adminHeaders(adminToken),
+  });
+
+export const sendResearchQuery = (adminToken: string, body: AnalystChatRequest) =>
+  request<AnalystChatResponse>("/ops/research/query", {
+    method: "POST",
+    headers: adminHeaders(adminToken),
+    body: JSON.stringify(body),
+  });
+
+export const sendAnalystChat = (adminToken: string, body: AnalystChatRequest) =>
+  sendResearchQuery(adminToken, body);
 
 export const fetchMarket = (ticker: string) =>
   request<MarketDetailRead>(`/markets/${encodeURIComponent(ticker)}`);
@@ -176,6 +249,7 @@ export const fetchPredictionSummary = (
   options: {
     sport?: string;
     market_family?: string;
+    market_families?: string[];
     stat_key?: string;
     outcome?: string;
     captured_from?: string;
@@ -185,6 +259,7 @@ export const fetchPredictionSummary = (
   const params = new URLSearchParams();
   if (options.sport) params.set("sport", options.sport);
   if (options.market_family) params.set("market_family", options.market_family);
+  options.market_families?.forEach((family) => params.append("market_families", family));
   if (options.stat_key) params.set("stat_key", options.stat_key);
   if (options.outcome) params.set("outcome", options.outcome);
   if (options.captured_from) params.set("captured_from", options.captured_from);
@@ -238,24 +313,19 @@ export const keys = {
     `/events?sport=${sport ?? ""}&day=${day ?? ""}`,
   watchlistDiagnostics: "/ops/watchlist/diagnostics",
   positions: "/positions",
+  autoTradingStatus: "/ops/auto-trading/status",
+  autoTradeRuns: "/ops/auto-trading/runs",
+  kalshiAccount: "/ops/kalshi/account",
   market: (ticker: string) => `/markets/${ticker}`,
   marketHistory: (ticker: string, range: string) =>
     `/markets/${ticker}/history?range=${range}`,
   runs: "/ops/runs",
   run: (id: number) => `/ops/runs/${id}`,
   refreshJob: (id: number) => `/ops/jobs/${id}`,
-  predictions: (args?: Record<string, string | number | undefined>) =>
-    `/predictions?${new URLSearchParams(
-      Object.entries(args ?? {}).flatMap(([key, value]) =>
-        value == null || value === "" ? [] : [[key, String(value)]],
-      ),
-    ).toString()}`,
-  predictionSummary: (args?: Record<string, string | number | undefined>) =>
-    `/predictions/summary?${new URLSearchParams(
-      Object.entries(args ?? {}).flatMap(([key, value]) =>
-        value == null || value === "" ? [] : [[key, String(value)]],
-      ),
-    ).toString()}`,
+  predictions: (args?: Record<string, QueryValue>) =>
+    `/predictions?${queryString(args)}`,
+  predictionSummary: (args?: Record<string, QueryValue>) =>
+    `/predictions/summary?${queryString(args)}`,
   modelReadinessSummary: "/ops/models/readiness",
   modelReadinessDetail: (familyKey: string) => `/ops/models/readiness/${familyKey}`,
   parlayPredictions: (sportScope = "all", legCount?: number, limit = 100) =>

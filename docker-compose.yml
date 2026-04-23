@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     container_name: kalshi-sports-copilot-db
     environment:
       POSTGRES_DB: kalshi_sports_copilot
@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - kalshi_sports_copilot_pgdata:/var/lib/postgresql/data
+      - kalshi_sports_copilot_pgdata_v18_cluster:/var/lib/postgresql
 
 volumes:
-  kalshi_sports_copilot_pgdata:
+  kalshi_sports_copilot_pgdata_v18_cluster:

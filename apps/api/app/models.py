@@ -528,6 +528,127 @@ class DemoFill(Base):
     order = relationship("DemoOrder", back_populates="fills")
 
 
+class AutoTradeControl(Base):
+    __tablename__ = "auto_trade_controls"
+
+    id = Column(Integer, primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=True)
+    disabled_at = Column(DateTime(timezone=True), nullable=True)
+    disabled_reason = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class AutoTradeRun(Base):
+    __tablename__ = "auto_trade_runs"
+    __table_args__ = (
+        UniqueConstraint("local_trade_date", "strategy_key", name="uq_auto_trade_runs_local_date_strategy"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    strategy_key = Column(String, nullable=False, index=True)
+    local_trade_date = Column(String, nullable=False, index=True)
+    requested_by = Column(String, nullable=False, default="scheduled")
+    status = Column(String, nullable=False, default="running", index=True)
+    budget_cents = Column(Integer, nullable=False, default=0)
+    spent_cents = Column(Integer, nullable=False, default=0)
+    candidate_count = Column(Integer, nullable=False, default=0)
+    submitted_order_count = Column(Integer, nullable=False, default=0)
+    skipped_reason = Column(String, nullable=True)
+    error_message = Column(Text, nullable=True)
+    details = Column(JSON, default=dict)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+    decisions = relationship("AutoTradeDecision", back_populates="run", cascade="all, delete-orphan")
+    orders = relationship("LiveOrder", back_populates="auto_trade_run")
+
+
+class LiveOrder(Base):
+    __tablename__ = "live_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    environment = Column(String, nullable=False, default="production", index=True)
+    source = Column(String, nullable=False, default="auto_trade", index=True)
+    auto_trade_run_id = Column(Integer, ForeignKey("auto_trade_runs.id"), nullable=True, index=True)
+    market_id = Column(Integer, ForeignKey("markets.id"), nullable=True, index=True)
+    ticker = Column(String, nullable=False, index=True)
+    client_order_id = Column(String, unique=True, nullable=False, index=True)
+    kalshi_order_id = Column(String, nullable=True, index=True)
+    side = Column(String, nullable=False)
+    action = Column(String, nullable=False, default="buy")
+    quantity = Column(Integer, nullable=False)
+    limit_price = Column(Float, nullable=False)
+    max_cost_cents = Column(Integer, nullable=False, default=0)
+    time_in_force = Column(String, nullable=False, default="fill_or_kill")
+    cancel_order_on_pause = Column(Boolean, nullable=False, default=True)
+    status = Column(String, nullable=False, default="pending_submission", index=True)
+    request_body = Column(JSON, default=dict)
+    response_body = Column(JSON, default=dict)
+    submitted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+
+    auto_trade_run = relationship("AutoTradeRun", back_populates="orders")
+    market = relationship("Market")
+    fills = relationship("LiveFill", back_populates="order", cascade="all, delete-orphan")
+
+
+class AutoTradeDecision(Base):
+    __tablename__ = "auto_trade_decisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("auto_trade_runs.id"), nullable=False, index=True)
+    recommendation_id = Column(Integer, ForeignKey("recommendations.id"), nullable=True, index=True)
+    market_id = Column(Integer, ForeignKey("markets.id"), nullable=True, index=True)
+    live_order_id = Column(Integer, ForeignKey("live_orders.id"), nullable=True, index=True)
+    ticker = Column(String, nullable=False, index=True)
+    sport_key = Column(String, nullable=True, index=True)
+    side = Column(String, nullable=False)
+    action = Column(String, nullable=False, default="buy")
+    limit_price = Column(Float, nullable=True)
+    quantity = Column(Integer, nullable=False, default=0)
+    max_cost_cents = Column(Integer, nullable=False, default=0)
+    edge = Column(Float, nullable=True)
+    confidence = Column(Float, nullable=True)
+    selection_score = Column(Float, nullable=True)
+    status = Column(String, nullable=False, default="candidate", index=True)
+    skip_reason = Column(String, nullable=True, index=True)
+    payload = Column(JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+
+    run = relationship("AutoTradeRun", back_populates="decisions")
+    recommendation = relationship("Recommendation")
+    market = relationship("Market")
+    live_order = relationship("LiveOrder")
+
+
+class LiveFill(Base):
+    __tablename__ = "live_fills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    live_order_id = Column(Integer, ForeignKey("live_orders.id"), nullable=False, index=True)
+    kalshi_fill_id = Column(String, unique=True, nullable=True, index=True)
+    count = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    side = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    raw_data = Column(JSON, default=dict)
+
+    order = relationship("LiveOrder", back_populates="fills")
+
+
+class KalshiAccountSnapshot(Base):
+    __tablename__ = "kalshi_account_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    environment = Column(String, nullable=False, default="production", index=True)
+    balance_cents = Column(Integer, nullable=True)
+    portfolio_value_cents = Column(Integer, nullable=True)
+    open_positions_count = Column(Integer, nullable=False, default=0)
+    open_orders_count = Column(Integer, nullable=False, default=0)
+    payload = Column(JSON, default=dict)
+    captured_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+
+
 class Run(Base):
     __tablename__ = "runs"
 

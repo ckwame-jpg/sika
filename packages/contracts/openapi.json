@@ -1,6 +1,448 @@
 {
   "components": {
     "schemas": {
+      "AnalystChatRequest": {
+        "properties": {
+          "include_web": {
+            "default": true,
+            "title": "Include Web",
+            "type": "boolean"
+          },
+          "message": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "AnalystChatRequest",
+        "type": "object"
+      },
+      "AnalystChatResponse": {
+        "properties": {
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/ResearchCitationRead"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "context": {
+            "additionalProperties": true,
+            "title": "Context",
+            "type": "object"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "mode": {
+            "default": "internal_only",
+            "enum": [
+              "internal_only",
+              "internal_plus_web",
+              "internal_fallback"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "used_web_search": {
+            "default": false,
+            "title": "Used Web Search",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message",
+          "model"
+        ],
+        "title": "AnalystChatResponse",
+        "type": "object"
+      },
+      "AutoTradeDecisionRead": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "edge": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edge"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "limit_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit Price"
+          },
+          "live_order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Order Id"
+          },
+          "market_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Id"
+          },
+          "max_cost_cents": {
+            "title": "Max Cost Cents",
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "recommendation_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation Id"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "selection_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection Score"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Reason"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "ticker",
+          "side",
+          "action",
+          "quantity",
+          "max_cost_cents",
+          "status",
+          "created_at"
+        ],
+        "title": "AutoTradeDecisionRead",
+        "type": "object"
+      },
+      "AutoTradeRunRead": {
+        "properties": {
+          "budget_cents": {
+            "title": "Budget Cents",
+            "type": "integer"
+          },
+          "candidate_count": {
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/AutoTradeDecisionRead"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "local_trade_date": {
+            "title": "Local Trade Date",
+            "type": "string"
+          },
+          "orders": {
+            "items": {
+              "$ref": "#/components/schemas/LiveOrderRead"
+            },
+            "title": "Orders",
+            "type": "array"
+          },
+          "requested_by": {
+            "title": "Requested By",
+            "type": "string"
+          },
+          "skipped_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped Reason"
+          },
+          "spent_cents": {
+            "title": "Spent Cents",
+            "type": "integer"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "strategy_key": {
+            "title": "Strategy Key",
+            "type": "string"
+          },
+          "submitted_order_count": {
+            "title": "Submitted Order Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "strategy_key",
+          "local_trade_date",
+          "requested_by",
+          "status",
+          "budget_cents",
+          "spent_cents",
+          "candidate_count",
+          "submitted_order_count",
+          "started_at"
+        ],
+        "title": "AutoTradeRunRead",
+        "type": "object"
+      },
+      "AutoTradingStatusRead": {
+        "properties": {
+          "allow_parlays": {
+            "title": "Allow Parlays",
+            "type": "boolean"
+          },
+          "daily_budget_cents": {
+            "title": "Daily Budget Cents",
+            "type": "integer"
+          },
+          "effective_enabled": {
+            "title": "Effective Enabled",
+            "type": "boolean"
+          },
+          "enabled_by_env": {
+            "title": "Enabled By Env",
+            "type": "boolean"
+          },
+          "kill_switch_active": {
+            "title": "Kill Switch Active",
+            "type": "boolean"
+          },
+          "latest_account_snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KalshiAccountSnapshotRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutoTradeRunRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "live_credentials_configured": {
+            "title": "Live Credentials Configured",
+            "type": "boolean"
+          },
+          "local_run_time": {
+            "title": "Local Run Time",
+            "type": "string"
+          },
+          "local_trade_date": {
+            "title": "Local Trade Date",
+            "type": "string"
+          },
+          "market_scope": {
+            "title": "Market Scope",
+            "type": "string"
+          },
+          "max_orders_per_day": {
+            "title": "Max Orders Per Day",
+            "type": "integer"
+          },
+          "remaining_budget_cents": {
+            "title": "Remaining Budget Cents",
+            "type": "integer"
+          },
+          "spent_today_cents": {
+            "title": "Spent Today Cents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled_by_env",
+          "kill_switch_active",
+          "effective_enabled",
+          "daily_budget_cents",
+          "spent_today_cents",
+          "remaining_budget_cents",
+          "max_orders_per_day",
+          "local_trade_date",
+          "local_run_time",
+          "market_scope",
+          "allow_parlays",
+          "live_credentials_configured"
+        ],
+        "title": "AutoTradingStatusRead",
+        "type": "object"
+      },
       "DemoOrderCreate": {
         "properties": {
           "action": {
@@ -452,6 +894,297 @@
           "status"
         ],
         "title": "JobRefreshResponse",
+        "type": "object"
+      },
+      "KalshiAccountRead": {
+        "properties": {
+          "credentials_configured": {
+            "title": "Credentials Configured",
+            "type": "boolean"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "live_fills": {
+            "items": {
+              "$ref": "#/components/schemas/LiveFillRead"
+            },
+            "title": "Live Fills",
+            "type": "array"
+          },
+          "live_orders": {
+            "items": {
+              "$ref": "#/components/schemas/LiveOrderRead"
+            },
+            "title": "Live Orders",
+            "type": "array"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KalshiAccountSnapshotRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "environment",
+          "credentials_configured"
+        ],
+        "title": "KalshiAccountRead",
+        "type": "object"
+      },
+      "KalshiAccountSnapshotRead": {
+        "properties": {
+          "balance_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Balance Cents"
+          },
+          "captured_at": {
+            "title": "Captured At",
+            "type": "string"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "open_orders_count": {
+            "title": "Open Orders Count",
+            "type": "integer"
+          },
+          "open_positions_count": {
+            "title": "Open Positions Count",
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "portfolio_value_cents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfolio Value Cents"
+          }
+        },
+        "required": [
+          "id",
+          "environment",
+          "open_positions_count",
+          "open_orders_count",
+          "captured_at"
+        ],
+        "title": "KalshiAccountSnapshotRead",
+        "type": "object"
+      },
+      "LiveFillRead": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "number"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kalshi_fill_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kalshi Fill Id"
+          },
+          "live_order_id": {
+            "title": "Live Order Id",
+            "type": "integer"
+          },
+          "price": {
+            "title": "Price",
+            "type": "number"
+          },
+          "raw_data": {
+            "additionalProperties": true,
+            "title": "Raw Data",
+            "type": "object"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "live_order_id",
+          "count",
+          "price",
+          "side",
+          "created_at"
+        ],
+        "title": "LiveFillRead",
+        "type": "object"
+      },
+      "LiveOrderRead": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "auto_trade_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Trade Run Id"
+          },
+          "cancel_order_on_pause": {
+            "title": "Cancel Order On Pause",
+            "type": "boolean"
+          },
+          "client_order_id": {
+            "title": "Client Order Id",
+            "type": "string"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/LiveFillRead"
+            },
+            "title": "Fills",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kalshi_order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kalshi Order Id"
+          },
+          "last_synced_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Synced At"
+          },
+          "limit_price": {
+            "title": "Limit Price",
+            "type": "number"
+          },
+          "market_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Id"
+          },
+          "max_cost_cents": {
+            "title": "Max Cost Cents",
+            "type": "integer"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "time_in_force": {
+            "title": "Time In Force",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "environment",
+          "source",
+          "ticker",
+          "client_order_id",
+          "side",
+          "action",
+          "quantity",
+          "limit_price",
+          "max_cost_cents",
+          "time_in_force",
+          "cancel_order_on_pause",
+          "status"
+        ],
+        "title": "LiveOrderRead",
         "type": "object"
       },
       "MarketDetailRead": {
@@ -3569,6 +4302,24 @@
         "title": "RefreshJobRead",
         "type": "object"
       },
+      "ResearchCitationRead": {
+        "properties": {
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "url"
+        ],
+        "title": "ResearchCitationRead",
+        "type": "object"
+      },
       "RunDetailRead": {
         "properties": {
           "details": {
@@ -3730,6 +4481,11 @@
             ],
             "title": "Current Slate Blocking Reason"
           },
+          "current_slate_broad_market_fallback_used": {
+            "default": false,
+            "title": "Current Slate Broad Market Fallback Used",
+            "type": "boolean"
+          },
           "current_slate_candidate_filter_reason_counts": {
             "additionalProperties": {
               "type": "integer"
@@ -3747,6 +4503,11 @@
             "title": "Current Slate Coverage Prediction Count",
             "type": "integer"
           },
+          "current_slate_discovered_market_count": {
+            "default": 0,
+            "title": "Current Slate Discovered Market Count",
+            "type": "integer"
+          },
           "current_slate_event_count": {
             "default": 0,
             "title": "Current Slate Event Count",
@@ -3757,14 +4518,39 @@
             "title": "Current Slate Filtered Candidate Market Count",
             "type": "integer"
           },
+          "current_slate_hydrated_event_ticker_count": {
+            "default": 0,
+            "title": "Current Slate Hydrated Event Ticker Count",
+            "type": "integer"
+          },
           "current_slate_loaded_candidate_market_count": {
             "default": 0,
             "title": "Current Slate Loaded Candidate Market Count",
             "type": "integer"
           },
+          "current_slate_matched_event_count": {
+            "default": 0,
+            "title": "Current Slate Matched Event Count",
+            "type": "integer"
+          },
+          "current_slate_open_markets_persisted": {
+            "default": 0,
+            "title": "Current Slate Open Markets Persisted",
+            "type": "integer"
+          },
           "current_slate_scored_market_count": {
             "default": 0,
             "title": "Current Slate Scored Market Count",
+            "type": "integer"
+          },
+          "current_slate_targeted_discovery_used": {
+            "default": false,
+            "title": "Current Slate Targeted Discovery Used",
+            "type": "boolean"
+          },
+          "current_slate_unmatched_event_count": {
+            "default": 0,
+            "title": "Current Slate Unmatched Event Count",
             "type": "integer"
           },
           "gamelog_cache_hits": {
@@ -5108,6 +5894,11 @@
             ],
             "title": "Latest Current Slate Blocking Reason"
           },
+          "latest_current_slate_broad_market_fallback_used": {
+            "default": false,
+            "title": "Latest Current Slate Broad Market Fallback Used",
+            "type": "boolean"
+          },
           "latest_current_slate_candidate_filter_reason_counts": {
             "additionalProperties": {
               "type": "integer"
@@ -5125,6 +5916,11 @@
             "title": "Latest Current Slate Coverage Prediction Count",
             "type": "integer"
           },
+          "latest_current_slate_discovered_market_count": {
+            "default": 0,
+            "title": "Latest Current Slate Discovered Market Count",
+            "type": "integer"
+          },
           "latest_current_slate_event_count": {
             "default": 0,
             "title": "Latest Current Slate Event Count",
@@ -5135,14 +5931,39 @@
             "title": "Latest Current Slate Filtered Candidate Market Count",
             "type": "integer"
           },
+          "latest_current_slate_hydrated_event_ticker_count": {
+            "default": 0,
+            "title": "Latest Current Slate Hydrated Event Ticker Count",
+            "type": "integer"
+          },
           "latest_current_slate_loaded_candidate_market_count": {
             "default": 0,
             "title": "Latest Current Slate Loaded Candidate Market Count",
             "type": "integer"
           },
+          "latest_current_slate_matched_event_count": {
+            "default": 0,
+            "title": "Latest Current Slate Matched Event Count",
+            "type": "integer"
+          },
+          "latest_current_slate_open_markets_persisted": {
+            "default": 0,
+            "title": "Latest Current Slate Open Markets Persisted",
+            "type": "integer"
+          },
           "latest_current_slate_scored_market_count": {
             "default": 0,
             "title": "Latest Current Slate Scored Market Count",
+            "type": "integer"
+          },
+          "latest_current_slate_targeted_discovery_used": {
+            "default": false,
+            "title": "Latest Current Slate Targeted Discovery Used",
+            "type": "boolean"
+          },
+          "latest_current_slate_unmatched_event_count": {
+            "default": 0,
+            "title": "Latest Current Slate Unmatched Event Count",
             "type": "integer"
           },
           "latest_prop_refresh_job": {
@@ -5676,6 +6497,382 @@
         "summary": "Get Market History"
       }
     },
+    "/ops/auto-trading/disable": {
+      "post": {
+        "operationId": "disable_live_auto_trading_ops_auto_trading_disable_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-sika-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sika-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoTradingStatusRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disable Live Auto Trading",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/auto-trading/enable": {
+      "post": {
+        "operationId": "enable_live_auto_trading_ops_auto_trading_enable_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-sika-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sika-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoTradingStatusRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enable Live Auto Trading",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/auto-trading/run-now": {
+      "post": {
+        "operationId": "run_auto_trading_now_ops_auto_trading_run_now_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-sika-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sika-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoTradeRunRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Auto Trading Now",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/auto-trading/runs": {
+      "get": {
+        "operationId": "list_auto_trade_runs_ops_auto_trading_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-sika-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sika-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AutoTradeRunRead"
+                  },
+                  "title": "Response List Auto Trade Runs Ops Auto Trading Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Auto Trade Runs",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/auto-trading/runs/{run_id}": {
+      "get": {
+        "operationId": "get_auto_trade_run_ops_auto_trading_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-sika-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sika-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoTradeRunRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Auto Trade Run",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/auto-trading/status": {
+      "get": {
+        "operationId": "get_auto_trading_status_ops_auto_trading_status_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-sika-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sika-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoTradingStatusRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Auto Trading Status",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/chat/analyst": {
+      "post": {
+        "operationId": "chat_with_site_analyst_ops_chat_analyst_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-sika-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sika-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalystChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalystChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat With Site Analyst",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/ops/jobs/refresh": {
       "post": {
         "operationId": "refresh_jobs_ops_jobs_refresh_post",
@@ -5760,6 +6957,65 @@
         ]
       }
     },
+    "/ops/kalshi/account": {
+      "get": {
+        "operationId": "get_live_kalshi_account_ops_kalshi_account_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "refresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Refresh",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-sika-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sika-Admin-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KalshiAccountRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Live Kalshi Account",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/ops/models/readiness": {
       "get": {
         "operationId": "model_readiness_summary_ops_models_readiness_get",
@@ -5818,6 +7074,65 @@
           }
         },
         "summary": "Model Readiness Detail",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/research/query": {
+      "post": {
+        "operationId": "query_site_research_endpoint_ops_research_query_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-sika-admin-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Sika-Admin-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalystChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalystChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Site Research Endpoint",
         "tags": [
           "ops"
         ]
@@ -6442,6 +7757,25 @@
                 }
               ],
               "title": "Market Family"
+            }
+          },
+          {
+            "in": "query",
+            "name": "market_families",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Market Families"
             }
           },
           {

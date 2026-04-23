@@ -397,6 +397,13 @@ class RunSummaryCounts(BaseModel):
     current_slate_scored_market_count: int = 0
     current_slate_coverage_prediction_count: int = 0
     current_slate_blocking_reason: str | None = None
+    current_slate_matched_event_count: int = 0
+    current_slate_hydrated_event_ticker_count: int = 0
+    current_slate_open_markets_persisted: int = 0
+    current_slate_targeted_discovery_used: bool = False
+    current_slate_broad_market_fallback_used: bool = False
+    current_slate_unmatched_event_count: int = 0
+    current_slate_discovered_market_count: int = 0
     scorer_outcome_counts: dict[str, int] = Field(default_factory=dict)
     recommendations_emitted: int = 0
     predictions_captured: int = 0
@@ -468,6 +475,13 @@ class WatchlistDiagnosticsRead(BaseModel):
     latest_current_slate_scored_market_count: int = 0
     latest_current_slate_coverage_prediction_count: int = 0
     latest_current_slate_blocking_reason: str | None = None
+    latest_current_slate_matched_event_count: int = 0
+    latest_current_slate_hydrated_event_ticker_count: int = 0
+    latest_current_slate_open_markets_persisted: int = 0
+    latest_current_slate_targeted_discovery_used: bool = False
+    latest_current_slate_broad_market_fallback_used: bool = False
+    latest_current_slate_unmatched_event_count: int = 0
+    latest_current_slate_discovered_market_count: int = 0
     latest_scorer_outcome_counts: dict[str, int] = Field(default_factory=dict)
     latest_watchlist_counts_by_sport: dict[str, int] = Field(default_factory=dict)
     current_recommendation_count: int = 0
@@ -641,6 +655,147 @@ class DemoOrderRead(BaseModel):
 class PositionsRead(BaseModel):
     paper_positions: list[PaperPositionRead]
     demo_orders: list[DemoOrderRead]
+
+
+class LiveFillRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    live_order_id: int
+    kalshi_fill_id: str | None = None
+    count: float
+    price: float
+    side: str
+    created_at: UTCDateTime
+    raw_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class LiveOrderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    environment: str
+    source: str
+    auto_trade_run_id: int | None = None
+    market_id: int | None = None
+    ticker: str
+    client_order_id: str
+    kalshi_order_id: str | None = None
+    side: str
+    action: str
+    quantity: int
+    limit_price: float
+    max_cost_cents: int
+    time_in_force: str
+    cancel_order_on_pause: bool
+    status: str
+    submitted_at: UTCDateTime | None = None
+    last_synced_at: UTCDateTime | None = None
+    fills: list[LiveFillRead] = Field(default_factory=list)
+
+
+class KalshiAccountSnapshotRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    environment: str
+    balance_cents: int | None = None
+    portfolio_value_cents: int | None = None
+    open_positions_count: int
+    open_orders_count: int
+    payload: dict[str, Any] = Field(default_factory=dict)
+    captured_at: UTCDateTime
+
+
+class KalshiAccountRead(BaseModel):
+    environment: str
+    credentials_configured: bool
+    snapshot: KalshiAccountSnapshotRead | None = None
+    live_orders: list[LiveOrderRead] = Field(default_factory=list)
+    live_fills: list[LiveFillRead] = Field(default_factory=list)
+
+
+class AutoTradeDecisionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_id: int
+    recommendation_id: int | None = None
+    market_id: int | None = None
+    live_order_id: int | None = None
+    ticker: str
+    sport_key: str | None = None
+    side: str
+    action: str
+    limit_price: float | None = None
+    quantity: int
+    max_cost_cents: int
+    edge: float | None = None
+    confidence: float | None = None
+    selection_score: float | None = None
+    status: str
+    skip_reason: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: UTCDateTime
+
+
+class AutoTradeRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    strategy_key: str
+    local_trade_date: str
+    requested_by: str
+    status: str
+    budget_cents: int
+    spent_cents: int
+    candidate_count: int
+    submitted_order_count: int
+    skipped_reason: str | None = None
+    error_message: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    started_at: UTCDateTime
+    finished_at: UTCDateTime | None = None
+    decisions: list[AutoTradeDecisionRead] = Field(default_factory=list)
+    orders: list[LiveOrderRead] = Field(default_factory=list)
+
+
+class AutoTradingStatusRead(BaseModel):
+    enabled_by_env: bool
+    kill_switch_active: bool
+    effective_enabled: bool
+    daily_budget_cents: int
+    spent_today_cents: int
+    remaining_budget_cents: int
+    max_orders_per_day: int
+    local_trade_date: str
+    local_run_time: str
+    market_scope: str
+    allow_parlays: bool
+    live_credentials_configured: bool
+    latest_run: AutoTradeRunRead | None = None
+    latest_account_snapshot: KalshiAccountSnapshotRead | None = None
+
+
+class AnalystChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    sport_key: str | None = None
+    season: int | None = None
+    include_web: bool = True
+
+
+class ResearchCitationRead(BaseModel):
+    title: str
+    url: str
+
+
+class AnalystChatResponse(BaseModel):
+    message: str
+    model: str
+    context: dict[str, Any] = Field(default_factory=dict)
+    citations: list[ResearchCitationRead] = Field(default_factory=list)
+    used_web_search: bool = False
+    mode: Literal["internal_only", "internal_plus_web", "internal_fallback"] = "internal_only"
 
 
 class JobRefreshResponse(BaseModel):

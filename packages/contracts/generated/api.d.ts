@@ -123,6 +123,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/auto-trading/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable Live Auto Trading */
+        post: operations["disable_live_auto_trading_ops_auto_trading_disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/auto-trading/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enable Live Auto Trading */
+        post: operations["enable_live_auto_trading_ops_auto_trading_enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/auto-trading/run-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Auto Trading Now */
+        post: operations["run_auto_trading_now_ops_auto_trading_run_now_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/auto-trading/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Auto Trade Runs */
+        get: operations["list_auto_trade_runs_ops_auto_trading_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/auto-trading/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Auto Trade Run */
+        get: operations["get_auto_trade_run_ops_auto_trading_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/auto-trading/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Auto Trading Status */
+        get: operations["get_auto_trading_status_ops_auto_trading_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/chat/analyst": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Chat With Site Analyst */
+        post: operations["chat_with_site_analyst_ops_chat_analyst_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/jobs/refresh": {
         parameters: {
             query?: never;
@@ -174,6 +293,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/kalshi/account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Live Kalshi Account */
+        get: operations["get_live_kalshi_account_ops_kalshi_account_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/models/readiness": {
         parameters: {
             query?: never;
@@ -202,6 +338,23 @@ export interface paths {
         get: operations["model_readiness_detail_ops_models_readiness__family_key__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/research/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Query Site Research Endpoint */
+        post: operations["query_site_research_endpoint_ops_research_query_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -555,6 +708,153 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AnalystChatRequest */
+        AnalystChatRequest: {
+            /**
+             * Include Web
+             * @default true
+             */
+            include_web: boolean;
+            /** Message */
+            message: string;
+            /** Season */
+            season?: number | null;
+            /** Sport Key */
+            sport_key?: string | null;
+        };
+        /** AnalystChatResponse */
+        AnalystChatResponse: {
+            /** Citations */
+            citations?: components["schemas"]["ResearchCitationRead"][];
+            /** Context */
+            context?: {
+                [key: string]: unknown;
+            };
+            /** Message */
+            message: string;
+            /**
+             * Mode
+             * @default internal_only
+             * @enum {string}
+             */
+            mode: "internal_only" | "internal_plus_web" | "internal_fallback";
+            /** Model */
+            model: string;
+            /**
+             * Used Web Search
+             * @default false
+             */
+            used_web_search: boolean;
+        };
+        /** AutoTradeDecisionRead */
+        AutoTradeDecisionRead: {
+            /** Action */
+            action: string;
+            /** Confidence */
+            confidence?: number | null;
+            /** Created At */
+            created_at: string;
+            /** Edge */
+            edge?: number | null;
+            /** Id */
+            id: number;
+            /** Limit Price */
+            limit_price?: number | null;
+            /** Live Order Id */
+            live_order_id?: number | null;
+            /** Market Id */
+            market_id?: number | null;
+            /** Max Cost Cents */
+            max_cost_cents: number;
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            };
+            /** Quantity */
+            quantity: number;
+            /** Recommendation Id */
+            recommendation_id?: number | null;
+            /** Run Id */
+            run_id: number;
+            /** Selection Score */
+            selection_score?: number | null;
+            /** Side */
+            side: string;
+            /** Skip Reason */
+            skip_reason?: string | null;
+            /** Sport Key */
+            sport_key?: string | null;
+            /** Status */
+            status: string;
+            /** Ticker */
+            ticker: string;
+        };
+        /** AutoTradeRunRead */
+        AutoTradeRunRead: {
+            /** Budget Cents */
+            budget_cents: number;
+            /** Candidate Count */
+            candidate_count: number;
+            /** Decisions */
+            decisions?: components["schemas"]["AutoTradeDecisionRead"][];
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            };
+            /** Error Message */
+            error_message?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Id */
+            id: number;
+            /** Local Trade Date */
+            local_trade_date: string;
+            /** Orders */
+            orders?: components["schemas"]["LiveOrderRead"][];
+            /** Requested By */
+            requested_by: string;
+            /** Skipped Reason */
+            skipped_reason?: string | null;
+            /** Spent Cents */
+            spent_cents: number;
+            /** Started At */
+            started_at: string;
+            /** Status */
+            status: string;
+            /** Strategy Key */
+            strategy_key: string;
+            /** Submitted Order Count */
+            submitted_order_count: number;
+        };
+        /** AutoTradingStatusRead */
+        AutoTradingStatusRead: {
+            /** Allow Parlays */
+            allow_parlays: boolean;
+            /** Daily Budget Cents */
+            daily_budget_cents: number;
+            /** Effective Enabled */
+            effective_enabled: boolean;
+            /** Enabled By Env */
+            enabled_by_env: boolean;
+            /** Kill Switch Active */
+            kill_switch_active: boolean;
+            latest_account_snapshot?: components["schemas"]["KalshiAccountSnapshotRead"] | null;
+            latest_run?: components["schemas"]["AutoTradeRunRead"] | null;
+            /** Live Credentials Configured */
+            live_credentials_configured: boolean;
+            /** Local Run Time */
+            local_run_time: string;
+            /** Local Trade Date */
+            local_trade_date: string;
+            /** Market Scope */
+            market_scope: string;
+            /** Max Orders Per Day */
+            max_orders_per_day: number;
+            /** Remaining Budget Cents */
+            remaining_budget_cents: number;
+            /** Spent Today Cents */
+            spent_today_cents: number;
+        };
         /** DemoOrderCreate */
         DemoOrderCreate: {
             /**
@@ -709,6 +1009,101 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "running" | "completed" | "failed";
+        };
+        /** KalshiAccountRead */
+        KalshiAccountRead: {
+            /** Credentials Configured */
+            credentials_configured: boolean;
+            /** Environment */
+            environment: string;
+            /** Live Fills */
+            live_fills?: components["schemas"]["LiveFillRead"][];
+            /** Live Orders */
+            live_orders?: components["schemas"]["LiveOrderRead"][];
+            snapshot?: components["schemas"]["KalshiAccountSnapshotRead"] | null;
+        };
+        /** KalshiAccountSnapshotRead */
+        KalshiAccountSnapshotRead: {
+            /** Balance Cents */
+            balance_cents?: number | null;
+            /** Captured At */
+            captured_at: string;
+            /** Environment */
+            environment: string;
+            /** Id */
+            id: number;
+            /** Open Orders Count */
+            open_orders_count: number;
+            /** Open Positions Count */
+            open_positions_count: number;
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            };
+            /** Portfolio Value Cents */
+            portfolio_value_cents?: number | null;
+        };
+        /** LiveFillRead */
+        LiveFillRead: {
+            /** Count */
+            count: number;
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: number;
+            /** Kalshi Fill Id */
+            kalshi_fill_id?: string | null;
+            /** Live Order Id */
+            live_order_id: number;
+            /** Price */
+            price: number;
+            /** Raw Data */
+            raw_data?: {
+                [key: string]: unknown;
+            };
+            /** Side */
+            side: string;
+        };
+        /** LiveOrderRead */
+        LiveOrderRead: {
+            /** Action */
+            action: string;
+            /** Auto Trade Run Id */
+            auto_trade_run_id?: number | null;
+            /** Cancel Order On Pause */
+            cancel_order_on_pause: boolean;
+            /** Client Order Id */
+            client_order_id: string;
+            /** Environment */
+            environment: string;
+            /** Fills */
+            fills?: components["schemas"]["LiveFillRead"][];
+            /** Id */
+            id: number;
+            /** Kalshi Order Id */
+            kalshi_order_id?: string | null;
+            /** Last Synced At */
+            last_synced_at?: string | null;
+            /** Limit Price */
+            limit_price: number;
+            /** Market Id */
+            market_id?: number | null;
+            /** Max Cost Cents */
+            max_cost_cents: number;
+            /** Quantity */
+            quantity: number;
+            /** Side */
+            side: string;
+            /** Source */
+            source: string;
+            /** Status */
+            status: string;
+            /** Submitted At */
+            submitted_at?: string | null;
+            /** Ticker */
+            ticker: string;
+            /** Time In Force */
+            time_in_force: string;
         };
         /** MarketDetailRead */
         MarketDetailRead: {
@@ -1610,6 +2005,13 @@ export interface components {
              */
             status: "queued" | "running" | "completed" | "failed";
         };
+        /** ResearchCitationRead */
+        ResearchCitationRead: {
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+        };
         /** RunDetailRead */
         RunDetailRead: {
             /** Details */
@@ -1679,6 +2081,11 @@ export interface components {
             critical_context_suppressed: number;
             /** Current Slate Blocking Reason */
             current_slate_blocking_reason?: string | null;
+            /**
+             * Current Slate Broad Market Fallback Used
+             * @default false
+             */
+            current_slate_broad_market_fallback_used: boolean;
             /** Current Slate Candidate Filter Reason Counts */
             current_slate_candidate_filter_reason_counts?: {
                 [key: string]: number;
@@ -1694,6 +2101,11 @@ export interface components {
              */
             current_slate_coverage_prediction_count: number;
             /**
+             * Current Slate Discovered Market Count
+             * @default 0
+             */
+            current_slate_discovered_market_count: number;
+            /**
              * Current Slate Event Count
              * @default 0
              */
@@ -1704,15 +2116,40 @@ export interface components {
              */
             current_slate_filtered_candidate_market_count: number;
             /**
+             * Current Slate Hydrated Event Ticker Count
+             * @default 0
+             */
+            current_slate_hydrated_event_ticker_count: number;
+            /**
              * Current Slate Loaded Candidate Market Count
              * @default 0
              */
             current_slate_loaded_candidate_market_count: number;
             /**
+             * Current Slate Matched Event Count
+             * @default 0
+             */
+            current_slate_matched_event_count: number;
+            /**
+             * Current Slate Open Markets Persisted
+             * @default 0
+             */
+            current_slate_open_markets_persisted: number;
+            /**
              * Current Slate Scored Market Count
              * @default 0
              */
             current_slate_scored_market_count: number;
+            /**
+             * Current Slate Targeted Discovery Used
+             * @default false
+             */
+            current_slate_targeted_discovery_used: boolean;
+            /**
+             * Current Slate Unmatched Event Count
+             * @default 0
+             */
+            current_slate_unmatched_event_count: number;
             /**
              * Gamelog Cache Hits
              * @default 0
@@ -2216,6 +2653,11 @@ export interface components {
             last_successful_refresh_at?: string | null;
             /** Latest Current Slate Blocking Reason */
             latest_current_slate_blocking_reason?: string | null;
+            /**
+             * Latest Current Slate Broad Market Fallback Used
+             * @default false
+             */
+            latest_current_slate_broad_market_fallback_used: boolean;
             /** Latest Current Slate Candidate Filter Reason Counts */
             latest_current_slate_candidate_filter_reason_counts?: {
                 [key: string]: number;
@@ -2231,6 +2673,11 @@ export interface components {
              */
             latest_current_slate_coverage_prediction_count: number;
             /**
+             * Latest Current Slate Discovered Market Count
+             * @default 0
+             */
+            latest_current_slate_discovered_market_count: number;
+            /**
              * Latest Current Slate Event Count
              * @default 0
              */
@@ -2241,15 +2688,40 @@ export interface components {
              */
             latest_current_slate_filtered_candidate_market_count: number;
             /**
+             * Latest Current Slate Hydrated Event Ticker Count
+             * @default 0
+             */
+            latest_current_slate_hydrated_event_ticker_count: number;
+            /**
              * Latest Current Slate Loaded Candidate Market Count
              * @default 0
              */
             latest_current_slate_loaded_candidate_market_count: number;
             /**
+             * Latest Current Slate Matched Event Count
+             * @default 0
+             */
+            latest_current_slate_matched_event_count: number;
+            /**
+             * Latest Current Slate Open Markets Persisted
+             * @default 0
+             */
+            latest_current_slate_open_markets_persisted: number;
+            /**
              * Latest Current Slate Scored Market Count
              * @default 0
              */
             latest_current_slate_scored_market_count: number;
+            /**
+             * Latest Current Slate Targeted Discovery Used
+             * @default false
+             */
+            latest_current_slate_targeted_discovery_used: boolean;
+            /**
+             * Latest Current Slate Unmatched Event Count
+             * @default 0
+             */
+            latest_current_slate_unmatched_event_count: number;
             latest_prop_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
             /**
              * Latest Recommendations Emitted
@@ -2532,6 +3004,231 @@ export interface operations {
             };
         };
     };
+    disable_live_auto_trading_ops_auto_trading_disable_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-sika-admin-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoTradingStatusRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enable_live_auto_trading_ops_auto_trading_enable_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-sika-admin-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoTradingStatusRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_auto_trading_now_ops_auto_trading_run_now_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-sika-admin-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoTradeRunRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_auto_trade_runs_ops_auto_trading_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: {
+                "x-sika-admin-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoTradeRunRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_auto_trade_run_ops_auto_trading_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-sika-admin-token"?: string | null;
+            };
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoTradeRunRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_auto_trading_status_ops_auto_trading_status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-sika-admin-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoTradingStatusRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chat_with_site_analyst_ops_chat_analyst_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-sika-admin-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalystChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalystChatResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     refresh_jobs_ops_jobs_refresh_post: {
         parameters: {
             query?: never;
@@ -2603,6 +3300,39 @@ export interface operations {
             };
         };
     };
+    get_live_kalshi_account_ops_kalshi_account_get: {
+        parameters: {
+            query?: {
+                refresh?: boolean;
+            };
+            header?: {
+                "x-sika-admin-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KalshiAccountRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     model_readiness_summary_ops_models_readiness_get: {
         parameters: {
             query?: never;
@@ -2641,6 +3371,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelFamilyReadinessRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_site_research_endpoint_ops_research_query_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "x-sika-admin-token"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalystChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalystChatResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2966,6 +3731,7 @@ export interface operations {
             query?: {
                 sport?: string | null;
                 market_family?: string | null;
+                market_families?: string[] | null;
                 stat_key?: string | null;
                 outcome?: string | null;
                 captured_from?: string | null;

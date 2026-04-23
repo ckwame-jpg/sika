@@ -1,10 +1,11 @@
+import re
 from datetime import date, datetime, timedelta, timezone
 from time import perf_counter
 from typing import Any, Iterable
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.clients.espn import EspnPublicClient
 from app.clients.kalshi import KalshiPublicClient, snapshot_from_market_payload
@@ -41,7 +42,7 @@ from app.services.watchlist_coverage import (
     recommendation_market_ids_for_sports,
     warm_current_watchlist_prop_context,
 )
-from app.sports.base import NormalizedEvent
+from app.sports.base import NormalizedEvent, alias_tokens
 from app.sports.registry import ADAPTERS
 
 
@@ -55,11 +56,63 @@ SPORT_LABELS = {
 
 PUBLIC_MAJOR_SPORTS = {"NBA", "NFL", "MLB"}
 PROP_REFRESH_COMBO_PAGE_SIZE = 50
-PROP_REFRESH_COMBO_LEG_BATCH_SIZE = 100
+PROP_REFRESH_COMBO_LEG_BATCH_SIZE = 10
 PROP_CONTEXT_BATCH_SIZE = 25
 WATCHLIST_SCORE_BATCH_SIZE = 25
 PREDICTION_SETTLEMENT_BATCH_SIZE = 100
 PARLAY_SETTLEMENT_BATCH_SIZE = 50
+CURRENT_SLATE_DISCOVERY_PAGE_LIMIT = 200
+CURRENT_SLATE_DISCOVERY_MAX_EVENT_PAGES = 3
+CURRENT_SLATE_DISCOVERY_MARKET_LIMIT_PER_EVENT = 1000
+CURRENT_SLATE_DISCOVERY_MAX_MARKET_PAGES = 5
+CURRENT_SLATE_EVENT_MATCH_WINDOW = timedelta(hours=30)
+CURRENT_SLATE_EVENT_SERIES_BY_SPORT = {
+    "NBA": (
+        "KXNBAGAME",
+        "KXNBASPREAD",
+        "KXNBAPTS",
+        "KXNBAREB",
+        "KXNBAAST",
+        "KXNBA3PT",
+        "KXNBASTL",
+        "KXNBABLK",
+    ),
+    "MLB": (
+        "KXMLBGAME",
+        "KXMLBF5",
+        "KXMLBSPREAD",
+        "KXMLBHIT",
+        "KXMLBHRR",
+        "KXMLBTB",
+        "KXMLBHR",
+    ),
+}
+CURRENT_SLATE_GAME_SERIES_BY_SPORT = {
+    "NBA": "KXNBAGAME",
+    "MLB": "KXMLBGAME",
+}
+CURRENT_SLATE_SPORT_BY_SERIES = {
+    series_ticker: sport_key
+    for sport_key, series_tickers in CURRENT_SLATE_EVENT_SERIES_BY_SPORT.items()
+    for series_ticker in series_tickers
+}
+KALSHI_EVENT_TICKER_TIME_RE = re.compile(
+    r"^[A-Z0-9]+-(?P<year>\d{2})(?P<month>[A-Z]{3})(?P<day>\d{2})(?P<hour>\d{2})(?P<minute>\d{2})"
+)
+KALSHI_MONTHS = {
+    "JAN": 1,
+    "FEB": 2,
+    "MAR": 3,
+    "APR": 4,
+    "MAY": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AUG": 8,
+    "SEP": 9,
+    "OCT": 10,
+    "NOV": 11,
+    "DEC": 12,
+}
 
 
 def _as_utc(value: datetime | None) -> datetime | None:
@@ -99,6 +152,230 @@ def _merge_count_maps(*payloads: dict[str, int]) -> dict[str, int]:
         for key, value in payload.items():
             merged[str(key)] = merged.get(str(key), 0) + int(value or 0)
     return merged
+
+
+def _normalize_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _event_match_tokens(event: Event) -> set[str]:
+    tokens = alias_tokens(event.name)
+    for entry in event.participants:
+        participant = entry.participant
+        tokens.update(alias_tokens(participant.display_name, participant.short_name))
+    return tokens
+
+
+def _kalshi_event_tokens(payload: dict[str, Any]) -> set[str]:
+    parts = [
+        payload.get("event_ticker"),
+        payload.get("ticker"),
+        payload.get("title"),
+        payload.get("sub_title"),
+        payload.get("subtitle"),
+    ]
+    metadata = payload.get("product_metadata")
+    if isinstance(metadata, dict):
+        parts.extend(str(value) for value in metadata.values() if value)
+    return alias_tokens(" ".join(str(part or "") for part in parts))
+
+
+def _token_score(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    shared = left & right
+    if not shared:
+        return 0.0
+    strong_shared = [token for token in shared if len(token) >= 4]
+    return min(1.0, (len(shared) * 0.15) + (len(strong_shared) * 0.2))
+
+
+def _parse_kalshi_event_time(event_ticker: str | None) -> datetime | None:
+    ticker = str(event_ticker or "").strip().upper()
+    match = KALSHI_EVENT_TICKER_TIME_RE.match(ticker)
+    if match is None:
+        return None
+    month = KALSHI_MONTHS.get(match.group("month"))
+    if month is None:
+        return None
+    try:
+        return datetime(
+            2000 + int(match.group("year")),
+            month,
+            int(match.group("day")),
+            int(match.group("hour")),
+            int(match.group("minute")),
+            tzinfo=timezone.utc,
+        )
+    except ValueError:
+        return None
+
+
+def _kalshi_event_ticker_suffix(event_ticker: str | None) -> str | None:
+    parts = str(event_ticker or "").strip().upper().split("-", 1)
+    if len(parts) != 2 or not parts[1]:
+        return None
+    return parts[1]
+
+
+def _kalshi_event_sport_key(payload: dict[str, Any]) -> str | None:
+    series_ticker = str(payload.get("series_ticker") or "").strip().upper()
+    if series_ticker in CURRENT_SLATE_SPORT_BY_SERIES:
+        return CURRENT_SLATE_SPORT_BY_SERIES[series_ticker]
+    return infer_market_sport_key(payload)
+
+
+def _best_current_event_match(
+    kalshi_event: dict[str, Any],
+    current_events: list[Event],
+) -> Event | None:
+    sport_key = _kalshi_event_sport_key(kalshi_event)
+    kalshi_tokens = _kalshi_event_tokens(kalshi_event)
+    kalshi_starts_at = _parse_kalshi_event_time(str(kalshi_event.get("event_ticker") or ""))
+    best_event = None
+    best_score = 0.0
+    for event in current_events:
+        if sport_key and event.sport_key != sport_key:
+            continue
+        event_starts_at = _normalize_utc(event.starts_at)
+        if kalshi_starts_at and event_starts_at:
+            delta_seconds = abs((event_starts_at - kalshi_starts_at).total_seconds())
+            if delta_seconds > CURRENT_SLATE_EVENT_MATCH_WINDOW.total_seconds():
+                continue
+        score = _token_score(kalshi_tokens, _event_match_tokens(event))
+        if score > best_score:
+            best_event = event
+            best_score = score
+    if best_event is not None and best_score >= 0.35:
+        return best_event
+    return None
+
+
+def _current_slate_discovery_defaults() -> dict[str, object]:
+    return {
+        "current_slate_targeted_discovery_used": False,
+        "current_slate_matched_event_count": 0,
+        "current_slate_hydrated_event_ticker_count": 0,
+        "current_slate_unmatched_event_count": 0,
+        "current_slate_discovered_market_count": 0,
+    }
+
+
+def _load_current_events(db: Session) -> list[Event]:
+    event_ids = current_watchlist_event_ids(db)
+    if not event_ids:
+        return []
+    return list(
+        db.scalars(
+            select(Event)
+            .options(selectinload(Event.participants).joinedload(EventParticipant.participant))
+            .where(Event.id.in_(tuple(event_ids)))
+        ).all()
+    )
+
+
+def _discover_current_slate_event_market_payloads(
+    db: Session,
+    *,
+    client: KalshiPublicClient,
+) -> tuple[list[dict[str, Any]], dict[str, object]]:
+    diagnostics = _current_slate_discovery_defaults()
+    if not hasattr(client, "iter_event_pages"):
+        return [], diagnostics
+
+    current_events = _load_current_events(db)
+    if not current_events:
+        return [], diagnostics
+
+    diagnostics["current_slate_targeted_discovery_used"] = True
+    current_event_ids = {event.id for event in current_events}
+    matched_event_ids: set[int] = set()
+    matched_event_tickers: dict[str, int] = {}
+
+    for sport_key in sorted(CURRENT_WATCHLIST_SPORTS):
+        game_series_ticker = CURRENT_SLATE_GAME_SERIES_BY_SPORT.get(sport_key)
+        if not game_series_ticker:
+            continue
+        try:
+            event_pages = client.iter_event_pages(
+                status="open",
+                series_ticker=game_series_ticker,
+                limit=CURRENT_SLATE_DISCOVERY_PAGE_LIMIT,
+                max_pages=CURRENT_SLATE_DISCOVERY_MAX_EVENT_PAGES,
+            )
+            for page_events, _cursor in event_pages:
+                for kalshi_event in page_events:
+                    event_ticker = str(kalshi_event.get("event_ticker") or kalshi_event.get("ticker") or "").strip()
+                    if not event_ticker:
+                        continue
+                    matched_event = _best_current_event_match(kalshi_event, current_events)
+                    if matched_event is None:
+                        continue
+                    suffix = _kalshi_event_ticker_suffix(event_ticker)
+                    if suffix is None:
+                        continue
+                    matched_event_ids.add(matched_event.id)
+                    for market_series_ticker in CURRENT_SLATE_EVENT_SERIES_BY_SPORT.get(sport_key, ()):
+                        matched_event_tickers[f"{market_series_ticker}-{suffix}"] = matched_event.id
+        except Exception:
+            continue
+
+    diagnostics["current_slate_matched_event_count"] = len(matched_event_ids)
+    diagnostics["current_slate_unmatched_event_count"] = max(0, len(current_event_ids - matched_event_ids))
+    if not matched_event_tickers:
+        return [], diagnostics
+
+    payload_records: list[dict[str, Any]] = []
+    hydrated_event_tickers: set[str] = set()
+    discovered_market_count = 0
+    for event_ticker, matched_event_id in sorted(matched_event_tickers.items()):
+        try:
+            market_pages = client.iter_market_pages(
+                status="open",
+                event_ticker=event_ticker,
+                limit=CURRENT_SLATE_DISCOVERY_MARKET_LIMIT_PER_EVENT,
+                mve_filter="exclude",
+                max_pages=CURRENT_SLATE_DISCOVERY_MAX_MARKET_PAGES,
+            )
+            for page_markets, _cursor in market_pages:
+                if page_markets:
+                    hydrated_event_tickers.add(event_ticker)
+                for market_payload in page_markets:
+                    if not market_payload:
+                        continue
+                    discovered_market_count += 1
+                    payload_records.append(
+                        {
+                            "payload": market_payload,
+                            "source_type": "standalone",
+                            "source_payload": {
+                                "source": "current_event_discovery",
+                                "event_ticker": event_ticker,
+                                "matched_event_id": matched_event_id,
+                            },
+                            "classification_override": None,
+                        }
+                    )
+        except Exception:
+            continue
+
+    diagnostics["current_slate_hydrated_event_ticker_count"] = len(hydrated_event_tickers)
+    diagnostics["current_slate_discovered_market_count"] = discovered_market_count
+    return payload_records, diagnostics
+
+
+def _dedupe_payload_records(payload_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records_by_ticker: dict[str, dict[str, Any]] = {}
+    for record in payload_records:
+        ticker = str((record.get("payload") or {}).get("ticker") or "").strip()
+        if not ticker:
+            continue
+        records_by_ticker[ticker] = record
+    return list(records_by_ticker.values())
 
 
 def _persist_market_payload_records(
@@ -596,7 +873,7 @@ def refresh_current_slate_kalshi_markets(
     db: Session,
     client: KalshiPublicClient | None = None,
 ) -> dict[str, object]:
-    """Hydrate known current-slate markets directly before falling back to a broad scan."""
+    """Hydrate known and discoverable current-slate markets before broad fallback."""
     client = client or KalshiPublicClient()
     target_markets = current_watchlist_markets(db)
     payload_records: list[dict[str, Any]] = []
@@ -617,7 +894,11 @@ def refresh_current_slate_kalshi_markets(
             }
         )
 
-    if not payload_records:
+    discovery_records, discovery_diagnostics = _discover_current_slate_event_market_payloads(db, client=client)
+    payload_records.extend(discovery_records)
+    payload_records = _dedupe_payload_records(payload_records)
+
+    def broad_fallback(*, targeted_records_persisted: int = 0) -> dict[str, object]:
         fallback = refresh_kalshi_markets(
             db,
             client=client,
@@ -626,14 +907,24 @@ def refresh_current_slate_kalshi_markets(
             discover_combo_props=False,
         )
         fallback["current_slate_targeted_market_count"] = len(target_markets)
-        fallback["current_slate_targeted_markets_refreshed"] = 0
+        fallback["current_slate_targeted_markets_refreshed"] = len(payload_records)
+        fallback["current_slate_targeted_records_persisted"] = targeted_records_persisted
+        fallback["current_slate_open_markets_persisted"] = len(fallback.get("open_market_tickers") or set())
+        fallback.update(discovery_diagnostics)
         fallback["broad_market_fallback_used"] = True
         return fallback
 
+    if not payload_records:
+        return broad_fallback()
+
     persisted = _persist_market_payload_records(db, payload_records)
+    processed = int(persisted.get("processed") or 0)
+    if processed <= 0:
+        return broad_fallback(targeted_records_persisted=0)
+
     return {
-        "processed": int(persisted.get("processed") or 0),
-        "total_kalshi_markets_seen": len(target_markets),
+        "processed": processed,
+        "total_kalshi_markets_seen": len(target_markets) + int(discovery_diagnostics.get("current_slate_discovered_market_count") or 0),
         "supported_nba_props_seen": int(persisted.get("supported_nba_props_seen") or 0),
         "supported_mlb_props_seen": int(persisted.get("supported_mlb_props_seen") or 0),
         "unsupported_prop_category_counts": dict(persisted.get("unsupported_prop_category_counts") or {}),
@@ -644,6 +935,9 @@ def refresh_current_slate_kalshi_markets(
         "open_market_tickers": persisted.get("open_market_tickers") or set(),
         "current_slate_targeted_market_count": len(target_markets),
         "current_slate_targeted_markets_refreshed": len(payload_records),
+        "current_slate_targeted_records_persisted": processed,
+        "current_slate_open_markets_persisted": len(persisted.get("open_market_tickers") or set()),
+        **discovery_diagnostics,
         "broad_market_fallback_used": False,
     }
 
@@ -728,6 +1022,13 @@ def _build_watchlist_run_details(
         "unsupported_prop_category_counts": kalshi_summary.get("unsupported_prop_category_counts") or {},
         "combo_prop_legs_discovered": kalshi_summary.get("combo_prop_legs_discovered") or 0,
         "combo_prop_legs_refreshed": kalshi_summary.get("combo_prop_legs_refreshed") or 0,
+        "current_slate_matched_event_count": kalshi_summary.get("current_slate_matched_event_count") or 0,
+        "current_slate_hydrated_event_ticker_count": kalshi_summary.get("current_slate_hydrated_event_ticker_count") or 0,
+        "current_slate_open_markets_persisted": kalshi_summary.get("current_slate_open_markets_persisted") or 0,
+        "current_slate_targeted_discovery_used": bool(kalshi_summary.get("current_slate_targeted_discovery_used") or False),
+        "current_slate_broad_market_fallback_used": bool(kalshi_summary.get("broad_market_fallback_used") or False),
+        "current_slate_unmatched_event_count": kalshi_summary.get("current_slate_unmatched_event_count") or 0,
+        "current_slate_discovered_market_count": kalshi_summary.get("current_slate_discovered_market_count") or 0,
         "mapped_markets": mapped_count,
         "mapped_prop_markets": mapped_prop_markets,
         "current_slate_event_count": int((extra_details or {}).get("current_slate_event_count") or 0),
@@ -937,17 +1238,22 @@ def _current_slate_candidate_market_ids(
     existing_recommendation_market_ids = set(
         recommendation_market_ids_for_sports(db, sports=tracked_sports)
     )
-    candidate_market_ids: set[int] = set(existing_recommendation_market_ids)
+    current_recommendation_markets = load_current_watchlist_markets(
+        db,
+        market_ids=existing_recommendation_market_ids,
+        event_ids=current_event_ids,
+    )
+    candidate_market_ids: set[int] = {market.id for market in current_recommendation_markets}
     affected_event_ids: set[int] = set()
 
-    touched_markets = db.scalars(
-        select(Market).where(Market.id.in_(tuple(sorted(touched_market_ids))))
-    ).all() if touched_market_ids else []
+    touched_markets = load_current_watchlist_markets(
+        db,
+        market_ids=touched_market_ids,
+        event_ids=current_event_ids,
+    ) if touched_market_ids else []
     touched_current_prop_keys: set[tuple[int, str, str]] = set()
     for market in touched_markets:
         if market.event_id is None:
-            continue
-        if (market.sport_key or "").upper() not in tracked_sports:
             continue
         affected_event_ids.add(market.event_id)
         candidate_market_ids.add(market.id)
@@ -961,12 +1267,11 @@ def _current_slate_candidate_market_ids(
 
     affected_event_ids.update(event_id for event_id in touched_event_ids if event_id in current_event_ids)
     if affected_event_ids:
-        event_markets = db.scalars(
-            select(Market).where(Market.event_id.in_(tuple(sorted(affected_event_ids))))
-        ).all()
+        event_markets = load_current_watchlist_markets(
+            db,
+            event_ids=affected_event_ids,
+        )
         for market in event_markets:
-            if (market.sport_key or "").upper() not in tracked_sports:
-                continue
             candidate_market_ids.add(market.id)
             raw_data = market.raw_data or {}
             if str(raw_data.get("copilot_market_family") or "") != "player_prop":
@@ -1299,6 +1604,13 @@ def advance_current_slate_refresh_job(
                 "market_snapshots_written": int(refreshed.get("market_snapshots_written") or 0),
                 "current_slate_targeted_market_count": int(refreshed.get("current_slate_targeted_market_count") or 0),
                 "current_slate_targeted_markets_refreshed": int(refreshed.get("current_slate_targeted_markets_refreshed") or 0),
+                "current_slate_targeted_records_persisted": int(refreshed.get("current_slate_targeted_records_persisted") or 0),
+                "current_slate_targeted_discovery_used": bool(refreshed.get("current_slate_targeted_discovery_used") or False),
+                "current_slate_matched_event_count": int(refreshed.get("current_slate_matched_event_count") or 0),
+                "current_slate_hydrated_event_ticker_count": int(refreshed.get("current_slate_hydrated_event_ticker_count") or 0),
+                "current_slate_open_markets_persisted": int(refreshed.get("current_slate_open_markets_persisted") or 0),
+                "current_slate_unmatched_event_count": int(refreshed.get("current_slate_unmatched_event_count") or 0),
+                "current_slate_discovered_market_count": int(refreshed.get("current_slate_discovered_market_count") or 0),
                 "broad_market_fallback_used": bool(refreshed.get("broad_market_fallback_used") or False),
             }
             stage_details["kalshi_ingest_seconds"] = round(stage_details.get("kalshi_ingest_seconds", 0.0) + (perf_counter() - stage_started), 3)
@@ -1420,6 +1732,13 @@ def advance_current_slate_refresh_job(
             "candidate_market_ids": candidate_market_ids,
             "candidate_market_count": candidate_market_count,
             "affected_event_count": affected_event_count,
+            "current_slate_matched_event_count": int(kalshi_summary.get("current_slate_matched_event_count") or 0),
+            "current_slate_hydrated_event_ticker_count": int(kalshi_summary.get("current_slate_hydrated_event_ticker_count") or 0),
+            "current_slate_open_markets_persisted": int(kalshi_summary.get("current_slate_open_markets_persisted") or 0),
+            "current_slate_targeted_discovery_used": bool(kalshi_summary.get("current_slate_targeted_discovery_used") or False),
+            "current_slate_broad_market_fallback_used": bool(kalshi_summary.get("broad_market_fallback_used") or False),
+            "current_slate_unmatched_event_count": int(kalshi_summary.get("current_slate_unmatched_event_count") or 0),
+            "current_slate_discovered_market_count": int(kalshi_summary.get("current_slate_discovered_market_count") or 0),
             "current_slate_loaded_candidate_market_count": staged_watchlist_summary.loaded_candidate_market_count,
             "current_slate_filtered_candidate_market_count": staged_watchlist_summary.filtered_candidate_market_count,
             "current_slate_candidate_filter_reason_counts": dict(staged_watchlist_summary.candidate_filter_reason_counts or {}),
@@ -1451,6 +1770,13 @@ def advance_current_slate_refresh_job(
         "cursor": cursor_payload or {},
         "candidate_market_count": candidate_market_count,
         "affected_event_count": affected_event_count,
+        "current_slate_matched_event_count": int(kalshi_summary.get("current_slate_matched_event_count") or 0),
+        "current_slate_hydrated_event_ticker_count": int(kalshi_summary.get("current_slate_hydrated_event_ticker_count") or 0),
+        "current_slate_open_markets_persisted": int(kalshi_summary.get("current_slate_open_markets_persisted") or 0),
+        "current_slate_targeted_discovery_used": bool(kalshi_summary.get("current_slate_targeted_discovery_used") or False),
+        "current_slate_broad_market_fallback_used": bool(kalshi_summary.get("broad_market_fallback_used") or False),
+        "current_slate_unmatched_event_count": int(kalshi_summary.get("current_slate_unmatched_event_count") or 0),
+        "current_slate_discovered_market_count": int(kalshi_summary.get("current_slate_discovered_market_count") or 0),
         "current_slate_blocking_reason": details.get("current_slate_blocking_reason"),
         "current_slate_loaded_candidate_market_count": staged_watchlist_summary.loaded_candidate_market_count,
         "current_slate_filtered_candidate_market_count": staged_watchlist_summary.filtered_candidate_market_count,
@@ -1485,6 +1811,13 @@ def advance_current_slate_refresh_job(
             "affected_event_count": affected_event_count,
             "current_slate_event_count": affected_event_count,
             "current_slate_candidate_market_count": candidate_market_count,
+            "current_slate_matched_event_count": int(kalshi_summary.get("current_slate_matched_event_count") or 0),
+            "current_slate_hydrated_event_ticker_count": int(kalshi_summary.get("current_slate_hydrated_event_ticker_count") or 0),
+            "current_slate_open_markets_persisted": int(kalshi_summary.get("current_slate_open_markets_persisted") or 0),
+            "current_slate_targeted_discovery_used": bool(kalshi_summary.get("current_slate_targeted_discovery_used") or False),
+            "current_slate_broad_market_fallback_used": bool(kalshi_summary.get("broad_market_fallback_used") or False),
+            "current_slate_unmatched_event_count": int(kalshi_summary.get("current_slate_unmatched_event_count") or 0),
+            "current_slate_discovered_market_count": int(kalshi_summary.get("current_slate_discovered_market_count") or 0),
             "current_slate_loaded_candidate_market_count": staged_watchlist_summary.loaded_candidate_market_count,
             "current_slate_filtered_candidate_market_count": staged_watchlist_summary.filtered_candidate_market_count,
             "current_slate_candidate_filter_reason_counts": dict(staged_watchlist_summary.candidate_filter_reason_counts or {}),

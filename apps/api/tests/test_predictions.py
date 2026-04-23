@@ -2,7 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from app.models import EspnPlayerGamelogCache, EspnPlayerSearchCache, Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, SignalSnapshot
+from app.api import routes as api_routes
+from app.models import EspnPlayerGamelogCache, EspnPlayerSearchCache, Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, Recommendation, SignalSnapshot
+from app.services.ingestion import _current_slate_candidate_market_ids
 from app.services.ingestion import (
     _refresh_combo_prop_discovery_batch,
     refresh_current_slate_kalshi_markets,
@@ -10,6 +12,7 @@ from app.services.ingestion import (
     run_prop_refresh_cycle,
     run_refresh_cycle,
 )
+from app.services.market_mapping import map_markets_to_events
 from app.services.predictions import capture_prediction, settle_predictions
 from app.services.scoring import PropStatsResolver, warm_prop_context_cache
 from app.services.watchlist_coverage import warm_current_watchlist_prop_context
@@ -220,6 +223,77 @@ class CurrentSlateTargetClient:
     def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
         self.list_market_calls += 1
         return []
+
+
+class CurrentSlateDiscoveryClient:
+    def __init__(
+        self,
+        *,
+        event_ticker: str,
+        market_payloads: list[dict] | None = None,
+        market_payloads_by_event_ticker: dict[str, list[dict]] | None = None,
+        broad_payloads: list[dict] | None = None,
+    ):
+        self.event_ticker = event_ticker
+        self.market_payloads = market_payloads or []
+        self.market_payloads_by_event_ticker = market_payloads_by_event_ticker or {}
+        self.broad_payloads = broad_payloads or []
+        self.event_page_calls: list[str | None] = []
+        self.event_market_calls: list[str | None] = []
+        self.list_market_calls = 0
+
+    def iter_event_pages(self, status="open", series_ticker=None, limit=200, max_pages=5, cursor=None):
+        self.event_page_calls.append(series_ticker)
+        event_series_ticker = self.event_ticker.split("-", 1)[0]
+        if series_ticker == event_series_ticker:
+            if event_series_ticker == "KXNBAGAME":
+                title = "Boston vs Brooklyn"
+                subtitle = "BKN at BOS"
+            else:
+                title = "New York Y vs Seattle"
+                subtitle = "NYY vs SEA"
+            yield (
+                [
+                    {
+                        "event_ticker": self.event_ticker,
+                        "series_ticker": event_series_ticker,
+                        "title": title,
+                        "sub_title": subtitle,
+                        "status": "active",
+                    }
+                ],
+                None,
+            )
+
+    def iter_market_pages(self, status="open", limit=1000, mve_filter="exclude", event_ticker=None, max_pages=5, cursor=None):
+        self.event_market_calls.append(event_ticker)
+        if event_ticker in self.market_payloads_by_event_ticker:
+            yield self.market_payloads_by_event_ticker[event_ticker], None
+            return
+        if event_ticker == self.event_ticker:
+            yield self.market_payloads, None
+
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+        self.list_market_calls += 1
+        return self.broad_payloads
+
+
+class CurrentSlateNoMatchDiscoveryClient(CurrentSlateDiscoveryClient):
+    def iter_event_pages(self, status="open", series_ticker=None, limit=200, max_pages=5, cursor=None):
+        self.event_page_calls.append(series_ticker)
+        if series_ticker == "KXMLBGAME":
+            yield (
+                [
+                    {
+                        "event_ticker": self.event_ticker,
+                        "series_ticker": "KXMLBGAME",
+                        "title": "Los Angeles vs San Francisco",
+                        "sub_title": "LAD vs SF",
+                        "status": "active",
+                    }
+                ],
+                None,
+            )
 
 
 class FakeKalshiComboClient:
@@ -806,6 +880,166 @@ def test_refresh_current_slate_kalshi_markets_uses_targeted_get_market_before_br
     assert summary["current_slate_targeted_markets_refreshed"] == 1
 
 
+def test_refresh_current_slate_kalshi_markets_discovers_event_ticker_markets(db_session):
+    event = _seed_team_event(db_session, sport_key="MLB", external_id="discover-current")
+    event.starts_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    event_ticker = f"KXMLBGAME-{event.starts_at.strftime('%y%b%d%H%M').upper()}NYYSEA"
+    market_payload = {
+        "ticker": f"{event_ticker}-SEA",
+        "series_ticker": "KXMLBGAME",
+        "event_ticker": event_ticker,
+        "title": "Will Seattle beat New York?",
+        "subtitle": "New York Yankees at Seattle Mariners",
+        "status": "active",
+        "close_time": event.starts_at.isoformat().replace("+00:00", "Z"),
+        "expected_expiration_time": event.starts_at.isoformat().replace("+00:00", "Z"),
+        "yes_sub_title": "Seattle Mariners",
+        "no_sub_title": "New York Yankees",
+        "yes_ask_dollars": "0.42",
+        "no_ask_dollars": "0.62",
+        "last_price_dollars": "0.43",
+    }
+    db_session.commit()
+
+    client = CurrentSlateDiscoveryClient(event_ticker=event_ticker, market_payloads=[market_payload])
+    summary = refresh_current_slate_kalshi_markets(db_session, client=client)
+    mapped = map_markets_to_events(
+        db_session,
+        candidate_market_ids=set(summary["touched_market_ids"]),
+    )
+    db_session.commit()
+
+    market = db_session.scalar(select(Market).where(Market.ticker == market_payload["ticker"]))
+    assert market is not None
+    assert market.event_id == event.id
+    assert mapped == 1
+    assert client.list_market_calls == 0
+    assert event_ticker in client.event_market_calls
+    assert "KXMLBHIT-" + event_ticker.split("-", 1)[1] in client.event_market_calls
+    assert summary["broad_market_fallback_used"] is False
+    assert summary["current_slate_targeted_discovery_used"] is True
+    assert summary["current_slate_matched_event_count"] == 1
+    assert summary["current_slate_hydrated_event_ticker_count"] == 1
+    assert summary["current_slate_open_markets_persisted"] == 1
+
+
+def test_refresh_current_slate_kalshi_markets_derives_prop_event_tickers_from_game_match(db_session):
+    event = _seed_team_event(db_session, sport_key="NBA", external_id="discover-derived-props")
+    event.starts_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    game_event_ticker = f"KXNBAGAME-{event.starts_at.strftime('%y%b%d%H%M').upper()}BOSNYK"
+    prop_event_ticker = f"KXNBAPTS-{game_event_ticker.split('-', 1)[1]}"
+    market_payload = {
+        "ticker": f"{prop_event_ticker}-BOSPLAYER-20",
+        "series_ticker": "KXNBAPTS",
+        "event_ticker": prop_event_ticker,
+        "title": "Jayson Tatum: 20+ points",
+        "subtitle": "Jayson Tatum: 20+ points",
+        "status": "active",
+        "close_time": event.starts_at.isoformat().replace("+00:00", "Z"),
+        "expected_expiration_time": event.starts_at.isoformat().replace("+00:00", "Z"),
+        "yes_sub_title": "Yes",
+        "no_sub_title": "No",
+        "yes_ask_dollars": "0.42",
+        "no_ask_dollars": "0.62",
+        "last_price_dollars": "0.43",
+    }
+    db_session.commit()
+
+    client = CurrentSlateDiscoveryClient(
+        event_ticker=game_event_ticker,
+        market_payloads_by_event_ticker={prop_event_ticker: [market_payload]},
+    )
+    summary = refresh_current_slate_kalshi_markets(db_session, client=client)
+
+    assert client.event_page_calls == ["KXMLBGAME", "KXNBAGAME"]
+    assert prop_event_ticker in client.event_market_calls
+    assert summary["broad_market_fallback_used"] is False
+    assert summary["current_slate_matched_event_count"] == 1
+    assert summary["current_slate_hydrated_event_ticker_count"] == 1
+    assert summary["current_slate_open_markets_persisted"] == 1
+
+
+def test_refresh_current_slate_kalshi_markets_uses_broad_fallback_when_discovery_has_no_matches(db_session):
+    event = _seed_team_event(db_session, sport_key="MLB", external_id="discover-no-match")
+    event.starts_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    event_ticker = f"KXMLBGAME-{event.starts_at.strftime('%y%b%d%H%M').upper()}LADSFG"
+    broad_payload = {
+        "ticker": f"{event_ticker}-SEA",
+        "series_ticker": "KXMLBGAME",
+        "event_ticker": event_ticker,
+        "title": "Will Seattle beat New York?",
+        "subtitle": "New York Yankees at Seattle Mariners",
+        "status": "active",
+        "close_time": event.starts_at.isoformat().replace("+00:00", "Z"),
+        "expected_expiration_time": event.starts_at.isoformat().replace("+00:00", "Z"),
+        "yes_sub_title": "Seattle Mariners",
+        "no_sub_title": "New York Yankees",
+        "yes_ask_dollars": "0.42",
+        "no_ask_dollars": "0.62",
+        "last_price_dollars": "0.43",
+    }
+    db_session.commit()
+
+    client = CurrentSlateNoMatchDiscoveryClient(event_ticker=event_ticker, broad_payloads=[broad_payload])
+    summary = refresh_current_slate_kalshi_markets(db_session, client=client)
+
+    assert client.list_market_calls == 1
+    assert summary["broad_market_fallback_used"] is True
+    assert summary["current_slate_targeted_discovery_used"] is True
+    assert summary["current_slate_matched_event_count"] == 0
+    assert summary["current_slate_unmatched_event_count"] == 1
+
+
+def test_current_slate_candidate_ids_start_from_current_open_mapped_markets(db_session):
+    current_event = _seed_team_event(db_session, sport_key="MLB", external_id="candidate-current")
+    current_event.starts_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    stale_event = _seed_team_event(db_session, sport_key="MLB", external_id="candidate-stale")
+    stale_event.starts_at = datetime.now(timezone.utc) - timedelta(days=2)
+    current_market = Market(
+        ticker="KXMLBGAME-CURRENT-SEA",
+        sport_key="MLB",
+        event_id=current_event.id,
+        title="Seattle wins?",
+        status="active",
+        raw_data={"copilot_market_family": "winner", "copilot_market_kind": "game_winner"},
+    )
+    stale_market = Market(
+        ticker="KXMLBGAME-STALE-SEA",
+        sport_key="MLB",
+        event_id=stale_event.id,
+        title="Stale Seattle wins?",
+        status="active",
+        raw_data={"copilot_market_family": "winner", "copilot_market_kind": "game_winner"},
+    )
+    db_session.add_all([current_market, stale_market])
+    db_session.flush()
+    db_session.add(
+        Recommendation(
+            event_id=stale_event.id,
+            market_id=stale_market.id,
+            side="yes",
+            action="buy",
+            status="active",
+            suggested_price=0.42,
+            edge=0.08,
+            confidence=0.66,
+            invalidation="Pull if stale.",
+            rationale="Stale recommendation.",
+        )
+    )
+    db_session.commit()
+
+    candidate_ids, affected_event_count = _current_slate_candidate_market_ids(
+        db_session,
+        touched_market_ids={current_market.id},
+        touched_event_ids={current_event.id, stale_event.id},
+    )
+
+    assert current_market.id in candidate_ids
+    assert stale_market.id not in candidate_ids
+    assert affected_event_count == 1
+
+
 def test_refresh_combo_prop_discovery_batch_prefilters_obvious_non_target_legs(db_session):
     client = ComboDiscoveryPrefilterClient()
 
@@ -898,7 +1132,7 @@ def test_warm_current_watchlist_prop_context_only_warms_current_slate(db_session
     current_event = _seed_team_event(db_session, sport_key="NBA", external_id="current-slate")
     current_event.starts_at = now + timedelta(hours=1)
     future_event = _seed_team_event(db_session, sport_key="NBA", external_id="future-slate")
-    future_event.starts_at = now + timedelta(days=1)
+    future_event.starts_at = now + timedelta(days=2)
     db_session.flush()
 
     db_session.add_all(
@@ -1209,3 +1443,139 @@ def test_prediction_history_and_summary_endpoints(client, db_session):
     assert payload["pending_predictions"] == 1
     assert payload["by_market_family"]["player_prop"] == 2
     assert payload["by_outcome"]["won"] == 1
+
+
+def test_prediction_summary_win_rate_is_not_hidden_by_recent_pending_rows(client, db_session, monkeypatch):
+    monkeypatch.setattr(api_routes, "PREDICTION_SUMMARY_ROW_LIMIT", 3)
+    settled_base = datetime.now(timezone.utc) - timedelta(days=45)
+    pending_base = datetime.now(timezone.utc) - timedelta(days=1)
+    _create_prediction(
+        db_session,
+        ticker="KXNBA-SUMMARY-OLD-WON",
+        sport_key="NBA",
+        outcome="won",
+        settlement_status="settled",
+        captured_at=settled_base,
+    )
+    _create_prediction(
+        db_session,
+        ticker="KXNBA-SUMMARY-OLD-LOST",
+        sport_key="NBA",
+        outcome="lost",
+        settlement_status="settled",
+        captured_at=settled_base + timedelta(minutes=5),
+    )
+    for index in range(3):
+        _create_prediction(
+            db_session,
+            ticker=f"KXNBA-SUMMARY-RECENT-PENDING-{index}",
+            sport_key="NBA",
+            outcome="pending",
+            settlement_status="pending",
+            captured_at=pending_base + timedelta(minutes=index),
+        )
+    db_session.commit()
+
+    summary = client.get("/predictions/summary", params={"sport": "NBA"})
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["total_predictions"] == 5
+    assert payload["settled_predictions"] == 2
+    assert payload["pending_predictions"] == 3
+    assert payload["won_predictions"] == 1
+    assert payload["lost_predictions"] == 1
+    assert payload["win_rate"] == 0.5
+
+
+def test_prediction_summary_accepts_repeated_market_families(client, db_session):
+    captured_base = datetime.now(timezone.utc) - timedelta(days=1)
+    _create_prediction(
+        db_session,
+        ticker="KXNBA-SUMMARY-WINNER-WON",
+        sport_key="NBA",
+        market_family="winner",
+        market_kind="game_winner",
+        stat_key="",
+        outcome="won",
+        settlement_status="settled",
+        captured_at=captured_base,
+    )
+    _create_prediction(
+        db_session,
+        ticker="KXNBA-SUMMARY-GAMELINE-LOST",
+        sport_key="NBA",
+        market_family="game_line",
+        market_kind="spread",
+        stat_key="",
+        outcome="lost",
+        settlement_status="settled",
+        captured_at=captured_base + timedelta(minutes=5),
+    )
+    _create_prediction(
+        db_session,
+        ticker="KXNBA-SUMMARY-WINNER-PUSH",
+        sport_key="NBA",
+        market_family="winner",
+        market_kind="game_winner",
+        stat_key="",
+        outcome="push",
+        settlement_status="settled",
+        captured_at=captured_base + timedelta(minutes=10),
+    )
+    _create_prediction(
+        db_session,
+        ticker="KXNBA-SUMMARY-GAMELINE-CANCELLED",
+        sport_key="NBA",
+        market_family="game_line",
+        market_kind="total",
+        stat_key="",
+        outcome="cancelled",
+        settlement_status="cancelled",
+        captured_at=captured_base + timedelta(minutes=15),
+    )
+    _create_prediction(
+        db_session,
+        ticker="KXNBA-SUMMARY-PROP-LOST",
+        sport_key="NBA",
+        market_family="player_prop",
+        market_kind="player_prop",
+        outcome="lost",
+        settlement_status="settled",
+        captured_at=captured_base + timedelta(minutes=20),
+    )
+    db_session.commit()
+
+    legacy = client.get("/predictions/summary", params={"sport": "NBA", "market_family": "player_prop"})
+    assert legacy.status_code == 200
+    legacy_payload = legacy.json()
+    assert legacy_payload["total_predictions"] == 1
+    assert legacy_payload["lost_predictions"] == 1
+
+    response = client.get(
+        "/predictions/summary",
+        params=[
+            ("sport", "NBA"),
+            ("market_families", "winner"),
+            ("market_families", "game_line"),
+        ],
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_predictions"] == 4
+    assert payload["won_predictions"] == 1
+    assert payload["lost_predictions"] == 1
+    assert payload["push_predictions"] == 1
+    assert payload["cancelled_predictions"] == 1
+    assert payload["win_rate"] == 0.5
+    assert payload["by_market_family"] == {"game_line": 2, "winner": 2}
+
+    push_only = client.get(
+        "/predictions/summary",
+        params=[
+            ("sport", "NBA"),
+            ("market_families", "winner"),
+            ("outcome", "push"),
+        ],
+    )
+    assert push_only.status_code == 200
+    assert push_only.json()["win_rate"] is None

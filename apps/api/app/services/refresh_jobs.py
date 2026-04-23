@@ -12,11 +12,12 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.models import RefreshJob, Run
 from app.services.ingestion import advance_current_slate_refresh_job, advance_prop_refresh_job, run_refresh_cycle
+from app.services.live_trading import run_auto_trade_strategy
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.ml.shadow import capture_shadow_artifacts_batch
 
 
-REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "cleanup"})
+REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "cleanup", "auto_trade"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
 
@@ -100,6 +101,29 @@ def reconcile_stale_jobs(db: Session, *, now: datetime | None = None) -> int:
     if stale_jobs:
         db.flush()
     return len(stale_jobs)
+
+
+def requeue_interrupted_jobs(db: Session, *, now: datetime | None = None) -> int:
+    """Requeue jobs that were running when the API process stopped.
+
+    Refresh jobs are persisted, but the worker process is not. On laptop-server
+    restarts, any ``running`` job in the database necessarily belonged to the
+    previous process and would otherwise block the single queue worker until the
+    stale timeout. Requeueing lets current-slate jobs take priority immediately.
+    """
+    reference_now = now or datetime.now(timezone.utc)
+    jobs = list(db.scalars(select(RefreshJob).where(RefreshJob.status == "running")).all())
+    for job in jobs:
+        details = dict(job.details or {})
+        details["interrupted_requeued_at"] = reference_now.isoformat()
+        job.details = details
+        job.status = "queued"
+        job.started_at = None
+        job.finished_at = None
+        job.error_message = None
+    if jobs:
+        db.flush()
+    return len(jobs)
 
 
 def enqueue_refresh_job(
@@ -189,20 +213,24 @@ def _job_priority_order():
             1,
         ),
         (
-            RefreshJob.kind == "refresh",
+            RefreshJob.kind == "auto_trade",
             2,
         ),
         (
-            RefreshJob.kind == "prop_refresh",
+            RefreshJob.kind == "refresh",
             3,
         ),
         (
-            RefreshJob.kind == "shadow_capture",
+            RefreshJob.kind == "prop_refresh",
             4,
         ),
         (
-            RefreshJob.kind == "cleanup",
+            RefreshJob.kind == "shadow_capture",
             5,
+        ),
+        (
+            RefreshJob.kind == "cleanup",
+            6,
         ),
         else_=99,
     )
@@ -415,6 +443,16 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                     return _snapshot(job)
             elif job.kind == "cleanup":
                 job.details = prune_runtime_artifacts(db)
+            elif job.kind == "auto_trade":
+                run = run_auto_trade_strategy(db, requested_by=job.reason or "scheduled")
+                job.details = {
+                    **dict(job.details or {}),
+                    "auto_trade_run_id": run.id,
+                    "auto_trade_status": run.status,
+                    "auto_trade_skipped_reason": run.skipped_reason,
+                    "submitted_order_count": run.submitted_order_count,
+                    "spent_cents": run.spent_cents,
+                }
             else:  # pragma: no cover - guarded above
                 raise ValueError(f"Unsupported refresh job kind: {job.kind}")
 

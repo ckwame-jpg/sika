@@ -129,6 +129,11 @@ _PERFORMANCE_INDEXES = [
     # Slice 2: the snapshot store is append-only per scope, queried by latest
     # generated_at. This composite supports ``WHERE scope = ? ORDER BY generated_at DESC``.
     "CREATE INDEX IF NOT EXISTS ix_current_slate_snapshots_scope_generated_at ON current_slate_snapshots(scope, generated_at)",
+    "CREATE INDEX IF NOT EXISTS ix_auto_trade_runs_date_strategy ON auto_trade_runs(local_trade_date, strategy_key)",
+    "CREATE INDEX IF NOT EXISTS ix_auto_trade_decisions_run_status ON auto_trade_decisions(run_id, status)",
+    "CREATE INDEX IF NOT EXISTS ix_live_orders_source_submitted ON live_orders(source, submitted_at DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_live_fills_order_created ON live_fills(live_order_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_kalshi_account_snapshots_captured ON kalshi_account_snapshots(captured_at DESC)",
 ]
 
 

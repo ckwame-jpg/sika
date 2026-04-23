@@ -447,6 +447,12 @@ def test_watchlist_diagnostics_endpoint_reports_zero_emission_refresh(client, db
             "current_slate_loaded_candidate_market_count": 0,
             "current_slate_filtered_candidate_market_count": 3,
             "current_slate_candidate_filter_reason_counts": {"not_current_event": 2, "status_not_open": 1},
+            "current_slate_matched_event_count": 1,
+            "current_slate_hydrated_event_ticker_count": 1,
+            "current_slate_open_markets_persisted": 3,
+            "current_slate_targeted_discovery_used": True,
+            "current_slate_broad_market_fallback_used": False,
+            "current_slate_unmatched_event_count": 0,
             "watchlist_counts_by_sport": {},
         },
     )
@@ -464,7 +470,14 @@ def test_watchlist_diagnostics_endpoint_reports_zero_emission_refresh(client, db
     assert payload["latest_current_slate_loaded_candidate_market_count"] == 0
     assert payload["latest_current_slate_filtered_candidate_market_count"] == 3
     assert payload["latest_current_slate_candidate_filter_reason_counts"] == {"not_current_event": 2, "status_not_open": 1}
+    assert payload["latest_current_slate_matched_event_count"] == 1
+    assert payload["latest_current_slate_hydrated_event_ticker_count"] == 1
+    assert payload["latest_current_slate_open_markets_persisted"] == 3
+    assert payload["latest_current_slate_targeted_discovery_used"] is True
+    assert payload["latest_current_slate_broad_market_fallback_used"] is False
+    assert payload["latest_current_slate_unmatched_event_count"] == 0
     assert payload["latest_refresh_run"]["summary_counts"]["current_slate_filtered_candidate_market_count"] == 3
+    assert payload["latest_refresh_run"]["summary_counts"]["current_slate_open_markets_persisted"] == 3
     assert payload["latest_watchlist_counts_by_sport"] == {}
 
 

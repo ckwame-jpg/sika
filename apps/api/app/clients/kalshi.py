@@ -139,6 +139,7 @@ class KalshiPublicClient:
         status: str = "open",
         limit: int = 1000,
         mve_filter: str = "exclude",
+        event_ticker: str | None = None,
         cursor: str | None = None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         params: dict[str, Any] = {
@@ -146,6 +147,8 @@ class KalshiPublicClient:
             "limit": min(limit, 1000),
             "mve_filter": mve_filter,
         }
+        if event_ticker:
+            params["event_ticker"] = event_ticker
         if cursor:
             params["cursor"] = cursor
 
@@ -164,6 +167,7 @@ class KalshiPublicClient:
         status: str = "open",
         limit: int = 1000,
         mve_filter: str = "exclude",
+        event_ticker: str | None = None,
         max_pages: int = 5,
         cursor: str | None = None,
     ):
@@ -176,6 +180,7 @@ class KalshiPublicClient:
                 status=status,
                 limit=min(remaining, 1000),
                 mve_filter=mve_filter,
+                event_ticker=event_ticker,
                 cursor=next_cursor,
             )
             if not page_markets:
@@ -190,6 +195,7 @@ class KalshiPublicClient:
         status: str = "open",
         limit: int = 1000,
         mve_filter: str = "exclude",
+        event_ticker: str | None = None,
         max_pages: int = 5,
     ) -> list[dict[str, Any]]:
         markets: list[dict[str, Any]] = []
@@ -197,11 +203,65 @@ class KalshiPublicClient:
             status=status,
             limit=limit,
             mve_filter=mve_filter,
+            event_ticker=event_ticker,
             max_pages=max_pages,
         ):
             markets.extend(page_markets)
 
         return markets[:limit]
+
+    def list_events_page(
+        self,
+        *,
+        status: str = "open",
+        series_ticker: str | None = None,
+        limit: int = 200,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        params: dict[str, Any] = {
+            "status": status,
+            "limit": min(limit, 200),
+        }
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if cursor:
+            params["cursor"] = cursor
+
+        response = self._get(
+            "/events",
+            params=params,
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return list(payload.get("events") or []), payload.get("cursor")
+
+    def iter_event_pages(
+        self,
+        *,
+        status: str = "open",
+        series_ticker: str | None = None,
+        limit: int = 200,
+        max_pages: int = 5,
+        cursor: str | None = None,
+    ):
+        remaining = limit
+        next_cursor = cursor
+        for _ in range(max_pages):
+            if remaining <= 0:
+                break
+            page_events, next_cursor = self.list_events_page(
+                status=status,
+                series_ticker=series_ticker,
+                limit=min(remaining, 200),
+                cursor=next_cursor,
+            )
+            if not page_events:
+                break
+            remaining -= len(page_events)
+            yield page_events, next_cursor
+            if not next_cursor:
+                break
 
     def get_market(self, ticker: str) -> dict[str, Any]:
         response = self._get(f"/markets/{ticker}", timeout=20)
@@ -252,17 +312,18 @@ class KalshiPublicClient:
         return response.json()
 
 
-class KalshiDemoClient:
+class KalshiAuthenticatedClient:
     def __init__(
         self,
         key_id: str | None = None,
         private_key_path: str | Path | None = None,
         base_url: str | None = None,
+        http_client: httpx.Client | None = None,
     ) -> None:
-        settings = get_settings()
-        self.key_id = key_id or settings.kalshi_key_id
-        self.private_key_path = Path(private_key_path or settings.kalshi_private_key_path)
-        self.base_url = (base_url or settings.kalshi_demo_base_url).rstrip("/")
+        self.key_id = key_id or ""
+        self.private_key_path = Path(private_key_path or "")
+        self.base_url = (base_url or "").rstrip("/")
+        self._http_client = http_client
 
     def _load_private_key(self):
         if not self.private_key_path.exists():
@@ -270,7 +331,11 @@ class KalshiDemoClient:
         return serialization.load_pem_private_key(self.private_key_path.read_bytes(), password=None)
 
     def sign_request(self, method: str, path: str, timestamp_ms: str) -> str:
-        payload = f"{timestamp_ms}{method.upper()}{path}".encode("utf-8")
+        # Kalshi signatures include the URL path only; query parameters are
+        # intentionally stripped for endpoints that pass filters via ``params``.
+        parsed = urlparse(path)
+        signing_path = parsed.path or path.split("?", 1)[0]
+        payload = f"{timestamp_ms}{method.upper()}{signing_path}".encode("utf-8")
         signature = self._load_private_key().sign(
             payload,
             padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
@@ -289,32 +354,66 @@ class KalshiDemoClient:
             "KALSHI-ACCESS-SIGNATURE": self.sign_request(method, path, timestamp_ms),
         }
 
-    def _request(self, method: str, path: str, json_body: dict[str, Any] | None = None, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
-        response = httpx.request(
-            method,
-            url,
-            headers=self._headers(method, url),
-            json=json_body,
-            params=params,
-            timeout=20,
-        )
+        request_kwargs = {
+            "headers": self._headers(method, url),
+            "json": json_body,
+            "params": params,
+            "timeout": 20,
+        }
+        if self._http_client is not None:
+            response = self._http_client.request(method, url, **request_kwargs)
+        else:
+            response = httpx.request(method, url, **request_kwargs)
         response.raise_for_status()
         return response.json()
 
-    def create_order(self, *, ticker: str, side: str, action: str, quantity: int, limit_price: float, time_in_force: str) -> dict[str, Any]:
-        client_order_id = str(uuid.uuid4())
+    def create_order(
+        self,
+        *,
+        ticker: str,
+        side: str,
+        action: str,
+        quantity: int,
+        limit_price: float,
+        time_in_force: str,
+        client_order_id: str | None = None,
+        buy_max_cost: int | None = None,
+        cancel_order_on_pause: bool | None = None,
+        no_resting: bool = False,
+        price_format: str = "dollars",
+    ) -> dict[str, Any]:
+        order_client_id = client_order_id or str(uuid.uuid4())
         payload: dict[str, Any] = {
             "ticker": ticker,
             "side": side,
             "action": action,
-            "client_order_id": client_order_id,
+            "client_order_id": order_client_id,
             "count": quantity,
             "count_fp": f"{quantity:.2f}",
+            "type": "limit",
             "time_in_force": time_in_force,
         }
-        price_field = "yes_price_dollars" if side.lower() == "yes" else "no_price_dollars"
-        payload[price_field] = f"{limit_price:.4f}"
+        price_cents = max(1, min(99, int(round(limit_price * 100))))
+        if price_format == "cents":
+            price_field = "yes_price" if side.lower() == "yes" else "no_price"
+            payload[price_field] = price_cents
+        else:
+            price_field = "yes_price_dollars" if side.lower() == "yes" else "no_price_dollars"
+            payload[price_field] = f"{limit_price:.4f}"
+        if buy_max_cost is not None:
+            payload["buy_max_cost"] = int(buy_max_cost)
+        if cancel_order_on_pause is not None:
+            payload["cancel_order_on_pause"] = bool(cancel_order_on_pause)
+        if no_resting:
+            payload["post_only"] = False
         response = self._request("POST", "/portfolio/orders", json_body=payload)
         response.setdefault("request", payload)
         return response
@@ -322,11 +421,54 @@ class KalshiDemoClient:
     def cancel_order(self, kalshi_order_id: str) -> dict[str, Any]:
         return self._request("DELETE", f"/portfolio/orders/{kalshi_order_id}")
 
-    def list_orders(self) -> list[dict[str, Any]]:
-        return self._request("GET", "/portfolio/orders").get("orders") or []
+    def list_orders(self, **params: Any) -> list[dict[str, Any]]:
+        clean_params = {key: value for key, value in params.items() if value is not None}
+        return self._request("GET", "/portfolio/orders", params=clean_params or None).get("orders") or []
 
-    def list_fills(self) -> list[dict[str, Any]]:
-        return self._request("GET", "/portfolio/fills").get("fills") or []
+    def list_fills(self, **params: Any) -> list[dict[str, Any]]:
+        clean_params = {key: value for key, value in params.items() if value is not None}
+        return self._request("GET", "/portfolio/fills", params=clean_params or None).get("fills") or []
+
+    def get_balance(self) -> dict[str, Any]:
+        return self._request("GET", "/portfolio/balance")
+
+    def list_positions(self, **params: Any) -> list[dict[str, Any]]:
+        clean_params = {key: value for key, value in params.items() if value is not None}
+        return self._request("GET", "/portfolio/positions", params=clean_params or None).get("positions") or []
+
+
+class KalshiDemoClient(KalshiAuthenticatedClient):
+    def __init__(
+        self,
+        key_id: str | None = None,
+        private_key_path: str | Path | None = None,
+        base_url: str | None = None,
+        http_client: httpx.Client | None = None,
+    ) -> None:
+        settings = get_settings()
+        super().__init__(
+            key_id=key_id or settings.kalshi_key_id,
+            private_key_path=private_key_path or settings.kalshi_private_key_path,
+            base_url=base_url or settings.kalshi_demo_base_url,
+            http_client=http_client,
+        )
+
+
+class KalshiLiveClient(KalshiAuthenticatedClient):
+    def __init__(
+        self,
+        key_id: str | None = None,
+        private_key_path: str | Path | None = None,
+        base_url: str | None = None,
+        http_client: httpx.Client | None = None,
+    ) -> None:
+        settings = get_settings()
+        super().__init__(
+            key_id=key_id or settings.kalshi_live_key_id,
+            private_key_path=private_key_path or settings.kalshi_live_private_key_path,
+            base_url=base_url or settings.kalshi_live_base_url,
+            http_client=http_client,
+        )
 
 
 def snapshot_from_market_payload(market: dict[str, Any]) -> dict[str, float | None]:

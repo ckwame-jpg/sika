@@ -1,15 +1,17 @@
 from datetime import date, datetime, timezone
 from math import isfinite
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.config import get_settings
 from app.database import get_db
 from app.models import (
+    AutoTradeRun,
     DemoOrder,
     Event,
     EventParticipant,
+    LiveOrder,
     Market,
     MarketSnapshot,
     PaperPosition,
@@ -23,12 +25,20 @@ from app.models import (
     Sport,
 )
 from app.schemas import (
+    AnalystChatRequest,
+    AnalystChatResponse,
+    AutoTradeRunRead,
+    AutoTradingStatusRead,
     DemoOrderCreate,
     DemoOrderRead,
     EventParticipantRead,
     EventRead,
     HealthResponse,
     JobRefreshResponse,
+    KalshiAccountRead,
+    KalshiAccountSnapshotRead,
+    LiveFillRead,
+    LiveOrderRead,
     MarketDetailRead,
     MarketHistoryRead,
     MarketListRead,
@@ -63,9 +73,17 @@ from app.schemas import (
     WatchlistDiagnosticsRead,
     WatchlistCoverageRowRead,
 )
+from app.services.admin_auth import require_owner_admin_token
+from app.services.analyst_chat import query_site_research, research_result_payload
+from app.services.live_trading import (
+    auto_trading_status,
+    disable_auto_trading,
+    enable_auto_trading,
+    live_account_state,
+    run_auto_trade_strategy,
+)
 from app.services.market_history import build_market_history
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
-from app.services.ml.study_progress import retained_study_cutoff
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
@@ -126,6 +144,23 @@ def _serialize_refresh_job(item: RefreshJob | None) -> RefreshJobRead | None:
         queued_at=item.queued_at,
         started_at=item.started_at,
         finished_at=item.finished_at,
+    )
+
+
+def _serialize_auto_trade_run(item: AutoTradeRun | None) -> AutoTradeRunRead | None:
+    if item is None:
+        return None
+    return AutoTradeRunRead.model_validate(item)
+
+
+def _serialize_live_account_state(state: dict[str, object]) -> KalshiAccountRead:
+    snapshot = state.get("snapshot")
+    return KalshiAccountRead(
+        environment=str(state.get("environment") or "production"),
+        credentials_configured=bool(state.get("credentials_configured")),
+        snapshot=KalshiAccountSnapshotRead.model_validate(snapshot) if snapshot else None,
+        live_orders=[LiveOrderRead.model_validate(item) for item in state.get("live_orders") or []],
+        live_fills=[LiveFillRead.model_validate(item) for item in state.get("live_fills") or []],
     )
 
 
@@ -440,6 +475,15 @@ def _run_summary_counts(details: dict | None) -> RunSummaryCounts:
         current_slate_scored_market_count=int(payload.get("current_slate_scored_market_count") or payload.get("scored_market_count") or 0),
         current_slate_coverage_prediction_count=int(payload.get("current_slate_coverage_prediction_count") or payload.get("coverage_prediction_count") or 0),
         current_slate_blocking_reason=payload.get("current_slate_blocking_reason"),
+        current_slate_matched_event_count=int(payload.get("current_slate_matched_event_count") or 0),
+        current_slate_hydrated_event_ticker_count=int(payload.get("current_slate_hydrated_event_ticker_count") or 0),
+        current_slate_open_markets_persisted=int(payload.get("current_slate_open_markets_persisted") or 0),
+        current_slate_targeted_discovery_used=bool(payload.get("current_slate_targeted_discovery_used") or False),
+        current_slate_broad_market_fallback_used=bool(
+            payload.get("current_slate_broad_market_fallback_used") or payload.get("broad_market_fallback_used") or False
+        ),
+        current_slate_unmatched_event_count=int(payload.get("current_slate_unmatched_event_count") or 0),
+        current_slate_discovered_market_count=int(payload.get("current_slate_discovered_market_count") or 0),
         scorer_outcome_counts=payload.get("scorer_outcome_counts") or payload.get("outcome_reason_counts") or {},
         recommendations_emitted=int(payload.get("recommendations_emitted") or 0),
         predictions_captured=int(payload.get("predictions_captured") or 0),
@@ -612,16 +656,47 @@ def _prediction_stmt(
     *,
     sport: str | None = None,
     market_family: str | None = None,
+    market_families: list[str] | None = None,
     stat_key: str | None = None,
     outcome: str | None = None,
     captured_from: date | None = None,
     captured_to: date | None = None,
 ):
     stmt = select(Prediction)
+    stmt = _apply_prediction_filters(
+        stmt,
+        sport=sport,
+        market_family=market_family,
+        market_families=market_families,
+        stat_key=stat_key,
+        outcome=outcome,
+        captured_from=captured_from,
+        captured_to=captured_to,
+    )
+    stmt = stmt.order_by(Prediction.captured_at.desc(), Prediction.id.desc())
+    return stmt
+
+
+def _apply_prediction_filters(
+    stmt,
+    *,
+    sport: str | None = None,
+    market_family: str | None = None,
+    market_families: list[str] | None = None,
+    stat_key: str | None = None,
+    outcome: str | None = None,
+    captured_from: date | None = None,
+    captured_to: date | None = None,
+):
     if sport:
         stmt = stmt.where(Prediction.sport_key == sport.upper())
-    if market_family:
-        stmt = stmt.where(Prediction.market_family == market_family)
+    families = [
+        family
+        for family in [market_family, *(market_families or [])]
+        if family
+    ]
+    if families:
+        stmt = stmt.where(Prediction.market_family.in_(families))
     if stat_key:
         stmt = stmt.where(Prediction.stat_key == stat_key)
     if outcome:
@@ -632,7 +707,6 @@ def _prediction_stmt(
     if captured_to:
         end = datetime.combine(captured_to, datetime.max.time(), tzinfo=timezone.utc)
         stmt = stmt.where(Prediction.captured_at <= end)
-    stmt = stmt.order_by(Prediction.captured_at.desc(), Prediction.id.desc())
     return stmt
 
 
@@ -691,27 +765,30 @@ def _aggregate_prediction_summary(
     *,
     sport: str | None = None,
     market_family: str | None = None,
+    market_families: list[str] | None = None,
     stat_key: str | None = None,
     outcome: str | None = None,
     captured_from: date | None = None,
     captured_to: date | None = None,
 ) -> PredictionSummaryRead:
-    use_recent_window_limit = captured_from is None and captured_to is None
-    if captured_from is None and captured_to is None:
-        captured_from = retained_study_cutoff().date()
-    base_stmt = _prediction_stmt(
+    base_stmt = _apply_prediction_filters(
+        select(
+            Prediction.id,
+            Prediction.edge,
+            Prediction.confidence,
+            Prediction.realized_pnl,
+            Prediction.prediction_outcome,
+            Prediction.sport_key,
+            Prediction.market_family,
+        ),
         sport=sport,
         market_family=market_family,
+        market_families=market_families,
         stat_key=stat_key,
         outcome=outcome,
         captured_from=captured_from,
         captured_to=captured_to,
-    ).order_by(None)
-    if use_recent_window_limit:
-        base_stmt = base_stmt.order_by(
-            Prediction.captured_at.desc(),
-            Prediction.id.desc(),
-        ).limit(PREDICTION_SUMMARY_ROW_LIMIT)
+    )
     subquery = base_stmt.subquery()
 
     totals = db.execute(
@@ -1016,6 +1093,13 @@ def get_watchlist_diagnostics(db: Session = Depends(get_db)) -> WatchlistDiagnos
         latest_current_slate_scored_market_count=summary_counts.current_slate_scored_market_count if summary_counts else 0,
         latest_current_slate_coverage_prediction_count=summary_counts.current_slate_coverage_prediction_count if summary_counts else 0,
         latest_current_slate_blocking_reason=summary_counts.current_slate_blocking_reason if summary_counts else None,
+        latest_current_slate_matched_event_count=summary_counts.current_slate_matched_event_count if summary_counts else 0,
+        latest_current_slate_hydrated_event_ticker_count=summary_counts.current_slate_hydrated_event_ticker_count if summary_counts else 0,
+        latest_current_slate_open_markets_persisted=summary_counts.current_slate_open_markets_persisted if summary_counts else 0,
+        latest_current_slate_targeted_discovery_used=summary_counts.current_slate_targeted_discovery_used if summary_counts else False,
+        latest_current_slate_broad_market_fallback_used=summary_counts.current_slate_broad_market_fallback_used if summary_counts else False,
+        latest_current_slate_unmatched_event_count=summary_counts.current_slate_unmatched_event_count if summary_counts else 0,
+        latest_current_slate_discovered_market_count=summary_counts.current_slate_discovered_market_count if summary_counts else 0,
         latest_scorer_outcome_counts=summary_counts.scorer_outcome_counts if summary_counts else {},
         latest_watchlist_counts_by_sport=summary_counts.watchlist_counts_by_sport if summary_counts else {},
         current_recommendation_count=int(current_recommendation_count),
@@ -1129,6 +1213,7 @@ def list_predictions(
 def prediction_summary(
     sport: str | None = None,
     market_family: str | None = None,
+    market_families: list[str] | None = Query(default=None),
     stat_key: str | None = None,
     outcome: str | None = None,
     captured_from: date | None = None,
@@ -1139,6 +1224,7 @@ def prediction_summary(
         db,
         sport=sport,
         market_family=market_family,
+        market_families=market_families,
         stat_key=stat_key,
         outcome=outcome,
         captured_from=captured_from,
@@ -1300,6 +1386,128 @@ def get_market_history(ticker: str, range: str = "1D", db: Session = Depends(get
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return MarketHistoryRead.model_validate(history)
+
+
+@ops_router.get("/auto-trading/status", response_model=AutoTradingStatusRead)
+def get_auto_trading_status(
+    _admin: None = Depends(require_owner_admin_token),
+    db: Session = Depends(get_db),
+) -> AutoTradingStatusRead:
+    return AutoTradingStatusRead.model_validate(auto_trading_status(db))
+
+
+@ops_router.get("/auto-trading/runs", response_model=list[AutoTradeRunRead])
+def list_auto_trade_runs(
+    limit: int = 20,
+    _admin: None = Depends(require_owner_admin_token),
+    db: Session = Depends(get_db),
+) -> list[AutoTradeRunRead]:
+    rows = db.scalars(
+        select(AutoTradeRun)
+        .options(selectinload(AutoTradeRun.decisions), selectinload(AutoTradeRun.orders).selectinload(LiveOrder.fills))
+        .order_by(AutoTradeRun.started_at.desc(), AutoTradeRun.id.desc())
+        .limit(max(1, min(limit, 100)))
+    ).all()
+    return [AutoTradeRunRead.model_validate(item) for item in rows]
+
+
+@ops_router.get("/auto-trading/runs/{run_id}", response_model=AutoTradeRunRead)
+def get_auto_trade_run(
+    run_id: int,
+    _admin: None = Depends(require_owner_admin_token),
+    db: Session = Depends(get_db),
+) -> AutoTradeRunRead:
+    run = db.scalar(
+        select(AutoTradeRun)
+        .options(selectinload(AutoTradeRun.decisions), selectinload(AutoTradeRun.orders).selectinload(LiveOrder.fills))
+        .where(AutoTradeRun.id == run_id)
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Auto-trade run not found")
+    return AutoTradeRunRead.model_validate(run)
+
+
+@ops_router.post("/auto-trading/run-now", response_model=AutoTradeRunRead)
+def run_auto_trading_now(
+    _admin: None = Depends(require_owner_admin_token),
+    db: Session = Depends(get_db),
+) -> AutoTradeRunRead:
+    run = run_auto_trade_strategy(db, requested_by="manual")
+    db.refresh(run)
+    return _serialize_auto_trade_run(run) or AutoTradeRunRead.model_validate(run)
+
+
+@ops_router.post("/auto-trading/disable", response_model=AutoTradingStatusRead)
+def disable_live_auto_trading(
+    _admin: None = Depends(require_owner_admin_token),
+    db: Session = Depends(get_db),
+) -> AutoTradingStatusRead:
+    disable_auto_trading(db, reason="manual_disable")
+    db.commit()
+    return AutoTradingStatusRead.model_validate(auto_trading_status(db))
+
+
+@ops_router.post("/auto-trading/enable", response_model=AutoTradingStatusRead)
+def enable_live_auto_trading(
+    _admin: None = Depends(require_owner_admin_token),
+    db: Session = Depends(get_db),
+) -> AutoTradingStatusRead:
+    enable_auto_trading(db)
+    db.commit()
+    return AutoTradingStatusRead.model_validate(auto_trading_status(db))
+
+
+@ops_router.get("/kalshi/account", response_model=KalshiAccountRead)
+def get_live_kalshi_account(
+    refresh: bool = False,
+    _admin: None = Depends(require_owner_admin_token),
+    db: Session = Depends(get_db),
+) -> KalshiAccountRead:
+    state = live_account_state(db, refresh=refresh)
+    db.commit()
+    return _serialize_live_account_state(state)
+
+
+@ops_router.post("/chat/analyst", response_model=AnalystChatResponse)
+def chat_with_site_analyst(
+    payload: AnalystChatRequest,
+    _admin: None = Depends(require_owner_admin_token),
+    db: Session = Depends(get_db),
+) -> AnalystChatResponse:
+    try:
+        result = query_site_research(
+            db,
+            message=payload.message,
+            sport_key=payload.sport_key,
+            season=payload.season,
+            include_web=payload.include_web,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Site analyst chat failed: {exc}") from exc
+    return AnalystChatResponse.model_validate(research_result_payload(result))
+
+
+@ops_router.post("/research/query", response_model=AnalystChatResponse)
+def query_site_research_endpoint(
+    payload: AnalystChatRequest,
+    _admin: None = Depends(require_owner_admin_token),
+    db: Session = Depends(get_db),
+) -> AnalystChatResponse:
+    try:
+        result = query_site_research(
+            db,
+            message=payload.message,
+            sport_key=payload.sport_key,
+            season=payload.season,
+            include_web=payload.include_web,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Site research failed: {exc}") from exc
+    return AnalystChatResponse.model_validate(research_result_payload(result))
 
 
 @ops_router.get("/runs", response_model=list[RunRead])
