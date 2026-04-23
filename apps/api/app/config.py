@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     kalshi_private_key_path: Path = Path("/Users/chris/.config/kalshi/kalshi-demo.key")
     kalshi_live_base_url: str = "https://api.elections.kalshi.com/trade-api/v2"
     kalshi_live_key_id: str = ""
-    kalshi_live_private_key_path: Path = Path("/Users/chris/.config/kalshi/kalshi-live.key")
+    kalshi_live_private_key_path: Path = Path.home() / ".config" / "kalshi" / "kalshi-live.key"
     sika_owner_admin_token: str = ""
     auto_trading_enabled: bool = False
     auto_trading_daily_budget_cents: int = 1000
