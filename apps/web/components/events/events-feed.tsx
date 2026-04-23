@@ -190,8 +190,14 @@ export function EventsFeed({
 
   if (error) {
     return (
-      <div className="flex h-24 items-center justify-center text-xs text-negative">
-        Failed to load events. Is the API running?
+      <div className="rounded-xl border border-negative/30 bg-negative-dim px-4 py-8 text-center">
+        <div className="mx-auto flex h-2 w-2 items-center justify-center">
+          <span className="h-2 w-2 rounded-full bg-negative shadow-[0_0_8px_0_var(--negative)]" />
+        </div>
+        <p className="mt-3 text-sm font-medium text-foreground">Couldn&rsquo;t reach the events feed.</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          The API didn&rsquo;t respond. Check that the backend is running, then try again.
+        </p>
       </div>
     );
   }

@@ -445,8 +445,14 @@ export function PredictionsDesk() {
             </div>
             <div className="cosmos-panel-body flush">
               {predsError ? (
-                <div className="cosmos-table-empty">
-                  Failed to load predictions: {predictionErrorMessage}
+                <div className="rounded-xl border border-negative/30 bg-negative-dim px-4 py-8 text-center">
+                  <div className="mx-auto flex h-2 w-2 items-center justify-center">
+                    <span className="h-2 w-2 rounded-full bg-negative shadow-[0_0_8px_0_var(--negative)]" />
+                  </div>
+                  <p className="mt-3 text-sm font-medium text-foreground">Couldn&rsquo;t load the ledger.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {predictionErrorMessage || "The prediction service didn\u2019t respond. Try again in a moment."}
+                  </p>
                 </div>
               ) : (
                 <>

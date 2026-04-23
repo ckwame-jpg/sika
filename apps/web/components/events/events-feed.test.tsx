@@ -59,13 +59,18 @@ function makeEvent(overrides: EventOverrides = {}): EventRead {
 }
 
 describe("EventsFeed", () => {
-  it("renders the error banner when the events fetch rejects", async () => {
+  it("renders the themed error card when the events fetch rejects", async () => {
     mockFetchEvents.mockRejectedValue(new Error("boom"));
 
     renderWithProviders(<EventsFeed mode="dashboard" />);
 
     expect(
-      await screen.findByText("Failed to load events. Is the API running?"),
+      await screen.findByText("Couldn\u2019t reach the events feed."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "The API didn\u2019t respond. Check that the backend is running, then try again.",
+      ),
     ).toBeInTheDocument();
     await waitFor(() => {
       expect(mockFetchEvents).toHaveBeenCalled();
