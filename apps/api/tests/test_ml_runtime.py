@@ -6,6 +6,7 @@ import pytest
 from app.config import get_settings
 from app.models import ModelFamilyRuntimeHealth, Prediction
 from app.services.ml.runtime import resolve_family_runtime, run_serving_inference, run_shadow_inference
+from app.services.operator_settings import set_ml_serving_mode
 
 
 @pytest.fixture(autouse=True)
@@ -135,6 +136,20 @@ def test_resolve_family_runtime_global_heuristic_overrides_family_modes(db_sessi
     assert decision.desired_mode == "heuristic"
     assert decision.effective_mode == "heuristic"
     assert decision.fallback_active is False
+
+
+def test_resolve_family_runtime_uses_operator_serving_mode_override(db_session, monkeypatch, tmp_path):
+    artifact_path = _write_artifact(tmp_path, family_key="nba_singles", scope="single")
+    manifest_path = _write_manifest(tmp_path, family_key="nba_singles", artifact_path=str(artifact_path), mode="shadow")
+    monkeypatch.setenv("ML_SERVING_MODE", "heuristic")
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(manifest_path))
+    set_ml_serving_mode(db_session, "shadow")
+    db_session.commit()
+
+    decision = resolve_family_runtime(db_session, "nba_singles", scope="single")
+
+    assert decision.desired_mode == "shadow"
+    assert decision.effective_mode == "shadow"
 
 
 def test_ml_family_modes_override_manifest_mode(db_session, monkeypatch, tmp_path):

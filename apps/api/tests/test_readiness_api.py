@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.models import ModelFamilyRuntimeHealth, Prediction, Run, ShadowInference
+from app.models import ModelFamilyRuntimeHealth, OperatorSetting, Prediction, RefreshJob, Run, ShadowInference
 from app.services.ingestion import run_shadow_capture_cycle
 from app.services.ml.runtime import sync_family_runtime_health
 
@@ -213,6 +213,47 @@ def test_models_readiness_endpoint_reports_insufficient_history_for_active_study
     nba = next(item for item in payload["families"] if item["family_key"] == "nba_singles")
     assert nba["study_track"] == "active"
     assert nba["readiness_status"] == "insufficient_history"
+
+
+def test_models_readiness_settings_update_enables_shadow_and_queues_backfill(client, db_session):
+    response = client.patch(
+        "/ops/models/readiness/settings",
+        json={"ml_serving_mode": "shadow"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ml_serving_mode"] == "shadow"
+    assert payload["shadow_enabled"] is True
+    assert payload["auto_promotion_enabled"] is False
+
+    setting = db_session.scalar(select(OperatorSetting).where(OperatorSetting.key == "ml_serving_mode"))
+    assert setting is not None
+    assert setting.value["mode"] == "shadow"
+
+    job = db_session.scalar(select(RefreshJob).where(RefreshJob.kind == "shadow_capture", RefreshJob.scope == "backfill"))
+    assert job is not None
+    assert job.status == "queued"
+
+
+def test_models_readiness_settings_update_arms_auto_promotion(client, db_session):
+    response = client.patch(
+        "/ops/models/readiness/settings",
+        json={"ml_serving_mode": "ml", "enqueue_shadow_backfill": False},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ml_serving_mode"] == "ml"
+    assert payload["shadow_enabled"] is True
+    assert payload["auto_promotion_enabled"] is True
+
+    setting = db_session.scalar(select(OperatorSetting).where(OperatorSetting.key == "ml_serving_mode"))
+    assert setting is not None
+    assert setting.value["mode"] == "ml"
+
+    job = db_session.scalar(select(RefreshJob).where(RefreshJob.kind == "shadow_capture"))
+    assert job is None
 
 
 def test_models_readiness_endpoint_marks_locked_and_heuristic_families(client):

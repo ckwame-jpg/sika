@@ -18,6 +18,7 @@ from app.services.ml.lineage import HEURISTIC_PARLAY_MODEL, HEURISTIC_SINGLE_MOD
 from app.services.ml.registry import ModelManifest, ModelManifestFamily, load_model_manifest
 from app.services.ml.study_progress import history_ready_for_shadow, is_active_study_family, settled_prediction_count_for_family
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition
+from app.services.operator_settings import effective_ml_serving_mode
 
 RuntimeMode = Literal["heuristic", "shadow", "ml"]
 RuntimeHealth = Literal["healthy", "degraded", "unavailable"]
@@ -129,8 +130,7 @@ def _resolve_requested_mode(
     *,
     manifest_family: ModelManifestFamily | None,
 ) -> RuntimeMode:
-    settings = get_settings()
-    global_mode = settings.ml_serving_mode
+    global_mode = effective_ml_serving_mode(db)
     resolved = _family_override_requested_mode(family_key)
     if resolved is None:
         resolved = _promotion_requested_mode(db, family_key)
@@ -161,9 +161,9 @@ def shadow_capture_blocker(
     family_key: str,
     *,
     scope: str,
+    db: Session | None = None,
 ) -> str | None:
-    settings = get_settings()
-    if settings.ml_serving_mode == "heuristic":
+    if effective_ml_serving_mode(db) == "heuristic":
         return "This family has enough settled history, but global ML mode is locked to heuristic, so shadow capture will not start automatically."
 
     manifest = load_model_manifest()

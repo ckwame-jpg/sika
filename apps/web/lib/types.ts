@@ -528,6 +528,11 @@ export interface ModelReadinessSummaryRead {
   families: ModelFamilyReadinessRead[];
 }
 
+export interface ModelReadinessSettingsUpdate {
+  ml_serving_mode: "heuristic" | "shadow" | "ml";
+  enqueue_shadow_backfill?: boolean;
+}
+
 export interface PaperPositionRead {
   id: number;
   ticker: string;

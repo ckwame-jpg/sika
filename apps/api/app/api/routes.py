@@ -34,6 +34,7 @@ from app.schemas import (
     MarketListRead,
     MarketSnapshotRead,
     ModelFamilyReadinessRead,
+    ModelReadinessSettingsUpdate,
     ModelReadinessSummaryRead,
     PaperPositionCreate,
     PaperPositionExit,
@@ -66,10 +67,11 @@ from app.schemas import (
 from app.services.market_history import build_market_history
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
 from app.services.ml.study_progress import retained_study_cutoff
+from app.services.operator_settings import set_ml_serving_mode
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
-from app.services.refresh_jobs import enqueue_refresh_job, get_refresh_job, reconcile_stale_jobs as reconcile_stale_refresh_jobs
+from app.services.refresh_jobs import enqueue_refresh_job, enqueue_shadow_capture_job, get_refresh_job, reconcile_stale_jobs as reconcile_stale_refresh_jobs
 from app.services.scheduler import get_refresh_runtime_state
 from app.services.stats_query import StatsQueryService
 from app.services.trade_desk import (
@@ -1091,6 +1093,18 @@ def get_parlay_watchlist(
 
 @ops_router.get("/models/readiness", response_model=ModelReadinessSummaryRead)
 def model_readiness_summary(db: Session = Depends(get_db)) -> ModelReadinessSummaryRead:
+    return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
+
+
+@ops_router.patch("/models/readiness/settings", response_model=ModelReadinessSummaryRead)
+def update_model_readiness_settings(
+    payload: ModelReadinessSettingsUpdate,
+    db: Session = Depends(get_db),
+) -> ModelReadinessSummaryRead:
+    set_ml_serving_mode(db, payload.ml_serving_mode)
+    if payload.ml_serving_mode in {"shadow", "ml"} and payload.enqueue_shadow_backfill:
+        enqueue_shadow_capture_job(db, scope="backfill")
+    db.commit()
     return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
 
 

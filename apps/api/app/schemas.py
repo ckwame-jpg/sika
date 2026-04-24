@@ -577,6 +577,11 @@ class ModelReadinessSummaryRead(BaseModel):
     families: list[ModelFamilyReadinessRead] = Field(default_factory=list)
 
 
+class ModelReadinessSettingsUpdate(BaseModel):
+    ml_serving_mode: Literal["heuristic", "shadow", "ml"]
+    enqueue_shadow_backfill: bool = True
+
+
 class MarketHistoryPointRead(BaseModel):
     timestamp: UTCDateTime
     yes_bid: float | None = None

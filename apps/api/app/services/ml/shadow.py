@@ -6,11 +6,11 @@ from datetime import datetime
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.config import get_settings
 from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
 from app.services.ml.runtime import run_shadow_inference
 from app.services.ml.study_progress import is_active_study_family, retained_study_cutoff
 from app.services.model_families import parlay_family_key, single_family_key
+from app.services.operator_settings import effective_ml_serving_mode
 
 SHADOW_BACKFILL_MAX_PREDICTIONS = 250
 SHADOW_BACKFILL_MAX_PARLAYS = 50
@@ -278,8 +278,7 @@ def capture_shadow_artifacts(
     source_run_id: int | None = None,
     backfill: bool = False,
 ) -> tuple[int, int]:
-    settings = get_settings()
-    if settings.ml_serving_mode == "heuristic" or run_id is None:
+    if effective_ml_serving_mode(db) == "heuristic" or run_id is None:
         return 0, 0
     if source_run_id is not None and backfill:
         raise ValueError("Shadow capture cannot target a source run and backfill in the same pass.")
@@ -457,8 +456,7 @@ def capture_shadow_artifacts_batch(
     prediction_limit: int = SHADOW_CAPTURE_BATCH_PREDICTIONS,
     parlay_limit: int = SHADOW_CAPTURE_BATCH_PARLAYS,
 ) -> ShadowCaptureBatch:
-    settings = get_settings()
-    if settings.ml_serving_mode == "heuristic" or run_id is None:
+    if effective_ml_serving_mode(db) == "heuristic" or run_id is None:
         return ShadowCaptureBatch(0, 0, None, None, True)
     if source_run_id is not None and backfill:
         raise ValueError("Shadow capture cannot target a source run and backfill in the same pass.")

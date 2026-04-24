@@ -476,6 +476,15 @@ class ModelFamilyRuntimeHealth(Base):
     promotion_updated_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class OperatorSetting(Base):
+    __tablename__ = "operator_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, nullable=False, unique=True, index=True)
+    value = Column(JSON, default=dict)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class PaperPosition(Base):
     __tablename__ = "paper_positions"
 

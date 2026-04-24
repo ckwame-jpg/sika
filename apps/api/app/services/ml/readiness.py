@@ -7,7 +7,6 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, load_only, selectinload
 
-from app.config import get_settings
 from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
 from app.services.ml.promotion import MIN_PROMOTION_SHADOW_SAMPLES, STABILITY_DAYS_REQUIRED
 from app.services.ml.runtime import read_family_runtime, shadow_capture_blocker
@@ -20,6 +19,7 @@ from app.services.ml.study_progress import (
     shadow_coverage_ready,
 )
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition, parlay_family_key, single_family_key
+from app.services.operator_settings import effective_ml_serving_mode
 
 READINESS_ROW_LIMIT = 5_000
 
@@ -211,6 +211,7 @@ def _rates_from_diagnostics(rows: list[Any]) -> tuple[dict[str, float], dict[str
 
 def _readiness_status(
     *,
+    db: Session,
     family_key: str,
     scope: str,
     study_track: str,
@@ -229,7 +230,7 @@ def _readiness_status(
             f"need {MIN_SETTLED_FOR_REVIEW} before review."
         )
     if shadow_predictions == 0:
-        blocker = shadow_capture_blocker(family_key, scope=scope)
+        blocker = shadow_capture_blocker(family_key, scope=scope, db=db)
         if blocker:
             return "shadow_not_started", blocker
         return "shadow_not_started", (
@@ -284,6 +285,7 @@ def _summary_for_family(
     runtime_health = _runtime_health(runtime.runtime_health)
     shadow_ratio = shadow_coverage_ratio(total_predictions=total_predictions, shadow_predictions=covered_shadow_predictions)
     readiness_status, why_not_ready = _readiness_status(
+        db=db,
         family_key=family_key,
         scope=scope,
         study_track=definition.study_track,
@@ -358,7 +360,7 @@ def _summary_for_family(
 
 
 def build_model_readiness_summary(db: Session) -> dict[str, Any]:
-    settings = get_settings()
+    serving_mode = effective_ml_serving_mode(db)
     cutoff = retained_study_cutoff()
     single_predictions = db.scalars(
         select(Prediction)
@@ -474,9 +476,9 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
 
     return {
         "generated_at": _now_utc(),
-        "ml_serving_mode": settings.ml_serving_mode,
-        "shadow_enabled": settings.ml_serving_mode in {"shadow", "ml"},
-        "auto_promotion_enabled": settings.ml_serving_mode == "ml",
+        "ml_serving_mode": serving_mode,
+        "shadow_enabled": serving_mode in {"shadow", "ml"},
+        "auto_promotion_enabled": serving_mode == "ml",
         "min_settled_for_review": MIN_SETTLED_FOR_REVIEW,
         "min_shadow_coverage": MIN_SHADOW_COVERAGE,
         "min_promotion_shadow_samples": MIN_PROMOTION_SHADOW_SAMPLES,

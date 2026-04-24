@@ -191,6 +191,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/models/readiness/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Model Readiness Settings */
+        patch: operations["update_model_readiness_settings_ops_models_readiness_settings_patch"];
+        trace?: never;
+    };
     "/ops/models/readiness/{family_key}": {
         parameters: {
             query?: never;
@@ -985,6 +1002,19 @@ export interface components {
              * @enum {string}
              */
             runtime_health: "healthy" | "degraded" | "unavailable";
+        };
+        /** ModelReadinessSettingsUpdate */
+        ModelReadinessSettingsUpdate: {
+            /**
+             * Enqueue Shadow Backfill
+             * @default true
+             */
+            enqueue_shadow_backfill: boolean;
+            /**
+             * Ml Serving Mode
+             * @enum {string}
+             */
+            ml_serving_mode: "heuristic" | "shadow" | "ml";
         };
         /** ModelReadinessSummaryRead */
         ModelReadinessSummaryRead: {
@@ -2670,6 +2700,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelReadinessSummaryRead"];
+                };
+            };
+        };
+    };
+    update_model_readiness_settings_ops_models_readiness_settings_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelReadinessSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelReadinessSummaryRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

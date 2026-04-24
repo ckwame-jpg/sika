@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import useSWR, { mutate } from "swr";
-import { AlertTriangle, CheckCircle2, Cpu, FlaskConical, RefreshCw } from "lucide-react";
-import { fetchModelReadinessDetail, fetchModelReadinessSummary, keys } from "@/lib/api";
+import { AlertTriangle, CheckCircle2, Cpu, FlaskConical, Power, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
+import { fetchModelReadinessDetail, fetchModelReadinessSummary, keys, updateModelReadinessSettings } from "@/lib/api";
 import type {
   ModelFamilyReadinessRead,
   ModelReadinessSummaryRead,
@@ -13,6 +13,8 @@ import type {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
+
+type RuntimeMode = ModelReadinessSummaryRead["ml_serving_mode"];
 
 const STUDY_LADDER = [
   "insufficient history",
@@ -185,6 +187,8 @@ function ProgressStep({
 
 export function ModelReadinessPanel() {
   const [refreshing, setRefreshing] = useState(false);
+  const [savingMode, setSavingMode] = useState<RuntimeMode | null>(null);
+  const [modeError, setModeError] = useState<string | null>(null);
   const { data: summary, isLoading, error } = useSWR<ModelReadinessSummaryRead>(
     keys.modelReadinessSummary,
     fetchModelReadinessSummary,
@@ -223,6 +227,25 @@ export function ModelReadinessPanel() {
       ]);
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function handleModeChange(mode: RuntimeMode) {
+    setSavingMode(mode);
+    setModeError(null);
+    try {
+      const nextSummary = await updateModelReadinessSettings({
+        ml_serving_mode: mode,
+        enqueue_shadow_backfill: mode !== "heuristic",
+      });
+      await mutate(keys.modelReadinessSummary, nextSummary, { revalidate: false });
+      if (selectedFamilyKey) {
+        await mutate(keys.modelReadinessDetail(selectedFamilyKey));
+      }
+    } catch (updateError) {
+      setModeError(updateError instanceof Error ? updateError.message : "Failed to update model mode.");
+    } finally {
+      setSavingMode(null);
     }
   }
 
@@ -295,18 +318,56 @@ export function ModelReadinessPanel() {
           </div>
         </div>
         <div className="cosmos-panel-body">
+          {modeError ? (
+            <div className="mb-4 flex items-center gap-2 rounded-lg border border-negative/30 bg-negative/10 px-3 py-2 text-sm text-negative">
+              <AlertTriangle size={14} />
+              {modeError}
+            </div>
+          ) : null}
           <div className="mb-4 grid gap-3 md:grid-cols-3">
             <div className="stats-tile">
               <p className="stats-tile-label">Global Mode</p>
               <p className="stats-tile-value font-mono">{summary.ml_serving_mode}</p>
+              {summary.ml_serving_mode !== "heuristic" ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 gap-2"
+                  onClick={() => void handleModeChange("heuristic")}
+                  disabled={savingMode !== null}
+                >
+                  <Power size={13} />
+                  Pause ML
+                </Button>
+              ) : null}
             </div>
             <div className="stats-tile">
               <p className="stats-tile-label">Shadow Capture</p>
               <p className="stats-tile-value">{summary.shadow_enabled ? "enabled" : "off"}</p>
+              <Button
+                variant={summary.shadow_enabled ? "secondary" : "primary"}
+                size="sm"
+                className="mt-3 gap-2"
+                onClick={() => void handleModeChange("shadow")}
+                disabled={summary.ml_serving_mode === "shadow" || savingMode !== null}
+              >
+                <ShieldCheck size={13} />
+                {summary.shadow_enabled ? "Shadow On" : "Enable Shadow"}
+              </Button>
             </div>
             <div className="stats-tile">
               <p className="stats-tile-label">Auto Promotion</p>
               <p className="stats-tile-value">{summary.auto_promotion_enabled ? "armed" : "manual"}</p>
+              <Button
+                variant={summary.auto_promotion_enabled ? "secondary" : "primary"}
+                size="sm"
+                className="mt-3 gap-2"
+                onClick={() => void handleModeChange(summary.auto_promotion_enabled ? "shadow" : "ml")}
+                disabled={savingMode !== null}
+              >
+                <Rocket size={13} />
+                {summary.auto_promotion_enabled ? "Manual Only" : "Arm Auto"}
+              </Button>
             </div>
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

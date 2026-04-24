@@ -9,6 +9,7 @@ import type {
   MarketDetailRead,
   MarketHistoryRead,
   ModelFamilyReadinessRead,
+  ModelReadinessSettingsUpdate,
   ModelReadinessSummaryRead,
   PaperPositionCreate,
   PaperPositionExit,
@@ -198,6 +199,12 @@ export const fetchModelReadinessSummary = () =>
 
 export const fetchModelReadinessDetail = (familyKey: string) =>
   request<ModelFamilyReadinessRead>(`/ops/models/readiness/${encodeURIComponent(familyKey)}`);
+
+export const updateModelReadinessSettings = (body: ModelReadinessSettingsUpdate) =>
+  request<ModelReadinessSummaryRead>("/ops/models/readiness/settings", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 
 export const fetchParlayPredictions = (sportScope = "all", legCount?: number, limit = 100) => {
   const params = new URLSearchParams({ sport_scope: sportScope, limit: String(limit) });

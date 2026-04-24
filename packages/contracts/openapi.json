@@ -1456,6 +1456,29 @@
         "title": "ModelFamilyRuntimeHealthRead",
         "type": "object"
       },
+      "ModelReadinessSettingsUpdate": {
+        "properties": {
+          "enqueue_shadow_backfill": {
+            "default": true,
+            "title": "Enqueue Shadow Backfill",
+            "type": "boolean"
+          },
+          "ml_serving_mode": {
+            "enum": [
+              "heuristic",
+              "shadow",
+              "ml"
+            ],
+            "title": "Ml Serving Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ml_serving_mode"
+        ],
+        "title": "ModelReadinessSettingsUpdate",
+        "type": "object"
+      },
       "ModelReadinessSummaryRead": {
         "properties": {
           "auto_promotion_enabled": {
@@ -5863,6 +5886,47 @@
           }
         },
         "summary": "Model Readiness Summary",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/models/readiness/settings": {
+      "patch": {
+        "operationId": "update_model_readiness_settings_ops_models_readiness_settings_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelReadinessSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelReadinessSummaryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Model Readiness Settings",
         "tags": [
           "ops"
         ]
