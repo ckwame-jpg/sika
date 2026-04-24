@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 *.pyc
 apps/api/.env
+apps/api/.owner-token
 apps/api/kalshi_sports_copilot.db
 apps/api/kalshi_sports_copilot.db-shm
 apps/api/kalshi_sports_copilot.db-wal
@@ -25,6 +26,7 @@ coverage/
 .claude/
 .playwright-cli/
 *.tsbuildinfo
+.local-server/
 apps/web/test-results/
 sika-handoff/
 apps/ml/artifacts/
