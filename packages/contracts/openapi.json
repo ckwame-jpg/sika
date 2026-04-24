@@ -1388,6 +1388,53 @@
             ],
             "title": "Model Version"
           },
+          "promotion_baseline_brier": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotion Baseline Brier"
+          },
+          "promotion_metrics": {
+            "additionalProperties": true,
+            "title": "Promotion Metrics",
+            "type": "object"
+          },
+          "promotion_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "shadow",
+                  "ml"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotion Mode"
+          },
+          "promotion_stability_days": {
+            "default": 0,
+            "title": "Promotion Stability Days",
+            "type": "integer"
+          },
+          "promotion_updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotion Updated At"
+          },
           "runtime_health": {
             "enum": [
               "healthy",
@@ -1411,6 +1458,11 @@
       },
       "ModelReadinessSummaryRead": {
         "properties": {
+          "auto_promotion_enabled": {
+            "default": false,
+            "title": "Auto Promotion Enabled",
+            "type": "boolean"
+          },
           "families": {
             "items": {
               "$ref": "#/components/schemas/ModelFamilyReadinessRead"
@@ -1421,6 +1473,41 @@
           "generated_at": {
             "title": "Generated At",
             "type": "string"
+          },
+          "min_promotion_shadow_samples": {
+            "default": 150,
+            "title": "Min Promotion Shadow Samples",
+            "type": "integer"
+          },
+          "min_settled_for_review": {
+            "default": 40,
+            "title": "Min Settled For Review",
+            "type": "integer"
+          },
+          "min_shadow_coverage": {
+            "default": 0.75,
+            "title": "Min Shadow Coverage",
+            "type": "number"
+          },
+          "ml_serving_mode": {
+            "default": "heuristic",
+            "enum": [
+              "heuristic",
+              "shadow",
+              "ml"
+            ],
+            "title": "Ml Serving Mode",
+            "type": "string"
+          },
+          "promotion_stability_days_required": {
+            "default": 3,
+            "title": "Promotion Stability Days Required",
+            "type": "integer"
+          },
+          "shadow_enabled": {
+            "default": false,
+            "title": "Shadow Enabled",
+            "type": "boolean"
           }
         },
         "required": [

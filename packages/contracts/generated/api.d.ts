@@ -965,6 +965,21 @@ export interface components {
             model_name?: string | null;
             /** Model Version */
             model_version?: string | null;
+            /** Promotion Baseline Brier */
+            promotion_baseline_brier?: number | null;
+            /** Promotion Metrics */
+            promotion_metrics?: {
+                [key: string]: unknown;
+            };
+            /** Promotion Mode */
+            promotion_mode?: ("shadow" | "ml") | null;
+            /**
+             * Promotion Stability Days
+             * @default 0
+             */
+            promotion_stability_days: number;
+            /** Promotion Updated At */
+            promotion_updated_at?: string | null;
             /**
              * Runtime Health
              * @enum {string}
@@ -973,10 +988,46 @@ export interface components {
         };
         /** ModelReadinessSummaryRead */
         ModelReadinessSummaryRead: {
+            /**
+             * Auto Promotion Enabled
+             * @default false
+             */
+            auto_promotion_enabled: boolean;
             /** Families */
             families?: components["schemas"]["ModelFamilyReadinessRead"][];
             /** Generated At */
             generated_at: string;
+            /**
+             * Min Promotion Shadow Samples
+             * @default 150
+             */
+            min_promotion_shadow_samples: number;
+            /**
+             * Min Settled For Review
+             * @default 40
+             */
+            min_settled_for_review: number;
+            /**
+             * Min Shadow Coverage
+             * @default 0.75
+             */
+            min_shadow_coverage: number;
+            /**
+             * Ml Serving Mode
+             * @default heuristic
+             * @enum {string}
+             */
+            ml_serving_mode: "heuristic" | "shadow" | "ml";
+            /**
+             * Promotion Stability Days Required
+             * @default 3
+             */
+            promotion_stability_days_required: number;
+            /**
+             * Shadow Enabled
+             * @default false
+             */
+            shadow_enabled: boolean;
         };
         /** PaperPositionCreate */
         PaperPositionCreate: {
