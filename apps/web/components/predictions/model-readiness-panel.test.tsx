@@ -34,5 +34,9 @@ describe("ModelReadinessPanel", () => {
     expect((await screen.findAllByText("active study")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("heuristic lane").length).toBeGreaterThan(0);
     expect(screen.getAllByText("heuristic -> heuristic").length).toBeGreaterThan(0);
+    expect(screen.getByText("Global Mode")).toBeInTheDocument();
+    expect(screen.getByText("Shadow Capture")).toBeInTheDocument();
+    expect(screen.getByText("Auto Promotion")).toBeInTheDocument();
+    expect(screen.getByText("Promotion Samples")).toBeInTheDocument();
   });
 });

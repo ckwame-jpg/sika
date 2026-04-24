@@ -471,6 +471,11 @@ export interface ModelFamilyRuntimeHealthRead {
   calibration_version: string | null;
   feature_set_version: string | null;
   model_metadata: Record<string, unknown>;
+  promotion_mode: "shadow" | "ml" | null;
+  promotion_stability_days: number;
+  promotion_baseline_brier: number | null;
+  promotion_metrics: Record<string, unknown>;
+  promotion_updated_at: string | null;
 }
 
 export interface ModelFamilyReadinessRead {
@@ -513,6 +518,13 @@ export interface ModelFamilyReadinessRead {
 
 export interface ModelReadinessSummaryRead {
   generated_at: string;
+  ml_serving_mode: "heuristic" | "shadow" | "ml";
+  shadow_enabled: boolean;
+  auto_promotion_enabled: boolean;
+  min_settled_for_review: number;
+  min_shadow_coverage: number;
+  min_promotion_shadow_samples: number;
+  promotion_stability_days_required: number;
   families: ModelFamilyReadinessRead[];
 }
 

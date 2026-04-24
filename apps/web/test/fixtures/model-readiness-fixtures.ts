@@ -34,6 +34,11 @@ function runtime(overrides: Partial<ModelFamilyRuntimeHealthRead>): ModelFamilyR
     calibration_version: overrides.calibration_version ?? null,
     feature_set_version: overrides.feature_set_version ?? null,
     model_metadata: overrides.model_metadata ?? {},
+    promotion_mode: overrides.promotion_mode ?? null,
+    promotion_stability_days: overrides.promotion_stability_days ?? 0,
+    promotion_baseline_brier: overrides.promotion_baseline_brier ?? null,
+    promotion_metrics: overrides.promotion_metrics ?? {},
+    promotion_updated_at: overrides.promotion_updated_at ?? null,
   };
 }
 
@@ -112,5 +117,12 @@ export const heuristicLaneFamilyFixture = family({
 
 export const modelReadinessSummaryFixture: ModelReadinessSummaryRead = {
   generated_at: "2026-04-07T18:00:00Z",
+  ml_serving_mode: "shadow",
+  shadow_enabled: true,
+  auto_promotion_enabled: false,
+  min_settled_for_review: 40,
+  min_shadow_coverage: 0.75,
+  min_promotion_shadow_samples: 150,
+  promotion_stability_days_required: 3,
   families: [activeStudyFamilyFixture, heuristicLaneFamilyFixture],
 };

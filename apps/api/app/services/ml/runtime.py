@@ -44,6 +44,11 @@ class FamilyRuntimeDecision:
     last_error_at: datetime | None
     consecutive_failures: int
     lineage: ModelLineage
+    promotion_mode: RuntimeMode | None = None
+    promotion_stability_days: int = 0
+    promotion_baseline_brier: float | None = None
+    promotion_metrics: dict[str, Any] | None = None
+    promotion_updated_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -327,6 +332,11 @@ def _decision_from_row(row: ModelFamilyRuntimeHealth, scope: str) -> FamilyRunti
         last_error_at=row.last_error_at,
         consecutive_failures=int(row.consecutive_failures or 0),
         lineage=lineage,
+        promotion_mode=(row.promotion_mode if row.promotion_mode in {"shadow", "ml"} else None),  # type: ignore[arg-type]
+        promotion_stability_days=int(row.promotion_stability_days or 0),
+        promotion_baseline_brier=row.promotion_baseline_brier,
+        promotion_metrics=dict(row.promotion_metrics or {}),
+        promotion_updated_at=row.promotion_updated_at,
     )
 
 
@@ -352,6 +362,11 @@ def read_family_runtime(
             last_error_at=None,
             consecutive_failures=0,
             lineage=lineage,
+            promotion_mode=None,
+            promotion_stability_days=0,
+            promotion_baseline_brier=None,
+            promotion_metrics={},
+            promotion_updated_at=None,
         )
     return _decision_from_row(row, scope)
 

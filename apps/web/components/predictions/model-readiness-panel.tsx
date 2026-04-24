@@ -22,6 +22,32 @@ const STUDY_LADDER = [
   "serving",
 ] as const;
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function promotionMetric(family: ModelFamilyReadinessRead, key: string): number | null {
+  const metrics = asRecord(asRecord(family.runtime.promotion_metrics).metrics);
+  const value = metrics[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function progressRatio(value: number, target: number): number {
+  if (target <= 0) return 1;
+  return Math.min(Math.max(value / target, 0), 1);
+}
+
+function rolloutAction(summary: ModelReadinessSummaryRead, family: ModelFamilyReadinessRead): string {
+  if (family.study_track !== "active") return "Heuristic lane";
+  if (family.runtime.effective_mode === "ml") return "Serving ML";
+  if (!summary.shadow_enabled) return "Enable shadow mode";
+  if (family.shadow_predictions === 0) return "Waiting for shadow capture";
+  if (family.readiness_status === "shadowing") return "Collecting shadow coverage";
+  if (family.readiness_status === "ready_for_review" && !summary.auto_promotion_enabled) return "Ready to arm auto-promotion";
+  if (summary.auto_promotion_enabled) return "Auto-promotion armed";
+  return family.readiness_status.replaceAll("_", " ");
+}
+
 function readinessPillClass(status: ReadinessStatus): string {
   if (status === "serving" || status === "ready_for_review") return "settled";
   if (status === "shadowing" || status === "shadow_not_started" || status === "insufficient_history") return "pending";
@@ -125,6 +151,38 @@ function BucketTable({
   );
 }
 
+function ProgressStep({
+  label,
+  value,
+  target,
+  detail,
+  complete,
+}: {
+  label: string;
+  value: number;
+  target: number;
+  detail: string;
+  complete?: boolean;
+}) {
+  const ratio = complete ? 1 : progressRatio(value, target);
+  return (
+    <div className="stats-tile">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="stats-tile-label">{label}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+        </div>
+        <span className={cn("outcome-pill", ratio >= 1 ? "settled" : "pending")}>
+          {ratio >= 1 ? "done" : `${Math.round(ratio * 100)}%`}
+        </span>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
+        <div className="h-full rounded-full bg-positive" style={{ width: `${ratio * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export function ModelReadinessPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const { data: summary, isLoading, error } = useSWR<ModelReadinessSummaryRead>(
@@ -202,6 +260,10 @@ export function ModelReadinessPanel() {
   }
 
   const selected = detail ?? summaryFallback;
+  const selectedPromotionSamples = selected ? promotionMetric(selected, "sample_count") ?? selected.shadow_predictions : 0;
+  const selectedShadowBrier = selected ? promotionMetric(selected, "shadow_brier") : null;
+  const selectedHeuristicBrier = selected ? promotionMetric(selected, "heuristic_brier") : null;
+  const selectedShadowTopDecileRoi = selected ? promotionMetric(selected, "shadow_top_decile_roi") : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -233,6 +295,20 @@ export function ModelReadinessPanel() {
           </div>
         </div>
         <div className="cosmos-panel-body">
+          <div className="mb-4 grid gap-3 md:grid-cols-3">
+            <div className="stats-tile">
+              <p className="stats-tile-label">Global Mode</p>
+              <p className="stats-tile-value font-mono">{summary.ml_serving_mode}</p>
+            </div>
+            <div className="stats-tile">
+              <p className="stats-tile-label">Shadow Capture</p>
+              <p className="stats-tile-value">{summary.shadow_enabled ? "enabled" : "off"}</p>
+            </div>
+            <div className="stats-tile">
+              <p className="stats-tile-label">Auto Promotion</p>
+              <p className="stats-tile-value">{summary.auto_promotion_enabled ? "armed" : "manual"}</p>
+            </div>
+          </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {summary.families.map((family) => (
               <FamilyCard
@@ -266,9 +342,61 @@ export function ModelReadinessPanel() {
                 ) : null}
               </div>
               <p className="mt-2 text-sm text-muted-foreground">{selected.why_not_ready}</p>
+              <p className="mt-2 text-sm font-medium text-foreground">{rolloutAction(summary, selected)}</p>
             </div>
           </div>
           <div className="cosmos-panel-body flex flex-col gap-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <ProgressStep
+                label="History"
+                value={selected.settled_predictions}
+                target={summary.min_settled_for_review}
+                detail={`${selected.settled_predictions}/${summary.min_settled_for_review} settled`}
+              />
+              <ProgressStep
+                label="Shadow Coverage"
+                value={selected.shadow_coverage_ratio}
+                target={summary.min_shadow_coverage}
+                detail={`${fmtPercent(selected.shadow_coverage_ratio)} / ${fmtPercent(summary.min_shadow_coverage)}`}
+              />
+              <ProgressStep
+                label="Promotion Samples"
+                value={selectedPromotionSamples}
+                target={summary.min_promotion_shadow_samples}
+                detail={`${selectedPromotionSamples}/${summary.min_promotion_shadow_samples} paired samples`}
+              />
+              <ProgressStep
+                label="Daily Stability"
+                value={selected.runtime.promotion_stability_days}
+                target={summary.promotion_stability_days_required}
+                detail={`${selected.runtime.promotion_stability_days}/${summary.promotion_stability_days_required} passing days`}
+              />
+              <ProgressStep
+                label="Serving"
+                value={selected.runtime.effective_mode === "ml" ? 1 : 0}
+                target={1}
+                detail={selected.runtime.effective_mode === "ml" ? "ML live" : "not live"}
+                complete={selected.runtime.effective_mode === "ml"}
+              />
+            </div>
+
+            {(selectedHeuristicBrier != null || selectedShadowBrier != null || selectedShadowTopDecileRoi != null) ? (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="stats-tile">
+                  <p className="stats-tile-label">Heuristic Brier</p>
+                  <p className="stats-tile-value font-mono">{selectedHeuristicBrier?.toFixed(4) ?? "—"}</p>
+                </div>
+                <div className="stats-tile">
+                  <p className="stats-tile-label">Shadow Brier</p>
+                  <p className="stats-tile-value font-mono">{selectedShadowBrier?.toFixed(4) ?? "—"}</p>
+                </div>
+                <div className="stats-tile">
+                  <p className="stats-tile-label">Shadow Top-Decile ROI</p>
+                  <p className="stats-tile-value font-mono">{selectedShadowTopDecileRoi != null ? fmtContractPnl(selectedShadowTopDecileRoi) : "—"}</p>
+                </div>
+              </div>
+            ) : null}
+
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
               <div className="stats-tile">
                 <p className="stats-tile-label">Runtime</p>

@@ -520,6 +520,11 @@ class ModelFamilyRuntimeHealthRead(BaseModel):
     calibration_version: str | None = None
     feature_set_version: str | None = None
     model_metadata: dict[str, Any] = Field(default_factory=dict)
+    promotion_mode: Literal["shadow", "ml"] | None = None
+    promotion_stability_days: int = 0
+    promotion_baseline_brier: float | None = None
+    promotion_metrics: dict[str, Any] = Field(default_factory=dict)
+    promotion_updated_at: UTCDateTime | None = None
 
 
 class ModelFamilyReadinessRead(BaseModel):
@@ -562,6 +567,13 @@ class ModelFamilyReadinessRead(BaseModel):
 
 class ModelReadinessSummaryRead(BaseModel):
     generated_at: UTCDateTime
+    ml_serving_mode: Literal["heuristic", "shadow", "ml"] = "heuristic"
+    shadow_enabled: bool = False
+    auto_promotion_enabled: bool = False
+    min_settled_for_review: int = 40
+    min_shadow_coverage: float = 0.75
+    min_promotion_shadow_samples: int = 150
+    promotion_stability_days_required: int = 3
     families: list[ModelFamilyReadinessRead] = Field(default_factory=list)
 
 

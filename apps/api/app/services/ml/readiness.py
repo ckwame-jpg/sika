@@ -7,7 +7,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, load_only, selectinload
 
+from app.config import get_settings
 from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
+from app.services.ml.promotion import MIN_PROMOTION_SHADOW_SAMPLES, STABILITY_DAYS_REQUIRED
 from app.services.ml.runtime import read_family_runtime, shadow_capture_blocker
 from app.services.ml.study_progress import (
     MIN_SETTLED_FOR_REVIEW,
@@ -320,6 +322,11 @@ def _summary_for_family(
             "calibration_version": runtime.lineage.calibration_version,
             "feature_set_version": runtime.lineage.feature_set_version,
             "model_metadata": dict(runtime.lineage.model_metadata or {}),
+            "promotion_mode": runtime.promotion_mode,
+            "promotion_stability_days": runtime.promotion_stability_days,
+            "promotion_baseline_brier": runtime.promotion_baseline_brier,
+            "promotion_metrics": dict(runtime.promotion_metrics or {}),
+            "promotion_updated_at": runtime.promotion_updated_at,
         },
         "total_predictions": total_predictions,
         "settled_predictions": len(settled),
@@ -351,6 +358,7 @@ def _summary_for_family(
 
 
 def build_model_readiness_summary(db: Session) -> dict[str, Any]:
+    settings = get_settings()
     cutoff = retained_study_cutoff()
     single_predictions = db.scalars(
         select(Prediction)
@@ -466,6 +474,13 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
 
     return {
         "generated_at": _now_utc(),
+        "ml_serving_mode": settings.ml_serving_mode,
+        "shadow_enabled": settings.ml_serving_mode in {"shadow", "ml"},
+        "auto_promotion_enabled": settings.ml_serving_mode == "ml",
+        "min_settled_for_review": MIN_SETTLED_FOR_REVIEW,
+        "min_shadow_coverage": MIN_SHADOW_COVERAGE,
+        "min_promotion_shadow_samples": MIN_PROMOTION_SHADOW_SAMPLES,
+        "promotion_stability_days_required": STABILITY_DAYS_REQUIRED,
         "families": families,
     }
 
