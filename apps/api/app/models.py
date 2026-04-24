@@ -469,6 +469,11 @@ class ModelFamilyRuntimeHealth(Base):
     calibration_version = Column(String, nullable=True)
     feature_set_version = Column(String, nullable=True)
     model_metadata = Column(JSON, default=dict)
+    promotion_mode = Column(String, nullable=True)
+    promotion_stability_days = Column(Integer, nullable=True)
+    promotion_baseline_brier = Column(Float, nullable=True)
+    promotion_metrics = Column(JSON, default=dict)
+    promotion_updated_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class PaperPosition(Base):

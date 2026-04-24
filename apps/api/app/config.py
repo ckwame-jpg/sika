@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     )
     scheduler_enabled: bool = True
     refresh_interval_minutes: int = 5
-    prop_refresh_interval_minutes: int = 20
+    prop_refresh_interval_minutes: int = 5
     queue_poll_interval_seconds: int = 5
     maintenance_claim_budget_seconds: int = 25
     cleanup_interval_hours: int = 6

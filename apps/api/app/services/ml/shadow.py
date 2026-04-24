@@ -125,7 +125,7 @@ def _capture_prediction_shadow(db: Session, prediction: Prediction) -> bool:
         return False
 
     family_key = _single_prediction_family_key(prediction)
-    result, decision = run_shadow_inference(db, family_key=family_key, scope="single")
+    result, decision = run_shadow_inference(db, family_key=family_key, scope="single", features=dict(prediction.features or {}))
     if result is None:
         return False
 
@@ -176,7 +176,7 @@ def _capture_parlay_shadow(db: Session, parlay: ParlayPrediction) -> bool:
         return False
 
     family_key = _parlay_prediction_family_key(parlay)
-    result, decision = run_shadow_inference(db, family_key=family_key, scope="parlay")
+    result, decision = run_shadow_inference(db, family_key=family_key, scope="parlay", features=dict(parlay.scoring_diagnostics or {}))
     if result is None:
         return False
 

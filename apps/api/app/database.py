@@ -73,6 +73,11 @@ SCHEMA_PATCHES: dict[str, dict[str, str]] = {
     "model_family_runtime_health": {
         "last_error_at": "DATETIME",
         "degraded_until": "DATETIME",
+        "promotion_mode": "VARCHAR",
+        "promotion_stability_days": "INTEGER",
+        "promotion_baseline_brier": "FLOAT",
+        "promotion_metrics": "JSON",
+        "promotion_updated_at": "TIMESTAMP WITH TIME ZONE",
     },
     "shadow_inferences": {
         "source_prediction_id": "INTEGER",

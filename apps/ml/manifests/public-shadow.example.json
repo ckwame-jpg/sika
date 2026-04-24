@@ -12,9 +12,10 @@
       "model_version": "2026-04-03",
       "calibration_version": "2026-04-03",
       "feature_set_version": "public-feature-set-v1",
-      "artifact_path": "artifacts/nba_singles_v1/model.joblib",
+      "artifact_path": "../artifacts/nba_singles_v1",
       "mode": "shadow",
       "metadata": {
+        "behavior": "sklearn_predict_proba",
         "sport": "NBA",
         "scope": "single"
       }
@@ -26,9 +27,10 @@
       "model_version": "2026-04-05",
       "calibration_version": "2026-04-05",
       "feature_set_version": "public-feature-set-v1",
-      "artifact_path": "artifacts/mlb_singles_v1/model.joblib",
+      "artifact_path": "../artifacts/mlb_singles_v1",
       "mode": "shadow",
       "metadata": {
+        "behavior": "sklearn_predict_proba",
         "sport": "MLB",
         "scope": "single"
       }
@@ -40,9 +42,10 @@
       "model_version": "2026-04-05",
       "calibration_version": "2026-04-05",
       "feature_set_version": "public-feature-set-v1",
-      "artifact_path": "artifacts/nba_props_v1/model.joblib",
+      "artifact_path": "../artifacts/nba_props_v1",
       "mode": "shadow",
       "metadata": {
+        "behavior": "sklearn_predict_proba",
         "sport": "NBA",
         "scope": "single"
       }
@@ -54,9 +57,10 @@
       "model_version": "2026-04-05",
       "calibration_version": "2026-04-05",
       "feature_set_version": "public-feature-set-v1",
-      "artifact_path": "artifacts/mlb_props_v1/model.joblib",
+      "artifact_path": "../artifacts/mlb_props_v1",
       "mode": "shadow",
       "metadata": {
+        "behavior": "sklearn_predict_proba",
         "sport": "MLB",
         "scope": "single"
       }
@@ -68,9 +72,10 @@
       "model_version": "2026-04-05",
       "calibration_version": "2026-04-05",
       "feature_set_version": "public-feature-set-v1",
-      "artifact_path": "artifacts/nba_parlay_2leg_v1/model.joblib",
+      "artifact_path": "../artifacts/nba_parlay_2leg_v1",
       "mode": "shadow",
       "metadata": {
+        "behavior": "sklearn_predict_proba",
         "sport": "NBA",
         "scope": "parlay",
         "leg_count": 2
@@ -83,9 +88,10 @@
       "model_version": "2026-04-05",
       "calibration_version": "2026-04-05",
       "feature_set_version": "public-feature-set-v1",
-      "artifact_path": "artifacts/mlb_parlay_2leg_v1/model.joblib",
+      "artifact_path": "../artifacts/mlb_parlay_2leg_v1",
       "mode": "shadow",
       "metadata": {
+        "behavior": "sklearn_predict_proba",
         "sport": "MLB",
         "scope": "parlay",
         "leg_count": 2
@@ -98,9 +104,10 @@
       "model_version": "2026-04-05",
       "calibration_version": "2026-04-05",
       "feature_set_version": "public-feature-set-v1",
-      "artifact_path": "artifacts/mixed_parlay_2leg_v1/model.joblib",
+      "artifact_path": "../artifacts/mixed_parlay_2leg_v1",
       "mode": "shadow",
       "metadata": {
+        "behavior": "sklearn_predict_proba",
         "sport": "MIXED",
         "scope": "parlay",
         "leg_count": 2

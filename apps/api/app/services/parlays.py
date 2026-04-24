@@ -239,6 +239,7 @@ def _build_generated_parlays(db: Session, candidates: list[ParlayCandidateInput]
                 db,
                 family_key=str(diagnostics.get("family_key") or parlay_family_key(leg_count, participating_sports)),
                 scope="parlay",
+                features=diagnostics,
             )
             if ml_result is not None:
                 combined_model_probability = round(ml_result.probability, 4)

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+from app.api import routes
 from app.models import (
     CurrentSlateSnapshot,
     Event,
@@ -196,7 +197,27 @@ def test_watchlist_and_positions_endpoints(client, db_session):
     assert len(positions.json()["paper_positions"]) == 1
 
 
-def test_watchlist_diagnostics_endpoint_reports_no_refresh_runs(client):
+def test_watchlist_diagnostics_endpoint_reports_no_refresh_runs(client, monkeypatch):
+    monkeypatch.setattr(
+        routes,
+        "get_refresh_runtime_state",
+        lambda: {
+            "refresh_status": "idle",
+            "refresh_reason": "none",
+            "last_successful_refresh_at": None,
+            "data_stale": True,
+            "refresh_error_message": None,
+            "prop_refresh_status": "idle",
+            "prop_refresh_reason": "none",
+            "last_prop_refresh_at": None,
+            "prop_data_stale": True,
+            "prop_refresh_error_message": None,
+            "active_refresh_job": None,
+            "latest_refresh_job": None,
+            "active_prop_refresh_job": None,
+            "latest_prop_refresh_job": None,
+        },
+    )
     diagnostics = client.get("/ops/watchlist/diagnostics")
 
     assert diagnostics.status_code == 200

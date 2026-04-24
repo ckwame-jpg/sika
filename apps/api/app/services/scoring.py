@@ -1569,7 +1569,7 @@ def _build_scored_recommendation(
     active_lineage = HEURISTIC_SINGLE_MODEL
     served_mode = "heuristic"
     if market:
-        ml_result, runtime_decision = run_serving_inference(db, family_key=family_key, scope="single")
+        ml_result, runtime_decision = run_serving_inference(db, family_key=family_key, scope="single", features=features)
         if ml_result is not None:
             probability_yes = round(ml_result.probability, 4)
             confidence = round(ml_result.confidence, 4)

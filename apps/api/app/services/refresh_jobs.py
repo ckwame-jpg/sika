@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
+from typing import Any
 
 import httpx
-from sqlalchemy import case, desc, select
+from sqlalchemy import case, desc, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -19,6 +22,9 @@ from app.services.ml.shadow import capture_shadow_artifacts_batch
 REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "cleanup"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
+WORKER_TIMEOUT_ERROR = "worker_timeout"
+WORKER_TIMEOUT_GRACE_SECONDS = 10.0
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,12 +239,62 @@ def _claim_next_job(db: Session) -> RefreshJob | None:
     return queued
 
 
-def _requeue_job(job: RefreshJob) -> None:
-    job.status = "queued"
-    job.queued_at = datetime.now(timezone.utc)
-    job.started_at = None
-    job.finished_at = None
-    job.error_message = None
+def _guarded_update_running_job(
+    db: Session,
+    job_id: int,
+    values: dict[str, Any],
+) -> bool:
+    result = db.execute(
+        update(RefreshJob)
+        .where(RefreshJob.id == job_id, RefreshJob.status == "running")
+        .values(**values)
+    )
+    return bool(result.rowcount)
+
+
+def _guarded_requeue_job(db: Session, job_id: int) -> bool:
+    now = datetime.now(timezone.utc)
+    return _guarded_update_running_job(
+        db,
+        job_id,
+        {
+            "status": "queued",
+            "queued_at": now,
+            "started_at": None,
+            "finished_at": None,
+            "error_message": None,
+        },
+    )
+
+
+def _guarded_complete_job(db: Session, job_id: int) -> bool:
+    return _guarded_update_running_job(
+        db,
+        job_id,
+        {
+            "status": "completed",
+            "finished_at": datetime.now(timezone.utc),
+        },
+    )
+
+
+def _guarded_fail_job(db: Session, job_id: int, error_message: str) -> bool:
+    return _guarded_update_running_job(
+        db,
+        job_id,
+        {
+            "status": "failed",
+            "error_message": error_message,
+            "finished_at": datetime.now(timezone.utc),
+        },
+    )
+
+
+def _refresh_job_snapshot(db: Session, job_id: int) -> RefreshJobSnapshot | None:
+    job = db.get(RefreshJob, job_id)
+    if job is not None:
+        db.refresh(job)
+    return _snapshot(job)
 
 
 def _current_slate_refresh_pending(db: Session) -> bool:
@@ -276,6 +332,19 @@ def _ensure_shadow_capture_run(
     return run
 
 
+def _execute_job_in_thread(
+    job_id: int,
+    done_event: threading.Event,
+    result_holder: dict[str, RefreshJobSnapshot | BaseException | None],
+) -> None:
+    try:
+        result_holder["snapshot"] = _execute_claimed_job(job_id)
+    except BaseException as exc:  # pragma: no cover - defensive thread boundary
+        result_holder["exception"] = exc
+    finally:
+        done_event.set()
+
+
 def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
     with SessionLocal() as db:
         reconciled = reconcile_stale_jobs(db)
@@ -287,6 +356,40 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
         job_id = claimed.id
         db.commit()
 
+    settings = get_settings()
+    done_event = threading.Event()
+    result_holder: dict[str, RefreshJobSnapshot | BaseException | None] = {
+        "snapshot": None,
+        "exception": None,
+    }
+    worker = threading.Thread(
+        target=_execute_job_in_thread,
+        args=(job_id, done_event, result_holder),
+        daemon=True,
+        name=f"refresh-worker-{job_id}",
+    )
+    worker.start()
+    timeout_seconds = max(float(settings.maintenance_claim_budget_seconds), 0.0) + WORKER_TIMEOUT_GRACE_SECONDS
+    if done_event.wait(timeout=timeout_seconds):
+        exception = result_holder.get("exception")
+        if exception is not None:
+            raise exception
+        snapshot = result_holder.get("snapshot")
+        return snapshot if isinstance(snapshot, RefreshJobSnapshot) else None
+
+    with SessionLocal() as db:
+        timed_out = _guarded_fail_job(db, job_id, WORKER_TIMEOUT_ERROR)
+        snapshot = _refresh_job_snapshot(db, job_id)
+        db.commit()
+    if timed_out:
+        logger.warning(
+            "refresh_job_worker_timeout",
+            extra={"job_id": job_id, "worker_name": worker.name, "timeout_seconds": timeout_seconds},
+        )
+    return snapshot
+
+
+def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
     with SessionLocal() as db:
         job = db.get(RefreshJob, job_id)
         if job is None:
@@ -301,10 +404,12 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                     )
                     job.run_id = run.id
                     if not completed:
-                        _requeue_job(job)
+                        db.flush()
+                        requeued = _guarded_requeue_job(db, job.id)
+                        if not requeued:
+                            logger.warning("refresh_job_late_requeue_ignored", extra={"job_id": job.id})
                         db.commit()
-                        db.refresh(job)
-                        return _snapshot(job)
+                        return _refresh_job_snapshot(db, job.id)
                     shadow_job, _created = enqueue_shadow_capture_job(
                         db,
                         scope="current_slate",
@@ -350,10 +455,12 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                     details["shadow_backfill_scope"] = shadow_job.scope
                     job.details = details
                 else:
-                    _requeue_job(job)
+                    db.flush()
+                    requeued = _guarded_requeue_job(db, job.id)
+                    if not requeued:
+                        logger.warning("refresh_job_late_requeue_ignored", extra={"job_id": job.id})
                     db.commit()
-                    db.refresh(job)
-                    return _snapshot(job)
+                    return _refresh_job_snapshot(db, job.id)
             elif job.kind == "shadow_capture":
                 details = dict(job.details or {})
                 run = _ensure_shadow_capture_run(db, job=job)
@@ -409,38 +516,44 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                         "refresh_scope": "shadow_capture",
                     }
                 else:
-                    _requeue_job(job)
+                    db.flush()
+                    requeued = _guarded_requeue_job(db, job.id)
+                    if not requeued:
+                        logger.warning("refresh_job_late_requeue_ignored", extra={"job_id": job.id})
                     db.commit()
-                    db.refresh(job)
-                    return _snapshot(job)
+                    return _refresh_job_snapshot(db, job.id)
             elif job.kind == "cleanup":
                 job.details = prune_runtime_artifacts(db)
             else:  # pragma: no cover - guarded above
                 raise ValueError(f"Unsupported refresh job kind: {job.kind}")
 
-            job.status = "completed"
-            job.finished_at = datetime.now(timezone.utc)
+            db.flush()
+            completed = _guarded_complete_job(db, job.id)
+            if not completed:
+                logger.warning("refresh_job_late_completion_ignored", extra={"job_id": job.id})
             db.commit()
-            db.refresh(job)
-            return _snapshot(job)
+            return _refresh_job_snapshot(db, job.id)
         except Exception as exc:
             if job.kind == "prop_refresh" and isinstance(exc, httpx.HTTPError):
-                _requeue_job(job)
                 details = dict(job.details or {})
                 details["last_transient_error"] = str(exc).strip() or exc.__class__.__name__
                 job.details = details
+                db.flush()
+                requeued = _guarded_requeue_job(db, job.id)
+                if not requeued:
+                    logger.warning("refresh_job_late_requeue_ignored", extra={"job_id": job.id})
                 db.commit()
-                db.refresh(job)
-                return _snapshot(job)
+                return _refresh_job_snapshot(db, job.id)
             if job.run_id is not None:
                 run = db.get(Run, job.run_id)
                 if run is not None and run.status == "running":
                     run.status = "failed"
                     run.error_message = str(exc).strip() or exc.__class__.__name__
                     run.finished_at = datetime.now(timezone.utc)
-            job.status = "failed"
-            job.error_message = str(exc).strip() or exc.__class__.__name__
-            job.finished_at = datetime.now(timezone.utc)
+            error_message = str(exc).strip() or exc.__class__.__name__
+            db.flush()
+            failed = _guarded_fail_job(db, job.id, error_message)
+            if not failed:
+                logger.warning("refresh_job_late_failure_ignored", extra={"job_id": job.id})
             db.commit()
-            db.refresh(job)
-            return _snapshot(job)
+            return _refresh_job_snapshot(db, job.id)

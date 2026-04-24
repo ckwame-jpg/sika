@@ -1,7 +1,10 @@
 import logging
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -326,6 +329,48 @@ def _reconcile_job() -> None:
         db.commit()
 
 
+def _evaluate_model_promotions_job() -> None:
+    from app.services.ml import kill_switch, promotion
+
+    with SessionLocal() as db:
+        promotion.evaluate_all_families(db)
+        kill_switch.evaluate_all_families(db)
+        db.commit()
+
+
+def _weekly_model_retrain_job() -> None:
+    apps_ml_dir = Path(__file__).resolve().parents[3] / "ml"
+    if not apps_ml_dir.exists():
+        logger.warning("Skipping model retrain; apps/ml workspace not found at %s", apps_ml_dir)
+        return
+    command = [
+        sys.executable,
+        "-m",
+        "ml.cli",
+        "train",
+        "--artifact-root",
+        "artifacts",
+        "--manifest-out",
+        "manifests/current.json",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=apps_ml_dir,
+            timeout=3600,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.TimeoutExpired:
+        logger.exception("Weekly model retrain timed out after 3600 seconds")
+        return
+    if result.returncode != 0:
+        logger.error("Weekly model retrain failed with exit code %s: %s", result.returncode, result.stderr[-2000:])
+        return
+    logger.info("Weekly model retrain completed: %s", result.stdout[-2000:])
+
+
 def _process_refresh_queue_job() -> None:
     result = process_refresh_job_queue_once()
     if result and result.kind == "refresh" and result.status == "completed":
@@ -395,6 +440,22 @@ def start_scheduler() -> None:
         trigger=CronTrigger(minute="*/15"),
         id="demo_reconcile",
         replace_existing=True,
+    )
+    scheduler.add_job(
+        _evaluate_model_promotions_job,
+        trigger=CronTrigger(hour=4, minute=0),
+        id="model_promotion_evaluator",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _weekly_model_retrain_job,
+        trigger=CronTrigger(day_of_week="sun", hour=3, minute=0),
+        id="weekly_model_retrain",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
     )
     scheduler.start()
     schedule_event_refreshes()

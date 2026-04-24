@@ -41,3 +41,34 @@ Offline training, calibration, backtests, and artifact packaging for the public-
 
 The live API stays inference-only and reads a manifest shaped like [`manifests/public-shadow.example.json`](./manifests/public-shadow.example.json).
 Use `serves_family_key` when the packaged artifact keeps a versioned family name such as `nba_props_v1` but should serve the live API family key such as `nba_props`.
+
+`artifact_path` points at an artifact directory, not an individual model file:
+
+```text
+artifacts/global_v1_20260424/
+├── model.joblib
+├── feature_spec.json
+└── training_metadata.json
+```
+
+The API dispatches directory artifacts with `metadata.behavior = "sklearn_predict_proba"`. Static JSON probability artifacts remain supported for tests and fallbacks.
+Because manifests live in `apps/ml/manifests/`, committed manifest entries should use paths like `../artifacts/global_v1_20260424`.
+
+## Training
+
+Run training from this workspace:
+
+```bash
+python -m ml.cli train --artifact-root artifacts --manifest-out manifests/current.json
+```
+
+The default data source is `DATABASE_URL`, falling back to `../api/kalshi_sports_copilot.db`. Pushes are dropped, coverage captures are excluded, and the first v1 artifact is a global residual-calibration model that can serve a live family through `serves_family_key`.
+
+API shadow activation is explicit:
+
+```bash
+ML_SERVING_MODE=shadow
+ML_MANIFEST_PATH=/absolute/path/to/apps/ml/manifests/current.json
+```
+
+Promotion to live ML still requires `ML_SERVING_MODE=ml`. The API promotion evaluator only promotes after enough settled shadow samples beat the heuristic on Brier, top-decile ROI, and three consecutive daily evaluations; the kill switch demotes back to shadow on rolling Brier regression or sustained runtime failure.

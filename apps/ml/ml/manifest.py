@@ -12,6 +12,7 @@ class ModelArtifact:
     calibration_version: str
     feature_set_version: str
     artifact_path: str
+    serves_family_key: str | None = None
     mode: str = "shadow"
     metadata: dict[str, Any] = field(default_factory=dict)
 

@@ -27,3 +27,4 @@ coverage/
 *.tsbuildinfo
 apps/web/test-results/
 sika-handoff/
+apps/ml/artifacts/

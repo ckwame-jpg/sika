@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import ModelFamilyRuntimeHealth
+from app.services.ml.artifact_loader import load_sklearn_artifact
+from app.services.ml.features import vectorize
 from app.services.ml.lineage import HEURISTIC_PARLAY_MODEL, HEURISTIC_SINGLE_MODEL, ModelLineage
 from app.services.ml.registry import ModelManifest, ModelManifestFamily, load_model_manifest
 from app.services.ml.study_progress import history_ready_for_shadow, is_active_study_family, settled_prediction_count_for_family
@@ -80,10 +82,22 @@ def _manifest_family_map(manifest: ModelManifest | None) -> dict[str, ModelManif
     }
 
 
-def _manual_requested_mode(family_key: str, *, manifest_family: ModelManifestFamily | None) -> RuntimeMode | None:
+def _family_override_requested_mode(family_key: str) -> RuntimeMode | None:
     override_mode = _safe_modes_mapping().get(family_key)
     if override_mode in {"shadow", "ml"}:
         return override_mode
+    return None
+
+
+def _promotion_requested_mode(db: Session, family_key: str) -> RuntimeMode | None:
+    row = _runtime_row_or_none(db, family_key)
+    promotion_mode = str(getattr(row, "promotion_mode", "") or "").strip().lower() if row else ""
+    if promotion_mode in {"shadow", "ml"}:
+        return promotion_mode  # type: ignore[return-value]
+    return None
+
+
+def _manifest_requested_mode(manifest_family: ModelManifestFamily | None) -> RuntimeMode | None:
     manifest_mode = str(manifest_family.mode or "").strip().lower() if manifest_family else ""
     if manifest_mode in {"shadow", "ml"}:
         return manifest_mode  # type: ignore[return-value]
@@ -112,7 +126,11 @@ def _resolve_requested_mode(
 ) -> RuntimeMode:
     settings = get_settings()
     global_mode = settings.ml_serving_mode
-    resolved = _manual_requested_mode(family_key, manifest_family=manifest_family)
+    resolved = _family_override_requested_mode(family_key)
+    if resolved is None:
+        resolved = _promotion_requested_mode(db, family_key)
+    if resolved is None:
+        resolved = _manifest_requested_mode(manifest_family)
     if resolved is None:
         resolved = _auto_shadow_requested_mode(db, family_key, manifest_family=manifest_family) or "heuristic"
 
@@ -158,6 +176,8 @@ def shadow_capture_blocker(
         scope,
         artifact_path,
         artifact_family_key=str(lineage.model_metadata.get("artifact_family_key") or family_key),
+        behavior=str(lineage.model_metadata.get("behavior") or "static_probability"),
+        feature_set_version=lineage.feature_set_version,
     )
     if error is not None:
         return f"This family has enough settled history, but shadow runtime is unavailable: {error}"
@@ -200,12 +220,44 @@ def _validate_artifact_payload(
     artifact_path: str | None,
     *,
     artifact_family_key: str | None = None,
+    behavior: str | None = None,
+    feature_set_version: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not artifact_path:
         return None, "No artifact_path configured for this family."
+    normalized_behavior = str(behavior or "static_probability").strip().lower()
     path = Path(artifact_path)
     if not path.exists():
         return None, f"Artifact missing at {artifact_path}."
+    if normalized_behavior == "sklearn_predict_proba":
+        if not path.is_dir():
+            return None, f"Sklearn artifact path must be a directory: {artifact_path}."
+        model_path = path / "model.joblib"
+        feature_spec_path = path / "feature_spec.json"
+        metadata_path = path / "training_metadata.json"
+        for required_path in (model_path, feature_spec_path, metadata_path):
+            if not required_path.exists():
+                return None, f"Sklearn artifact missing {required_path.name}."
+        try:
+            feature_spec = json.loads(feature_spec_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return None, f"Feature spec load failed: {exc}"
+        spec_version = str(feature_spec.get("version") or "")
+        if feature_set_version and spec_version != feature_set_version:
+            return None, f"Feature spec version mismatch for {family_key}."
+        return {
+            "family_key": artifact_family_key or family_key,
+            "serves_family_key": family_key,
+            "scope": scope,
+            "behavior": normalized_behavior,
+            "artifact_dir": str(path.resolve()),
+            "metadata": {"feature_spec_version": spec_version},
+        }, None
+
+    if normalized_behavior not in {"static_probability", ""}:
+        return None, f"Unsupported artifact behavior: {normalized_behavior}."
+    if path.is_dir():
+        return None, f"Static artifact path must be a JSON file: {artifact_path}."
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:  # pragma: no cover - defensive
@@ -351,6 +403,8 @@ def resolve_family_runtime(
         scope,
         artifact_path,
         artifact_family_key=str(lineage.model_metadata.get("artifact_family_key") or family_key),
+        behavior=str(lineage.model_metadata.get("behavior") or "static_probability"),
+        feature_set_version=lineage.feature_set_version,
     )
     if error is not None or payload is None:
         _apply_runtime_state(
@@ -401,16 +455,32 @@ def _artifact_payload_for_decision(decision: FamilyRuntimeDecision, scope: str) 
         scope,
         decision.artifact_path,
         artifact_family_key=str(metadata.get("artifact_family_key") or decision.family_key),
+        behavior=str(metadata.get("behavior") or "static_probability"),
+        feature_set_version=decision.lineage.feature_set_version,
     )
     if error is not None or payload is None:
         raise RuntimeError(error or "Artifact payload unavailable.")
     return payload
 
 
-def _run_artifact_inference(payload: dict[str, Any]) -> tuple[float, float, dict[str, Any]]:
+def _run_artifact_inference(payload: dict[str, Any], *, features: dict[str, Any] | None = None) -> tuple[float, float, dict[str, Any]]:
     behavior = str(payload.get("behavior") or "static_probability").strip().lower()
     if behavior == "raise":
         raise RuntimeError("Artifact declared raise behavior.")
+    if behavior == "sklearn_predict_proba":
+        artifact_dir = str(payload.get("artifact_dir") or "").strip()
+        if not artifact_dir:
+            raise RuntimeError("Sklearn artifact directory missing from payload.")
+        artifact = load_sklearn_artifact(artifact_dir)
+        vector = vectorize(dict(features or {}), artifact.feature_spec).reshape(1, -1)
+        probability = float(artifact.pipeline.predict_proba(vector)[0][1])
+        confidence = probability
+        metadata = {
+            "feature_spec_version": artifact.feature_spec.version,
+            "artifact_dir": str(artifact.artifact_dir),
+            "training_metadata": dict(artifact.training_metadata or {}),
+        }
+        return probability, confidence, metadata
     probability = float(payload.get("probability") if payload.get("probability") is not None else payload.get("yes_probability"))
     confidence = float(payload.get("confidence") if payload.get("confidence") is not None else probability)
     metadata = dict(payload.get("metadata") or {})
@@ -473,6 +543,7 @@ def run_serving_inference(
     *,
     family_key: str,
     scope: str,
+    features: dict[str, Any] | None = None,
 ) -> tuple[ModelInferenceResult | None, FamilyRuntimeDecision]:
     decision = resolve_family_runtime(db, family_key, scope=scope)
     if decision.effective_mode != "ml":
@@ -480,7 +551,7 @@ def run_serving_inference(
 
     try:
         payload = _artifact_payload_for_decision(decision, scope)
-        probability, confidence, metadata = _run_artifact_inference(payload)
+        probability, confidence, metadata = _run_artifact_inference(payload, features=features)
         if not isfinite(probability) or not isfinite(confidence):
             raise RuntimeError("Model output contained non-finite values.")
         if probability < 0.0 or probability > 1.0:
@@ -511,6 +582,7 @@ def run_shadow_inference(
     *,
     family_key: str,
     scope: str,
+    features: dict[str, Any] | None = None,
 ) -> tuple[ModelInferenceResult | None, FamilyRuntimeDecision]:
     decision = resolve_family_runtime(db, family_key, scope=scope)
     if decision.desired_mode not in {"shadow", "ml"}:
@@ -520,7 +592,7 @@ def run_shadow_inference(
 
     try:
         payload = _artifact_payload_for_decision(decision, scope)
-        probability, confidence, metadata = _run_artifact_inference(payload)
+        probability, confidence, metadata = _run_artifact_inference(payload, features=features)
         if not isfinite(probability) or not isfinite(confidence):
             raise RuntimeError("Model output contained non-finite values.")
         if probability < 0.0 or probability > 1.0:
