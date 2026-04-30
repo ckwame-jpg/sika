@@ -27,10 +27,7 @@ function TradeContent() {
 export default function TradePage() {
   return (
     <>
-      <Header
-        title="Trade"
-        description="Event-first desk for curated game lines and player props"
-      />
+      <Header title="Trade" />
       <main className="flex-1 overflow-visible">
         <Suspense>
           <TradeContent />

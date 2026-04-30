@@ -9,7 +9,6 @@ export default function SettingsModelsPage() {
     <>
       <Header
         title="Model Readiness"
-        description="Runtime health, shadow coverage, and promotion readiness by family"
         actions={(
           <Button variant="ghost" size="sm" asChild>
             <Link href="/settings" className="flex items-center gap-1">

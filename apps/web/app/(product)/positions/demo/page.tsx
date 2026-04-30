@@ -14,7 +14,6 @@ export default function DemoOrdersPage() {
     <>
       <Header
         title="Demo Orders"
-        description="Real Kalshi orders · manual approval required"
         actions={
           <Button
             variant="primary"

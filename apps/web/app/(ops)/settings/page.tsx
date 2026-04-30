@@ -34,10 +34,7 @@ export default function SettingsPage() {
 
   return (
     <>
-      <Header
-        title="Settings"
-        description="Display preferences for prices, odds, and trade inputs"
-      />
+      <Header title="Settings" />
       <main className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-3xl space-y-4">
           <section className="cosmos-panel">

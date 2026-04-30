@@ -189,9 +189,7 @@ export function ProbabilitySurfaceHero({
           <span>{scoredCount} markets in current snapshot. </span>
           <span className="th-hl">{recommendationCount} current picks.</span>
         </div>
-        <div className="th-sub">
-          Snapshot {fmtDatetime(generatedAt)}. Peaks mark where the model most disagrees with Kalshi.
-        </div>
+        <div className="th-sub">Snapshot {fmtDatetime(generatedAt)}.</div>
         <div className="th-chips" data-testid="trade-hero-chips">
           <div className="th-chip" data-testid="trade-hero-chip-avg-edge">
             <span className="th-chip-label">AVG EDGE</span>
