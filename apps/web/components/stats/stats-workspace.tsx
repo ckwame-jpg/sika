@@ -341,7 +341,19 @@ function MiniBars({ points }: { points: number[] }) {
   };
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" width="100%" height="90" role="img" aria-label="Trend chart">
+    <div
+      className="sa-chart-svg-wrap"
+      style={{ width: "100%", maxWidth: 720, aspectRatio: `${W} / ${H}`, margin: "0 auto" }}
+    >
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="xMidYMid meet"
+      width="100%"
+      height="100%"
+      role="img"
+      aria-label="Trend chart"
+      style={{ display: "block" }}
+    >
       <line
         x1={0}
         x2={W}
@@ -379,5 +391,6 @@ function MiniBars({ points }: { points: number[] }) {
         );
       })}
     </svg>
+    </div>
   );
 }
