@@ -154,6 +154,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
   coverage_prediction_count: 0,
   blocking_reason: null,
   generated_from_run_id: 99,
+  previous_slate: null,
 };
 
 export const tradeDeskFixtureWithNonMonotonicGroup: TradeDeskResponse = {
@@ -218,4 +219,6 @@ export const healthFixture: HealthResponse = {
   latest_refresh_job: null,
   active_prop_refresh_job: null,
   latest_prop_refresh_job: null,
+  active_settlement_job: null,
+  latest_settlement_job: null,
 };

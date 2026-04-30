@@ -26,14 +26,18 @@ describe("PlayerPropGroup", () => {
     renderWithProviders(<PlayerPropHarness />);
 
     const card = screen.getByTestId("trade-prop-card");
+    expect(within(card).queryByText("DM")).not.toBeInTheDocument();
+    expect(within(card).queryByText("OVER")).not.toBeInTheDocument();
+    expect(within(card).getByText("davion mitchell")).toBeInTheDocument();
+    expect(within(card).getByText("tor")).toBeInTheDocument();
+    expect(within(card).getByText("points")).toBeInTheDocument();
+    expect(within(card).getByText("72.1%")).toBeInTheDocument();
     expect(within(card).getByTestId("trade-prop-summary-label")).toHaveTextContent("10+ points");
     expect(within(card).getByTestId("trade-prop-summary-edge")).toHaveTextContent("+32.1%");
-    expect(within(card).getByTestId("trade-prop-summary-win-prob")).toHaveTextContent("72.1%");
 
     await user.click(within(card).getByRole("button", { name: "4+" }));
     expect(within(card).getByTestId("trade-prop-summary-label")).toHaveTextContent("4+ assists");
     expect(within(card).getByTestId("trade-prop-summary-edge")).toHaveTextContent("+4.4%");
-    expect(within(card).getByTestId("trade-prop-summary-win-prob")).toHaveTextContent("89.4%");
     expect(within(card).getAllByTestId("trade-threshold-chip").filter((chip) => chip.getAttribute("aria-pressed") === "true")).toHaveLength(1);
 
     await user.click(within(card).getByRole("button", { name: "10+" }));

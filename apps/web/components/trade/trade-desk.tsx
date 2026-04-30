@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { RefreshCw, X } from "lucide-react";
+import { ChevronRight, RefreshCw, X } from "lucide-react";
 import { fetchTradeDesk, keys } from "@/lib/api";
 import type {
+  TradeDeskArchivedSlate,
   TradeDeskEvent,
   TradeDeskGameLine,
   TradeDeskResponse,
   TradeDeskThreshold,
 } from "@/lib/types";
-import { cn, fmtEdge, fmtPercent, fmtPrice, fmtRelative, fmtStartsAt, sportLabel } from "@/lib/utils";
+import { cn, fmtDatetime, fmtEdge, fmtPercent, fmtPrice, fmtRelative, fmtStartsAt, sportLabel } from "@/lib/utils";
 import { PlayerPropGroup } from "@/components/trade/player-prop-group";
 import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
 import { ProbabilitySurfaceHero } from "@/components/trade/probability-surface-hero";
@@ -73,6 +74,15 @@ function mean(values: number[]): number | null {
   let sum = 0;
   for (const v of values) sum += v;
   return sum / values.length;
+}
+
+function selectionExistsInEvents(events: TradeDeskEvent[], ticker: string): boolean {
+  return events.some((event) =>
+    event.game_lines.some((line) => line.ticker === ticker) ||
+    event.player_props.some((player) =>
+      player.stat_groups.some((group) => group.thresholds.some((threshold) => threshold.ticker === ticker))
+    )
+  );
 }
 
 /**
@@ -227,7 +237,7 @@ function MarketSummaryStrip({ kpis }: { kpis: TradeKpis }) {
         seed={31}
       />
       <KpiCard
-        label="Recommendations"
+        label="Current picks"
         value={kpis.recommendations}
         sub="past edge threshold"
         testIdRoot="trade-kpi-card-recommendations"
@@ -300,8 +310,173 @@ function buildPlayerPropSelection(
   };
 }
 
+interface TradeEventListProps {
+  events: TradeDeskEvent[];
+  expandedEventIds: Set<number>;
+  idPrefix: string;
+  selected: TradeSelection | null;
+  onToggleEvent: (eventId: number) => void;
+  onSelect: (selection: TradeSelection) => void;
+}
+
+function TradeEventList({
+  events,
+  expandedEventIds,
+  idPrefix,
+  selected,
+  onToggleEvent,
+  onSelect,
+}: TradeEventListProps) {
+  return (
+    <>
+      {events.map((event) => {
+        const showGameLines = event.game_lines.length > 0;
+        const showPlayerProps = event.player_props.length > 0;
+        if (!showGameLines && !showPlayerProps) {
+          return null;
+        }
+
+        const groupedGameLines = [...event.game_lines].sort(
+          (left, right) => sectionOrder(left.market_kind) - sectionOrder(right.market_kind),
+        );
+        const isExpanded = expandedEventIds.has(event.event_id);
+        const marketsId = `${idPrefix}-trade-event-${event.event_id}-markets`;
+        const selectedInEvent = selected?.eventId === event.event_id;
+        const marketCount = event.game_lines.length;
+        const ladderCount = event.player_props.length;
+
+        return (
+          <article
+            key={`${idPrefix}-${event.event_id}`}
+            className={cn("event-card", isExpanded && "open")}
+            style={{ ["--sport-tint" as string]: sportTint(event.sport_key) }}
+          >
+            <button
+              type="button"
+              className="event-card-head event-card-toggle"
+              aria-expanded={isExpanded}
+              aria-controls={marketsId}
+              onClick={() => onToggleEvent(event.event_id)}
+              data-testid="trade-event-toggle"
+            >
+              <ChevronRight className="event-card-chev" size={16} aria-hidden />
+              <span
+                className="sport-pill"
+                style={{ ["--tint" as string]: sportTint(event.sport_key) }}
+              >
+                <span className="dot" aria-hidden />
+                {sportLabel(event.sport_key)}
+              </span>
+              <h2>{event.event_name}</h2>
+              <span className="event-card-summary">
+                {marketCount} markets · {ladderCount} ladders
+              </span>
+              {selectedInEvent ? <span className="event-status-pill live">selected</span> : null}
+              <span className="event-card-when">{fmtStartsAt(event.starts_at)}</span>
+            </button>
+
+            <div id={marketsId} className="event-card-markets" hidden={!isExpanded}>
+              {isExpanded && showGameLines ? (
+                <div className="market-section">
+                  <div className="market-section-head">
+                    <h3>Game Lines</h3>
+                    <span className="count">{groupedGameLines.length} markets</span>
+                  </div>
+                  {groupedGameLines.map((line) => (
+                    <GameLineRow
+                      key={line.ticker}
+                      line={line}
+                      selectedTicker={selected?.ticker}
+                      onSelect={() => onSelect(buildGameLineSelection(event, line))}
+                    />
+                  ))}
+                </div>
+              ) : null}
+
+              {isExpanded && showPlayerProps ? (
+                <div className="market-section">
+                  <div className="market-section-head">
+                    <h3>Player Props</h3>
+                    <span className="count">{event.player_props.length} ladders</span>
+                  </div>
+                  {event.player_props.map((player) => (
+                    <PlayerPropGroup
+                      key={`${idPrefix}-${event.event_id}-${player.subject_name}`}
+                      player={player}
+                      selectedTicker={selected?.ticker}
+                      onSelectThreshold={(subjectName, subjectTeam, statKey, threshold) =>
+                        onSelect(buildPlayerPropSelection(event, subjectName, subjectTeam, statKey, threshold))
+                      }
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </article>
+        );
+      })}
+    </>
+  );
+}
+
+function ArchivedSlateSection({
+  slate,
+  expanded,
+  expandedEventIds,
+  selected,
+  onToggle,
+  onToggleEvent,
+  onSelect,
+}: {
+  slate: TradeDeskArchivedSlate;
+  expanded: boolean;
+  expandedEventIds: Set<number>;
+  selected: TradeSelection | null;
+  onToggle: () => void;
+  onToggleEvent: (eventId: number) => void;
+  onSelect: (selection: TradeSelection) => void;
+}) {
+  const panelId = "trade-previous-slate";
+  return (
+    <section className={cn("archived-slate", expanded && "open")} data-testid="trade-previous-slate">
+      <button
+        type="button"
+        className="archived-slate-head"
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        onClick={onToggle}
+      >
+        <ChevronRight className="archived-slate-chev" size={16} aria-hidden />
+        <span className="archived-slate-title">Last good slate · {fmtDatetime(slate.generated_at)}</span>
+        <span className="archived-slate-summary">
+          {slate.recommendation_count} picks · {slate.scored_market_count} scored
+        </span>
+      </button>
+      <div id={panelId} className="archived-slate-body" hidden={!expanded}>
+        <div className="archived-slate-kpis">
+          <span>{slate.event_count} events</span>
+          <span>{slate.candidate_market_count} candidates</span>
+          <span>{slate.coverage_prediction_count} coverage</span>
+          {slate.generated_from_run_id ? <span>run #{slate.generated_from_run_id}</span> : null}
+        </div>
+        <TradeEventList
+          events={slate.events}
+          expandedEventIds={expandedEventIds}
+          idPrefix="archived"
+          selected={selected}
+          onToggleEvent={onToggleEvent}
+          onSelect={onSelect}
+        />
+      </div>
+    </section>
+  );
+}
+
 export function TradeDesk({ sport }: { sport?: string }) {
   const [selected, setSelected] = useState<TradeSelection | null>(null);
+  const [expandedEventIds, setExpandedEventIds] = useState<Set<number>>(() => new Set());
+  const [archivedExpandedEventIds, setArchivedExpandedEventIds] = useState<Set<number>>(() => new Set());
+  const [archiveState, setArchiveState] = useState<{ key: string | null; expanded: boolean } | null>(null);
   const { data, error, isLoading } = useSWR<TradeDeskResponse>(
     keys.tradeDesk(sport),
     () => fetchTradeDesk(sport),
@@ -313,17 +488,66 @@ export function TradeDesk({ sport }: { sport?: string }) {
       return;
     }
 
-    const selectionStillVisible = data.events.some((event) =>
-      event.game_lines.some((line) => line.ticker === selected.ticker) ||
-      event.player_props.some((player) =>
-        player.stat_groups.some((group) => group.thresholds.some((threshold) => threshold.ticker === selected.ticker))
-      )
-    );
+    const selectionStillVisible =
+      selectionExistsInEvents(data.events, selected.ticker) ||
+      selectionExistsInEvents(data.previous_slate?.events ?? [], selected.ticker);
 
     if (!selectionStillVisible) {
       setSelected(null);
     }
   }, [data, selected]);
+
+  useEffect(() => {
+    if (!data) return;
+    setExpandedEventIds((current) => {
+      const visibleEventIds = new Set(data.events.map((event) => event.event_id));
+      const next = new Set<number>();
+      for (const eventId of current) {
+        if (visibleEventIds.has(eventId)) {
+          next.add(eventId);
+        }
+      }
+      return next.size === current.size ? current : next;
+    });
+    setArchivedExpandedEventIds((current) => {
+      const visibleEventIds = new Set((data.previous_slate?.events ?? []).map((event) => event.event_id));
+      const next = new Set<number>();
+      for (const eventId of current) {
+        if (visibleEventIds.has(eventId)) {
+          next.add(eventId);
+        }
+      }
+      return next.size === current.size ? current : next;
+    });
+  }, [data]);
+
+  function toggleEvent(eventId: number) {
+    setExpandedEventIds((current) => {
+      const next = new Set(current);
+      if (next.has(eventId)) {
+        next.delete(eventId);
+      } else {
+        next.add(eventId);
+      }
+      return next;
+    });
+  }
+
+  function toggleArchivedEvent(eventId: number) {
+    setArchivedExpandedEventIds((current) => {
+      const next = new Set(current);
+      if (next.has(eventId)) {
+        next.delete(eventId);
+      } else {
+        next.add(eventId);
+      }
+      return next;
+    });
+  }
+
+  function selectOrToggle(selection: TradeSelection) {
+    setSelected((current) => (current?.ticker === selection.ticker ? null : selection));
+  }
 
   if (isLoading && !data) {
     return (
@@ -347,7 +571,21 @@ export function TradeDesk({ sport }: { sport?: string }) {
   }
 
   const kpis = computeTradeKpis(data);
-  const scoredCount = data.scored_market_count || data.candidate_market_count;
+  const scoredCount = data.scored_market_count;
+  const previousSlate = data.previous_slate;
+  const archiveKey = previousSlate?.generated_at ?? null;
+  const archiveDefaultExpanded = Boolean(
+    previousSlate && (data.events.length === 0 || data.freshness_status === "degraded" || data.freshness_status === "empty"),
+  );
+  const archiveExpanded = previousSlate
+    ? archiveState?.key === archiveKey
+      ? archiveState.expanded
+      : archiveDefaultExpanded
+    : false;
+
+  function toggleArchive() {
+    setArchiveState({ key: archiveKey, expanded: !archiveExpanded });
+  }
 
   return (
     <div className="space-y-4">
@@ -357,88 +595,20 @@ export function TradeDesk({ sport }: { sport?: string }) {
         recommendationCount={data.recommendation_count}
         avgEdge={kpis.avgEdge}
         topQuartileEdge={kpis.topQuartileEdge}
+        generatedAt={data.generated_at}
       />
       <MarketSummaryStrip kpis={kpis} />
 
       <div className="flex gap-6">
         <div className="flex min-w-0 flex-1 flex-col gap-4">
-          {data.events.map((event) => {
-            const showGameLines = event.game_lines.length > 0;
-            const showPlayerProps = event.player_props.length > 0;
-            if (!showGameLines && !showPlayerProps) {
-              return null;
-            }
-
-            const groupedGameLines = [...event.game_lines].sort(
-              (left, right) => sectionOrder(left.market_kind) - sectionOrder(right.market_kind),
-            );
-
-            return (
-              <article
-                key={event.event_id}
-                className="event-card"
-                style={{ ["--sport-tint" as string]: sportTint(event.sport_key) }}
-              >
-                <header className="event-card-head">
-                  <span
-                    className="sport-pill"
-                    style={{ ["--tint" as string]: sportTint(event.sport_key) }}
-                  >
-                    <span className="dot" aria-hidden />
-                    {sportLabel(event.sport_key)}
-                  </span>
-                  <h2>{event.event_name}</h2>
-                  <span className="event-card-when">{fmtStartsAt(event.starts_at)}</span>
-                </header>
-
-                <div className="event-card-markets">
-                  {showGameLines && (
-                    <div className="market-section">
-                      <div className="market-section-head">
-                        <h3>Game Lines</h3>
-                        <span className="count">{groupedGameLines.length} markets</span>
-                      </div>
-                      {groupedGameLines.map((line) => (
-                        <GameLineRow
-                          key={line.ticker}
-                          line={line}
-                          selectedTicker={selected?.ticker}
-                          onSelect={() =>
-                            setSelected((current) =>
-                              current?.ticker === line.ticker ? null : buildGameLineSelection(event, line),
-                            )
-                          }
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {showPlayerProps && (
-                    <div className="market-section">
-                      <div className="market-section-head">
-                        <h3>Player Props</h3>
-                        <span className="count">{event.player_props.length} ladders</span>
-                      </div>
-                      {event.player_props.map((player) => (
-                        <PlayerPropGroup
-                          key={`${event.event_id}-${player.subject_name}`}
-                          player={player}
-                          selectedTicker={selected?.ticker}
-                          onSelectThreshold={(subjectName, subjectTeam, statKey, threshold) =>
-                            setSelected((current) =>
-                              current?.ticker === threshold.ticker
-                                ? null
-                                : buildPlayerPropSelection(event, subjectName, subjectTeam, statKey, threshold),
-                            )
-                          }
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </article>
-            );
-          })}
+          <TradeEventList
+            events={data.events}
+            expandedEventIds={expandedEventIds}
+            idPrefix="current"
+            selected={selected}
+            onToggleEvent={toggleEvent}
+            onSelect={selectOrToggle}
+          />
 
           {data.events.length === 0 && (
             <div className="rounded-2xl border border-border bg-surface px-4 py-8 text-center">
@@ -457,6 +627,18 @@ export function TradeDesk({ sport }: { sport?: string }) {
               )}
             </div>
           )}
+
+          {previousSlate ? (
+            <ArchivedSlateSection
+              slate={previousSlate}
+              expanded={archiveExpanded}
+              expandedEventIds={archivedExpandedEventIds}
+              selected={selected}
+              onToggle={toggleArchive}
+              onToggleEvent={toggleArchivedEvent}
+              onSelect={selectOrToggle}
+            />
+          ) : null}
 
           {data.research_sports.length > 0 && (
             <div className="space-y-2">
@@ -482,7 +664,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
           )}
         </div>
 
-        <div className="sticky top-4 hidden w-80 shrink-0 self-start lg:block">
+        <div className="trade-ticket-rail hidden w-80 shrink-0 lg:block" data-testid="trade-ticket-rail">
           <TradeTicket selection={selected} />
         </div>
       </div>

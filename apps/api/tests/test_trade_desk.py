@@ -13,6 +13,38 @@ from app.services.trade_desk import (
 )
 
 
+def _snapshot_event_payload(
+    *,
+    event_id: int,
+    event_name: str,
+    sport_key: str,
+    starts_at: datetime,
+    ticker: str,
+) -> dict:
+    return {
+        "event_id": event_id,
+        "event_name": event_name,
+        "event_status": "scheduled",
+        "starts_at": starts_at.isoformat().replace("+00:00", "Z"),
+        "sport_key": sport_key,
+        "game_lines": [
+            {
+                "ticker": ticker,
+                "market_title": f"{event_name} Winner?",
+                "display_label": event_name.split(" at ")[-1] + " to win",
+                "sport_key": sport_key,
+                "market_kind": "game_winner",
+                "selected_side": "yes",
+                "selected_side_probability": 0.61,
+                "entry_price": 0.54,
+                "edge": 0.07,
+                "confidence": 0.7,
+            }
+        ],
+        "player_props": [],
+    }
+
+
 def test_thresholds_are_monotonic_utility():
     def make(prob: float) -> TradeDeskThresholdRead:
         return TradeDeskThresholdRead(
@@ -235,6 +267,7 @@ def test_persist_current_slate_snapshots_marks_current_events_without_candidates
     assert response.event_count == 1
     assert response.candidate_market_count == 0
     assert response.blocking_reason == "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+    assert response.previous_slate is None
 
 
 def test_persist_current_slate_snapshots_marks_prefiltered_candidates_degraded(db_session):
@@ -349,7 +382,7 @@ def test_persist_current_slate_snapshots_marks_scored_zero_recommendation_slate_
     assert response.recommendation_count == 0
 
 
-def test_load_trade_desk_snapshot_serves_previous_non_empty_slate_when_latest_is_degraded(db_session):
+def test_load_trade_desk_snapshot_serves_latest_sport_slate_when_latest_is_degraded(db_session):
     older_ts = datetime.now(timezone.utc)
     newer_ts = older_ts + timedelta(minutes=5)
     db_session.add(
@@ -358,28 +391,13 @@ def test_load_trade_desk_snapshot_serves_previous_non_empty_slate_when_latest_is
             generated_at=older_ts,
             payload={
                 "events": [
-                    {
-                        "event_id": 501,
-                        "event_name": "Brooklyn Nets at Boston Celtics",
-                        "event_status": "scheduled",
-                        "starts_at": older_ts.isoformat().replace("+00:00", "Z"),
-                        "sport_key": "NBA",
-                        "game_lines": [
-                            {
-                                "ticker": "KXNBAGAME-FALLBACK-BOS",
-                                "market_title": "Brooklyn at Boston Winner?",
-                                "display_label": "Boston Celtics to win",
-                                "sport_key": "NBA",
-                                "market_kind": "game_winner",
-                                "selected_side": "yes",
-                                "selected_side_probability": 0.61,
-                                "entry_price": 0.54,
-                                "edge": 0.07,
-                                "confidence": 0.7,
-                            }
-                        ],
-                        "player_props": [],
-                    }
+                    _snapshot_event_payload(
+                        event_id=501,
+                        event_name="Brooklyn Nets at Boston Celtics",
+                        sport_key="NBA",
+                        starts_at=older_ts,
+                        ticker="KXNBAGAME-FALLBACK-BOS",
+                    )
                 ],
                 "research_sports": [],
                 "generated_at": older_ts.isoformat().replace("+00:00", "Z"),
@@ -410,10 +428,95 @@ def test_load_trade_desk_snapshot_serves_previous_non_empty_slate_when_latest_is
     response = load_trade_desk_snapshot(db_session, sport="NBA")
 
     assert response is not None
-    assert response.generated_at == older_ts
-    assert response.freshness_status == "stale"
-    assert len(response.events) == 1
-    assert "Showing previous non-empty slate" in (response.blocking_reason or "")
+    assert response.generated_at == newer_ts
+    assert response.freshness_status == "degraded"
+    assert response.event_count == 1
+    assert response.candidate_market_count == 0
+    assert response.scored_market_count == 0
+    assert response.recommendation_count == 0
+    assert response.coverage_prediction_count == 0
+    assert response.events == []
+    assert response.blocking_reason == "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+    assert response.previous_slate is not None
+    assert response.previous_slate.generated_at == older_ts
+    assert response.previous_slate.generated_from_run_id is None
+    assert response.previous_slate.freshness_status == "stale"
+    assert response.previous_slate.recommendation_count == 1
+    assert response.previous_slate.events[0].event_name == "Brooklyn Nets at Boston Celtics"
+
+
+def test_load_trade_desk_snapshot_returns_degraded_all_scope_with_previous_slate(db_session):
+    older_ts = datetime.now(timezone.utc)
+    newer_ts = older_ts + timedelta(minutes=5)
+    previous_run = Run(kind="refresh", status="completed", finished_at=older_ts)
+    latest_run = Run(
+        kind="refresh",
+        status="completed",
+        finished_at=newer_ts,
+        details={
+            "current_slate_loaded_candidate_market_count": 0,
+            "current_slate_filtered_candidate_market_count": 743,
+        },
+    )
+    db_session.add_all([previous_run, latest_run])
+    db_session.flush()
+    db_session.add(
+        CurrentSlateSnapshot(
+            scope="all",
+            source_run_id=previous_run.id,
+            generated_at=older_ts,
+            payload={
+                "events": [
+                    _snapshot_event_payload(
+                        event_id=601,
+                        event_name="Miami Heat at Toronto Raptors",
+                        sport_key="NBA",
+                        starts_at=older_ts,
+                        ticker="KXNBAGAME-FALLBACK-TOR",
+                    )
+                ],
+                "research_sports": [],
+                "generated_at": older_ts.isoformat().replace("+00:00", "Z"),
+                "freshness_status": "fresh",
+            },
+        )
+    )
+    db_session.add(
+        CurrentSlateSnapshot(
+            scope="all",
+            source_run_id=latest_run.id,
+            generated_at=newer_ts,
+            payload={
+                "events": [],
+                "research_sports": [],
+                "generated_at": newer_ts.isoformat().replace("+00:00", "Z"),
+                "freshness_status": "degraded",
+                "event_count": 1,
+                "candidate_market_count": 1,
+                "scored_market_count": 0,
+                "recommendation_count": 0,
+                "coverage_prediction_count": 0,
+                "blocking_reason": "Current slate candidate markets were filtered before scoring; no current open supported markets reached the scorer.",
+                "generated_from_run_id": latest_run.id,
+            },
+        )
+    )
+    db_session.commit()
+
+    response = load_trade_desk_snapshot(db_session)
+
+    assert response is not None
+    assert response.generated_at == newer_ts
+    assert response.freshness_status == "degraded"
+    assert response.generated_from_run_id == latest_run.id
+    assert response.recommendation_count == 0
+    assert response.events == []
+    assert response.previous_slate is not None
+    assert response.previous_slate.generated_at == older_ts
+    assert response.previous_slate.generated_from_run_id == previous_run.id
+    assert response.previous_slate.freshness_status == "stale"
+    assert response.previous_slate.recommendation_count == 1
+    assert response.previous_slate.events[0].event_name == "Miami Heat at Toronto Raptors"
 
 
 def test_load_trade_desk_snapshot_returns_latest_when_multiple_rows_exist(db_session):

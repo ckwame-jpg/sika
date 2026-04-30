@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { fmtEdge } from "@/lib/utils";
+import { fmtDatetime, fmtEdge } from "@/lib/utils";
 
 interface ProbabilitySurfaceHeroProps {
   scoredCount: number;
   recommendationCount: number;
   avgEdge: number | null;
   topQuartileEdge: number | null;
+  generatedAt?: string | null;
 }
 
 interface SkyReadState {
@@ -51,6 +52,7 @@ export function ProbabilitySurfaceHero({
   recommendationCount,
   avgEdge,
   topQuartileEdge,
+  generatedAt,
 }: ProbabilitySurfaceHeroProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -184,11 +186,11 @@ export function ProbabilitySurfaceHero({
       <div className="trade-hero-inner">
         <div className="th-eyebrow">Trade desk · probability surface</div>
         <div className="th-title">
-          <span>{scoredCount} markets scored tonight. </span>
-          <span className="th-hl">{recommendationCount} past edge.</span>
+          <span>{scoredCount} markets in current snapshot. </span>
+          <span className="th-hl">{recommendationCount} current picks.</span>
         </div>
         <div className="th-sub">
-          Peaks are markets where the model most disagrees with Kalshi. Drag the sky to explore.
+          Snapshot {fmtDatetime(generatedAt)}. Peaks mark where the model most disagrees with Kalshi.
         </div>
         <div className="th-chips" data-testid="trade-hero-chips">
           <div className="th-chip" data-testid="trade-hero-chip-avg-edge">

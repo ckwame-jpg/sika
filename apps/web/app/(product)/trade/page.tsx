@@ -31,7 +31,7 @@ export default function TradePage() {
         title="Trade"
         description="Event-first desk for curated game lines and player props"
       />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-visible">
         <Suspense>
           <TradeContent />
         </Suspense>

@@ -33,7 +33,11 @@ function thresholdsAreMonotonic(thresholds: TradeDeskThreshold[]): boolean {
 }
 
 function formatStatLabel(statKey: string) {
-  return statKey.replace(/_/g, " ");
+  return statKey.replace(/_/g, " ").toLowerCase();
+}
+
+function formatDisplayText(value: string): string {
+  return value.toLowerCase();
 }
 
 /**
@@ -70,15 +74,6 @@ function bestThresholdSummary(player: TradeDeskPlayerProp): ThresholdSummary | n
   return best;
 }
 
-function initialsOf(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
-
 export function PlayerPropGroup({
   player,
   selectedTicker,
@@ -94,12 +89,15 @@ export function PlayerPropGroup({
       }))
   )[0] ?? null;
   const summary = selectedSummary ?? bestThresholdSummary(player);
-  const summaryWinProb = summary
-    ? summary.threshold.selected_side_probability ?? summary.threshold.probability_yes
-    : null;
-  const subtitle = [player.subject_team, summary ? formatStatLabel(summary.statKey) : null]
-    .filter(Boolean)
-    .join(" · ");
+  const visibleGroups = player.stat_groups
+    .filter((group) => thresholdsAreMonotonic(group.thresholds))
+    .map((group) => ({
+      ...group,
+      thresholds: group.thresholds
+        .filter((threshold) => isOverSide(threshold.selected_side))
+        .sort((left, right) => left.threshold - right.threshold),
+    }))
+    .filter((group) => group.thresholds.length > 0);
 
   return (
     <div
@@ -113,28 +111,19 @@ export function PlayerPropGroup({
       >
         <ChevronRight className="prop-chev" aria-hidden />
         <div className="prop-head-player">
-          <span className="prop-avatar" aria-hidden>
-            {initialsOf(player.subject_name)}
-          </span>
-          <div className="min-w-0">
-            <div className="prop-pname truncate">{player.subject_name}</div>
-            {subtitle && <div className="prop-psub">{subtitle}</div>}
-          </div>
+          <div className="prop-pname truncate">{formatDisplayText(player.subject_name)}</div>
+          {player.subject_team && <div className="prop-psub">{formatDisplayText(player.subject_team)}</div>}
         </div>
         {summary && (
-          <div className="prop-best-edge">
-            <span className="label">best edge</span>
+          <div className="prop-best-edge" aria-label="Selected ladder summary">
+            <span className="label" data-testid="trade-prop-summary-label">
+              {summary.threshold.threshold}+ {formatStatLabel(summary.statKey)}
+            </span>
             <span
               className={summary.threshold.edge >= 0 ? "pos" : "neg"}
               data-testid="trade-prop-summary-edge"
             >
               {fmtEdge(summary.threshold.edge)}
-            </span>
-            <span className="label" data-testid="trade-prop-summary-label">
-              {summary.threshold.threshold}+ {formatStatLabel(summary.statKey)}
-            </span>
-            <span className="label" data-testid="trade-prop-summary-win-prob">
-              {fmtPercent(summaryWinProb)}
             </span>
           </div>
         )}
@@ -142,47 +131,48 @@ export function PlayerPropGroup({
 
       {expanded && (
         <div className="prop-ladder">
-          {player.stat_groups.map((group) => {
-            if (!thresholdsAreMonotonic(group.thresholds)) {
-              return null;
-            }
-
-            return group.thresholds
-              .filter((threshold) => isOverSide(threshold.selected_side))
-              .map((threshold) => {
-                const isSelected = threshold.ticker === selectedTicker;
-                const winProb = threshold.selected_side_probability ?? threshold.probability_yes;
-                const thresholdLabel = `${threshold.threshold}+`;
-                return (
-                  <button
-                    type="button"
-                    key={threshold.ticker}
-                    data-testid="trade-threshold-chip"
-                    aria-pressed={isSelected}
-                    aria-label={thresholdLabel}
-                    onClick={() =>
-                      onSelectThreshold(
-                        player.subject_name,
-                        player.subject_team,
-                        group.stat_key,
-                        threshold,
-                      )
-                    }
-                    className={cn("ladder-row", "over", isSelected && "selected")}
-                  >
-                    <span className="side-pill">OVER</span>
-                    <span className="thresh">
-                      <span className="u">{formatStatLabel(group.stat_key)}</span>
-                      <span>{thresholdLabel}</span>
-                    </span>
-                    <span className="p">{fmtPrice(threshold.entry_price)}</span>
-                    <span className="wp">{fmtPercent(winProb)}</span>
-                    <span className={cn("ed", threshold.edge >= 0 ? "pos" : "neg")}>
-                      {fmtEdge(threshold.edge)}
-                    </span>
-                  </button>
-                );
-              });
+          {visibleGroups.map((group) => {
+            const selectedThreshold = group.thresholds.find((threshold) => threshold.ticker === selectedTicker);
+            const rowSummary = selectedThreshold
+              ?? group.thresholds.find((threshold) => threshold.is_best)
+              ?? group.thresholds[0];
+            const rowWinProb = rowSummary.selected_side_probability ?? rowSummary.probability_yes;
+            return (
+              <div className="prop-stat-row" key={group.stat_key}>
+                <div className="prop-stat-meta">
+                  <span className="prop-stat-name">{formatStatLabel(group.stat_key)}</span>
+                  <span className="prop-stat-prob">{fmtPercent(rowWinProb)}</span>
+                </div>
+                <div className="prop-thresholds">
+                  {group.thresholds.map((threshold) => {
+                    const isSelected = threshold.ticker === selectedTicker;
+                    const thresholdLabel = `${threshold.threshold}+`;
+                    const winProb = threshold.selected_side_probability ?? threshold.probability_yes;
+                    return (
+                      <button
+                        type="button"
+                        key={threshold.ticker}
+                        data-testid="trade-threshold-chip"
+                        aria-pressed={isSelected}
+                        aria-label={thresholdLabel}
+                        title={`${formatStatLabel(group.stat_key)} ${thresholdLabel} · ${fmtPercent(winProb)} win · ${fmtPrice(threshold.entry_price)} entry · ${fmtEdge(threshold.edge)} edge`}
+                        onClick={() =>
+                          onSelectThreshold(
+                            player.subject_name,
+                            player.subject_team,
+                            group.stat_key,
+                            threshold,
+                          )
+                        }
+                        className={cn("prop-threshold-chip", threshold.is_best && "best", isSelected && "selected")}
+                      >
+                        {thresholdLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
           })}
         </div>
       )}

@@ -35,6 +35,10 @@ describe("TradeDesk", () => {
     renderWithProviders(<TradeDesk sport="NBA" />);
 
     await screen.findByText("Miami Heat at Toronto Raptors");
+    const eventToggle = screen.getByRole("button", { name: /miami heat at toronto raptors/i });
+    expect(eventToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Game Lines")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("trade-prop-card")).not.toBeInTheDocument();
 
     // KPI quad — 4 cards, new labels + sub-lines
     expect(screen.getByTestId("trade-kpi-events")).toHaveTextContent("1");
@@ -46,7 +50,7 @@ describe("TradeDesk", () => {
     expect(screen.getByTestId("trade-kpi-card-candidate-markets")).toHaveTextContent("scored");
 
     expect(screen.getByTestId("trade-kpi-recommendations")).toHaveTextContent("7");
-    expect(screen.getByTestId("trade-kpi-card-recommendations")).toHaveTextContent("Recommendations");
+    expect(screen.getByTestId("trade-kpi-card-recommendations")).toHaveTextContent("Current picks");
     expect(screen.getByTestId("trade-kpi-card-recommendations")).toHaveTextContent("past edge threshold");
 
     // Fixture edges: [0.08, 0.09, 0.10, 0.321, 0.098, 0.044, 0.051]
@@ -56,8 +60,8 @@ describe("TradeDesk", () => {
     expect(screen.getByTestId("trade-kpi-card-avg-edge")).toHaveTextContent("top-quartile +10.0%");
 
     // Hero: two-clause headline + chip row
-    expect(screen.getByText(/markets scored tonight\./)).toBeInTheDocument();
-    expect(screen.getByText(/past edge\./)).toBeInTheDocument();
+    expect(screen.getByText(/markets in current snapshot\./)).toBeInTheDocument();
+    expect(screen.getByText(/current picks\./)).toBeInTheDocument();
     expect(screen.getByTestId("trade-hero-chip-avg-edge")).toHaveTextContent("+11.2%");
     expect(screen.getByTestId("trade-hero-chip-top-quartile")).toHaveTextContent("+10.0%");
 
@@ -79,22 +83,45 @@ describe("TradeDesk", () => {
 
     renderWithProviders(<TradeDesk sport="NBA" />);
     await screen.findByText("Miami Heat at Toronto Raptors");
+    await user.click(screen.getByRole("button", { name: /miami heat at toronto raptors/i }));
 
-    const propCard = screen.getByTestId("trade-prop-card");
+    const propCard = await screen.findByTestId("trade-prop-card");
 
     await user.click(within(propCard).getByRole("button", { name: "4+" }));
     expect(within(propCard).getByTestId("trade-prop-summary-label")).toHaveTextContent("4+ assists");
-    expect(within(propCard).getByTestId("trade-prop-summary-win-prob")).toHaveTextContent("89.4%");
+    expect(within(propCard).getByText("89.4%")).toBeInTheDocument();
     expect(within(propCard).getByTestId("trade-prop-summary-edge")).toHaveTextContent("+4.4%");
     expectAnyTicketTitleToContain("Davion Mitchell 4+ assists");
     expect(within(propCard).getAllByTestId("trade-threshold-chip").filter((chip) => chip.getAttribute("aria-pressed") === "true")).toHaveLength(1);
 
     await user.click(within(propCard).getByRole("button", { name: "10+" }));
     expect(within(propCard).getByTestId("trade-prop-summary-label")).toHaveTextContent("10+ points");
-    expect(within(propCard).getByTestId("trade-prop-summary-win-prob")).toHaveTextContent("72.1%");
+    expect(within(propCard).getByText("72.1%")).toBeInTheDocument();
     expect(within(propCard).getByTestId("trade-prop-summary-edge")).toHaveTextContent("+32.1%");
     expectAnyTicketTitleToContain("Davion Mitchell 10+ points");
     expect(within(propCard).getAllByTestId("trade-threshold-chip").filter((chip) => chip.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+  });
+
+  it("toggles event cards while preserving the selected trade ticket", async () => {
+    const user = userEvent.setup();
+    mockFetchTradeDesk.mockResolvedValue(tradeDeskFixture);
+
+    renderWithProviders(<TradeDesk sport="NBA" />);
+
+    const eventToggle = await screen.findByRole("button", { name: /miami heat at toronto raptors/i });
+    expect(screen.getByTestId("trade-ticket-rail")).toHaveClass("trade-ticket-rail");
+
+    await user.click(eventToggle);
+    expect(eventToggle).toHaveAttribute("aria-expanded", "true");
+
+    const propCard = await screen.findByTestId("trade-prop-card");
+    await user.click(within(propCard).getByRole("button", { name: "4+" }));
+    expectAnyTicketTitleToContain("Davion Mitchell 4+ assists");
+
+    await user.click(eventToggle);
+    expect(eventToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("trade-prop-card")).not.toBeInTheDocument();
+    expectAnyTicketTitleToContain("Davion Mitchell 4+ assists");
   });
 
   it("renders degraded slate health instead of a generic empty state", async () => {
@@ -117,6 +144,48 @@ describe("TradeDesk", () => {
     expect(screen.getByText("Current events")).toBeInTheDocument();
     // "Candidate markets" now appears both in SlateHealthDetails and the KPI quad label.
     expect(screen.getAllByText("Candidate markets").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders last good slate as a separate collapsible archive", async () => {
+    const user = userEvent.setup();
+    mockFetchTradeDesk.mockResolvedValue({
+      ...tradeDeskFixture,
+      events: [],
+      freshness_status: "degraded",
+      event_count: 2,
+      candidate_market_count: 0,
+      scored_market_count: 0,
+      recommendation_count: 0,
+      coverage_prediction_count: 0,
+      blocking_reason: "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them.",
+      previous_slate: {
+        events: tradeDeskFixture.events,
+        generated_at: "2026-04-07T18:00:00Z",
+        freshness_status: "stale",
+        event_count: 1,
+        candidate_market_count: 7,
+        scored_market_count: 7,
+        recommendation_count: 7,
+        coverage_prediction_count: 0,
+        blocking_reason: null,
+        generated_from_run_id: 99,
+      },
+    });
+
+    renderWithProviders(<TradeDesk sport="NBA" />);
+
+    await screen.findByText("Current slate is degraded for NBA.");
+    expect(screen.getByTestId("trade-kpi-recommendations")).toHaveTextContent("0");
+
+    const archiveToggle = screen.getByRole("button", { name: /last good slate/i });
+    expect(archiveToggle).toHaveAttribute("aria-expanded", "true");
+    expect(archiveToggle).toHaveTextContent("7 picks");
+    expect(screen.getByRole("button", { name: /miami heat at toronto raptors/i })).toBeInTheDocument();
+
+    await user.click(archiveToggle);
+
+    expect(archiveToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: /miami heat at toronto raptors/i })).not.toBeInTheDocument();
   });
 
   it("renders empty scored slate state when no markets clear thresholds", async () => {

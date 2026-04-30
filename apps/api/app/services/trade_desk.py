@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Prediction, Recommendation, Run
 from app.schemas import (
     SportAvailabilityRead,
+    TradeDeskArchivedSlateRead,
     TradeDeskEventRead,
     TradeDeskGameLineRead,
     TradeDeskPlayerPropRead,
@@ -686,9 +687,27 @@ def _latest_prior_useful_snapshot(
         if not row.payload:
             continue
         candidate = TradeDeskResponse.model_validate(row.payload)
-        if candidate.events:
+        if candidate.events and _recommendation_count_from_events(candidate.events) > 0:
             return row
     return None
+
+
+def _archived_slate_from_response(response: TradeDeskResponse) -> TradeDeskArchivedSlateRead:
+    recommendation_count = response.recommendation_count or _recommendation_count_from_events(response.events)
+    scored_market_count = response.scored_market_count or recommendation_count
+    candidate_market_count = response.candidate_market_count or scored_market_count
+    return TradeDeskArchivedSlateRead(
+        events=response.events,
+        generated_at=response.generated_at,
+        freshness_status="stale",
+        event_count=response.event_count or len(response.events),
+        candidate_market_count=candidate_market_count,
+        scored_market_count=scored_market_count,
+        recommendation_count=recommendation_count,
+        coverage_prediction_count=response.coverage_prediction_count,
+        blocking_reason=response.blocking_reason,
+        generated_from_run_id=response.generated_from_run_id,
+    )
 
 
 def load_trade_desk_snapshot(db: Session, *, sport: str | None = None) -> TradeDeskResponse | None:
@@ -718,14 +737,12 @@ def load_trade_desk_snapshot(db: Session, *, sport: str | None = None) -> TradeD
     if snapshot is None or not snapshot.payload:
         return None
     response = _snapshot_response(db, snapshot, scope=scope)
-    if response.freshness_status == "degraded":
+    if _has_stale_snapshot_events(response):
+        response.freshness_status = "stale"
+    if response.freshness_status in {"degraded", "empty"} or response.recommendation_count <= 0:
         prior = _latest_prior_useful_snapshot(db, scope=scope, latest=snapshot)
         if prior is not None:
             prior_response = _snapshot_response(db, prior, scope=scope)
             prior_response.freshness_status = "stale"
-            latest_reason = response.blocking_reason or "Latest current-slate refresh is degraded."
-            prior_response.blocking_reason = f"{latest_reason} Showing previous non-empty slate."
-            return prior_response
-    if _has_stale_snapshot_events(response):
-        response.freshness_status = "stale"
+            response.previous_slate = _archived_slate_from_response(prior_response)
     return response
