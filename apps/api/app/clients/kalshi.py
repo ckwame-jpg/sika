@@ -252,7 +252,7 @@ class KalshiPublicClient:
         return response.json()
 
 
-class KalshiDemoClient:
+class KalshiAuthenticatedClient:
     def __init__(
         self,
         key_id: str | None = None,
@@ -262,7 +262,10 @@ class KalshiDemoClient:
         settings = get_settings()
         self.key_id = key_id or settings.kalshi_key_id
         self.private_key_path = Path(private_key_path or settings.kalshi_private_key_path)
-        self.base_url = (base_url or settings.kalshi_demo_base_url).rstrip("/")
+        self.base_url = (base_url or settings.kalshi_public_base_url).rstrip("/")
+
+    def is_configured(self) -> bool:
+        return bool(self.key_id.strip()) and self.private_key_path.exists()
 
     def _load_private_key(self):
         if not self.private_key_path.exists():
@@ -289,7 +292,14 @@ class KalshiDemoClient:
             "KALSHI-ACCESS-SIGNATURE": self.sign_request(method, path, timestamp_ms),
         }
 
-    def _request(self, method: str, path: str, json_body: dict[str, Any] | None = None, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        timeout: float = 20,
+    ) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         response = httpx.request(
             method,
@@ -297,10 +307,66 @@ class KalshiDemoClient:
             headers=self._headers(method, url),
             json=json_body,
             params=params,
-            timeout=20,
+            timeout=timeout,
         )
         response.raise_for_status()
         return response.json()
+
+
+class KalshiAccountClient(KalshiAuthenticatedClient):
+    def get_balance(self) -> dict[str, Any]:
+        return self._request("GET", "/portfolio/balance", timeout=8)
+
+    def list_markets_by_tickers(self, tickers: list[str]) -> list[dict[str, Any]]:
+        if not tickers:
+            return []
+        payload = self._request(
+            "GET",
+            "/markets",
+            params={
+                "tickers": ",".join(tickers),
+                "limit": min(len(tickers), 1000),
+                "mve_filter": "include",
+            },
+            timeout=8,
+        )
+        return list(payload.get("markets") or [])
+
+    def list_positions(
+        self,
+        *,
+        count_filter: str = "position",
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "count_filter": count_filter,
+            "limit": min(max(limit, 1), 1000),
+        }
+        if cursor:
+            params["cursor"] = cursor
+        return self._request("GET", "/portfolio/positions", params=params, timeout=8)
+
+    def list_fills(self, *, limit: int = 25, cursor: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": min(max(limit, 1), 200)}
+        if cursor:
+            params["cursor"] = cursor
+        return self._request("GET", "/portfolio/fills", params=params, timeout=8)
+
+
+class KalshiDemoClient(KalshiAuthenticatedClient):
+    def __init__(
+        self,
+        key_id: str | None = None,
+        private_key_path: str | Path | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        settings = get_settings()
+        super().__init__(
+            key_id=key_id,
+            private_key_path=private_key_path,
+            base_url=base_url or settings.kalshi_demo_base_url,
+        )
 
     def create_order(self, *, ticker: str, side: str, action: str, quantity: int, limit_price: float, time_in_force: str) -> dict[str, Any]:
         client_order_id = str(uuid.uuid4())

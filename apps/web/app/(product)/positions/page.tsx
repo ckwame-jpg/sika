@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Header } from "@/components/layout/header";
 import { DemoOrdersTable } from "@/components/positions/demo-orders-table";
+import { KalshiAccountPanel } from "@/components/positions/kalshi-account-panel";
 import { PaperPositionsTable } from "@/components/positions/paper-positions-table";
 import { TradeDialog } from "@/components/positions/trade-dialog";
 import { Button } from "@/components/ui/button";
@@ -29,29 +30,43 @@ export default function PaperPositionsPage() {
         }
       />
       <main className="flex-1 overflow-y-auto p-3 sm:p-4">
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="space-y-4">
           <section className="cosmos-panel">
             <div className="cosmos-panel-head">
               <div className="cosmos-panel-head-text">
-                <h2 className="cosmos-panel-title">Paper Positions</h2>
-                <p className="cosmos-panel-desc">Simulated trades without real money</p>
+                <h2 className="cosmos-panel-title">Kalshi Account Picks</h2>
+                <p className="cosmos-panel-desc">Live positions, account value, and fills</p>
               </div>
             </div>
             <div className="cosmos-panel-body flush">
-              <PaperPositionsTable />
+              <KalshiAccountPanel />
             </div>
           </section>
-          <section className="cosmos-panel">
-            <div className="cosmos-panel-head">
-              <div className="cosmos-panel-head-text">
-                <h2 className="cosmos-panel-title">Demo Orders</h2>
-                <p className="cosmos-panel-desc">Orders routed through the Kalshi demo environment</p>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <section className="cosmos-panel">
+              <div className="cosmos-panel-head">
+                <div className="cosmos-panel-head-text">
+                  <h2 className="cosmos-panel-title">Paper Positions</h2>
+                  <p className="cosmos-panel-desc">Simulated trades without real money</p>
+                </div>
               </div>
-            </div>
-            <div className="cosmos-panel-body flush">
-              <DemoOrdersTable />
-            </div>
-          </section>
+              <div className="cosmos-panel-body flush">
+                <PaperPositionsTable />
+              </div>
+            </section>
+            <section className="cosmos-panel">
+              <div className="cosmos-panel-head">
+                <div className="cosmos-panel-head-text">
+                  <h2 className="cosmos-panel-title">Demo Orders</h2>
+                  <p className="cosmos-panel-desc">Orders routed through the Kalshi demo environment</p>
+                </div>
+              </div>
+              <div className="cosmos-panel-body flush">
+                <DemoOrdersTable />
+              </div>
+            </section>
+          </div>
         </div>
       </main>
 
