@@ -89,6 +89,9 @@ export const tradeDeskFixture: TradeDeskResponse = {
       event_status: "scheduled",
       starts_at: "2026-04-07T23:00:00Z",
       sport_key: "NBA",
+      candidate_market_count: 7,
+      scored_market_count: 7,
+      coverage_prediction_count: 0,
       game_lines: [
         {
           ticker: "KXNBAGAME-RAPTORS",

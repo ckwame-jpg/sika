@@ -61,21 +61,24 @@ test("trade uses mocked market data and never requests positions", async ({ page
   await expect(page.getByText("Your Exposure")).toHaveCount(0);
   await expect(page.getByText("Event Context")).toHaveCount(0);
 
+  await page.getByRole("button", { name: /Miami Heat at Toronto Raptors/i }).click();
+
+  const ticketRail = page.getByTestId("trade-ticket-rail");
   await page.getByRole("button", { name: /Toronto Raptors to win/i }).click();
   await expect(ticketTitle).toHaveText("Toronto Raptors to win");
 
   const propCard = page.getByTestId("trade-prop-card").first();
   await propCard.getByRole("button", { name: "4+" }).click();
   await expect(propCard.getByTestId("trade-prop-summary-label")).toHaveText("4+ assists");
-  await expect(propCard.getByTestId("trade-prop-summary-win-prob")).toHaveText("89.4%");
   await expect(propCard.getByTestId("trade-prop-summary-edge")).toHaveText("+4.4%");
   await expect(ticketTitle).toHaveText("Davion Mitchell 4+ assists");
+  await expect(ticketRail).toContainText("89.4%");
 
   await propCard.getByRole("button", { name: "10+" }).click();
   await expect(propCard.getByTestId("trade-prop-summary-label")).toHaveText("10+ points");
-  await expect(propCard.getByTestId("trade-prop-summary-win-prob")).toHaveText("72.1%");
   await expect(propCard.getByTestId("trade-prop-summary-edge")).toHaveText("+32.1%");
   await expect(ticketTitle).toHaveText("Davion Mitchell 10+ points");
+  await expect(ticketRail).toContainText("72.1%");
   await expect(propCard.locator('[data-testid="trade-threshold-chip"][aria-pressed="true"]')).toHaveCount(1);
 
   expect(positionsRequested).toBe(false);

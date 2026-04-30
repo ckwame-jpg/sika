@@ -287,6 +287,88 @@ def _recommendation_count_from_events(events: list[TradeDeskEventRead]) -> int:
     return count
 
 
+def _event_market_stat_totals(events: list[TradeDeskEventRead]) -> tuple[int, int]:
+    scored_market_count = 0
+    coverage_prediction_count = 0
+    for event in events:
+        scored_market_count += event.scored_market_count
+        coverage_prediction_count += event.coverage_prediction_count
+    return scored_market_count, coverage_prediction_count
+
+
+def _current_event_market_stats(
+    db: Session,
+    *,
+    sport: str | None = None,
+    source_run_id: int | None = None,
+) -> dict[int, dict[str, object]]:
+    markets = current_watchlist_markets(db, sport=sport)
+    stats: dict[int, dict[str, object]] = {}
+    market_event_ids: dict[int, int] = {}
+    for market in markets:
+        if market.event is None or market.event_id is None:
+            continue
+        if not trade_desk_market_matches_event(market):
+            continue
+        market_event_ids[market.id] = market.event_id
+        bucket = stats.setdefault(
+            market.event_id,
+            {
+                "event": market.event,
+                "candidate_market_count": 0,
+                "scored_market_ids": set(),
+                "coverage_market_ids": set(),
+            },
+        )
+        bucket["candidate_market_count"] = int(bucket["candidate_market_count"]) + 1
+
+    if not market_event_ids:
+        return stats
+
+    market_ids = list(market_event_ids)
+    if source_run_id is None:
+        max_id_per_market = (
+            select(
+                Prediction.market_id,
+                func.max(Prediction.id).label("max_id"),
+            )
+            .where(Prediction.market_id.in_(tuple(market_ids)))
+            .group_by(Prediction.market_id)
+            .subquery()
+        )
+        predictions = db.scalars(
+            select(Prediction).join(max_id_per_market, Prediction.id == max_id_per_market.c.max_id)
+        ).all()
+    else:
+        predictions = db.scalars(
+            select(Prediction)
+            .where(
+                Prediction.run_id == source_run_id,
+                Prediction.market_id.in_(tuple(market_ids)),
+            )
+            .order_by(Prediction.id.asc())
+        ).all()
+
+    for prediction in predictions:
+        if prediction.market_id is None:
+            continue
+        event_id = market_event_ids.get(prediction.market_id)
+        if event_id is None:
+            continue
+        bucket = stats.get(event_id)
+        if bucket is None:
+            continue
+        scored_market_ids = bucket["scored_market_ids"]
+        coverage_market_ids = bucket["coverage_market_ids"]
+        assert isinstance(scored_market_ids, set)
+        assert isinstance(coverage_market_ids, set)
+        scored_market_ids.add(prediction.market_id)
+        if (prediction.capture_scope or "recommendation") == "coverage":
+            coverage_market_ids.add(prediction.market_id)
+
+    return stats
+
+
 def _prediction_counts_for_run(db: Session, *, run_id: int | None, sport: str | None = None) -> tuple[int, int]:
     if run_id is None:
         return 0, 0
@@ -365,6 +447,12 @@ def _apply_product_slate_health(
         run_id=source_run_id,
     )
     recommendation_count = _recommendation_count_from_events(response.events)
+    if source_run_id is None:
+        event_scored_market_count, event_coverage_prediction_count = _event_market_stat_totals(response.events)
+        if event_scored_market_count > 0:
+            scored_market_count = event_scored_market_count
+        if event_coverage_prediction_count > 0:
+            coverage_prediction_count = event_coverage_prediction_count
     if scored_market_count <= 0 and source_run_id is None and recommendation_count > 0:
         scored_market_count = recommendation_count
 
@@ -387,7 +475,12 @@ def _apply_product_slate_health(
     response.generated_from_run_id = source_run_id
 
 
-def build_trade_desk_response(db: Session, *, sport: str | None = None) -> TradeDeskResponse:
+def build_trade_desk_response(
+    db: Session,
+    *,
+    sport: str | None = None,
+    source_run_id: int | None = None,
+) -> TradeDeskResponse:
     normalized_sport = sport.upper() if sport else None
     availability_rows = sorted(sport_availability_rows(db), key=lambda item: sport_order(item.sport_key))
     if normalized_sport and normalized_sport not in CURRENT_WATCHLIST_SPORTS:
@@ -399,6 +492,11 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
     recommendations = _latest_trade_recommendations(
         db,
         sport=normalized_sport if normalized_sport in CURRENT_WATCHLIST_SPORTS else None,
+    )
+    event_market_stats = _current_event_market_stats(
+        db,
+        sport=normalized_sport if normalized_sport in CURRENT_WATCHLIST_SPORTS else None,
+        source_run_id=source_run_id,
     )
 
     event_buckets: dict[int, dict[str, object]] = {}
@@ -489,6 +587,19 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
             )
         )
 
+    for event_id, stats in event_market_stats.items():
+        event = stats.get("event")
+        if not isinstance(event, Event):
+            continue
+        event_buckets.setdefault(
+            event_id,
+            {
+                "event": event,
+                "game_lines": [],
+                "props": {},
+            },
+        )
+
     events: list[TradeDeskEventRead] = []
     game_line_order = {"game_winner": 0, "first_five_winner": 0, "spread": 1, "total": 2}
     for bucket in event_buckets.values():
@@ -536,6 +647,16 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
                 )
 
         player_props.sort(key=lambda item: (-item.best_edge, item.subject_name.lower()))
+        stats = event_market_stats.get(event.id, {})
+        scored_market_ids = stats.get("scored_market_ids", set())
+        coverage_market_ids = stats.get("coverage_market_ids", set())
+        if not isinstance(scored_market_ids, set):
+            scored_market_ids = set()
+        if not isinstance(coverage_market_ids, set):
+            coverage_market_ids = set()
+        candidate_market_count = int(stats.get("candidate_market_count") or 0)
+        scored_market_count = len(scored_market_ids)
+        coverage_prediction_count = len(coverage_market_ids)
         sorted_game_lines = sorted(
             game_lines,
             key=lambda item: (
@@ -544,7 +665,7 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
                 item.display_label.lower(),
             ),
         )
-        if not sorted_game_lines and not player_props:
+        if not sorted_game_lines and not player_props and candidate_market_count <= 0:
             continue
         events.append(
             TradeDeskEventRead(
@@ -553,6 +674,9 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
                 event_status=event.status,
                 starts_at=event.starts_at,
                 sport_key=event.sport_key,
+                candidate_market_count=candidate_market_count,
+                scored_market_count=scored_market_count,
+                coverage_prediction_count=coverage_prediction_count,
                 game_lines=sorted_game_lines,
                 player_props=player_props,
             )
@@ -580,7 +704,7 @@ def build_trade_desk_response(db: Session, *, sport: str | None = None) -> Trade
         db,
         response,
         scope=SNAPSHOT_SCOPE_ALL if normalized_sport is None else normalized_sport,
-        source_run_id=None,
+        source_run_id=source_run_id,
     )
     return response
 
@@ -603,7 +727,11 @@ def persist_current_slate_snapshots(
     timestamp = generated_at or datetime.now(timezone.utc)
     persisted: dict[str, datetime] = {}
     for scope in (SNAPSHOT_SCOPE_ALL, *sorted(CURRENT_WATCHLIST_SPORTS)):
-        response = build_trade_desk_response(db, sport=None if scope == SNAPSHOT_SCOPE_ALL else scope)
+        response = build_trade_desk_response(
+            db,
+            sport=None if scope == SNAPSHOT_SCOPE_ALL else scope,
+            source_run_id=source_run_id,
+        )
         # Stamp freshness metadata directly into the persisted payload so that
         # the stored snapshot is self-describing regardless of DB-row fields.
         response.generated_at = timestamp

@@ -310,6 +310,18 @@ function buildPlayerPropSelection(
   };
 }
 
+function countPropThresholds(event: TradeDeskEvent): number {
+  return event.player_props.reduce(
+    (total, player) =>
+      total + player.stat_groups.reduce((groupTotal, group) => groupTotal + group.thresholds.length, 0),
+    0,
+  );
+}
+
+function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 interface TradeEventListProps {
   events: TradeDeskEvent[];
   expandedEventIds: Set<number>;
@@ -332,7 +344,11 @@ function TradeEventList({
       {events.map((event) => {
         const showGameLines = event.game_lines.length > 0;
         const showPlayerProps = event.player_props.length > 0;
-        if (!showGameLines && !showPlayerProps) {
+        const candidateCount = event.candidate_market_count ?? 0;
+        const scoredCount = event.scored_market_count ?? 0;
+        const coverageCount = event.coverage_prediction_count ?? 0;
+        const showCoverageOnly = candidateCount > 0 || scoredCount > 0 || coverageCount > 0;
+        if (!showGameLines && !showPlayerProps && !showCoverageOnly) {
           return null;
         }
 
@@ -342,8 +358,13 @@ function TradeEventList({
         const isExpanded = expandedEventIds.has(event.event_id);
         const marketsId = `${idPrefix}-trade-event-${event.event_id}-markets`;
         const selectedInEvent = selected?.eventId === event.event_id;
-        const marketCount = event.game_lines.length;
+        const pickCount = event.game_lines.length + countPropThresholds(event);
         const ladderCount = event.player_props.length;
+        const summaryParts = [
+          pluralize(pickCount, "pick"),
+          pluralize(ladderCount, "ladder"),
+          coverageCount > 0 ? `${coverageCount} coverage` : null,
+        ].filter(Boolean);
 
         return (
           <article
@@ -369,7 +390,7 @@ function TradeEventList({
               </span>
               <h2>{event.event_name}</h2>
               <span className="event-card-summary">
-                {marketCount} markets · {ladderCount} ladders
+                {summaryParts.join(" · ")}
               </span>
               {selectedInEvent ? <span className="event-status-pill live">selected</span> : null}
               <span className="event-card-when">{fmtStartsAt(event.starts_at)}</span>
@@ -390,6 +411,21 @@ function TradeEventList({
                       onSelect={() => onSelect(buildGameLineSelection(event, line))}
                     />
                   ))}
+                </div>
+              ) : null}
+
+              {isExpanded && !showGameLines && !showPlayerProps && showCoverageOnly ? (
+                <div className="market-section">
+                  <div className="market-section-head">
+                    <h3>Coverage</h3>
+                    <span className="count">
+                      {pluralize(scoredCount, "scored market")}
+                    </span>
+                  </div>
+                  <div className="rounded-lg border border-border bg-surface-hover px-4 py-3 text-sm text-muted-foreground">
+                    No bet cleared bet filters for this event.
+                    {coverageCount > 0 ? ` ${coverageCount} coverage predictions were captured.` : ""}
+                  </div>
                 </div>
               ) : null}
 

@@ -293,6 +293,9 @@ export interface TradeDeskEvent {
   event_status: string;
   starts_at: string | null;
   sport_key: string;
+  candidate_market_count: number;
+  scored_market_count: number;
+  coverage_prediction_count: number;
   game_lines: TradeDeskGameLine[];
   player_props: TradeDeskPlayerProp[];
 }

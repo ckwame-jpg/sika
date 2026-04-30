@@ -2231,6 +2231,16 @@ export interface components {
         };
         /** TradeDeskEventRead */
         TradeDeskEventRead: {
+            /**
+             * Candidate Market Count
+             * @default 0
+             */
+            candidate_market_count: number;
+            /**
+             * Coverage Prediction Count
+             * @default 0
+             */
+            coverage_prediction_count: number;
             /** Event Id */
             event_id: number;
             /** Event Name */
@@ -2241,6 +2251,11 @@ export interface components {
             game_lines?: components["schemas"]["TradeDeskGameLineRead"][];
             /** Player Props */
             player_props?: components["schemas"]["TradeDeskPlayerPropRead"][];
+            /**
+             * Scored Market Count
+             * @default 0
+             */
+            scored_market_count: number;
             /** Sport Key */
             sport_key: string;
             /** Starts At */
