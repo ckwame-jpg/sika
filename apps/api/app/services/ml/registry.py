@@ -30,13 +30,22 @@ class ModelManifest:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+def _default_manifest_path() -> Path | None:
+    bundled_path = Path(__file__).resolve().parents[4] / "ml" / "manifests" / "current.json"
+    return bundled_path if bundled_path.exists() else None
+
+
 def load_model_manifest(manifest_path: str | None = None) -> ModelManifest | None:
     settings = get_settings()
     resolved_path = (manifest_path if manifest_path is not None else settings.ml_manifest_path).strip()
     if not resolved_path:
-        return None
+        default_path = _default_manifest_path()
+        if default_path is None:
+            return None
+        path = default_path
+    else:
+        path = Path(resolved_path)
 
-    path = Path(resolved_path)
     if not path.exists():
         return None
 

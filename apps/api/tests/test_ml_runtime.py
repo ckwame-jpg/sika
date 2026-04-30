@@ -5,6 +5,7 @@ import pytest
 
 from app.config import get_settings
 from app.models import ModelFamilyRuntimeHealth, Prediction
+from app.services.ml.registry import load_model_manifest
 from app.services.ml.runtime import resolve_family_runtime, run_serving_inference, run_shadow_inference
 from app.services.operator_settings import set_ml_serving_mode
 
@@ -211,9 +212,19 @@ def test_global_heuristic_mode_keeps_auto_shadow_off(db_session, monkeypatch, tm
     assert decision.fallback_active is False
 
 
-def test_auto_shadow_stays_heuristic_when_no_manifest_is_available(db_session, monkeypatch):
-    monkeypatch.setenv("ML_SERVING_MODE", "shadow")
+def test_load_model_manifest_uses_bundled_current_manifest_when_unconfigured(monkeypatch):
     monkeypatch.delenv("ML_MANIFEST_PATH", raising=False)
+    get_settings.cache_clear()
+
+    manifest = load_model_manifest()
+
+    assert manifest is not None
+    assert {family.serves_family_key for family in manifest.families} >= {"mlb_props", "nba_props"}
+
+
+def test_auto_shadow_stays_heuristic_when_no_manifest_entry_is_available(db_session, monkeypatch, tmp_path):
+    monkeypatch.setenv("ML_SERVING_MODE", "shadow")
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(tmp_path / "missing-manifest.json"))
     monkeypatch.delenv("ML_FAMILY_MODES_JSON", raising=False)
     _seed_nba_single_predictions(db_session, total=40, settled=40)
 

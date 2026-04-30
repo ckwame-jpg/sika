@@ -3,10 +3,12 @@
 import { useEffect, useState } from "react";
 import useSWR, { mutate } from "swr";
 import { AlertTriangle, CheckCircle2, Cpu, FlaskConical, Power, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
-import { fetchModelReadinessDetail, fetchModelReadinessSummary, keys, updateModelReadinessSettings } from "@/lib/api";
+import { fetchHealth, fetchModelReadinessDetail, fetchModelReadinessSummary, keys, updateModelReadinessSettings } from "@/lib/api";
 import type {
+  HealthResponse,
   ModelFamilyReadinessRead,
   ModelReadinessSummaryRead,
+  RefreshJobRead,
   ReadinessStatus,
   RuntimeHealthStatus,
 } from "@/lib/types";
@@ -26,6 +28,10 @@ const STUDY_LADDER = [
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function numberFromRecord(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function promotionMetric(family: ModelFamilyReadinessRead, key: string): number | null {
@@ -79,6 +85,24 @@ function shadowBacklogLabel(family: ModelFamilyReadinessRead): string {
   if (backlog <= 0) return "backlog clear";
   const unit = family.scope === "parlay" ? "parlays" : "predictions";
   return `${backlog} ${unit} pending`;
+}
+
+function defaultFamilyKey(families: ModelFamilyReadinessRead[]): string {
+  const activeWithVolume = families.find(
+    (family) =>
+      family.study_track === "active" &&
+      (family.total_predictions > 0 ||
+        family.settled_predictions > 0 ||
+        family.pending_predictions > 0 ||
+        family.shadow_predictions > 0 ||
+        shadowBacklogCount(family) > 0),
+  );
+  return activeWithVolume?.family_key ?? families.find((family) => family.study_track === "active")?.family_key ?? families[0]?.family_key ?? "";
+}
+
+function settlementJobMetric(job: RefreshJobRead | null | undefined, summaryKey: string, metricKey: string): number {
+  const details = asRecord(job?.details);
+  return numberFromRecord(asRecord(details[summaryKey])[metricKey]);
 }
 
 function FamilyCard({
@@ -198,11 +222,20 @@ export function ModelReadinessPanel() {
       revalidateOnReconnect: false,
     },
   );
+  const { data: health } = useSWR<HealthResponse>(keys.health, fetchHealth, {
+    refreshInterval: 30_000,
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+  });
   const [selectedFamilyKey, setSelectedFamilyKey] = useState<string>("");
 
   useEffect(() => {
-    if (!selectedFamilyKey && summary?.families?.length) {
-      setSelectedFamilyKey(summary.families[0].family_key);
+    if (!summary?.families?.length) {
+      return;
+    }
+    const selectedStillExists = summary.families.some((family) => family.family_key === selectedFamilyKey);
+    if (!selectedFamilyKey || !selectedStillExists) {
+      setSelectedFamilyKey(defaultFamilyKey(summary.families));
     }
   }, [selectedFamilyKey, summary]);
 
@@ -224,6 +257,7 @@ export function ModelReadinessPanel() {
       await Promise.all([
         mutate(keys.modelReadinessSummary),
         selectedFamilyKey ? mutate(keys.modelReadinessDetail(selectedFamilyKey)) : Promise.resolve(),
+        mutate(keys.health),
       ]);
     } finally {
       setRefreshing(false);
@@ -287,6 +321,21 @@ export function ModelReadinessPanel() {
   const selectedShadowBrier = selected ? promotionMetric(selected, "shadow_brier") : null;
   const selectedHeuristicBrier = selected ? promotionMetric(selected, "heuristic_brier") : null;
   const selectedShadowTopDecileRoi = selected ? promotionMetric(selected, "shadow_top_decile_roi") : null;
+  const selectedHasNoRecommendationRows = selected
+    ? selected.total_predictions === 0 && selected.settled_predictions === 0 && selected.pending_predictions === 0
+    : false;
+  const settlementFamilies = summary.families.filter(
+    (family) => family.study_track === "active" && family.pending_predictions > 0 && family.settled_predictions === 0,
+  );
+  const settlementPendingCount = settlementFamilies.reduce((total, family) => total + family.pending_predictions, 0);
+  const settlementJob = health?.active_settlement_job ?? health?.latest_settlement_job ?? null;
+  const settlementProcessed = settlementJob
+    ? numberFromRecord(asRecord(settlementJob.details).processed_so_far)
+    : 0;
+  const settlementUpdated =
+    settlementJobMetric(settlementJob, "single_settlement_summary", "updated") +
+    settlementJobMetric(settlementJob, "parlay_settlement_summary", "updated");
+  const settlementJobStatus = health?.active_settlement_job?.status ?? settlementJob?.status ?? "idle";
 
   return (
     <div className="flex flex-col gap-4">
@@ -322,6 +371,26 @@ export function ModelReadinessPanel() {
             <div className="mb-4 flex items-center gap-2 rounded-lg border border-negative/30 bg-negative/10 px-3 py-2 text-sm text-negative">
               <AlertTriangle size={14} />
               {modeError}
+            </div>
+          ) : null}
+          {settlementFamilies.length > 0 ? (
+            <div className="stats-tile mb-4" data-testid="model-settlement-status">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="stats-tile-label">Settlement Worker</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {settlementPendingCount} pending predictions across {settlementFamilies.length} active families.
+                  </p>
+                </div>
+                <span className={cn("outcome-pill", settlementJobStatus === "failed" ? "lost" : settlementJobStatus === "completed" ? "settled" : "pending")}>
+                  {settlementJobStatus}
+                </span>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {settlementJob
+                  ? `latest job processed ${settlementProcessed} rows and updated ${settlementUpdated}.`
+                  : "waiting for the next automatic settlement job."}
+              </p>
             </div>
           ) : null}
           <div className="mb-4 grid gap-3 md:grid-cols-3">
@@ -407,6 +476,14 @@ export function ModelReadinessPanel() {
             </div>
           </div>
           <div className="cosmos-panel-body flex flex-col gap-4">
+            {selectedHasNoRecommendationRows ? (
+              <div className="stats-tile" data-testid="model-family-empty-volume">
+                <p className="stats-tile-label">Prediction Volume</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  No recommendation predictions have been captured for this family yet. Settlement progress appears on active families with captured rows.
+                </p>
+              </div>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
               <ProgressStep
                 label="History"
