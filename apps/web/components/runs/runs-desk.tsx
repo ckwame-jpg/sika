@@ -25,7 +25,17 @@ function countEntries(details: Record<string, unknown>, key: string) {
 function runKindLabel(kind: string): string {
   if (kind === "prop_refresh") return "Maintenance Refresh";
   if (kind === "shadow_capture") return "Shadow Capture";
+  if (kind === "settlement") return "Settlement";
+  if (kind === "cleanup") return "Cleanup";
   return "Refresh";
+}
+
+function settlementUpdateCount(summary: RunRead["summary_counts"]) {
+  return summary.prediction_settlement_updated + summary.parlay_prediction_settlement_updated;
+}
+
+function nonZeroEntries(values: Record<string, number>) {
+  return Object.entries(values).filter(([, count]) => Number(count) > 0);
 }
 
 function MetricTile({ label, value }: { label: string; value: string | number }) {
@@ -60,12 +70,17 @@ export function RunsDesk() {
   const fetchErrors = detail ? countEntries(detail.details, "sports_fetch_errors") : [];
   const watchlistCounts = detail ? countEntries(detail.details, "watchlist_counts_by_sport") : [];
   const predictionOutcomes = detail
-    ? Object.entries(detail.summary_counts.prediction_outcomes ?? {})
+    ? nonZeroEntries(detail.summary_counts.prediction_outcomes ?? {})
+    : [];
+  const parlayPredictionOutcomes = detail
+    ? nonZeroEntries(detail.summary_counts.parlay_prediction_outcomes ?? {})
     : [];
   const shadowScope = String(detail?.details.shadow_capture_scope ?? "");
   const shadowPredictionsCaptured = Number(detail?.details.shadow_predictions_captured ?? 0);
   const shadowParlaysCaptured = Number(detail?.details.shadow_parlay_predictions_captured ?? 0);
   const shadowSourceRunId = detail?.details.source_run_id != null ? String(detail.details.source_run_id) : null;
+  const settlementProcessedSoFar = Number(detail?.details.processed_so_far ?? detail?.records_processed ?? 0);
+  const settlementBatchSize = Number(detail?.details.batch_size ?? 0);
 
   return (
     <div className="grid h-full min-h-0 gap-4 overflow-auto xl:grid-cols-[360px_minmax(0,1fr)]">
@@ -120,6 +135,12 @@ export function RunsDesk() {
                         <span>{run.records_processed} records</span>
                         {run.kind === "shadow_capture" ? (
                           <span>{String((run as RunRead).records_processed)} shadow captures</span>
+                        ) : run.kind === "settlement" ? (
+                          <>
+                            <span>{settlementUpdateCount(run.summary_counts)} updates</span>
+                            <span>{run.summary_counts.prediction_settlement_updated} singles</span>
+                            <span>{run.summary_counts.parlay_prediction_settlement_updated} parlays</span>
+                          </>
                         ) : (
                           <>
                             <span>{run.summary_counts.supported_markets_kept} markets</span>
@@ -165,6 +186,13 @@ export function RunsDesk() {
                   <MetricTile label="Shadow Singles" value={shadowPredictionsCaptured} />
                   <MetricTile label="Shadow Parlays" value={shadowParlaysCaptured} />
                   <MetricTile label="Source Run" value={shadowSourceRunId ?? "backfill"} />
+                </div>
+              ) : detail.kind === "settlement" ? (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <MetricTile label="Processed" value={settlementProcessedSoFar} />
+                  <MetricTile label="Single Updates" value={detail.summary_counts.prediction_settlement_updated} />
+                  <MetricTile label="Parlay Updates" value={detail.summary_counts.parlay_prediction_settlement_updated} />
+                  <MetricTile label="Batch Size" value={settlementBatchSize || "—"} />
                 </div>
               ) : (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -243,6 +271,20 @@ export function RunsDesk() {
                   </div>
                 </div>
               </div>
+
+              {parlayPredictionOutcomes.length > 0 && (
+                <div className="stats-tile">
+                  <p className="stats-tile-label">Parlay Outcomes</p>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                    {parlayPredictionOutcomes.map(([outcome, count]) => (
+                      <div key={outcome} className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
+                        <span className="text-foreground capitalize">{outcome}</span>
+                        <span className="font-mono text-muted-foreground">{String(count)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {fetchErrors.length > 0 && (
                 <div className="rounded-xl border border-warning/20 bg-warning/8 px-3 py-3">
