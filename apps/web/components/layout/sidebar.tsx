@@ -30,7 +30,7 @@ import {
   useHealthStatus,
 } from "@/lib/health-status";
 
-type SyncState = "refreshing" | "stalled" | "failed" | "stale" | "synced";
+type SyncState = "queued" | "refreshing" | "worker_offline" | "stalled" | "failed" | "stale" | "synced";
 import { triggerRefreshAndRevalidate } from "@/lib/refresh";
 import { SPORT_OPTIONS, cn } from "@/lib/utils";
 import { useSportQueryParam } from "@/components/filters/sport-filter-select";
@@ -132,8 +132,12 @@ function SportFilter({ onNavigate }: { onNavigate?: () => void }) {
 
 function syncLabel(state: SyncState | null): string {
   switch (state) {
+    case "queued":
+      return "Refresh queued";
     case "refreshing":
       return "Refreshing…";
+    case "worker_offline":
+      return "Worker offline";
     case "stalled":
       return "Refresh stalled";
     case "failed":
@@ -168,7 +172,7 @@ function SyncFoot() {
     }
   }
 
-  const isBusy = refreshing || syncState === "refreshing";
+  const isBusy = refreshing || syncState === "queued" || syncState === "refreshing" || syncState === "worker_offline";
 
   return (
     <div className="sync-pill" title={title}>

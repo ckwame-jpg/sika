@@ -5,7 +5,7 @@ import { fetchHealth, keys } from "@/lib/api";
 import type { HealthResponse } from "@/lib/types";
 import { fmtRelative } from "@/lib/utils";
 
-type SyncState = "refreshing" | "stalled" | "failed" | "stale" | "synced";
+type SyncState = "queued" | "refreshing" | "worker_offline" | "stalled" | "failed" | "stale" | "synced";
 type SyncBadgeVariant = "positive" | "warning" | "negative";
 
 interface SyncBadge {
@@ -32,9 +32,11 @@ function isAnyJobStalled(health: HealthResponse): boolean {
 
 export function getSyncState(health?: HealthResponse | null): SyncState | null {
   if (!health) return null;
-  const isRefreshing = health.refresh_status === "queued" || health.refresh_status === "running";
 
-  if (isRefreshing) {
+  if (health.refresh_status === "queued") {
+    return health.scheduler_enabled ? "queued" : "worker_offline";
+  }
+  if (health.refresh_status === "running") {
     return isAnyJobStalled(health) ? "stalled" : "refreshing";
   }
   if (health.refresh_status === "failed" && health.data_stale) {
@@ -67,13 +69,32 @@ function fmtRelativeCompact(iso: string | null | undefined): string {
 export function getMarketSyncBadge(health?: HealthResponse | null): SyncBadge | null {
   if (!health) return null;
 
-  if (health.refresh_status === "queued" || health.refresh_status === "running") {
+  if (health.refresh_status === "queued" && !health.scheduler_enabled) {
+    return {
+      text: "Market queued - worker not running",
+      title: "A current-slate refresh is queued, but the scheduler worker is not running.",
+      variant: "warning",
+    };
+  }
+
+  if (health.refresh_status === "queued") {
+    return {
+      text: health.active_refresh_job?.scope === "current_slate" ? "Market refresh queued" : "Market queued",
+      title:
+        health.active_refresh_job?.scope === "current_slate"
+          ? "Current-slate market refresh is queued."
+          : "Market refresh is queued.",
+      variant: "warning",
+    };
+  }
+
+  if (health.refresh_status === "running") {
     return {
       text: health.active_refresh_job?.scope === "current_slate" ? "Market refreshing slate" : "Market refreshing",
       title:
         health.active_refresh_job?.scope === "current_slate"
-          ? "Current-slate market refresh is queued or running."
-          : "Market refresh is queued or running.",
+          ? "Current-slate market refresh is running."
+          : "Market refresh is running.",
       variant: "warning",
     };
   }
@@ -196,12 +217,20 @@ export function getOperatorBanner(health?: HealthResponse | null) {
   const propRefreshError = getUserSafeRefreshErrorMessage(health.prop_refresh_error_message);
   const activeRefreshScope = health.active_refresh_job?.scope;
 
+  if (health.refresh_status === "queued" && !health.scheduler_enabled) {
+    return {
+      tone: "warning" as const,
+      message: "Refresh queued, but the scheduler worker is not running. See Runs for details.",
+    };
+  }
   if (health.refresh_status === "queued" || health.refresh_status === "running") {
     return {
       tone: "neutral" as const,
       message:
         activeRefreshScope === "current_slate"
-          ? "Refreshing the current NBA/MLB slate in background."
+          ? health.refresh_status === "queued"
+            ? "Current NBA/MLB slate refresh is queued."
+            : "Refreshing the current NBA/MLB slate in background."
           : health.prop_refresh_status === "queued" || health.prop_refresh_status === "running"
             ? "Refreshing markets and props in background."
             : "Refreshing market data in background.",
