@@ -195,6 +195,7 @@ def test_watchlist_and_positions_endpoints(client, db_session):
     positions = client.get("/positions")
     assert positions.status_code == 200
     assert len(positions.json()["paper_positions"]) == 1
+    assert positions.json()["kalshi_account"]["status"] == "not_configured"
 
 
 def test_watchlist_diagnostics_endpoint_reports_no_refresh_runs(client, monkeypatch):
@@ -612,6 +613,52 @@ def test_runs_and_market_history_endpoints(client, db_session):
     assert markets.json()[0]["ticker"] == "KXMLBHIT-TEST"
     assert markets.json()[0]["market_family"] == "player_prop"
     assert markets.json()[0]["latest_snapshot"]["last_price"] == 0.35
+
+
+def test_run_summary_counts_include_batched_settlement_details(client, db_session):
+    db_session.add(
+        Run(
+            kind="settlement",
+            status="completed",
+            records_processed=104,
+            details={
+                "single_settlement_summary": {
+                    "processed": 100,
+                    "updated": 10,
+                    "won": 4,
+                    "lost": 5,
+                    "push": 1,
+                    "cancelled": 0,
+                    "pending": 0,
+                    "unresolved": 0,
+                    "errors": 0,
+                },
+                "parlay_settlement_summary": {
+                    "processed": 4,
+                    "updated": 1,
+                    "won": 1,
+                    "lost": 0,
+                    "push": 0,
+                    "cancelled": 0,
+                    "pending": 0,
+                    "unresolved": 0,
+                    "errors": 0,
+                },
+            },
+        )
+    )
+    db_session.commit()
+
+    response = client.get("/ops/runs")
+
+    assert response.status_code == 200
+    summary = response.json()[0]["summary_counts"]
+    assert summary["prediction_settlement_updated"] == 10
+    assert summary["parlay_prediction_settlement_updated"] == 1
+    assert summary["prediction_outcomes"]["won"] == 4
+    assert summary["prediction_outcomes"]["lost"] == 5
+    assert summary["prediction_outcomes"]["push"] == 1
+    assert summary["parlay_prediction_outcomes"]["won"] == 1
 
 
 def test_trade_desk_groups_game_lines_props_and_research_rows(client, db_session):

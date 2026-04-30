@@ -65,6 +65,7 @@ from app.schemas import (
     WatchlistCoverageRowRead,
 )
 from app.services.market_history import build_market_history
+from app.services.kalshi_account import build_kalshi_account_snapshot
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
 from app.services.ml.study_progress import retained_study_cutoff
 from app.services.operator_settings import set_ml_serving_mode
@@ -420,52 +421,91 @@ def _serialize_recommendation(
     )
 
 
+SETTLEMENT_OUTCOME_KEYS = ("won", "lost", "push", "cancelled", "pending", "unresolved", "errors")
+
+
+def _summary_int(payload: dict, summary_key: str, metric_key: str) -> int:
+    summary = payload.get(summary_key)
+    if not isinstance(summary, dict):
+        return 0
+    return int(summary.get(metric_key) or 0)
+
+
+def _payload_int(payload: dict, key: str, fallback: int = 0) -> int:
+    raw = payload.get(key)
+    if raw is None:
+        raw = fallback
+    return int(raw or 0)
+
+
+def _settlement_outcomes(payload: dict, key: str, summary_key: str) -> dict[str, int]:
+    direct = payload.get(key)
+    if isinstance(direct, dict) and direct:
+        return direct
+    summary = payload.get(summary_key)
+    if not isinstance(summary, dict):
+        return {}
+    return {key: int(summary.get(key) or 0) for key in SETTLEMENT_OUTCOME_KEYS}
+
+
 def _run_summary_counts(details: dict | None) -> RunSummaryCounts:
     payload = details or {}
+    single_settlement_updated = _summary_int(payload, "single_settlement_summary", "updated")
+    parlay_settlement_updated = _summary_int(payload, "parlay_settlement_summary", "updated")
     return RunSummaryCounts(
         sports_records_ingested=payload.get("sports_records_ingested") or {},
-        total_kalshi_markets_seen=int(payload.get("total_kalshi_markets_seen") or 0),
-        supported_markets_kept=int(payload.get("supported_markets_kept") or 0),
-        supported_nba_props_seen=int(payload.get("supported_nba_props_seen") or 0),
-        supported_mlb_props_seen=int(payload.get("supported_mlb_props_seen") or 0),
-        mapped_markets=int(payload.get("mapped_markets") or 0),
-        mapped_prop_markets=int(payload.get("mapped_prop_markets") or 0),
-        current_slate_event_count=int(payload.get("current_slate_event_count") or payload.get("affected_event_count") or 0),
-        current_slate_candidate_market_count=int(payload.get("current_slate_candidate_market_count") or payload.get("candidate_market_count") or 0),
-        current_slate_loaded_candidate_market_count=int(payload.get("current_slate_loaded_candidate_market_count") or payload.get("loaded_candidate_market_count") or 0),
-        current_slate_filtered_candidate_market_count=int(
-            payload.get("current_slate_filtered_candidate_market_count") or payload.get("filtered_candidate_market_count") or 0
+        total_kalshi_markets_seen=_payload_int(payload, "total_kalshi_markets_seen"),
+        supported_markets_kept=_payload_int(payload, "supported_markets_kept"),
+        supported_nba_props_seen=_payload_int(payload, "supported_nba_props_seen"),
+        supported_mlb_props_seen=_payload_int(payload, "supported_mlb_props_seen"),
+        mapped_markets=_payload_int(payload, "mapped_markets"),
+        mapped_prop_markets=_payload_int(payload, "mapped_prop_markets"),
+        current_slate_event_count=_payload_int(payload, "current_slate_event_count", _payload_int(payload, "affected_event_count")),
+        current_slate_candidate_market_count=_payload_int(payload, "current_slate_candidate_market_count", _payload_int(payload, "candidate_market_count")),
+        current_slate_loaded_candidate_market_count=_payload_int(
+            payload,
+            "current_slate_loaded_candidate_market_count",
+            _payload_int(payload, "loaded_candidate_market_count"),
+        ),
+        current_slate_filtered_candidate_market_count=_payload_int(
+            payload,
+            "current_slate_filtered_candidate_market_count",
+            _payload_int(payload, "filtered_candidate_market_count"),
         ),
         current_slate_candidate_filter_reason_counts=payload.get("current_slate_candidate_filter_reason_counts")
         or payload.get("candidate_filter_reason_counts")
         or {},
-        current_slate_scored_market_count=int(payload.get("current_slate_scored_market_count") or payload.get("scored_market_count") or 0),
-        current_slate_coverage_prediction_count=int(payload.get("current_slate_coverage_prediction_count") or payload.get("coverage_prediction_count") or 0),
+        current_slate_scored_market_count=_payload_int(payload, "current_slate_scored_market_count", _payload_int(payload, "scored_market_count")),
+        current_slate_coverage_prediction_count=_payload_int(
+            payload,
+            "current_slate_coverage_prediction_count",
+            _payload_int(payload, "coverage_prediction_count"),
+        ),
         current_slate_blocking_reason=payload.get("current_slate_blocking_reason"),
         scorer_outcome_counts=payload.get("scorer_outcome_counts") or payload.get("outcome_reason_counts") or {},
-        recommendations_emitted=int(payload.get("recommendations_emitted") or 0),
-        predictions_captured=int(payload.get("predictions_captured") or 0),
-        parlay_recommendations_emitted=int(payload.get("parlay_recommendations_emitted") or 0),
-        parlay_predictions_captured=int(payload.get("parlay_predictions_captured") or 0),
-        prediction_settlement_updated=int(payload.get("prediction_settlement_updated") or 0),
-        parlay_prediction_settlement_updated=int(payload.get("parlay_prediction_settlement_updated") or 0),
-        prediction_outcomes=payload.get("prediction_outcomes") or {},
-        parlay_prediction_outcomes=payload.get("parlay_prediction_outcomes") or {},
+        recommendations_emitted=_payload_int(payload, "recommendations_emitted"),
+        predictions_captured=_payload_int(payload, "predictions_captured"),
+        parlay_recommendations_emitted=_payload_int(payload, "parlay_recommendations_emitted"),
+        parlay_predictions_captured=_payload_int(payload, "parlay_predictions_captured"),
+        prediction_settlement_updated=_payload_int(payload, "prediction_settlement_updated", single_settlement_updated),
+        parlay_prediction_settlement_updated=_payload_int(payload, "parlay_prediction_settlement_updated", parlay_settlement_updated),
+        prediction_outcomes=_settlement_outcomes(payload, "prediction_outcomes", "single_settlement_summary"),
+        parlay_prediction_outcomes=_settlement_outcomes(payload, "parlay_prediction_outcomes", "parlay_settlement_summary"),
         unsupported_prop_category_counts=payload.get("unsupported_prop_category_counts") or {},
-        heuristic_longshots_suppressed=int(payload.get("heuristic_longshots_suppressed") or 0),
-        inverse_winner_duplicates_collapsed=int(payload.get("inverse_winner_duplicates_collapsed") or 0),
-        combo_prop_candidates_emitted=int(payload.get("combo_prop_candidates_emitted") or 0),
-        combo_prop_candidates_suppressed=int(payload.get("combo_prop_candidates_suppressed") or 0),
-        critical_context_suppressed=int(payload.get("critical_context_suppressed") or 0),
+        heuristic_longshots_suppressed=_payload_int(payload, "heuristic_longshots_suppressed"),
+        inverse_winner_duplicates_collapsed=_payload_int(payload, "inverse_winner_duplicates_collapsed"),
+        combo_prop_candidates_emitted=_payload_int(payload, "combo_prop_candidates_emitted"),
+        combo_prop_candidates_suppressed=_payload_int(payload, "combo_prop_candidates_suppressed"),
+        critical_context_suppressed=_payload_int(payload, "critical_context_suppressed"),
         quality_tier_counts=payload.get("quality_tier_counts") or {},
-        prop_subjects_warmed=int(payload.get("prop_subjects_warmed") or 0),
-        player_search_cache_hits=int(payload.get("player_search_cache_hits") or 0),
-        player_search_cache_misses=int(payload.get("player_search_cache_misses") or 0),
-        gamelog_cache_hits=int(payload.get("gamelog_cache_hits") or 0),
-        gamelog_cache_misses=int(payload.get("gamelog_cache_misses") or 0),
-        stale_gamelog_fallbacks=int(payload.get("stale_gamelog_fallbacks") or 0),
-        combo_prop_legs_discovered=int(payload.get("combo_prop_legs_discovered") or 0),
-        combo_prop_legs_refreshed=int(payload.get("combo_prop_legs_refreshed") or 0),
+        prop_subjects_warmed=_payload_int(payload, "prop_subjects_warmed"),
+        player_search_cache_hits=_payload_int(payload, "player_search_cache_hits"),
+        player_search_cache_misses=_payload_int(payload, "player_search_cache_misses"),
+        gamelog_cache_hits=_payload_int(payload, "gamelog_cache_hits"),
+        gamelog_cache_misses=_payload_int(payload, "gamelog_cache_misses"),
+        stale_gamelog_fallbacks=_payload_int(payload, "stale_gamelog_fallbacks"),
+        combo_prop_legs_discovered=_payload_int(payload, "combo_prop_legs_discovered"),
+        combo_prop_legs_refreshed=_payload_int(payload, "combo_prop_legs_refreshed"),
         watchlist_counts_by_sport=payload.get("watchlist_counts_by_sport") or {},
         watchlist_counts_by_prop_category=payload.get("watchlist_counts_by_prop_category") or {},
         parlay_watchlist_counts_by_scope=payload.get("parlay_watchlist_counts_by_scope") or {},
@@ -877,6 +917,8 @@ def health() -> HealthResponse:
         latest_refresh_job=RefreshJobRead.model_validate(runtime["latest_refresh_job"]) if runtime["latest_refresh_job"] else None,
         active_prop_refresh_job=RefreshJobRead.model_validate(runtime["active_prop_refresh_job"]) if runtime["active_prop_refresh_job"] else None,
         latest_prop_refresh_job=RefreshJobRead.model_validate(runtime["latest_prop_refresh_job"]) if runtime["latest_prop_refresh_job"] else None,
+        active_settlement_job=RefreshJobRead.model_validate(runtime.get("active_settlement_job")) if runtime.get("active_settlement_job") else None,
+        latest_settlement_job=RefreshJobRead.model_validate(runtime.get("latest_settlement_job")) if runtime.get("latest_settlement_job") else None,
     )
 
 
@@ -1188,9 +1230,11 @@ def parlay_prediction_summary(
 def get_positions(db: Session = Depends(get_db)) -> PositionsRead:
     paper_positions = db.scalars(select(PaperPosition).order_by(PaperPosition.opened_at.desc())).all()
     demo_orders = db.scalars(select(DemoOrder).order_by(DemoOrder.id.desc())).all()
+    kalshi_account = build_kalshi_account_snapshot(db)
     return PositionsRead(
         paper_positions=[PaperPositionRead.model_validate(item) for item in paper_positions],
         demo_orders=[DemoOrderRead.model_validate(item) for item in demo_orders],
+        kalshi_account=kalshi_account,
     )
 
 
@@ -1398,7 +1442,7 @@ def refresh_job_detail(job_id: int, db: Session = Depends(get_db)) -> RefreshJob
 
 @ops_router.post("/jobs/settle-predictions", response_model=PredictionSettlementResponse)
 def settle_prediction_job(db: Session = Depends(get_db)) -> PredictionSettlementResponse:
-    single_summary = settle_predictions(db)
+    single_summary = settle_predictions(db, latest_only_per_key=True)
     parlay_summary = settle_parlay_predictions(db)
     db.commit()
     return PredictionSettlementResponse(**_merge_settlement_summaries(single_summary, parlay_summary))

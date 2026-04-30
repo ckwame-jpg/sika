@@ -28,6 +28,8 @@ export interface HealthResponse {
   latest_refresh_job: RefreshJobRead | null;
   active_prop_refresh_job: RefreshJobRead | null;
   latest_prop_refresh_job: RefreshJobRead | null;
+  active_settlement_job: RefreshJobRead | null;
+  latest_settlement_job: RefreshJobRead | null;
 }
 
 export interface RefreshJobRead {
@@ -295,6 +297,19 @@ export interface TradeDeskEvent {
   player_props: TradeDeskPlayerProp[];
 }
 
+export interface TradeDeskArchivedSlate {
+  events: TradeDeskEvent[];
+  generated_at: string | null;
+  freshness_status: "stale";
+  event_count: number;
+  candidate_market_count: number;
+  scored_market_count: number;
+  recommendation_count: number;
+  coverage_prediction_count: number;
+  blocking_reason: string | null;
+  generated_from_run_id: number | null;
+}
+
 export interface TradeDeskResponse {
   events: TradeDeskEvent[];
   research_sports: SportAvailabilityRead[];
@@ -307,6 +322,7 @@ export interface TradeDeskResponse {
   coverage_prediction_count: number;
   blocking_reason: string | null;
   generated_from_run_id: number | null;
+  previous_slate: TradeDeskArchivedSlate | null;
 }
 
 export interface MarketHistoryPointRead {
@@ -562,9 +578,60 @@ export interface DemoOrderRead {
   last_synced_at: string | null;
 }
 
+export interface KalshiAccountBalanceRead {
+  cash_balance_dollars: number | null;
+  portfolio_value_dollars: number | null;
+  updated_ts: number | null;
+}
+
+export interface KalshiAccountMarketPositionRead {
+  ticker: string;
+  bet_label: string | null;
+  bet_subtitle: string | null;
+  market_title: string | null;
+  market_subtitle: string | null;
+  sport_key: string | null;
+  position: number;
+  total_traded_dollars: number | null;
+  market_exposure_dollars: number | null;
+  realized_pnl_dollars: number | null;
+  fees_paid_dollars: number | null;
+  resting_orders_count: number;
+  last_updated_ts: string | null;
+}
+
+export interface KalshiAccountFillRead {
+  fill_id: string | null;
+  trade_id: string | null;
+  order_id: string | null;
+  ticker: string;
+  bet_label: string | null;
+  bet_subtitle: string | null;
+  market_title: string | null;
+  market_subtitle: string | null;
+  sport_key: string | null;
+  side: string | null;
+  action: string | null;
+  count: number;
+  yes_price_dollars: number | null;
+  no_price_dollars: number | null;
+  fee_dollars: number | null;
+  created_time: string | null;
+}
+
+export interface KalshiAccountRead {
+  configured: boolean;
+  status: "connected" | "not_configured" | "error";
+  error_message: string | null;
+  balance: KalshiAccountBalanceRead | null;
+  market_positions: KalshiAccountMarketPositionRead[];
+  recent_fills: KalshiAccountFillRead[];
+}
+
 export interface PositionsRead {
   paper_positions: PaperPositionRead[];
   demo_orders: DemoOrderRead[];
+  kalshi_account: KalshiAccountRead;
 }
 
 export interface PaperPositionCreate {

@@ -57,6 +57,10 @@ Copy `apps/api/.env.example` to `apps/api/.env` and set:
 - `KALSHI_KEY_ID`
 - `KALSHI_PRIVATE_KEY_PATH`
 
+The Portfolio page uses those Kalshi credentials for read-only live account tracking:
+balance, open picks from `/portfolio/positions`, and recent fills from `/portfolio/fills`.
+If the credentials are absent, the page still loads with paper positions and demo orders.
+
 `DATABASE_URL` now defaults to a local SQLite file for smoke runs:
 
 ```bash

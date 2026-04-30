@@ -51,6 +51,8 @@ class HealthResponse(BaseModel):
     latest_refresh_job: RefreshJobRead | None = None
     active_prop_refresh_job: RefreshJobRead | None = None
     latest_prop_refresh_job: RefreshJobRead | None = None
+    active_settlement_job: RefreshJobRead | None = None
+    latest_settlement_job: RefreshJobRead | None = None
 
 
 class SportRead(BaseModel):
@@ -319,6 +321,19 @@ class TradeDeskEventRead(BaseModel):
     player_props: list[TradeDeskPlayerPropRead] = Field(default_factory=list)
 
 
+class TradeDeskArchivedSlateRead(BaseModel):
+    events: list[TradeDeskEventRead] = Field(default_factory=list)
+    generated_at: UTCDateTime | None = None
+    freshness_status: Literal["stale"] = "stale"
+    event_count: int = 0
+    candidate_market_count: int = 0
+    scored_market_count: int = 0
+    recommendation_count: int = 0
+    coverage_prediction_count: int = 0
+    blocking_reason: str | None = None
+    generated_from_run_id: int | None = None
+
+
 class TradeDeskResponse(BaseModel):
     events: list[TradeDeskEventRead] = Field(default_factory=list)
     research_sports: list[SportAvailabilityRead] = Field(default_factory=list)
@@ -331,6 +346,7 @@ class TradeDeskResponse(BaseModel):
     coverage_prediction_count: int = 0
     blocking_reason: str | None = None
     generated_from_run_id: int | None = None
+    previous_slate: TradeDeskArchivedSlateRead | None = None
 
 
 class ProductScopeFreshnessRead(BaseModel):
@@ -655,9 +671,60 @@ class DemoOrderRead(BaseModel):
     last_synced_at: UTCDateTime | None = None
 
 
+class KalshiAccountBalanceRead(BaseModel):
+    cash_balance_dollars: float | None = None
+    portfolio_value_dollars: float | None = None
+    updated_ts: int | None = None
+
+
+class KalshiAccountMarketPositionRead(BaseModel):
+    ticker: str
+    bet_label: str | None = None
+    bet_subtitle: str | None = None
+    market_title: str | None = None
+    market_subtitle: str | None = None
+    sport_key: str | None = None
+    position: float
+    total_traded_dollars: float | None = None
+    market_exposure_dollars: float | None = None
+    realized_pnl_dollars: float | None = None
+    fees_paid_dollars: float | None = None
+    resting_orders_count: int = 0
+    last_updated_ts: UTCDateTime | None = None
+
+
+class KalshiAccountFillRead(BaseModel):
+    fill_id: str | None = None
+    trade_id: str | None = None
+    order_id: str | None = None
+    ticker: str
+    bet_label: str | None = None
+    bet_subtitle: str | None = None
+    market_title: str | None = None
+    market_subtitle: str | None = None
+    sport_key: str | None = None
+    side: str | None = None
+    action: str | None = None
+    count: float
+    yes_price_dollars: float | None = None
+    no_price_dollars: float | None = None
+    fee_dollars: float | None = None
+    created_time: UTCDateTime | None = None
+
+
+class KalshiAccountRead(BaseModel):
+    configured: bool
+    status: Literal["connected", "not_configured", "error"]
+    error_message: str | None = None
+    balance: KalshiAccountBalanceRead | None = None
+    market_positions: list[KalshiAccountMarketPositionRead] = Field(default_factory=list)
+    recent_fills: list[KalshiAccountFillRead] = Field(default_factory=list)
+
+
 class PositionsRead(BaseModel):
     paper_positions: list[PaperPositionRead]
     demo_orders: list[DemoOrderRead]
+    kalshi_account: KalshiAccountRead
 
 
 class JobRefreshResponse(BaseModel):
