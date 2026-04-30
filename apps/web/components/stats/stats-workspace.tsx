@@ -25,6 +25,21 @@ const EXAMPLES: Record<SportKey, string[]> = {
 const CURRENT_SEASON = "2025-26";
 const SEASON_OPTIONS = ["2025-26", "2024-25", "2023-24", "2022-23"];
 
+// ESPN's `season` parameter is sport-specific:
+//   NBA + Tennis (multi-year span): use the END year (e.g. "2025-26" -> 2026).
+//   NFL + MLB + Soccer + UFC: use the START / single year (e.g. "2025-26" -> 2025).
+function resolveSeasonYear(season: string, sport: SportKey): number | undefined {
+  if (!season) return undefined;
+  const dashIdx = season.indexOf("-");
+  if (dashIdx === -1) {
+    const n = Number(season);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  const startYear = Number(season.slice(0, dashIdx));
+  if (!Number.isFinite(startYear)) return undefined;
+  return sport === "NBA" || sport === "TENNIS" ? startYear + 1 : startYear;
+}
+
 interface StatsWorkspaceProps {
   initialSport?: SportKey;
 }
@@ -46,11 +61,10 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
     setLoading(true);
     setError(null);
     try {
-      const seasonYear = season ? Number(season.slice(0, 4)) : undefined;
       const next = await queryStats({
         question: finalQuestion,
         sport_key: sportKey,
-        season: Number.isFinite(seasonYear) ? seasonYear : undefined,
+        season: resolveSeasonYear(season, sportKey),
       });
       setQuestion(finalQuestion);
       setResult(next);
