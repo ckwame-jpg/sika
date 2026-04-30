@@ -17,14 +17,22 @@ from app.models import RefreshJob, Run
 from app.services.ingestion import advance_current_slate_refresh_job, advance_prop_refresh_job, run_refresh_cycle
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.ml.shadow import capture_shadow_artifacts_batch
+from app.services.parlays import settle_parlay_predictions_batch
+from app.services.predictions import settle_predictions_batch
 
 
-REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "cleanup"})
+REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "settlement", "cleanup"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
 WORKER_TIMEOUT_ERROR = "worker_timeout"
 WORKER_TIMEOUT_GRACE_SECONDS = 10.0
+CURRENT_SLATE_WORKER_TIMEOUT_SECONDS = 300.0
+PROP_REFRESH_WORKER_TIMEOUT_SECONDS = 300.0
+SETTLEMENT_WORKER_TIMEOUT_SECONDS = 120.0
+PREDICTION_SETTLEMENT_BATCH_SIZE = 100
+PARLAY_SETTLEMENT_BATCH_SIZE = 50
 logger = logging.getLogger(__name__)
+SETTLEMENT_SUMMARY_KEYS = ("processed", "updated", "won", "lost", "push", "cancelled", "pending", "unresolved", "errors")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +74,43 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _worker_timeout_seconds(job: RefreshJob) -> float:
+    settings = get_settings()
+    default_timeout = max(float(settings.maintenance_claim_budget_seconds), 0.0) + WORKER_TIMEOUT_GRACE_SECONDS
+    if job.kind == "refresh" and job.scope == "current_slate":
+        return max(default_timeout, CURRENT_SLATE_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "prop_refresh":
+        return max(default_timeout, PROP_REFRESH_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "settlement":
+        return max(default_timeout, SETTLEMENT_WORKER_TIMEOUT_SECONDS)
+    return default_timeout
+
+
+def _fail_run(
+    db: Session,
+    run_id: int | None,
+    error_message: str,
+    *,
+    finished_at: datetime | None = None,
+    only_running: bool = True,
+) -> bool:
+    if run_id is None:
+        return False
+    criteria = [Run.id == run_id]
+    if only_running:
+        criteria.append(Run.status == "running")
+    result = db.execute(
+        update(Run)
+        .where(*criteria)
+        .values(
+            status="failed",
+            error_message=error_message,
+            finished_at=finished_at or datetime.now(timezone.utc),
+        )
+    )
+    return bool(result.rowcount)
+
+
 def get_refresh_job(db: Session, job_id: int) -> RefreshJob | None:
     return db.get(RefreshJob, job_id)
 
@@ -96,13 +141,21 @@ def reconcile_stale_jobs(db: Session, *, now: datetime | None = None) -> int:
         select(RefreshJob).where(RefreshJob.status.in_(tuple(ACTIVE_JOB_STATUSES)))
     ).all():
         anchor = job.started_at if job.status == "running" and job.started_at is not None else job.queued_at
-        age_minutes = (reference_now - _as_utc(anchor)).total_seconds() / 60
-        if age_minutes > settings.refresh_job_stale_minutes:
+        age_seconds = (reference_now - _as_utc(anchor)).total_seconds()
+        timed_out = job.status == "running" and job.started_at is not None and age_seconds > _worker_timeout_seconds(job)
+        stale = (age_seconds / 60) > settings.refresh_job_stale_minutes
+        if timed_out or stale:
+            job.error_message = WORKER_TIMEOUT_ERROR if timed_out else STALE_REFRESH_JOB_ERROR
             stale_jobs.append(job)
     for job in stale_jobs:
         job.status = "failed"
-        job.error_message = STALE_REFRESH_JOB_ERROR
         job.finished_at = reference_now
+        _fail_run(
+            db,
+            job.run_id,
+            job.error_message or STALE_REFRESH_JOB_ERROR,
+            finished_at=reference_now,
+        )
     if stale_jobs:
         db.flush()
     return len(stale_jobs)
@@ -199,7 +252,7 @@ def _job_priority_order():
             2,
         ),
         (
-            RefreshJob.kind == "prop_refresh",
+            RefreshJob.kind == "settlement",
             3,
         ),
         (
@@ -207,8 +260,12 @@ def _job_priority_order():
             4,
         ),
         (
-            RefreshJob.kind == "cleanup",
+            RefreshJob.kind == "prop_refresh",
             5,
+        ),
+        (
+            RefreshJob.kind == "cleanup",
+            6,
         ),
         else_=99,
     )
@@ -332,6 +389,132 @@ def _ensure_shadow_capture_run(
     return run
 
 
+def _empty_settlement_summary() -> dict[str, int]:
+    return {key: 0 for key in SETTLEMENT_SUMMARY_KEYS}
+
+
+def _coerce_settlement_summary(value: object) -> dict[str, int]:
+    payload = dict(value or {}) if isinstance(value, dict) else {}
+    summary = _empty_settlement_summary()
+    for key in summary:
+        summary[key] = int(payload.get(key) or 0)
+    return summary
+
+
+def _merge_settlement_summaries(*summaries: dict[str, int]) -> dict[str, int]:
+    merged = _empty_settlement_summary()
+    for summary in summaries:
+        for key in merged:
+            merged[key] += int(summary.get(key) or 0)
+    return merged
+
+
+def _settlement_processed_so_far(*, single_summary: dict[str, int], parlay_summary: dict[str, int]) -> int:
+    return int(single_summary.get("processed") or 0) + int(parlay_summary.get("processed") or 0)
+
+
+def _ensure_settlement_run(
+    db: Session,
+    *,
+    job: RefreshJob,
+) -> Run:
+    if job.run_id is not None:
+        existing = db.get(Run, job.run_id)
+        if existing is not None:
+            return existing
+    run = Run(
+        kind="settlement",
+        status="running",
+        details={"refresh_scope": "settlement", "phase": "single_predictions"},
+    )
+    db.add(run)
+    db.flush()
+    job.run_id = run.id
+    return run
+
+
+def advance_settlement_job(db: Session, *, job: RefreshJob) -> tuple[Run, bool]:
+    details = dict(job.details or {})
+    phase = str(details.get("phase") or "single_predictions")
+    cursor = dict(details.get("cursor") or {}) or None
+    single_summary = _coerce_settlement_summary(details.get("single_settlement_summary"))
+    parlay_summary = _coerce_settlement_summary(details.get("parlay_settlement_summary"))
+    run = _ensure_settlement_run(db, job=job)
+    batch_started = perf_counter()
+    batch_size = 0
+    completed = False
+
+    if phase == "single_predictions":
+        batch_summary, next_cursor = settle_predictions_batch(
+            db,
+            latest_only_per_key=True,
+            limit=PREDICTION_SETTLEMENT_BATCH_SIZE,
+            cursor=cursor,
+        )
+        single_summary = _merge_settlement_summaries(single_summary, batch_summary)
+        batch_size = PREDICTION_SETTLEMENT_BATCH_SIZE
+        if next_cursor is None:
+            phase = "parlay_predictions"
+            cursor = None
+        else:
+            cursor = next_cursor
+    elif phase == "parlay_predictions":
+        batch_summary, next_cursor = settle_parlay_predictions_batch(
+            db,
+            limit=PARLAY_SETTLEMENT_BATCH_SIZE,
+            cursor=cursor,
+        )
+        parlay_summary = _merge_settlement_summaries(parlay_summary, batch_summary)
+        batch_size = PARLAY_SETTLEMENT_BATCH_SIZE
+        if next_cursor is None:
+            completed = True
+            cursor = None
+        else:
+            cursor = next_cursor
+    else:
+        raise ValueError(f"Unsupported settlement phase: {phase}")
+
+    processed_so_far = _settlement_processed_so_far(
+        single_summary=single_summary,
+        parlay_summary=parlay_summary,
+    )
+    details.update(
+        {
+            "phase": phase,
+            "cursor": cursor or {},
+            "single_settlement_summary": single_summary,
+            "parlay_settlement_summary": parlay_summary,
+            "processed_so_far": processed_so_far,
+            "batch_size": batch_size,
+            "last_batch_seconds": round(perf_counter() - batch_started, 3),
+            "remaining_estimate": None,
+        }
+    )
+    job.details = details
+    run.records_processed = processed_so_far
+    run.details = {
+        "refresh_scope": "settlement",
+        "phase": phase,
+        "cursor": cursor or {},
+        "single_settlement_summary": single_summary,
+        "parlay_settlement_summary": parlay_summary,
+        "processed_so_far": processed_so_far,
+        "batch_size": batch_size,
+        "last_batch_seconds": details["last_batch_seconds"],
+    }
+    if completed:
+        run.status = "completed"
+        run.finished_at = datetime.now(timezone.utc)
+        run.details = {
+            "refresh_scope": "settlement",
+            "single_settlement_summary": single_summary,
+            "parlay_settlement_summary": parlay_summary,
+            "processed_so_far": processed_so_far,
+        }
+    db.flush()
+    return run, completed
+
+
 def _execute_job_in_thread(
     job_id: int,
     done_event: threading.Event,
@@ -354,9 +537,9 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
                 db.commit()
             return None
         job_id = claimed.id
+        timeout_seconds = _worker_timeout_seconds(claimed)
         db.commit()
 
-    settings = get_settings()
     done_event = threading.Event()
     result_holder: dict[str, RefreshJobSnapshot | BaseException | None] = {
         "snapshot": None,
@@ -369,7 +552,6 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
         name=f"refresh-worker-{job_id}",
     )
     worker.start()
-    timeout_seconds = max(float(settings.maintenance_claim_budget_seconds), 0.0) + WORKER_TIMEOUT_GRACE_SECONDS
     if done_event.wait(timeout=timeout_seconds):
         exception = result_holder.get("exception")
         if exception is not None:
@@ -380,6 +562,8 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
     with SessionLocal() as db:
         timed_out = _guarded_fail_job(db, job_id, WORKER_TIMEOUT_ERROR)
         snapshot = _refresh_job_snapshot(db, job_id)
+        if timed_out and snapshot is not None:
+            _fail_run(db, snapshot.run_id, WORKER_TIMEOUT_ERROR)
         db.commit()
     if timed_out:
         logger.warning(
@@ -408,6 +592,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                         requeued = _guarded_requeue_job(db, job.id)
                         if not requeued:
                             logger.warning("refresh_job_late_requeue_ignored", extra={"job_id": job.id})
+                            _fail_run(db, job.run_id, WORKER_TIMEOUT_ERROR, only_running=False)
                         db.commit()
                         return _refresh_job_snapshot(db, job.id)
                     shadow_job, _created = enqueue_shadow_capture_job(
@@ -459,6 +644,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     requeued = _guarded_requeue_job(db, job.id)
                     if not requeued:
                         logger.warning("refresh_job_late_requeue_ignored", extra={"job_id": job.id})
+                        _fail_run(db, job.run_id, WORKER_TIMEOUT_ERROR, only_running=False)
                     db.commit()
                     return _refresh_job_snapshot(db, job.id)
             elif job.kind == "shadow_capture":
@@ -520,6 +706,18 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     requeued = _guarded_requeue_job(db, job.id)
                     if not requeued:
                         logger.warning("refresh_job_late_requeue_ignored", extra={"job_id": job.id})
+                        _fail_run(db, job.run_id, WORKER_TIMEOUT_ERROR, only_running=False)
+                    db.commit()
+                    return _refresh_job_snapshot(db, job.id)
+            elif job.kind == "settlement":
+                run, completed = advance_settlement_job(db, job=job)
+                job.run_id = run.id
+                if not completed:
+                    db.flush()
+                    requeued = _guarded_requeue_job(db, job.id)
+                    if not requeued:
+                        logger.warning("refresh_job_late_requeue_ignored", extra={"job_id": job.id})
+                        _fail_run(db, job.run_id, WORKER_TIMEOUT_ERROR, only_running=False)
                     db.commit()
                     return _refresh_job_snapshot(db, job.id)
             elif job.kind == "cleanup":
@@ -531,6 +729,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
             completed = _guarded_complete_job(db, job.id)
             if not completed:
                 logger.warning("refresh_job_late_completion_ignored", extra={"job_id": job.id})
+                _fail_run(db, job.run_id, WORKER_TIMEOUT_ERROR, only_running=False)
             db.commit()
             return _refresh_job_snapshot(db, job.id)
         except Exception as exc:
@@ -545,11 +744,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 db.commit()
                 return _refresh_job_snapshot(db, job.id)
             if job.run_id is not None:
-                run = db.get(Run, job.run_id)
-                if run is not None and run.status == "running":
-                    run.status = "failed"
-                    run.error_message = str(exc).strip() or exc.__class__.__name__
-                    run.finished_at = datetime.now(timezone.utc)
+                _fail_run(db, job.run_id, str(exc).strip() or exc.__class__.__name__)
             error_message = str(exc).strip() or exc.__class__.__name__
             db.flush()
             failed = _guarded_fail_job(db, job.id, error_message)

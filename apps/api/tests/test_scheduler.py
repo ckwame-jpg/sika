@@ -102,6 +102,20 @@ def test_health_endpoint_uses_sanitized_refresh_error_message(client, monkeypatc
         "latest_refresh_job": None,
         "active_prop_refresh_job": None,
         "latest_prop_refresh_job": None,
+        "active_settlement_job": {
+            "id": 7,
+            "kind": "settlement",
+            "scope": "predictions",
+            "reason": "interval",
+            "status": "running",
+            "run_id": 17,
+            "error_message": None,
+            "details": {"processed_so_far": 100},
+            "queued_at": datetime(2026, 4, 7, 18, 0, tzinfo=timezone.utc),
+            "started_at": datetime(2026, 4, 7, 18, 1, tzinfo=timezone.utc),
+            "finished_at": None,
+        },
+        "latest_settlement_job": None,
     }
     monkeypatch.setattr(routes, "get_refresh_runtime_state", lambda: monkeypatch_payload)
     response = client.get("/health")
@@ -112,6 +126,34 @@ def test_health_endpoint_uses_sanitized_refresh_error_message(client, monkeypatc
     assert "sqlalche.me" not in payload["refresh_error_message"]
     assert payload["prop_refresh_status"] == "running"
     assert payload["prop_refresh_reason"] == "interval"
+    assert payload["active_settlement_job"]["kind"] == "settlement"
+    assert payload["active_settlement_job"]["scope"] == "predictions"
+
+
+def test_manual_settle_predictions_endpoint_uses_latest_only_single_predictions(client, monkeypatch):
+    calls = {}
+
+    def _settle_predictions(db, **kwargs):
+        calls["single_kwargs"] = kwargs
+        return {"processed": 3, "updated": 2, "won": 1, "lost": 1}
+
+    def _settle_parlay_predictions(db):
+        calls["parlay_called"] = True
+        return {"processed": 1, "updated": 1, "won": 1}
+
+    monkeypatch.setattr(routes, "settle_predictions", _settle_predictions)
+    monkeypatch.setattr(routes, "settle_parlay_predictions", _settle_parlay_predictions)
+
+    response = client.post("/ops/jobs/settle-predictions")
+
+    assert response.status_code == 200
+    assert calls["single_kwargs"]["latest_only_per_key"] is True
+    assert calls["parlay_called"] is True
+    payload = response.json()
+    assert payload["processed"] == 4
+    assert payload["updated"] == 3
+    assert payload["won"] == 2
+    assert payload["lost"] == 1
 
 
 def test_reconcile_stale_jobs_marks_old_active_jobs_failed(db_session):
@@ -145,13 +187,14 @@ def test_reconcile_stale_jobs_marks_old_active_jobs_failed(db_session):
 
 
 def test_reconcile_stale_jobs_keeps_expected_long_running_refreshes_active(db_session):
+    now = datetime.now(timezone.utc)
     running_job = RefreshJob(
         kind="refresh",
         scope="current_slate",
         reason="interval",
         status="running",
-        queued_at=datetime.now(timezone.utc) - timedelta(minutes=45),
-        started_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+        queued_at=now - timedelta(minutes=45),
+        started_at=now - timedelta(minutes=4),
     )
     db_session.add(running_job)
     db_session.commit()
@@ -191,6 +234,31 @@ def test_enqueue_refresh_job_reconciles_stale_active_job_before_coalescing(db_se
     assert stale_job.error_message == refresh_jobs.STALE_REFRESH_JOB_ERROR
     assert job.id != stale_job.id
     assert job.status == "queued"
+
+
+def test_enqueue_refresh_job_accepts_and_coalesces_settlement_jobs(db_session):
+    first, first_created = refresh_jobs.enqueue_refresh_job(
+        db_session,
+        kind="settlement",
+        scope="predictions",
+        reason="interval",
+    )
+    second, second_created = refresh_jobs.enqueue_refresh_job(
+        db_session,
+        kind="settlement",
+        scope="predictions",
+        reason="manual",
+    )
+    db_session.commit()
+
+    assert first_created is True
+    assert second_created is False
+    assert first.id == second.id
+    db_session.refresh(second)
+    assert second.kind == "settlement"
+    assert second.scope == "predictions"
+    assert second.reason == "interval"
+    assert db_session.query(RefreshJob).filter_by(kind="settlement").count() == 1
 
 
 def test_get_refresh_runtime_state_reconciles_stale_jobs_without_restart(db_session, monkeypatch):
@@ -270,6 +338,134 @@ def test_claim_next_job_prioritizes_current_slate_over_maintenance_continuation(
     assert claimed.id == current_slate.id
     assert claimed.kind == "refresh"
     assert claimed.scope == "current_slate"
+
+
+def test_claim_next_job_prioritizes_settlement_after_current_shadow_before_prop_refresh(db_session):
+    prop_refresh = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    settlement = RefreshJob(
+        kind="settlement",
+        scope="predictions",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    shadow_capture = RefreshJob(
+        kind="shadow_capture",
+        scope="current_slate",
+        reason="follow_up",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    db_session.add_all([prop_refresh, settlement, shadow_capture])
+    db_session.commit()
+
+    first = refresh_jobs._claim_next_job(db_session)
+    assert first is not None
+    assert first.id == shadow_capture.id
+
+    refresh_jobs._guarded_complete_job(db_session, first.id)
+    db_session.commit()
+
+    second = refresh_jobs._claim_next_job(db_session)
+    assert second is not None
+    assert second.id == settlement.id
+    assert second.kind == "settlement"
+
+
+def test_claim_next_job_prioritizes_shadow_backfill_before_prop_refresh(db_session):
+    prop_refresh = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    shadow_backfill = RefreshJob(
+        kind="shadow_capture",
+        scope="backfill",
+        reason="maintenance_follow_up",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    db_session.add_all([prop_refresh, shadow_backfill])
+    db_session.commit()
+
+    claimed = refresh_jobs._claim_next_job(db_session)
+
+    assert claimed is not None
+    assert claimed.id == shadow_backfill.id
+    assert claimed.kind == "shadow_capture"
+
+
+def test_process_refresh_job_queue_once_requeues_and_completes_settlement_batches(db_session, monkeypatch):
+    job = RefreshJob(
+        kind="settlement",
+        scope="predictions",
+        reason="interval",
+        status="queued",
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
+    single_cursors: list[dict | None] = []
+    parlay_cursors: list[dict | None] = []
+
+    def _settle_predictions_batch(db, *, latest_only_per_key, limit, cursor=None, **kwargs):
+        single_cursors.append(cursor)
+        assert latest_only_per_key is True
+        assert limit == refresh_jobs.PREDICTION_SETTLEMENT_BATCH_SIZE
+        if cursor is None:
+            return {"processed": 100, "updated": 8, "won": 5, "lost": 3}, {
+                "captured_at": "2026-04-07T18:00:00+00:00",
+                "prediction_id": 100,
+            }
+        return {"processed": 20, "updated": 2, "won": 1, "lost": 1}, None
+
+    def _settle_parlay_predictions_batch(db, *, limit, cursor=None):
+        parlay_cursors.append(cursor)
+        assert limit == refresh_jobs.PARLAY_SETTLEMENT_BATCH_SIZE
+        return {"processed": 4, "updated": 1, "won": 1}, None
+
+    monkeypatch.setattr(refresh_jobs, "settle_predictions_batch", _settle_predictions_batch)
+    monkeypatch.setattr(refresh_jobs, "settle_parlay_predictions_batch", _settle_parlay_predictions_batch)
+
+    first = refresh_jobs.process_refresh_job_queue_once()
+    assert first is not None
+    assert first.kind == "settlement"
+    assert first.status == "queued"
+    db_session.refresh(job)
+    assert job.run_id is not None
+    assert job.details["phase"] == "single_predictions"
+    assert job.details["cursor"]["prediction_id"] == 100
+    assert job.details["single_settlement_summary"]["processed"] == 100
+
+    second = refresh_jobs.process_refresh_job_queue_once()
+    assert second is not None
+    assert second.status == "queued"
+    db_session.refresh(job)
+    assert job.details["phase"] == "parlay_predictions"
+    assert job.details["cursor"] == {}
+    assert job.details["single_settlement_summary"]["processed"] == 120
+
+    third = refresh_jobs.process_refresh_job_queue_once()
+    assert third is not None
+    assert third.status == "completed"
+    db_session.refresh(job)
+    run = db_session.get(Run, job.run_id)
+    assert run is not None
+    assert run.status == "completed"
+    assert job.details["parlay_settlement_summary"]["processed"] == 4
+    assert run.details["single_settlement_summary"]["updated"] == 10
+    assert run.details["parlay_settlement_summary"]["updated"] == 1
+    assert single_cursors == [None, {"captured_at": "2026-04-07T18:00:00+00:00", "prediction_id": 100}]
+    assert parlay_cursors == [None]
 
 
 def test_process_refresh_job_queue_once_requeues_incomplete_prop_refresh(db_session, monkeypatch):

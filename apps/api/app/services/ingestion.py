@@ -1735,7 +1735,7 @@ def run_refresh_cycle(
             espn_client = major_provider or EspnPublicClient(http_client=shared_http_client)
             settings = get_settings()
             active_sports = list(sports or (["NBA", "MLB"] if current_slate_only else settings.enabled_sports))
-            stage_details: dict[str, float] = {}
+            stage_details: dict[str, object] = {}
 
             stage_started = perf_counter()
             sports_summary = refresh_sports_data(
@@ -1790,6 +1790,15 @@ def run_refresh_cycle(
             stage_details["watchlist_regeneration_seconds"] = round(perf_counter() - stage_started, 3)
             db.commit()
             if current_slate_only:
+                stage_started = perf_counter()
+                snapshots = persist_current_slate_snapshots(
+                    db,
+                    source_run_id=run.id,
+                )
+                stage_details["trade_snapshot_persist_seconds"] = round(perf_counter() - stage_started, 3)
+                if snapshots.get("all") is not None:
+                    stage_details["snapshot_generated_at"] = snapshots["all"].isoformat()
+                db.commit()
                 shadow_prediction_count, shadow_parlay_prediction_count = 0, 0
             else:
                 shadow_prediction_count, shadow_parlay_prediction_count = capture_shadow_artifacts(

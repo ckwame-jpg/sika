@@ -176,6 +176,8 @@ def get_refresh_runtime_state() -> dict[str, object | None]:
         latest_refresh = latest_job_for_kind(db, "refresh")
         active_prop_refresh = active_job_for_kind(db, "prop_refresh")
         latest_prop_refresh = latest_job_for_kind(db, "prop_refresh")
+        active_settlement = active_job_for_kind(db, "settlement")
+        latest_settlement = latest_job_for_kind(db, "settlement")
 
     last_successful_refresh_at = _latest_successful_refresh_finished_at()
     last_prop_refresh_at = _latest_successful_prop_refresh_finished_at()
@@ -207,6 +209,8 @@ def get_refresh_runtime_state() -> dict[str, object | None]:
         "latest_refresh_job": _serialize_job(latest_refresh),
         "active_prop_refresh_job": _serialize_job(active_prop_refresh),
         "latest_prop_refresh_job": _serialize_job(latest_prop_refresh),
+        "active_settlement_job": _serialize_job(active_settlement),
+        "latest_settlement_job": _serialize_job(latest_settlement),
     }
 
 
@@ -240,6 +244,10 @@ def _queue_current_slate_refresh(reason: str) -> bool:
 
 def _queue_maintenance_refresh(reason: str) -> bool:
     return _queue_job(kind="prop_refresh", scope="maintenance", reason=reason)
+
+
+def _queue_settlement_job(reason: str = "interval") -> bool:
+    return _queue_job(kind="settlement", scope="predictions", reason=reason)
 
 
 def _queue_cleanup_job() -> bool:
@@ -415,6 +423,14 @@ def start_scheduler() -> None:
         lambda: queue_current_slate_refresh_if_due(reason="interval"),
         trigger=IntervalTrigger(seconds=enqueue_check_seconds),
         id="live_refresh_due_check",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        lambda: _queue_settlement_job("interval"),
+        trigger=IntervalTrigger(minutes=5),
+        id="settlement_due_check",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

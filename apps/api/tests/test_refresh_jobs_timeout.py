@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timedelta, timezone
 from time import monotonic
 from types import SimpleNamespace
 
@@ -34,6 +35,7 @@ def _fast_timeout_settings(monkeypatch):
         lambda: SimpleNamespace(maintenance_claim_budget_seconds=0.05, refresh_job_stale_minutes=30),
     )
     monkeypatch.setattr(refresh_jobs, "WORKER_TIMEOUT_GRACE_SECONDS", 0.3)
+    monkeypatch.setattr(refresh_jobs, "PROP_REFRESH_WORKER_TIMEOUT_SECONDS", 0.35)
 
 
 def _queued_prop_job(db_session, *, reason="interval") -> RefreshJob:
@@ -48,11 +50,36 @@ def _queued_prop_job(db_session, *, reason="interval") -> RefreshJob:
     return job
 
 
+def _queued_current_slate_job(db_session, *, reason="interval") -> RefreshJob:
+    job = RefreshJob(
+        kind="refresh",
+        scope="current_slate",
+        reason=reason,
+        status="queued",
+    )
+    db_session.add(job)
+    db_session.commit()
+    return job
+
+
 def _completed_run(db, *, kind="prop_refresh") -> Run:
     run = Run(kind=kind, status="completed")
     db.add(run)
     db.flush()
     return run
+
+
+def _wait_for_run_status(db_session, run_id: int, status: str, *, timeout: float = 1.0) -> Run:
+    deadline = monotonic() + timeout
+    while True:
+        db_session.expire_all()
+        run = db_session.get(Run, run_id)
+        if run is not None and run.status == status:
+            return run
+        if monotonic() >= deadline:
+            assert run is not None
+            assert run.status == status
+        threading.Event().wait(timeout=0.01)
 
 
 def test_worker_timeout_releases_claim(db_session, monkeypatch):
@@ -132,8 +159,10 @@ def test_late_worker_completion_does_not_resurrect(db_session, monkeypatch):
     entered = threading.Event()
     release = threading.Event()
     complete_attempted = threading.Event()
+    run_fail_attempted = threading.Event()
     complete_result = {"value": None}
     original_complete = refresh_jobs._guarded_complete_job
+    original_fail_run = refresh_jobs._fail_run
 
     def _advance(db, job):
         entered.set()
@@ -145,8 +174,20 @@ def test_late_worker_completion_does_not_resurrect(db_session, monkeypatch):
         complete_attempted.set()
         return bool(complete_result["value"])
 
+    def _fail_run(db, run_id, error_message, *, finished_at=None, only_running=True):
+        result = original_fail_run(
+            db,
+            run_id,
+            error_message,
+            finished_at=finished_at,
+            only_running=only_running,
+        )
+        run_fail_attempted.set()
+        return result
+
     monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
     monkeypatch.setattr(refresh_jobs, "_guarded_complete_job", _guarded_complete)
+    monkeypatch.setattr(refresh_jobs, "_fail_run", _fail_run)
 
     result = refresh_jobs.process_refresh_job_queue_once()
 
@@ -155,11 +196,15 @@ def test_late_worker_completion_does_not_resurrect(db_session, monkeypatch):
     assert result.status == "failed"
     release.set()
     assert complete_attempted.wait(timeout=1)
+    assert run_fail_attempted.wait(timeout=1)
     assert complete_result["value"] is False
     db_session.expire_all()
     persisted = db_session.get(RefreshJob, job.id)
     assert persisted.status == "failed"
     assert persisted.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
+    persisted_run = db_session.query(Run).order_by(Run.id.desc()).first()
+    persisted_run = _wait_for_run_status(db_session, persisted_run.id, "failed")
+    assert persisted_run.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
 
 
 def test_late_worker_requeue_does_not_resurrect(db_session, monkeypatch):
@@ -246,3 +291,136 @@ def test_normal_path_unchanged(db_session, monkeypatch):
     shadow_job = db_session.query(RefreshJob).filter_by(kind="shadow_capture", scope="backfill").one()
     assert shadow_job.status == "queued"
     assert shadow_job.details["source_prop_refresh_job_id"] == job.id
+
+
+def test_current_slate_refresh_gets_longer_worker_timeout(db_session, monkeypatch):
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    monkeypatch.setattr(refresh_jobs, "CURRENT_SLATE_WORKER_TIMEOUT_SECONDS", 0.8)
+    job = _queued_current_slate_job(db_session)
+    entered = threading.Event()
+
+    def _advance(db, *, job, sports):
+        entered.set()
+        threading.Event().wait(timeout=0.45)
+        return _completed_run(db, kind="refresh"), True
+
+    monkeypatch.setattr(refresh_jobs, "advance_current_slate_refresh_job", _advance)
+
+    started = monotonic()
+    result = refresh_jobs.process_refresh_job_queue_once()
+    elapsed = monotonic() - started
+
+    assert entered.wait(timeout=1)
+    assert elapsed >= 0.4
+    assert result is not None
+    assert result.job_id == job.id
+    assert result.kind == "refresh"
+    assert result.status == "completed"
+    db_session.expire_all()
+    persisted = db_session.get(RefreshJob, job.id)
+    assert persisted.status == "completed"
+
+
+def test_settlement_gets_longer_worker_timeout(monkeypatch):
+    _fast_timeout_settings(monkeypatch)
+    monkeypatch.setattr(refresh_jobs, "SETTLEMENT_WORKER_TIMEOUT_SECONDS", 0.8)
+    job = RefreshJob(
+        kind="settlement",
+        scope="predictions",
+        reason="interval",
+        status="running",
+    )
+
+    assert refresh_jobs._worker_timeout_seconds(job) == 0.8
+
+
+def test_prop_refresh_gets_longer_worker_timeout(monkeypatch):
+    _fast_timeout_settings(monkeypatch)
+    monkeypatch.setattr(refresh_jobs, "PROP_REFRESH_WORKER_TIMEOUT_SECONDS", 0.8)
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="running",
+    )
+
+    assert refresh_jobs._worker_timeout_seconds(job) == 0.8
+
+
+def test_reconcile_marks_orphaned_running_job_worker_timeout(db_session, monkeypatch):
+    _fast_timeout_settings(monkeypatch)
+    now = datetime.now(timezone.utc)
+    run = Run(
+        kind="prop_refresh",
+        status="running",
+        started_at=now - timedelta(seconds=1),
+    )
+    db_session.add(run)
+    db_session.flush()
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="running",
+        run_id=run.id,
+        queued_at=now - timedelta(seconds=5),
+        started_at=now - timedelta(seconds=1),
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    reconciled = refresh_jobs.reconcile_stale_jobs(db_session, now=now)
+
+    assert reconciled == 1
+    db_session.expire_all()
+    persisted = db_session.get(RefreshJob, job.id)
+    assert persisted.status == "failed"
+    assert persisted.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
+    persisted_run = db_session.get(Run, run.id)
+    assert persisted_run.status == "failed"
+    assert persisted_run.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
+
+
+def test_worker_timeout_marks_visible_associated_run_failed(db_session, monkeypatch):
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    job = _queued_prop_job(db_session)
+    entered = threading.Event()
+    release = threading.Event()
+    complete_attempted = threading.Event()
+    run_id = {"value": None}
+    original_complete = refresh_jobs._guarded_complete_job
+
+    def _advance(db, job):
+        run = Run(kind="prop_refresh", status="running")
+        db.add(run)
+        db.flush()
+        job.run_id = run.id
+        run_id["value"] = run.id
+        db.commit()
+        entered.set()
+        release.wait(timeout=5)
+        return run, True
+
+    def _guarded_complete(db, job_id):
+        result = original_complete(db, job_id)
+        complete_attempted.set()
+        return result
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+    monkeypatch.setattr(refresh_jobs, "_guarded_complete_job", _guarded_complete)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+
+    assert entered.wait(timeout=1)
+    assert result is not None
+    assert result.status == "failed"
+    db_session.expire_all()
+    persisted_run = db_session.get(Run, run_id["value"])
+    assert persisted_run.status == "failed"
+    assert persisted_run.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
+    release.set()
+    assert complete_attempted.wait(timeout=1)
+    persisted_run = _wait_for_run_status(db_session, run_id["value"], "failed")
+    assert persisted_run.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR

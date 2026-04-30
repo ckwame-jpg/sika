@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 os.environ["SCHEDULER_ENABLED"] = "false"
+os.environ["KALSHI_KEY_ID"] = ""
+os.environ["KALSHI_PRIVATE_KEY_PATH"] = "/tmp/sika-missing-kalshi.key"
 
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
