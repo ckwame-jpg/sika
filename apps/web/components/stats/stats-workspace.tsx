@@ -317,9 +317,14 @@ function MiniBars({ points }: { points: number[] }) {
   const W = 400;
   const H = 90;
   const PAD_X = 20;
-  const BAR_Y_TOP = 10;
-  const BAR_AREA = 75;
-  const yFor = (v: number) => BAR_Y_TOP + BAR_AREA - ((v - min) / range) * (BAR_AREA - 5);
+  const BAR_Y_TOP = 14;
+  const BAR_AREA = 70;
+  const FILL = 0.85;
+  const FLOOR = 0.12;
+  const yFor = (v: number) => {
+    const fraction = ((v - min) / range) * FILL + FLOOR;
+    return BAR_Y_TOP + BAR_AREA - fraction * BAR_AREA;
+  };
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" width="100%" height="90" role="img" aria-label="Trend chart">
@@ -328,7 +333,7 @@ function MiniBars({ points }: { points: number[] }) {
         x2={W}
         y1={yFor(mean)}
         y2={yFor(mean)}
-        stroke="rgba(255,180,100,0.45)"
+        stroke="rgba(150,140,255,0.45)"
         strokeWidth={1}
         strokeDasharray="4 4"
       />
@@ -344,15 +349,15 @@ function MiniBars({ points }: { points: number[] }) {
               width={20}
               height={h}
               rx={2}
-              fill={v >= mean ? "rgba(80,220,160,0.7)" : "rgba(255,120,120,0.55)"}
+              fill={v >= mean ? "rgba(120,210,200,0.78)" : "rgba(170,140,235,0.62)"}
             />
             <text
               x={x}
-              y={y - 5}
+              y={BAR_Y_TOP - 4}
               textAnchor="middle"
               fill="rgba(210,220,240,0.85)"
               fontSize="10"
-              fontFamily="JetBrains Mono, monospace"
+              fontFamily="var(--font-geist-sans), system-ui, sans-serif"
             >
               {Number.isInteger(v) ? v : v.toFixed(1)}
             </text>
