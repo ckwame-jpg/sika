@@ -221,25 +221,27 @@ def _readiness_status(
     shadow_coverage_ratio: float,
 ) -> tuple[str, str]:
     if study_track != "active":
-        return "heuristic_only", "This family is not in the active ML study track and stays on the heuristic path."
+        return "heuristic_only", "This family is not in the ML candidate lane and stays on the heuristic path."
     if desired_mode == "ml":
         return "serving", "This family is configured to serve ML. Runtime health below shows whether it is currently falling back."
     if not history_ready_for_shadow(settled_predictions):
         return "insufficient_history", (
-            f"This family is in the active ML study track. Only {settled_predictions} settled predictions are available; "
-            f"need {MIN_SETTLED_FOR_REVIEW} before review."
+            f"This family is a ML candidate. Only {settled_predictions} settled predictions are available; "
+            f"need {MIN_SETTLED_FOR_REVIEW} before the readiness gate clears."
         )
     if shadow_predictions == 0:
         blocker = shadow_capture_blocker(family_key, scope=scope, db=db)
         if blocker:
             return "shadow_not_started", blocker
         return "shadow_not_started", (
-            "This family has enough settled history and is shadow-eligible, but no shadow samples have been recorded yet."
+            "This family has enough settled history and is shadow-eligible, but no shadow evidence has been recorded yet."
         )
     if not shadow_coverage_ready(shadow_coverage_ratio):
-        return "shadowing", f"Shadow coverage is {shadow_coverage_ratio:.0%}; need at least {MIN_SHADOW_COVERAGE:.0%} before review."
+        return "shadowing", (
+            f"Shadow coverage is {shadow_coverage_ratio:.0%}; need at least {MIN_SHADOW_COVERAGE:.0%} for promotion review."
+        )
     return "ready_for_review", (
-        "Settled history and shadow coverage are high enough for a promotion review. This does not enable live ML serving until desired mode is set to ml."
+        "Settled history and shadow evidence are high enough for promotion review. This does not enable live ML serving until desired mode is set to ml."
     )
 
 

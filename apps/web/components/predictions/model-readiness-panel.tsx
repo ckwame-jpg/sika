@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import useSWR, { mutate } from "swr";
 import { AlertTriangle, CheckCircle2, Cpu, FlaskConical, Power, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
-import { fetchModelReadinessDetail, fetchModelReadinessSummary, keys, updateModelReadinessSettings } from "@/lib/api";
+import { fetchHealth, fetchModelReadinessDetail, fetchModelReadinessSummary, keys, updateModelReadinessSettings } from "@/lib/api";
 import type {
+  HealthResponse,
   ModelFamilyReadinessRead,
   ModelReadinessSummaryRead,
   ReadinessStatus,
+  RefreshJobRead,
   RuntimeHealthStatus,
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -16,13 +18,34 @@ import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/util
 
 type RuntimeMode = ModelReadinessSummaryRead["ml_serving_mode"];
 
-const STUDY_LADDER = [
-  "insufficient history",
+const READINESS_PATH = [
+  "needs history",
   "shadow not started",
-  "shadowing",
+  "calibrating",
   "ready for review",
-  "serving",
+  "ML live",
 ] as const;
+
+function readinessStatusLabel(status: ReadinessStatus): string {
+  switch (status) {
+    case "shadowing":
+      return "calibrating";
+    case "serving":
+      return "ML live";
+    case "insufficient_history":
+      return "needs history";
+    default:
+      return status.replaceAll("_", " ");
+  }
+}
+
+function shadowBackfillStatus(job: RefreshJobRead | null): string | null {
+  if (!job) return null;
+  if (job.status === "queued") return "shadow backfill queued";
+  if (job.status === "running") return "shadow backfill running";
+  if (job.status === "failed") return "last backfill failed";
+  return null;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -44,10 +67,10 @@ function rolloutAction(summary: ModelReadinessSummaryRead, family: ModelFamilyRe
   if (family.runtime.effective_mode === "ml") return "Serving ML";
   if (!summary.shadow_enabled) return "Enable shadow mode";
   if (family.shadow_predictions === 0) return "Waiting for shadow capture";
-  if (family.readiness_status === "shadowing") return "Collecting shadow coverage";
+  if (family.readiness_status === "shadowing") return "Calibrating against shadow evidence";
   if (family.readiness_status === "ready_for_review" && !summary.auto_promotion_enabled) return "Ready to arm auto-promotion";
   if (summary.auto_promotion_enabled) return "Auto-promotion armed";
-  return family.readiness_status.replaceAll("_", " ");
+  return readinessStatusLabel(family.readiness_status);
 }
 
 function readinessPillClass(status: ReadinessStatus): string {
@@ -67,7 +90,7 @@ function studyTrackPillClass(studyTrack: ModelFamilyReadinessRead["study_track"]
 }
 
 function studyTrackLabel(studyTrack: ModelFamilyReadinessRead["study_track"]): string {
-  return studyTrack === "active" ? "active study" : "heuristic lane";
+  return studyTrack === "active" ? "ML candidate" : "heuristic lane";
 }
 
 function shadowBacklogCount(family: ModelFamilyReadinessRead): number {
@@ -84,10 +107,12 @@ function shadowBacklogLabel(family: ModelFamilyReadinessRead): string {
 function FamilyCard({
   family,
   selected,
+  shadowBackfillLabel,
   onSelect,
 }: {
   family: ModelFamilyReadinessRead;
   selected: boolean;
+  shadowBackfillLabel: string | null;
   onSelect: (familyKey: string) => void;
 }) {
   return (
@@ -107,7 +132,7 @@ function FamilyCard({
           </p>
         </div>
         <span className={cn("outcome-pill", readinessPillClass(family.readiness_status))}>
-          {family.readiness_status.replaceAll("_", " ")}
+          {readinessStatusLabel(family.readiness_status)}
         </span>
       </div>
       <div className="mt-3 flex flex-wrap gap-2 text-xs">
@@ -122,6 +147,14 @@ function FamilyCard({
         </span>
         {family.runtime.fallback_active ? (
           <span className="outcome-pill lost">fallback active</span>
+        ) : null}
+        {shadowBackfillLabel ? (
+          <span className={cn(
+            "outcome-pill",
+            shadowBackfillLabel === "last backfill failed" ? "lost" : "pending",
+          )}>
+            {shadowBackfillLabel}
+          </span>
         ) : null}
       </div>
     </button>
@@ -198,6 +231,11 @@ export function ModelReadinessPanel() {
       revalidateOnReconnect: false,
     },
   );
+  const { data: health } = useSWR<HealthResponse>(keys.health, fetchHealth, {
+    refreshInterval: 0,
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+  });
   const [selectedFamilyKey, setSelectedFamilyKey] = useState<string>("");
 
   useEffect(() => {
@@ -223,6 +261,7 @@ export function ModelReadinessPanel() {
     try {
       await Promise.all([
         mutate(keys.modelReadinessSummary),
+        mutate(keys.health),
         selectedFamilyKey ? mutate(keys.modelReadinessDetail(selectedFamilyKey)) : Promise.resolve(),
       ]);
     } finally {
@@ -288,6 +327,17 @@ export function ModelReadinessPanel() {
   const selectedHeuristicBrier = selected ? promotionMetric(selected, "heuristic_brier") : null;
   const selectedShadowTopDecileRoi = selected ? promotionMetric(selected, "shadow_top_decile_roi") : null;
 
+  function familyShadowBackfillLabel(family: ModelFamilyReadinessRead): string | null {
+    const backlog = family.shadow_backlog_predictions + family.shadow_backlog_parlays;
+    const coverageLow = family.shadow_coverage_ratio < (summary?.min_shadow_coverage ?? 0.75);
+    if (backlog <= 0 || !coverageLow) return null;
+    const activeLabel = shadowBackfillStatus(health?.active_shadow_capture_job ?? null);
+    if (activeLabel) return activeLabel;
+    const latest = health?.latest_shadow_capture_job ?? null;
+    if (latest && latest.status === "failed") return "last backfill failed";
+    return "waiting for backfill";
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <section className="cosmos-panel overflow-hidden">
@@ -310,7 +360,7 @@ export function ModelReadinessPanel() {
               </Button>
             </div>
             <div className="mt-2 flex flex-col gap-2 text-sm text-muted-foreground">
-              <p>Study ladder: {STUDY_LADDER.join(" -> ")}.</p>
+              <p>Readiness path: {READINESS_PATH.join(" -> ")}.</p>
               <p>
                 Runtime stays separate: <span className="font-mono">desired -&gt; effective</span> shows what is configured versus what is actually serving live. Only families with effective mode <span className="font-mono">ml</span> are serving calibrated probabilities.
               </p>
@@ -376,6 +426,7 @@ export function ModelReadinessPanel() {
                 key={family.family_key}
                 family={family}
                 selected={selected?.family_key === family.family_key}
+                shadowBackfillLabel={familyShadowBackfillLabel(family)}
                 onSelect={setSelectedFamilyKey}
               />
             ))}
@@ -393,13 +444,21 @@ export function ModelReadinessPanel() {
                   {studyTrackLabel(selected.study_track)}
                 </span>
                 <span className={cn("outcome-pill", readinessPillClass(selected.readiness_status))}>
-                  {selected.readiness_status.replaceAll("_", " ")}
+                  {readinessStatusLabel(selected.readiness_status)}
                 </span>
                 <span className={cn("outcome-pill", runtimePillClass(selected.runtime.runtime_health))}>
                   {selected.runtime.runtime_health}
                 </span>
                 {selected.runtime.fallback_active ? (
                   <span className="outcome-pill lost">ML requested, heuristic serving</span>
+                ) : null}
+                {familyShadowBackfillLabel(selected) ? (
+                  <span className={cn(
+                    "outcome-pill",
+                    familyShadowBackfillLabel(selected) === "last backfill failed" ? "lost" : "pending",
+                  )}>
+                    {familyShadowBackfillLabel(selected)}
+                  </span>
                 ) : null}
               </div>
               <p className="mt-2 text-sm text-muted-foreground">{selected.why_not_ready}</p>

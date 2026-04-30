@@ -28,6 +28,8 @@ export interface HealthResponse {
   latest_refresh_job: RefreshJobRead | null;
   active_prop_refresh_job: RefreshJobRead | null;
   latest_prop_refresh_job: RefreshJobRead | null;
+  active_shadow_capture_job: RefreshJobRead | null;
+  latest_shadow_capture_job: RefreshJobRead | null;
 }
 
 export interface RefreshJobRead {
@@ -423,6 +425,8 @@ export interface WatchlistDiagnosticsRead {
   latest_refresh_job: RefreshJobRead | null;
   active_prop_refresh_job: RefreshJobRead | null;
   latest_prop_refresh_job: RefreshJobRead | null;
+  active_shadow_capture_job: RefreshJobRead | null;
+  latest_shadow_capture_job: RefreshJobRead | null;
 }
 
 export interface JobRefreshResponse {

@@ -176,6 +176,8 @@ def get_refresh_runtime_state() -> dict[str, object | None]:
         latest_refresh = latest_job_for_kind(db, "refresh")
         active_prop_refresh = active_job_for_kind(db, "prop_refresh")
         latest_prop_refresh = latest_job_for_kind(db, "prop_refresh")
+        active_shadow_capture = active_job_for_kind(db, "shadow_capture")
+        latest_shadow_capture = latest_job_for_kind(db, "shadow_capture")
 
     last_successful_refresh_at = _latest_successful_refresh_finished_at()
     last_prop_refresh_at = _latest_successful_prop_refresh_finished_at()
@@ -207,6 +209,8 @@ def get_refresh_runtime_state() -> dict[str, object | None]:
         "latest_refresh_job": _serialize_job(latest_refresh),
         "active_prop_refresh_job": _serialize_job(active_prop_refresh),
         "latest_prop_refresh_job": _serialize_job(latest_prop_refresh),
+        "active_shadow_capture_job": _serialize_job(active_shadow_capture),
+        "latest_shadow_capture_job": _serialize_job(latest_shadow_capture),
     }
 
 

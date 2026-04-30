@@ -877,6 +877,8 @@ def health() -> HealthResponse:
         latest_refresh_job=RefreshJobRead.model_validate(runtime["latest_refresh_job"]) if runtime["latest_refresh_job"] else None,
         active_prop_refresh_job=RefreshJobRead.model_validate(runtime["active_prop_refresh_job"]) if runtime["active_prop_refresh_job"] else None,
         latest_prop_refresh_job=RefreshJobRead.model_validate(runtime["latest_prop_refresh_job"]) if runtime["latest_prop_refresh_job"] else None,
+        active_shadow_capture_job=RefreshJobRead.model_validate(runtime["active_shadow_capture_job"]) if runtime["active_shadow_capture_job"] else None,
+        latest_shadow_capture_job=RefreshJobRead.model_validate(runtime["latest_shadow_capture_job"]) if runtime["latest_shadow_capture_job"] else None,
     )
 
 
@@ -1027,6 +1029,8 @@ def get_watchlist_diagnostics(db: Session = Depends(get_db)) -> WatchlistDiagnos
         latest_refresh_job=RefreshJobRead.model_validate(runtime["latest_refresh_job"]) if runtime["latest_refresh_job"] else None,
         active_prop_refresh_job=RefreshJobRead.model_validate(runtime["active_prop_refresh_job"]) if runtime["active_prop_refresh_job"] else None,
         latest_prop_refresh_job=RefreshJobRead.model_validate(runtime["latest_prop_refresh_job"]) if runtime["latest_prop_refresh_job"] else None,
+        active_shadow_capture_job=RefreshJobRead.model_validate(runtime["active_shadow_capture_job"]) if runtime["active_shadow_capture_job"] else None,
+        latest_shadow_capture_job=RefreshJobRead.model_validate(runtime["latest_shadow_capture_job"]) if runtime["latest_shadow_capture_job"] else None,
     )
 
 

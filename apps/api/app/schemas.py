@@ -51,6 +51,8 @@ class HealthResponse(BaseModel):
     latest_refresh_job: RefreshJobRead | None = None
     active_prop_refresh_job: RefreshJobRead | None = None
     latest_prop_refresh_job: RefreshJobRead | None = None
+    active_shadow_capture_job: RefreshJobRead | None = None
+    latest_shadow_capture_job: RefreshJobRead | None = None
 
 
 class SportRead(BaseModel):
@@ -477,6 +479,8 @@ class WatchlistDiagnosticsRead(BaseModel):
     latest_refresh_job: RefreshJobRead | None = None
     active_prop_refresh_job: RefreshJobRead | None = None
     latest_prop_refresh_job: RefreshJobRead | None = None
+    active_shadow_capture_job: RefreshJobRead | None = None
+    latest_shadow_capture_job: RefreshJobRead | None = None
 
 
 ReadinessStatus = Literal[

@@ -672,6 +672,7 @@ export interface components {
         HealthResponse: {
             active_prop_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
             active_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
+            active_shadow_capture_job?: components["schemas"]["RefreshJobRead"] | null;
             /** Data Stale */
             data_stale: boolean;
             /** Environment */
@@ -682,6 +683,7 @@ export interface components {
             last_successful_refresh_at?: string | null;
             latest_prop_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
             latest_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
+            latest_shadow_capture_job?: components["schemas"]["RefreshJobRead"] | null;
             /** Prop Data Stale */
             prop_data_stale: boolean;
             /** Prop Refresh Error Message */
@@ -2282,6 +2284,7 @@ export interface components {
         WatchlistDiagnosticsRead: {
             active_prop_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
             active_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
+            active_shadow_capture_job?: components["schemas"]["RefreshJobRead"] | null;
             /**
              * Current Recommendation Count
              * @default 0
@@ -2345,6 +2348,7 @@ export interface components {
             latest_scorer_outcome_counts?: {
                 [key: string]: number;
             };
+            latest_shadow_capture_job?: components["schemas"]["RefreshJobRead"] | null;
             /**
              * Latest Supported Markets Kept
              * @default 0

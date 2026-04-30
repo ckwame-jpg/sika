@@ -280,6 +280,16 @@
               }
             ]
           },
+          "active_shadow_capture_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "data_stale": {
             "title": "Data Stale",
             "type": "boolean"
@@ -321,6 +331,16 @@
             ]
           },
           "latest_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_shadow_capture_job": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/RefreshJobRead"
@@ -5172,6 +5192,16 @@
               }
             ]
           },
+          "active_shadow_capture_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "current_recommendation_count": {
             "default": 0,
             "title": "Current Recommendation Count",
@@ -5307,6 +5337,16 @@
             },
             "title": "Latest Scorer Outcome Counts",
             "type": "object"
+          },
+          "latest_shadow_capture_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "latest_supported_markets_kept": {
             "default": 0,

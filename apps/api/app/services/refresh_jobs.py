@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import RefreshJob, Run
-from app.services.ingestion import advance_current_slate_refresh_job, advance_prop_refresh_job, run_refresh_cycle
+from app.services.ingestion import (
+    SETTLEMENT_PHASES,
+    advance_current_slate_refresh_job,
+    advance_prop_refresh_job,
+    run_refresh_cycle,
+)
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.ml.shadow import capture_shadow_artifacts_batch
 
@@ -93,9 +98,9 @@ def reconcile_stale_jobs(db: Session, *, now: datetime | None = None) -> int:
     reference_now = now or datetime.now(timezone.utc)
     stale_jobs = []
     for job in db.scalars(
-        select(RefreshJob).where(RefreshJob.status.in_(tuple(ACTIVE_JOB_STATUSES)))
+        select(RefreshJob).where(RefreshJob.status == "running")
     ).all():
-        anchor = job.started_at if job.status == "running" and job.started_at is not None else job.queued_at
+        anchor = job.started_at if job.started_at is not None else job.queued_at
         age_minutes = (reference_now - _as_utc(anchor)).total_seconds() / 60
         if age_minutes > settings.refresh_job_stale_minutes:
             stale_jobs.append(job)
@@ -195,20 +200,24 @@ def _job_priority_order():
             1,
         ),
         (
-            RefreshJob.kind == "refresh",
+            (RefreshJob.kind == "shadow_capture") & (RefreshJob.scope == "backfill"),
             2,
         ),
         (
-            RefreshJob.kind == "prop_refresh",
+            RefreshJob.kind == "refresh",
             3,
         ),
         (
-            RefreshJob.kind == "shadow_capture",
+            RefreshJob.kind == "prop_refresh",
             4,
         ),
         (
-            RefreshJob.kind == "cleanup",
+            RefreshJob.kind == "shadow_capture",
             5,
+        ),
+        (
+            RefreshJob.kind == "cleanup",
+            6,
         ),
         else_=99,
     )
@@ -434,11 +443,14 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 completed = False
                 run = None
                 while True:
+                    initial_phase = str((job.details or {}).get("phase") or "")
                     run, completed = advance_prop_refresh_job(db, job=job)
                     job.run_id = run.id
                     if completed:
                         break
                     if _current_slate_refresh_pending(db):
+                        break
+                    if initial_phase in SETTLEMENT_PHASES:
                         break
                     if perf_counter() - claim_started >= budget_seconds:
                         break

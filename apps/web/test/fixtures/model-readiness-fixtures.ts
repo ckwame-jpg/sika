@@ -1,8 +1,10 @@
 import type {
+  HealthResponse,
   ModelFamilyReadinessRead,
   ModelFamilyRuntimeHealthRead,
   ModelReadinessSummaryRead,
   ReadinessBucketRead,
+  RefreshJobRead,
 } from "@/lib/types";
 
 const emptyBucket = (label: string): ReadinessBucketRead => ({
@@ -125,4 +127,46 @@ export const modelReadinessSummaryFixture: ModelReadinessSummaryRead = {
   min_promotion_shadow_samples: 150,
   promotion_stability_days_required: 3,
   families: [activeStudyFamilyFixture, heuristicLaneFamilyFixture],
+};
+
+export const healthFixture: HealthResponse = {
+  status: "ok",
+  environment: "test",
+  scheduler_enabled: true,
+  refresh_status: "idle",
+  refresh_reason: "none",
+  last_successful_refresh_at: "2026-04-07T18:00:00Z",
+  data_stale: false,
+  refresh_error_message: null,
+  prop_refresh_status: "idle",
+  prop_refresh_reason: "none",
+  last_prop_refresh_at: "2026-04-07T18:00:00Z",
+  prop_data_stale: false,
+  prop_refresh_error_message: null,
+  active_refresh_job: null,
+  latest_refresh_job: null,
+  active_prop_refresh_job: null,
+  latest_prop_refresh_job: null,
+  active_shadow_capture_job: null,
+  latest_shadow_capture_job: null,
+};
+
+const queuedShadowBackfillJob: RefreshJobRead = {
+  id: 99,
+  kind: "shadow_capture",
+  scope: "backfill",
+  reason: "maintenance_follow_up",
+  status: "queued",
+  run_id: null,
+  error_message: null,
+  details: { shadow_capture_scope: "backfill" },
+  queued_at: "2026-04-07T17:55:00Z",
+  started_at: null,
+  finished_at: null,
+};
+
+export const healthWithShadowBackfillQueued: HealthResponse = {
+  ...healthFixture,
+  active_shadow_capture_job: queuedShadowBackfillJob,
+  latest_shadow_capture_job: queuedShadowBackfillJob,
 };

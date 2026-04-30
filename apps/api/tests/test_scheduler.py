@@ -102,6 +102,8 @@ def test_health_endpoint_uses_sanitized_refresh_error_message(client, monkeypatc
         "latest_refresh_job": None,
         "active_prop_refresh_job": None,
         "latest_prop_refresh_job": None,
+        "active_shadow_capture_job": None,
+        "latest_shadow_capture_job": None,
     }
     monkeypatch.setattr(routes, "get_refresh_runtime_state", lambda: monkeypatch_payload)
     response = client.get("/health")
@@ -112,6 +114,35 @@ def test_health_endpoint_uses_sanitized_refresh_error_message(client, monkeypatc
     assert "sqlalche.me" not in payload["refresh_error_message"]
     assert payload["prop_refresh_status"] == "running"
     assert payload["prop_refresh_reason"] == "interval"
+    assert payload["active_shadow_capture_job"] is None
+    assert payload["latest_shadow_capture_job"] is None
+
+
+def test_health_endpoint_includes_active_shadow_capture_job(db_session, client, monkeypatch):
+    backfill_job = RefreshJob(
+        kind="shadow_capture",
+        scope="backfill",
+        reason="maintenance_follow_up",
+        status="running",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+        started_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        details={"shadow_capture_scope": "backfill"},
+    )
+    db_session.add(backfill_job)
+    db_session.commit()
+
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_shadow_capture_job"] is not None
+    assert payload["active_shadow_capture_job"]["kind"] == "shadow_capture"
+    assert payload["active_shadow_capture_job"]["scope"] == "backfill"
+    assert payload["active_shadow_capture_job"]["status"] == "running"
+    assert payload["latest_shadow_capture_job"] is not None
+    assert payload["latest_shadow_capture_job"]["id"] == backfill_job.id
 
 
 def test_reconcile_stale_jobs_marks_old_active_jobs_failed(db_session):
@@ -142,6 +173,85 @@ def test_reconcile_stale_jobs_marks_old_active_jobs_failed(db_session):
     assert stale_job.error_message == refresh_jobs.STALE_REFRESH_JOB_ERROR
     assert stale_job.finished_at is not None
     assert fresh_job.status == "queued"
+
+
+def test_reconcile_stale_jobs_leaves_queued_jobs_alone_even_when_old(db_session):
+    long_queued_backfill = RefreshJob(
+        kind="shadow_capture",
+        scope="backfill",
+        reason="maintenance_follow_up",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(hours=12),
+    )
+    db_session.add(long_queued_backfill)
+    db_session.commit()
+
+    reconciled = scheduler.reconcile_stale_jobs(db_session)
+    db_session.commit()
+
+    assert reconciled == 0
+    db_session.refresh(long_queued_backfill)
+    assert long_queued_backfill.status == "queued"
+    assert long_queued_backfill.error_message is None
+
+
+def test_claim_next_job_prioritizes_shadow_backfill_over_settlement_and_refresh(db_session):
+    settlement = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    generic_refresh = RefreshJob(
+        kind="refresh",
+        scope="full",
+        reason="manual",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=15),
+    )
+    backfill = RefreshJob(
+        kind="shadow_capture",
+        scope="backfill",
+        reason="maintenance_follow_up",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+    )
+    db_session.add_all([settlement, generic_refresh, backfill])
+    db_session.commit()
+
+    claimed = refresh_jobs._claim_next_job(db_session)
+
+    assert claimed is not None
+    assert claimed.id == backfill.id
+    assert claimed.kind == "shadow_capture"
+    assert claimed.scope == "backfill"
+
+
+def test_claim_next_job_keeps_current_slate_ahead_of_shadow_backfill(db_session):
+    backfill = RefreshJob(
+        kind="shadow_capture",
+        scope="backfill",
+        reason="maintenance_follow_up",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    current_slate = RefreshJob(
+        kind="refresh",
+        scope="current_slate",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+    db_session.add_all([backfill, current_slate])
+    db_session.commit()
+
+    claimed = refresh_jobs._claim_next_job(db_session)
+
+    assert claimed is not None
+    assert claimed.id == current_slate.id
+    assert claimed.kind == "refresh"
+    assert claimed.scope == "current_slate"
 
 
 def test_reconcile_stale_jobs_keeps_expected_long_running_refreshes_active(db_session):
@@ -342,6 +452,47 @@ def test_process_refresh_job_queue_once_runs_multiple_prop_refresh_batches_withi
     assert job.run_id == run.id
     assert job.status == "queued"
     assert job.details["cursor"]["market_id"] == 502
+
+
+def test_process_refresh_job_queue_once_yields_after_one_settlement_batch(db_session, monkeypatch):
+    run = Run(kind="prop_refresh", status="running")
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+        details={"phase": "settle_predictions_batch"},
+    )
+    db_session.add_all([run, job])
+    db_session.commit()
+
+    monkeypatch.setattr(refresh_jobs, "SessionLocal", lambda: _DbSessionContext(db_session))
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(maintenance_claim_budget_seconds=25, refresh_job_stale_minutes=30),
+    )
+    perf_counter_values = iter([0.0, 1.0, 2.0])
+    monkeypatch.setattr(refresh_jobs, "perf_counter", lambda: next(perf_counter_values))
+
+    call_count = {"count": 0}
+
+    def _advance(db, job):
+        call_count["count"] += 1
+        job.details = {"phase": "settle_predictions_batch", "cursor": {"prediction_id": 100 + call_count["count"]}}
+        return run, False
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+
+    assert result is not None
+    assert result.kind == "prop_refresh"
+    assert result.status == "queued"
+    assert call_count["count"] == 1
+    db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.details["phase"] == "settle_predictions_batch"
 
 
 def test_process_refresh_job_queue_once_yields_prop_refresh_when_current_slate_arrives(db_session, monkeypatch):
