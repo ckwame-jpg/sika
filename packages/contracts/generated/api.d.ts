@@ -672,6 +672,7 @@ export interface components {
         HealthResponse: {
             active_prop_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
             active_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
+            active_settlement_job?: components["schemas"]["RefreshJobRead"] | null;
             /** Data Stale */
             data_stale: boolean;
             /** Environment */
@@ -682,6 +683,7 @@ export interface components {
             last_successful_refresh_at?: string | null;
             latest_prop_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
             latest_refresh_job?: components["schemas"]["RefreshJobRead"] | null;
+            latest_settlement_job?: components["schemas"]["RefreshJobRead"] | null;
             /** Prop Data Stale */
             prop_data_stale: boolean;
             /** Prop Refresh Error Message */
@@ -726,6 +728,99 @@ export interface components {
              * @enum {string}
              */
             status: "queued" | "running" | "completed" | "failed";
+        };
+        /** KalshiAccountBalanceRead */
+        KalshiAccountBalanceRead: {
+            /** Cash Balance Dollars */
+            cash_balance_dollars?: number | null;
+            /** Portfolio Value Dollars */
+            portfolio_value_dollars?: number | null;
+            /** Updated Ts */
+            updated_ts?: number | null;
+        };
+        /** KalshiAccountFillRead */
+        KalshiAccountFillRead: {
+            /** Action */
+            action?: string | null;
+            /** Bet Label */
+            bet_label?: string | null;
+            /** Bet Subtitle */
+            bet_subtitle?: string | null;
+            /** Count */
+            count: number;
+            /** Created Time */
+            created_time?: string | null;
+            /** Fee Dollars */
+            fee_dollars?: number | null;
+            /** Fill Id */
+            fill_id?: string | null;
+            /** Market Subtitle */
+            market_subtitle?: string | null;
+            /** Market Title */
+            market_title?: string | null;
+            /** No Price Dollars */
+            no_price_dollars?: number | null;
+            /** Order Id */
+            order_id?: string | null;
+            /** Side */
+            side?: string | null;
+            /** Sport Key */
+            sport_key?: string | null;
+            /** Ticker */
+            ticker: string;
+            /** Trade Id */
+            trade_id?: string | null;
+            /** Yes Price Dollars */
+            yes_price_dollars?: number | null;
+        };
+        /** KalshiAccountMarketPositionRead */
+        KalshiAccountMarketPositionRead: {
+            /** Bet Label */
+            bet_label?: string | null;
+            /** Bet Subtitle */
+            bet_subtitle?: string | null;
+            /** Fees Paid Dollars */
+            fees_paid_dollars?: number | null;
+            /** Last Updated Ts */
+            last_updated_ts?: string | null;
+            /** Market Exposure Dollars */
+            market_exposure_dollars?: number | null;
+            /** Market Subtitle */
+            market_subtitle?: string | null;
+            /** Market Title */
+            market_title?: string | null;
+            /** Position */
+            position: number;
+            /** Realized Pnl Dollars */
+            realized_pnl_dollars?: number | null;
+            /**
+             * Resting Orders Count
+             * @default 0
+             */
+            resting_orders_count: number;
+            /** Sport Key */
+            sport_key?: string | null;
+            /** Ticker */
+            ticker: string;
+            /** Total Traded Dollars */
+            total_traded_dollars?: number | null;
+        };
+        /** KalshiAccountRead */
+        KalshiAccountRead: {
+            balance?: components["schemas"]["KalshiAccountBalanceRead"] | null;
+            /** Configured */
+            configured: boolean;
+            /** Error Message */
+            error_message?: string | null;
+            /** Market Positions */
+            market_positions?: components["schemas"]["KalshiAccountMarketPositionRead"][];
+            /** Recent Fills */
+            recent_fills?: components["schemas"]["KalshiAccountFillRead"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "connected" | "not_configured" | "error";
         };
         /** MarketDetailRead */
         MarketDetailRead: {
@@ -1317,6 +1412,7 @@ export interface components {
         PositionsRead: {
             /** Demo Orders */
             demo_orders: components["schemas"]["DemoOrderRead"][];
+            kalshi_account: components["schemas"]["KalshiAccountRead"];
             /** Paper Positions */
             paper_positions: components["schemas"]["PaperPositionRead"][];
         };
@@ -2091,6 +2187,48 @@ export interface components {
             /** Wins */
             wins?: number | null;
         };
+        /** TradeDeskArchivedSlateRead */
+        TradeDeskArchivedSlateRead: {
+            /** Blocking Reason */
+            blocking_reason?: string | null;
+            /**
+             * Candidate Market Count
+             * @default 0
+             */
+            candidate_market_count: number;
+            /**
+             * Coverage Prediction Count
+             * @default 0
+             */
+            coverage_prediction_count: number;
+            /**
+             * Event Count
+             * @default 0
+             */
+            event_count: number;
+            /** Events */
+            events?: components["schemas"]["TradeDeskEventRead"][];
+            /**
+             * Freshness Status
+             * @default stale
+             * @constant
+             */
+            freshness_status: "stale";
+            /** Generated At */
+            generated_at?: string | null;
+            /** Generated From Run Id */
+            generated_from_run_id?: number | null;
+            /**
+             * Recommendation Count
+             * @default 0
+             */
+            recommendation_count: number;
+            /**
+             * Scored Market Count
+             * @default 0
+             */
+            scored_market_count: number;
+        };
         /** TradeDeskEventRead */
         TradeDeskEventRead: {
             /** Event Id */
@@ -2179,6 +2317,7 @@ export interface components {
             generated_at?: string | null;
             /** Generated From Run Id */
             generated_from_run_id?: number | null;
+            previous_slate?: components["schemas"]["TradeDeskArchivedSlateRead"] | null;
             /**
              * Recommendation Count
              * @default 0

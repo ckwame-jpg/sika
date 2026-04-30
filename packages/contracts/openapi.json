@@ -280,6 +280,16 @@
               }
             ]
           },
+          "active_settlement_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "data_stale": {
             "title": "Data Stale",
             "type": "boolean"
@@ -321,6 +331,16 @@
             ]
           },
           "latest_refresh_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefreshJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_settlement_job": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/RefreshJobRead"
@@ -452,6 +472,408 @@
           "status"
         ],
         "title": "JobRefreshResponse",
+        "type": "object"
+      },
+      "KalshiAccountBalanceRead": {
+        "properties": {
+          "cash_balance_dollars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash Balance Dollars"
+          },
+          "portfolio_value_dollars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfolio Value Dollars"
+          },
+          "updated_ts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated Ts"
+          }
+        },
+        "title": "KalshiAccountBalanceRead",
+        "type": "object"
+      },
+      "KalshiAccountFillRead": {
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "bet_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bet Label"
+          },
+          "bet_subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bet Subtitle"
+          },
+          "count": {
+            "title": "Count",
+            "type": "number"
+          },
+          "created_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created Time"
+          },
+          "fee_dollars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fee Dollars"
+          },
+          "fill_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Id"
+          },
+          "market_subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Subtitle"
+          },
+          "market_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Title"
+          },
+          "no_price_dollars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Price Dollars"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "side": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Side"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "trade_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trade Id"
+          },
+          "yes_price_dollars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yes Price Dollars"
+          }
+        },
+        "required": [
+          "ticker",
+          "count"
+        ],
+        "title": "KalshiAccountFillRead",
+        "type": "object"
+      },
+      "KalshiAccountMarketPositionRead": {
+        "properties": {
+          "bet_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bet Label"
+          },
+          "bet_subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bet Subtitle"
+          },
+          "fees_paid_dollars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fees Paid Dollars"
+          },
+          "last_updated_ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Updated Ts"
+          },
+          "market_exposure_dollars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Exposure Dollars"
+          },
+          "market_subtitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Subtitle"
+          },
+          "market_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Title"
+          },
+          "position": {
+            "title": "Position",
+            "type": "number"
+          },
+          "realized_pnl_dollars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl Dollars"
+          },
+          "resting_orders_count": {
+            "default": 0,
+            "title": "Resting Orders Count",
+            "type": "integer"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "total_traded_dollars": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Traded Dollars"
+          }
+        },
+        "required": [
+          "ticker",
+          "position"
+        ],
+        "title": "KalshiAccountMarketPositionRead",
+        "type": "object"
+      },
+      "KalshiAccountRead": {
+        "properties": {
+          "balance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KalshiAccountBalanceRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "market_positions": {
+            "items": {
+              "$ref": "#/components/schemas/KalshiAccountMarketPositionRead"
+            },
+            "title": "Market Positions",
+            "type": "array"
+          },
+          "recent_fills": {
+            "items": {
+              "$ref": "#/components/schemas/KalshiAccountFillRead"
+            },
+            "title": "Recent Fills",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "connected",
+              "not_configured",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configured",
+          "status"
+        ],
+        "title": "KalshiAccountRead",
         "type": "object"
       },
       "MarketDetailRead": {
@@ -2461,6 +2883,9 @@
             "title": "Demo Orders",
             "type": "array"
           },
+          "kalshi_account": {
+            "$ref": "#/components/schemas/KalshiAccountRead"
+          },
           "paper_positions": {
             "items": {
               "$ref": "#/components/schemas/PaperPositionRead"
@@ -2471,7 +2896,8 @@
         },
         "required": [
           "paper_positions",
-          "demo_orders"
+          "demo_orders",
+          "kalshi_account"
         ],
         "title": "PositionsRead",
         "type": "object"
@@ -4539,6 +4965,83 @@
         "title": "StatsSummaryRead",
         "type": "object"
       },
+      "TradeDeskArchivedSlateRead": {
+        "properties": {
+          "blocking_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocking Reason"
+          },
+          "candidate_market_count": {
+            "default": 0,
+            "title": "Candidate Market Count",
+            "type": "integer"
+          },
+          "coverage_prediction_count": {
+            "default": 0,
+            "title": "Coverage Prediction Count",
+            "type": "integer"
+          },
+          "event_count": {
+            "default": 0,
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/TradeDeskEventRead"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "freshness_status": {
+            "const": "stale",
+            "default": "stale",
+            "title": "Freshness Status",
+            "type": "string"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "generated_from_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated From Run Id"
+          },
+          "recommendation_count": {
+            "default": 0,
+            "title": "Recommendation Count",
+            "type": "integer"
+          },
+          "scored_market_count": {
+            "default": 0,
+            "title": "Scored Market Count",
+            "type": "integer"
+          }
+        },
+        "title": "TradeDeskArchivedSlateRead",
+        "type": "object"
+      },
       "TradeDeskEventRead": {
         "properties": {
           "event_id": {
@@ -4804,6 +5307,16 @@
               }
             ],
             "title": "Generated From Run Id"
+          },
+          "previous_slate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TradeDeskArchivedSlateRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "recommendation_count": {
             "default": 0,
