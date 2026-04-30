@@ -10,7 +10,7 @@ function TradeContent() {
 
   return (
     <>
-      <div className="sticky top-0 z-10 border-b border-border bg-surface px-3 py-3 sm:px-5">
+      <div className="border-b border-border bg-surface px-3 py-3 sm:px-5">
         <div className="flex items-center gap-3">
           <span className="text-xs text-muted-foreground">Sport</span>
           <SportFilterSelect triggerClassName="h-8 w-[140px] text-xs" />

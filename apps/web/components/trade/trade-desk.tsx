@@ -196,12 +196,9 @@ interface KpiCardProps {
   sub?: string;
   testIdRoot: string;
   testIdValue: string;
-  seed: number;
-  trend?: "up" | "down";
 }
 
-function KpiCard({ label, value, sub, testIdRoot, testIdValue, seed, trend = "up" }: KpiCardProps) {
-  const series = randomWalk(24, trend === "up", seed);
+function KpiCard({ label, value, sub, testIdRoot, testIdValue }: KpiCardProps) {
   return (
     <div className="trade-kpi" data-testid={testIdRoot}>
       <div className="trade-kpi-orb" aria-hidden />
@@ -210,9 +207,6 @@ function KpiCard({ label, value, sub, testIdRoot, testIdValue, seed, trend = "up
         {value}
       </div>
       {sub && <div className="trade-kpi-sub">{sub}</div>}
-      <div className="spark-wrap">
-        <Sparkline values={series} width={140} height={22} trend={trend} />
-      </div>
     </div>
   );
 }
@@ -226,7 +220,6 @@ function MarketSummaryStrip({ kpis }: { kpis: TradeKpis }) {
         sub={`${kpis.live} live · ${kpis.upcoming} upcoming`}
         testIdRoot="trade-kpi-card-events"
         testIdValue="trade-kpi-events"
-        seed={11}
       />
       <KpiCard
         label="Candidate markets"
@@ -234,7 +227,6 @@ function MarketSummaryStrip({ kpis }: { kpis: TradeKpis }) {
         sub="scored"
         testIdRoot="trade-kpi-card-candidate-markets"
         testIdValue="trade-kpi-candidate-markets"
-        seed={31}
       />
       <KpiCard
         label="Current picks"
@@ -242,7 +234,6 @@ function MarketSummaryStrip({ kpis }: { kpis: TradeKpis }) {
         sub="past edge threshold"
         testIdRoot="trade-kpi-card-recommendations"
         testIdValue="trade-kpi-recommendations"
-        seed={47}
       />
       <KpiCard
         label="Avg edge"
@@ -254,7 +245,6 @@ function MarketSummaryStrip({ kpis }: { kpis: TradeKpis }) {
         }
         testIdRoot="trade-kpi-card-avg-edge"
         testIdValue="trade-kpi-avg-edge"
-        seed={73}
       />
     </div>
   );

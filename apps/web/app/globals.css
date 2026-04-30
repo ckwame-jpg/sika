@@ -108,12 +108,12 @@
   --cosmos-violet: hsl(262 60% 48%);
   --cosmos-cyan: hsl(190 80% 50%);
 
-  --sport-nba: hsl(25 95% 53%);
-  --sport-nfl: hsl(218 75% 45%);
-  --sport-mlb: hsl(0 75% 50%);
-  --sport-soccer: hsl(142 71% 38%);
-  --sport-tennis: hsl(78 80% 42%);
-  --sport-ufc: hsl(0 90% 52%);
+  --sport-nba: hsl(248 80% 62%);
+  --sport-nfl: hsl(218 75% 50%);
+  --sport-mlb: hsl(285 70% 60%);
+  --sport-soccer: hsl(168 60% 42%);
+  --sport-tennis: hsl(195 75% 50%);
+  --sport-ufc: hsl(305 70% 58%);
 
   /* Cosmos feature-surface tokens (shared by light/dark feature cards) */
   --color-cosmos-text-bright: hsl(258 100% 96%);
@@ -293,12 +293,12 @@
   --cosmos-violet: hsl(262 60% 58%);
   --cosmos-cyan: hsl(190 80% 60%);
 
-  --sport-nba: hsl(25 95% 58%);
-  --sport-nfl: hsl(210 80% 62%);
-  --sport-mlb: hsl(0 80% 62%);
-  --sport-soccer: hsl(142 65% 50%);
-  --sport-tennis: hsl(78 75% 55%);
-  --sport-ufc: hsl(0 90% 60%);
+  --sport-nba: hsl(248 85% 70%);
+  --sport-nfl: hsl(218 80% 65%);
+  --sport-mlb: hsl(285 75% 70%);
+  --sport-soccer: hsl(168 65% 55%);
+  --sport-tennis: hsl(195 80% 62%);
+  --sport-ufc: hsl(305 75% 68%);
 }
 
 @layer base {
@@ -755,9 +755,12 @@
 .trade-kpi {
   position: relative;
   overflow: hidden;
-  border: 1px solid var(--color-cosmos-border-soft);
+  border: 1px solid var(--color-cosmos-violet-edge);
   border-radius: var(--radius);
-  background: var(--color-cosmos-surface-dim);
+  background:
+    radial-gradient(120% 80% at 10% 0%, var(--color-cosmos-violet-hero-peak), transparent 60%),
+    radial-gradient(100% 70% at 90% 100%, var(--color-cosmos-cyan-edge), transparent 60%),
+    var(--color-cosmos-hero-ink);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   padding: 12px 14px;
@@ -2925,7 +2928,7 @@
   align-items: center;
   gap: 16px;
   padding: 12px 20px;
-  background: hsl(var(--color-cosmos-ink-800-hsl) / 0.55);
+  background: hsl(var(--color-cosmos-ink-800-hsl) / 0.92);
   backdrop-filter: blur(14px) saturate(1.1);
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
