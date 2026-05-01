@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { queryStats } from "@/lib/api";
 import { SPORT_LABELS, type SportKey, type StatsQueryRead } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -220,21 +220,38 @@ function LoadingState({ sportKey }: { sportKey: SportKey }) {
 }
 
 function StatsAnswer({ result }: { result: StatsQueryRead }) {
-  // Query-aware primary metric: first key in metric_labels, if any.
-  const metricKeys = Object.keys(result.metric_labels);
-  const primaryKey = metricKeys[0];
-
   // Metric grid: up to 6 populated metrics, labels from backend.
   const metricEntries = Object.entries(result.summary.metrics)
     .filter(([, value]) => value != null)
     .slice(0, 6);
 
-  // Chart data: plot primary metric across first 10 logs.
-  // Skip chart entirely if we have no primaryKey or no logs.
+  // A metric is chartable if at least one game log has a finite numeric value for it.
+  const chartableKeys = new Set(
+    metricEntries
+      .map(([key]) => key)
+      .filter((key) =>
+        result.game_logs.some((g) => {
+          const v = g.metrics?.[key];
+          return typeof v === "number" && Number.isFinite(v);
+        }),
+      ),
+  );
+
+  const defaultMetric = metricEntries.find(([key]) => chartableKeys.has(key))?.[0];
+  const [selectedMetric, setSelectedMetric] = useState<string | undefined>(defaultMetric);
+
+  // Reset the selection whenever a new query result lands so the chart starts on the
+  // primary metric for the new entity instead of stale state from the previous answer.
+  useEffect(() => {
+    setSelectedMetric(defaultMetric);
+  }, [defaultMetric, result.entity_id]);
+
+  const activeMetric = selectedMetric && chartableKeys.has(selectedMetric) ? selectedMetric : defaultMetric;
+
   const chartPoints: Array<{ value: number; label: string }> = [];
-  if (primaryKey && result.game_logs.length > 0) {
+  if (activeMetric && result.game_logs.length > 0) {
     for (const g of result.game_logs.slice(0, 10)) {
-      const v = g.metrics?.[primaryKey];
+      const v = g.metrics?.[activeMetric];
       if (typeof v === "number" && Number.isFinite(v)) {
         chartPoints.push({ value: v, label: g.opponent ?? "" });
       }
@@ -262,21 +279,33 @@ function StatsAnswer({ result }: { result: StatsQueryRead }) {
       )}
 
       <div className="sa-answer-grid">
-        {metricEntries.map(([key, value]) => (
-          <div key={key} className="sa-stat">
-            <div className="sa-stat-l">{result.metric_labels[key] ?? key}</div>
-            <div className="sa-stat-v">
-              {value == null ? "—" : Number.isInteger(value) ? String(value) : value.toFixed(2)}
-            </div>
-            {/* sa-stat-s reserved for backend-provided delta copy when available */}
-          </div>
-        ))}
+        {metricEntries.map(([key, value]) => {
+          const chartable = chartableKeys.has(key);
+          const isActive = chartable && key === activeMetric;
+          return (
+            <button
+              key={key}
+              type="button"
+              className={cn("sa-stat", isActive && "is-active", !chartable && "is-static")}
+              onClick={chartable ? () => setSelectedMetric(key) : undefined}
+              disabled={!chartable}
+              aria-pressed={chartable ? isActive : undefined}
+              data-testid={`sa-metric-${key}`}
+            >
+              <div className="sa-stat-l">{result.metric_labels[key] ?? key}</div>
+              <div className="sa-stat-v">
+                {value == null ? "—" : Number.isInteger(value) ? String(value) : value.toFixed(2)}
+              </div>
+              {/* sa-stat-s reserved for backend-provided delta copy when available */}
+            </button>
+          );
+        })}
       </div>
 
       {showChart && (
         <div className="sa-answer-chart" data-testid="sa-answer-chart">
           <div className="sa-answer-chart-label">
-            <span>{result.metric_labels[primaryKey!] ?? primaryKey} · last {chartPoints.length}</span>
+            <span>{result.metric_labels[activeMetric!] ?? activeMetric} · last {chartPoints.length}</span>
             <span className="sa-answer-chart-meta">
               avg {(chartPoints.reduce((s, p) => s + p.value, 0) / chartPoints.length).toFixed(1)}
             </span>

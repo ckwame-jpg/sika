@@ -2484,10 +2484,33 @@
 }
 
 .sa-stat {
+  display: block;
+  width: 100%;
+  text-align: left;
   padding: 10px 12px;
   background-color: hsl(var(--color-cosmos-ink-700-hsl) / 0.55);
   border: 0.625px solid hsl(var(--color-cosmos-violet-500-hsl) / 0.12);
   border-radius: 9px;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, transform 0.05s;
+  font: inherit;
+  color: inherit;
+}
+.sa-stat:hover:not(:disabled):not(.is-active) {
+  border-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.35);
+  background-color: hsl(var(--color-cosmos-ink-700-hsl) / 0.75);
+}
+.sa-stat:active:not(:disabled) {
+  transform: scale(0.99);
+}
+.sa-stat.is-active {
+  border-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.55);
+  background-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.18);
+  box-shadow: 0 0 12px hsl(var(--color-cosmos-violet-500-hsl) / 0.25) inset;
+}
+.sa-stat.is-static,
+.sa-stat:disabled {
+  cursor: default;
 }
 
 .sa-stat-l {
