@@ -36,6 +36,20 @@ interface Nebula {
   depth: number;
 }
 
+interface Galaxy {
+  cx: number;
+  cy: number;
+  r: number;
+  tilt: number;
+  aspect: number;
+  coreTint: string;
+  haloTint: string;
+  alpha: number;
+  depth: number;
+  ph: number;
+  sp: number;
+}
+
 declare global {
   interface Window {
     __sikaSky?: SkyState;
@@ -65,23 +79,24 @@ export function StarfieldCanvas() {
     let h = 0;
     let stars: Star[] = [];
     let nebulae: Nebula[] = [];
+    let galaxies: Galaxy[] = [];
 
     function resize() {
       w = canvas!.width = window.innerWidth * dpr;
       h = canvas!.height = window.innerHeight * dpr;
       canvas!.style.width = window.innerWidth + "px";
       canvas!.style.height = window.innerHeight + "px";
-      const count = Math.floor((window.innerWidth * window.innerHeight) / 1100);
+      const count = Math.floor((window.innerWidth * window.innerHeight) / 700);
       stars = Array.from({ length: count }, () => ({
         x0: Math.random() * w,
         y0: Math.random() * h,
-        r: Math.random() * 1.3 * dpr + 0.22 * dpr,
+        r: Math.random() * 1.3 * dpr + 0.2 * dpr,
         a: Math.min(1, Math.random() * 0.975 + 0.286),
         ph: Math.random() * Math.PI * 2,
         sp: 0.0006 + Math.random() * 0.0018,
         drift: 0.3 + Math.random() * 1.4,
         depth: 0.2 + Math.random() * 1.0,
-        bloom: Math.random() < 0.22,
+        bloom: Math.random() < 0.18,
         tint:
           Math.random() < 0.16
             ? "180,140,255"
@@ -95,6 +110,30 @@ export function StarfieldCanvas() {
         { cx: w * 0.55, cy: h * 0.55, r: Math.max(w, h) * 0.30, tint: "180,120,255", alpha: 0.10, sp: 0.00004, ph: 2.2, depth: 0.4 },
         { cx: w * 0.88, cy: h * 0.62, r: Math.max(w, h) * 0.22, tint: "100,200,255", alpha: 0.08, sp: 0.00003, ph: 3.7, depth: 0.5 },
       ];
+      // Distant galaxies: small elliptical smudges with a brighter core, scattered across
+      // the sky. Sizes scale to viewport so they read at any resolution.
+      const longSide = Math.max(w, h);
+      const galaxySpecs: Array<Omit<Galaxy, "cx" | "cy" | "r"> & { cxR: number; cyR: number; rR: number }> = [
+        { cxR: 0.14, cyR: 0.22, rR: 0.060, tilt: -0.5, aspect: 0.42, coreTint: "240,220,255", haloTint: "150,120,220", alpha: 0.55, depth: 0.6, ph: 0.4, sp: 0.00001 },
+        { cxR: 0.86, cyR: 0.42, rR: 0.075, tilt: 0.9, aspect: 0.34, coreTint: "255,235,210", haloTint: "200,140,90", alpha: 0.45, depth: 0.5, ph: 1.2, sp: 0.000008 },
+        { cxR: 0.32, cyR: 0.74, rR: 0.090, tilt: -1.3, aspect: 0.50, coreTint: "230,240,255", haloTint: "120,170,230", alpha: 0.40, depth: 0.55, ph: 2.6, sp: 0.000012 },
+        { cxR: 0.62, cyR: 0.92, rR: 0.055, tilt: 0.3, aspect: 0.28, coreTint: "245,225,255", haloTint: "170,100,210", alpha: 0.50, depth: 0.45, ph: 3.1, sp: 0.000009 },
+        { cxR: 0.96, cyR: 0.08, rR: 0.040, tilt: -2.0, aspect: 0.55, coreTint: "255,245,235", haloTint: "210,170,130", alpha: 0.42, depth: 0.7, ph: 0.9, sp: 0.000011 },
+        { cxR: 0.04, cyR: 0.55, rR: 0.050, tilt: 1.6, aspect: 0.38, coreTint: "235,235,255", haloTint: "140,140,210", alpha: 0.38, depth: 0.5, ph: 4.4, sp: 0.000007 },
+      ];
+      galaxies = galaxySpecs.map((spec) => ({
+        cx: w * spec.cxR,
+        cy: h * spec.cyR,
+        r: longSide * spec.rR,
+        tilt: spec.tilt,
+        aspect: spec.aspect,
+        coreTint: spec.coreTint,
+        haloTint: spec.haloTint,
+        alpha: spec.alpha,
+        depth: spec.depth,
+        ph: spec.ph,
+        sp: spec.sp,
+      }));
     }
 
     let raf = 0;
@@ -119,6 +158,31 @@ export function StarfieldCanvas() {
         ctx!.beginPath();
         ctx!.arc(cx, cy, n.r * pulse, 0, Math.PI * 2);
         ctx!.fill();
+      }
+      for (const g of galaxies) {
+        const pulse = 0.92 + 0.08 * Math.sin(g.ph + dt * g.sp * 30);
+        const cx = g.cx + px * g.depth;
+        const cy = g.cy + py * g.depth;
+        ctx!.save();
+        ctx!.translate(cx, cy);
+        ctx!.rotate(g.tilt);
+        ctx!.scale(1, g.aspect);
+        const halo = ctx!.createRadialGradient(0, 0, 0, 0, 0, g.r * pulse);
+        halo.addColorStop(0, `rgba(${g.haloTint},${g.alpha})`);
+        halo.addColorStop(0.45, `rgba(${g.haloTint},${g.alpha * 0.30})`);
+        halo.addColorStop(1, `rgba(${g.haloTint},0)`);
+        ctx!.fillStyle = halo;
+        ctx!.beginPath();
+        ctx!.arc(0, 0, g.r * pulse, 0, Math.PI * 2);
+        ctx!.fill();
+        const core = ctx!.createRadialGradient(0, 0, 0, 0, 0, g.r * 0.32);
+        core.addColorStop(0, `rgba(${g.coreTint},${Math.min(1, g.alpha * 1.6)})`);
+        core.addColorStop(1, `rgba(${g.coreTint},0)`);
+        ctx!.fillStyle = core;
+        ctx!.beginPath();
+        ctx!.arc(0, 0, g.r * 0.32, 0, Math.PI * 2);
+        ctx!.fill();
+        ctx!.restore();
       }
       ctx!.globalCompositeOperation = "source-over";
 

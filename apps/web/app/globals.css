@@ -262,13 +262,13 @@
   --color-cosmos-accent-bright: var(--color-cosmos-violet-300);
   --color-cosmos-satellite: var(--color-cosmos-cyan-300);
 
-  /* Bloom alphas — barely-there nebula glow so the void dominates. */
+  /* Bloom alphas — whisper-faint corner glow, almost imperceptible. */
   --bloom-primary-hsl: 262 60% 40%;
-  --bloom-primary-alpha: 0.07;
+  --bloom-primary-alpha: 0.022;
   --bloom-secondary-hsl: 190 75% 45%;
-  --bloom-secondary-alpha: 0.04;
+  --bloom-secondary-alpha: 0.014;
   --bloom-central-hsl: 272 70% 60%;
-  --bloom-central-alpha: 0.015;
+  --bloom-central-alpha: 0.005;
 }
 
 /* ── Dark mode CSS variables (product default) ── */
