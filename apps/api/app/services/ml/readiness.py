@@ -259,11 +259,17 @@ def _summary_for_family(
     if scope == "single":
         coverage_predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") == "coverage"]
         predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") != "coverage"]
-        covered_shadow_predictions, shadow_backlog_predictions = _single_shadow_coverage_count(predictions, shadow_singles)
+        # Coverage predictions are first-class for the active ML study: shadow inference
+        # runs over them too, and they count toward the settled-history gate. The visibility
+        # split (settled vs coverage_settled) stays so operators can still see how many of
+        # the rows came from heuristic recommendations vs unrecommended scored markets.
+        gate_predictions = predictions + coverage_predictions
+        covered_shadow_predictions, shadow_backlog_predictions = _single_shadow_coverage_count(gate_predictions, shadow_singles)
         shadow_backlog_parlays = 0
     else:
         coverage_predictions = []
         predictions = all_predictions
+        gate_predictions = predictions
         covered_shadow_predictions, shadow_backlog_parlays = _parlay_shadow_coverage_count(predictions, shadow_parlays)
         shadow_backlog_predictions = 0
     total_predictions = len(predictions)
@@ -283,14 +289,15 @@ def _summary_for_family(
     desired_mode = _runtime_mode(runtime.desired_mode)
     effective_mode = _runtime_mode(runtime.effective_mode)
     runtime_health = _runtime_health(runtime.runtime_health)
-    shadow_ratio = shadow_coverage_ratio(total_predictions=total_predictions, shadow_predictions=covered_shadow_predictions)
+    shadow_ratio = shadow_coverage_ratio(total_predictions=len(gate_predictions), shadow_predictions=covered_shadow_predictions)
+    gate_settled_predictions = len(settled) + len(coverage_settled)
     readiness_status, why_not_ready = _readiness_status(
         db=db,
         family_key=family_key,
         scope=scope,
         study_track=definition.study_track,
         desired_mode=desired_mode,
-        settled_predictions=len(settled),
+        settled_predictions=gate_settled_predictions,
         shadow_predictions=covered_shadow_predictions,
         shadow_coverage_ratio=shadow_ratio,
     )

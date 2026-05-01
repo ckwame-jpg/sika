@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -54,7 +54,6 @@ def settled_prediction_counts_by_family(db: Session) -> dict[str, int]:
     single_rows = db.execute(
         select(Prediction.sport_key, Prediction.market_family).where(
             Prediction.prediction_outcome.in_(SETTLED_OUTCOMES),
-            or_(Prediction.capture_scope.is_(None), Prediction.capture_scope != "coverage"),
         )
     ).all()
     for sport_key, market_family in single_rows:

@@ -100,8 +100,6 @@ def prediction_requires_shadow_capture(
     *,
     active_study_only: bool = False,
 ) -> bool:
-    if (prediction.capture_scope or "recommendation") == "coverage":
-        return False
     family_key = _single_prediction_family_key(prediction)
     if active_study_only and not is_active_study_family(family_key):
         return False
@@ -208,10 +206,7 @@ def _capture_parlay_shadow(db: Session, parlay: ParlayPrediction) -> bool:
 def _source_run_predictions(db: Session, *, source_run_id: int) -> list[Prediction]:
     return db.scalars(
         select(Prediction)
-        .where(
-            Prediction.run_id == source_run_id,
-            or_(Prediction.capture_scope.is_(None), Prediction.capture_scope != "coverage"),
-        )
+        .where(Prediction.run_id == source_run_id)
         .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
     ).all()
 
@@ -238,10 +233,7 @@ def _backfill_predictions(db: Session) -> list[Prediction]:
     selected_predictions: list[Prediction] = []
     rows = db.scalars(
         select(Prediction)
-        .where(
-            Prediction.captured_at >= cutoff,
-            or_(Prediction.capture_scope.is_(None), Prediction.capture_scope != "coverage"),
-        )
+        .where(Prediction.captured_at >= cutoff)
         .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
     ).all()
     for prediction in rows:
@@ -331,27 +323,18 @@ def _prediction_shadow_stmt(
         cutoff = retained_study_cutoff()
         return (
             select(Prediction)
-            .where(
-                Prediction.captured_at >= cutoff,
-                or_(Prediction.capture_scope.is_(None), Prediction.capture_scope != "coverage"),
-            )
+            .where(Prediction.captured_at >= cutoff)
             .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
         )
     if source_run_id is not None:
         return (
             select(Prediction)
-            .where(
-                Prediction.run_id == source_run_id,
-                or_(Prediction.capture_scope.is_(None), Prediction.capture_scope != "coverage"),
-            )
+            .where(Prediction.run_id == source_run_id)
             .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
         )
     return (
         select(Prediction)
-        .where(
-            Prediction.run_id == run_id,
-            or_(Prediction.capture_scope.is_(None), Prediction.capture_scope != "coverage"),
-        )
+        .where(Prediction.run_id == run_id)
         .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
     )
 

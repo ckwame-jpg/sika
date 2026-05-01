@@ -324,6 +324,21 @@ def test_models_readiness_endpoint_separates_coverage_history_from_recommendatio
     assert payload["coverage_settled_predictions"] == 8
 
 
+def test_models_readiness_endpoint_counts_coverage_settled_toward_active_study_gate(client, db_session):
+    # Coverage-only families (markets the heuristic never recommends but does score) must
+    # still ramp the active ML study gate, otherwise efficient single markets like NBA
+    # spreads/totals would be stuck at 0 settled forever.
+    _seed_nba_coverage_predictions(db_session, total=40, settled=40)
+    db_session.commit()
+
+    response = client.get("/ops/models/readiness/nba_props")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["coverage_settled_predictions"] == 40
+    assert payload["readiness_status"] == "shadow_not_started"
+
+
 def test_models_readiness_endpoint_reports_shadowing_with_low_coverage(client, db_session, monkeypatch, tmp_path):
     artifact_path = _write_artifact(tmp_path, family_key="nba_singles", scope="single")
     manifest_path = _write_manifest(tmp_path, family_key="nba_singles", artifact_path=str(artifact_path), mode="shadow")
