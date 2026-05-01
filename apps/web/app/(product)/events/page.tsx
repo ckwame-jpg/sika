@@ -46,10 +46,7 @@ function EventsContent() {
 export default function EventsPage() {
   return (
     <>
-      <Header
-        title="Events"
-        description="Sporting events mapped to Kalshi markets"
-      />
+      <Header title="Events" />
       <main className="flex-1 overflow-y-auto">
         <Suspense>
           <EventsContent />

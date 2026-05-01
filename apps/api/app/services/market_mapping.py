@@ -83,15 +83,25 @@ def map_markets_to_events(db: Session, *, candidate_market_ids: set[int] | None 
         anchor_time = _normalize_utc(market_anchor_time(market.raw_data or {}) or market.close_time)
         best_event = None
         best_score = 0.0
+        best_time_delta: float | None = None
         for event, event_tokens, event_starts_at in event_context:
             if market_sport_key and event.sport_key != market_sport_key:
                 continue
-            if anchor_time and event_starts_at and abs((event_starts_at - anchor_time).total_seconds()) > timedelta(days=3).total_seconds():
-                continue
+            time_delta: float | None = None
+            if anchor_time and event_starts_at:
+                time_delta = abs((event_starts_at - anchor_time).total_seconds())
+                if time_delta > timedelta(hours=36).total_seconds():
+                    continue
             score = _token_score(market_tokens, event_tokens)
-            if score > best_score:
+            if score < best_score:
+                continue
+            if score > best_score or (
+                time_delta is not None
+                and (best_time_delta is None or time_delta < best_time_delta)
+            ):
                 best_score = score
                 best_event = event
+                best_time_delta = time_delta
         if best_event and best_score >= 0.35:
             market.event_id = best_event.id
             market.sport_key = best_event.sport_key

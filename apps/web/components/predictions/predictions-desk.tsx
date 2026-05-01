@@ -33,7 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
 import { Sparkline, randomWalk } from "@/components/ui/sparkline";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
-import { EDGE_EXPLANATION, ENTRY_LABEL, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
+import { ENTRY_LABEL, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
 import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { SportFilterSelect, useSportQueryParam } from "@/components/filters/sport-filter-select";
@@ -440,7 +440,6 @@ export function PredictionsDesk() {
             <div className="cosmos-panel-head">
               <div className="cosmos-panel-head-text">
                 <h2 className="cosmos-panel-title">Prediction Ledger</h2>
-                <p className="cosmos-panel-desc">{EDGE_EXPLANATION}</p>
               </div>
             </div>
             <div className="cosmos-panel-body flush">

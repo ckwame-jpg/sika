@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { queryStats } from "@/lib/api";
 import { SPORT_LABELS, type SportKey, type StatsQueryRead } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,21 @@ const EXAMPLES: Record<SportKey, string[]> = {
 const CURRENT_SEASON = "2025-26";
 const SEASON_OPTIONS = ["2025-26", "2024-25", "2023-24", "2022-23"];
 
+// ESPN's `season` parameter is sport-specific:
+//   NBA + Tennis (multi-year span): use the END year (e.g. "2025-26" -> 2026).
+//   NFL + MLB + Soccer + UFC: use the START / single year (e.g. "2025-26" -> 2025).
+function resolveSeasonYear(season: string, sport: SportKey): number | undefined {
+  if (!season) return undefined;
+  const dashIdx = season.indexOf("-");
+  if (dashIdx === -1) {
+    const n = Number(season);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  const startYear = Number(season.slice(0, dashIdx));
+  if (!Number.isFinite(startYear)) return undefined;
+  return sport === "NBA" || sport === "TENNIS" ? startYear + 1 : startYear;
+}
+
 interface StatsWorkspaceProps {
   initialSport?: SportKey;
 }
@@ -46,11 +61,10 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
     setLoading(true);
     setError(null);
     try {
-      const seasonYear = season ? Number(season.slice(0, 4)) : undefined;
       const next = await queryStats({
         question: finalQuestion,
         sport_key: sportKey,
-        season: Number.isFinite(seasonYear) ? seasonYear : undefined,
+        season: resolveSeasonYear(season, sportKey),
       });
       setQuestion(finalQuestion);
       setResult(next);
@@ -206,21 +220,38 @@ function LoadingState({ sportKey }: { sportKey: SportKey }) {
 }
 
 function StatsAnswer({ result }: { result: StatsQueryRead }) {
-  // Query-aware primary metric: first key in metric_labels, if any.
-  const metricKeys = Object.keys(result.metric_labels);
-  const primaryKey = metricKeys[0];
-
   // Metric grid: up to 6 populated metrics, labels from backend.
   const metricEntries = Object.entries(result.summary.metrics)
     .filter(([, value]) => value != null)
     .slice(0, 6);
 
-  // Chart data: plot primary metric across first 10 logs.
-  // Skip chart entirely if we have no primaryKey or no logs.
+  // A metric is chartable if at least one game log has a finite numeric value for it.
+  const chartableKeys = new Set(
+    metricEntries
+      .map(([key]) => key)
+      .filter((key) =>
+        result.game_logs.some((g) => {
+          const v = g.metrics?.[key];
+          return typeof v === "number" && Number.isFinite(v);
+        }),
+      ),
+  );
+
+  const defaultMetric = metricEntries.find(([key]) => chartableKeys.has(key))?.[0];
+  const [selectedMetric, setSelectedMetric] = useState<string | undefined>(defaultMetric);
+
+  // Reset the selection whenever a new query result lands so the chart starts on the
+  // primary metric for the new entity instead of stale state from the previous answer.
+  useEffect(() => {
+    setSelectedMetric(defaultMetric);
+  }, [defaultMetric, result.entity_id]);
+
+  const activeMetric = selectedMetric && chartableKeys.has(selectedMetric) ? selectedMetric : defaultMetric;
+
   const chartPoints: Array<{ value: number; label: string }> = [];
-  if (primaryKey && result.game_logs.length > 0) {
+  if (activeMetric && result.game_logs.length > 0) {
     for (const g of result.game_logs.slice(0, 10)) {
-      const v = g.metrics?.[primaryKey];
+      const v = g.metrics?.[activeMetric];
       if (typeof v === "number" && Number.isFinite(v)) {
         chartPoints.push({ value: v, label: g.opponent ?? "" });
       }
@@ -248,21 +279,33 @@ function StatsAnswer({ result }: { result: StatsQueryRead }) {
       )}
 
       <div className="sa-answer-grid">
-        {metricEntries.map(([key, value]) => (
-          <div key={key} className="sa-stat">
-            <div className="sa-stat-l">{result.metric_labels[key] ?? key}</div>
-            <div className="sa-stat-v">
-              {value == null ? "—" : Number.isInteger(value) ? String(value) : value.toFixed(2)}
-            </div>
-            {/* sa-stat-s reserved for backend-provided delta copy when available */}
-          </div>
-        ))}
+        {metricEntries.map(([key, value]) => {
+          const chartable = chartableKeys.has(key);
+          const isActive = chartable && key === activeMetric;
+          return (
+            <button
+              key={key}
+              type="button"
+              className={cn("sa-stat", isActive && "is-active", !chartable && "is-static")}
+              onClick={chartable ? () => setSelectedMetric(key) : undefined}
+              disabled={!chartable}
+              aria-pressed={chartable ? isActive : undefined}
+              data-testid={`sa-metric-${key}`}
+            >
+              <div className="sa-stat-l">{result.metric_labels[key] ?? key}</div>
+              <div className="sa-stat-v">
+                {value == null ? "—" : Number.isInteger(value) ? String(value) : value.toFixed(2)}
+              </div>
+              {/* sa-stat-s reserved for backend-provided delta copy when available */}
+            </button>
+          );
+        })}
       </div>
 
       {showChart && (
         <div className="sa-answer-chart" data-testid="sa-answer-chart">
           <div className="sa-answer-chart-label">
-            <span>{result.metric_labels[primaryKey!] ?? primaryKey} · last {chartPoints.length}</span>
+            <span>{result.metric_labels[activeMetric!] ?? activeMetric} · last {chartPoints.length}</span>
             <span className="sa-answer-chart-meta">
               avg {(chartPoints.reduce((s, p) => s + p.value, 0) / chartPoints.length).toFixed(1)}
             </span>
@@ -317,18 +360,35 @@ function MiniBars({ points }: { points: number[] }) {
   const W = 400;
   const H = 90;
   const PAD_X = 20;
-  const BAR_Y_TOP = 10;
-  const BAR_AREA = 75;
-  const yFor = (v: number) => BAR_Y_TOP + BAR_AREA - ((v - min) / range) * (BAR_AREA - 5);
+  const BAR_Y_TOP = 14;
+  const BAR_AREA = 70;
+  const FILL = 0.85;
+  const FLOOR = 0.12;
+  const yFor = (v: number) => {
+    const fraction = ((v - min) / range) * FILL + FLOOR;
+    return BAR_Y_TOP + BAR_AREA - fraction * BAR_AREA;
+  };
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" width="100%" height="90" role="img" aria-label="Trend chart">
+    <div
+      className="sa-chart-svg-wrap"
+      style={{ width: "100%", maxWidth: 720, aspectRatio: `${W} / ${H}`, margin: "0 auto" }}
+    >
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="xMidYMid meet"
+      width="100%"
+      height="100%"
+      role="img"
+      aria-label="Trend chart"
+      style={{ display: "block" }}
+    >
       <line
         x1={0}
         x2={W}
         y1={yFor(mean)}
         y2={yFor(mean)}
-        stroke="rgba(255,180,100,0.45)"
+        stroke="rgba(150,140,255,0.45)"
         strokeWidth={1}
         strokeDasharray="4 4"
       />
@@ -344,15 +404,15 @@ function MiniBars({ points }: { points: number[] }) {
               width={20}
               height={h}
               rx={2}
-              fill={v >= mean ? "rgba(80,220,160,0.7)" : "rgba(255,120,120,0.55)"}
+              fill={v >= mean ? "rgba(120,210,200,0.78)" : "rgba(170,140,235,0.62)"}
             />
             <text
               x={x}
-              y={y - 5}
+              y={BAR_Y_TOP - 4}
               textAnchor="middle"
               fill="rgba(210,220,240,0.85)"
               fontSize="10"
-              fontFamily="JetBrains Mono, monospace"
+              fontFamily="var(--font-geist-sans), system-ui, sans-serif"
             >
               {Number.isInteger(v) ? v : v.toFixed(1)}
             </text>
@@ -360,5 +420,6 @@ function MiniBars({ points }: { points: number[] }) {
         );
       })}
     </svg>
+    </div>
   );
 }

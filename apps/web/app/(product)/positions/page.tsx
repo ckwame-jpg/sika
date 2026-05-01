@@ -16,7 +16,6 @@ export default function PaperPositionsPage() {
     <>
       <Header
         title="Portfolio"
-        description="Paper positions and demo orders"
         actions={
           <Button
             variant="primary"

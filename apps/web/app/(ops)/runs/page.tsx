@@ -6,10 +6,7 @@ import { RunsDesk } from "@/components/runs/runs-desk";
 export default function RunsPage() {
   return (
     <>
-      <Header
-        title="Runs"
-        description="Refresh history, ingestion diagnostics, and emitted recommendations"
-      />
+      <Header title="Runs" />
       <main className="flex-1 overflow-hidden p-4">
         <RunsDesk />
       </main>

@@ -317,6 +317,9 @@ class TradeDeskEventRead(BaseModel):
     event_status: str
     starts_at: UTCDateTime | None = None
     sport_key: str
+    candidate_market_count: int = 0
+    scored_market_count: int = 0
+    coverage_prediction_count: int = 0
     game_lines: list[TradeDeskGameLineRead] = Field(default_factory=list)
     player_props: list[TradeDeskPlayerPropRead] = Field(default_factory=list)
 

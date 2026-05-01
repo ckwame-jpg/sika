@@ -5044,6 +5044,16 @@
       },
       "TradeDeskEventRead": {
         "properties": {
+          "candidate_market_count": {
+            "default": 0,
+            "title": "Candidate Market Count",
+            "type": "integer"
+          },
+          "coverage_prediction_count": {
+            "default": 0,
+            "title": "Coverage Prediction Count",
+            "type": "integer"
+          },
           "event_id": {
             "title": "Event Id",
             "type": "integer"
@@ -5069,6 +5079,11 @@
             },
             "title": "Player Props",
             "type": "array"
+          },
+          "scored_market_count": {
+            "default": 0,
+            "title": "Scored Market Count",
+            "type": "integer"
           },
           "sport_key": {
             "title": "Sport Key",

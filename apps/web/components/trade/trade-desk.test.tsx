@@ -208,4 +208,43 @@ describe("TradeDesk", () => {
     expect(screen.getByText("Scored markets")).toBeInTheDocument();
     expect(screen.getAllByText("18").length).toBeGreaterThan(0);
   });
+
+  it("keeps coverage-only events visible without treating them as bets", async () => {
+    const user = userEvent.setup();
+    mockFetchTradeDesk.mockResolvedValue({
+      ...tradeDeskFixture,
+      events: [
+        {
+          event_id: 22,
+          event_name: "Boston Celtics at Philadelphia 76ers",
+          event_status: "scheduled",
+          starts_at: "2026-04-08T00:00:00Z",
+          sport_key: "NBA",
+          candidate_market_count: 4,
+          scored_market_count: 4,
+          coverage_prediction_count: 4,
+          game_lines: [],
+          player_props: [],
+        },
+      ],
+      event_count: 1,
+      candidate_market_count: 4,
+      scored_market_count: 4,
+      recommendation_count: 0,
+      coverage_prediction_count: 4,
+    });
+
+    renderWithProviders(<TradeDesk sport="NBA" />);
+
+    const eventToggle = await screen.findByRole("button", { name: /boston celtics at philadelphia 76ers/i });
+    expect(eventToggle).toHaveTextContent("0 picks");
+    expect(eventToggle).toHaveTextContent("4 coverage");
+
+    await user.click(eventToggle);
+
+    expect(screen.getByText("Coverage")).toBeInTheDocument();
+    expect(screen.getByText(/No bet cleared bet filters/)).toBeInTheDocument();
+    expect(screen.queryByText("Game Lines")).not.toBeInTheDocument();
+    expect(screen.queryByText("Player Props")).not.toBeInTheDocument();
+  });
 });

@@ -220,9 +220,6 @@ export function ParlayPredictionsSection({
         <div className="cosmos-panel-head">
           <div className="cosmos-panel-head-text">
             <h2 className="cosmos-panel-title">Parlay Ledger</h2>
-            <p className="cosmos-panel-desc">
-              Stored parlay predictions and settlement outcomes for NBA, MLB, and mixed combinations.
-            </p>
           </div>
         </div>
         <div className="cosmos-panel-body flush">

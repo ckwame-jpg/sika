@@ -165,6 +165,85 @@ def test_build_trade_desk_clamps_rather_than_drops_non_monotonic_stat_group(db_s
         assert probs[i] <= probs[i - 1]
 
 
+def test_build_trade_desk_includes_coverage_only_current_events(db_session):
+    run = Run(kind="refresh", status="running")
+    event = Event(
+        external_id="coverage-only-event",
+        sport_key="NBA",
+        name="Boston Celtics at Philadelphia 76ers",
+        status="scheduled",
+        starts_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([run, event])
+    db_session.flush()
+    market = Market(
+        ticker="KXNBAPTS-COVERAGE-ONLY",
+        sport_key="NBA",
+        event_id=event.id,
+        title="Jayson Tatum: 20+ points?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_market_kind": "player_prop",
+            "copilot_stat_key": "points",
+            "copilot_threshold": 20.0,
+            "copilot_direction": "over",
+            "copilot_subject_name": "Jayson Tatum",
+            "copilot_subject_team": "BOS",
+        },
+    )
+    db_session.add(market)
+    db_session.flush()
+    db_session.add(
+        Prediction(
+            run_id=run.id,
+            event_id=event.id,
+            market_id=market.id,
+            ticker=market.ticker,
+            sport_key="NBA",
+            event_name=event.name,
+            market_title=market.title,
+            market_family="player_prop",
+            market_kind="player_prop",
+            stat_key="points",
+            threshold=20.0,
+            subject_name="Jayson Tatum",
+            subject_team="BOS",
+            capture_scope="coverage",
+            side="yes",
+            action="buy",
+            suggested_price=0.52,
+            fair_yes_price=0.54,
+            fair_no_price=0.46,
+            edge=0.02,
+            confidence=0.65,
+            rationale="Coverage prediction for current slate.",
+            scoring_diagnostics={"current_watchlist_market": True},
+            settlement_status="pending",
+            prediction_outcome="pending",
+        )
+    )
+    db_session.commit()
+
+    response = build_trade_desk_response(db_session, sport="NBA", source_run_id=run.id)
+
+    assert len(response.events) == 1
+    trade_event = response.events[0]
+    assert trade_event.event_name == "Boston Celtics at Philadelphia 76ers"
+    assert trade_event.game_lines == []
+    assert trade_event.player_props == []
+    assert trade_event.candidate_market_count == 1
+    assert trade_event.scored_market_count == 1
+    assert trade_event.coverage_prediction_count == 1
+    assert response.freshness_status == "empty"
+    assert response.coverage_prediction_count == 1
+
+    live_response = build_trade_desk_response(db_session, sport="NBA")
+
+    assert live_response.freshness_status == "empty"
+    assert live_response.coverage_prediction_count == 1
+
+
 def test_load_trade_desk_snapshot_returns_stale_payload_with_flag_when_events_are_stale(db_session):
     """Regression: a snapshot whose events have aged past the current-slate
     window must still be served, with ``freshness_status="stale"``. Previously

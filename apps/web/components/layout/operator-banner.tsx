@@ -8,10 +8,11 @@ export function OperatorBanner() {
 
   if (!banner) return null;
 
-  const className =
+  const baseClass =
     banner.tone === "warning"
       ? "topbar-chip chip-operator"
       : "topbar-chip chip-product";
+  const className = banner.active ? `${baseClass} chip-refreshing` : baseClass;
 
   return (
     <span

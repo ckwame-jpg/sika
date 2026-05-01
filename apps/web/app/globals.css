@@ -31,7 +31,7 @@
 
   /* Fonts */
   --font-sans: var(--font-geist-sans), system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), monospace;
+  --font-mono: var(--font-geist-sans), system-ui, sans-serif;
 
   /* Border radius */
   --radius-sm: 4px;
@@ -108,12 +108,12 @@
   --cosmos-violet: hsl(262 60% 48%);
   --cosmos-cyan: hsl(190 80% 50%);
 
-  --sport-nba: hsl(25 95% 53%);
-  --sport-nfl: hsl(218 75% 45%);
-  --sport-mlb: hsl(0 75% 50%);
-  --sport-soccer: hsl(142 71% 38%);
-  --sport-tennis: hsl(78 80% 42%);
-  --sport-ufc: hsl(0 90% 52%);
+  --sport-nba: hsl(248 80% 62%);
+  --sport-nfl: hsl(218 75% 50%);
+  --sport-mlb: hsl(285 70% 60%);
+  --sport-soccer: hsl(168 60% 42%);
+  --sport-tennis: hsl(195 75% 50%);
+  --sport-ufc: hsl(305 70% 58%);
 
   /* Cosmos feature-surface tokens (shared by light/dark feature cards) */
   --color-cosmos-text-bright: hsl(258 100% 96%);
@@ -293,12 +293,12 @@
   --cosmos-violet: hsl(262 60% 58%);
   --cosmos-cyan: hsl(190 80% 60%);
 
-  --sport-nba: hsl(25 95% 58%);
-  --sport-nfl: hsl(210 80% 62%);
-  --sport-mlb: hsl(0 80% 62%);
-  --sport-soccer: hsl(142 65% 50%);
-  --sport-tennis: hsl(78 75% 55%);
-  --sport-ufc: hsl(0 90% 60%);
+  --sport-nba: hsl(248 85% 70%);
+  --sport-nfl: hsl(218 80% 65%);
+  --sport-mlb: hsl(285 75% 70%);
+  --sport-soccer: hsl(168 65% 55%);
+  --sport-tennis: hsl(195 80% 62%);
+  --sport-ufc: hsl(305 75% 68%);
 }
 
 @layer base {
@@ -504,7 +504,7 @@
 
   /* KPI value — big tabular number */
   .cosmos-kpi-value {
-    font-family: var(--font-geist-mono), ui-monospace, monospace;
+    font-family: var(--font-geist-sans), system-ui, sans-serif;
     font-size: 1.5rem;
     font-weight: 600;
     letter-spacing: -0.01em;
@@ -664,7 +664,7 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--color-cosmos-text-muted);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 .th-title {
   font-size: 26px;
@@ -704,10 +704,10 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--color-cosmos-text-muted);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 .th-chip-value {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -755,9 +755,12 @@
 .trade-kpi {
   position: relative;
   overflow: hidden;
-  border: 1px solid var(--color-cosmos-border-soft);
+  border: 1px solid var(--color-cosmos-violet-edge);
   border-radius: var(--radius);
-  background: var(--color-cosmos-surface-dim);
+  background:
+    radial-gradient(120% 80% at 10% 0%, var(--color-cosmos-violet-hero-peak), transparent 60%),
+    radial-gradient(100% 70% at 90% 100%, var(--color-cosmos-cyan-edge), transparent 60%),
+    var(--color-cosmos-hero-ink);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   padding: 12px 14px;
@@ -769,7 +772,7 @@
   color: var(--color-cosmos-text-muted);
 }
 .trade-kpi-value {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 22px;
   font-weight: 600;
   margin-top: 4px;
@@ -784,7 +787,7 @@
   font-size: 11px;
   color: var(--color-cosmos-text-muted);
   margin-top: 2px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 .trade-kpi-orb {
   position: absolute;
@@ -891,7 +894,7 @@
 }
 .event-card-summary {
   flex: 0 0 auto;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 11px;
   color: var(--color-cosmos-text-muted);
   white-space: nowrap;
@@ -899,7 +902,7 @@
 .event-card-when {
   font-size: 11.5px;
   color: var(--muted-foreground);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   margin-left: auto;
 }
 .event-card-markets {
@@ -929,11 +932,11 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--color-cosmos-text-muted);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 .event-card-tile-value {
   margin-top: 4px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 14px;
   font-weight: 600;
   color: var(--color-cosmos-text-bright);
@@ -942,7 +945,7 @@
 .event-card-tile-value.live { color: var(--color-cosmos-outcome-won-fg); }
 .event-card-tile-sub {
   margin-top: 2px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 11px;
   color: var(--color-cosmos-text-muted);
 }
@@ -951,7 +954,7 @@
   text-align: center;
   font-size: 13px;
   color: var(--color-cosmos-text-muted);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   border: 1px dashed var(--color-cosmos-border-soft);
   border-radius: 12px;
   background: var(--color-cosmos-surface-dim);
@@ -1001,7 +1004,7 @@
 }
 .archived-slate-summary,
 .archived-slate-kpis {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 11px;
   color: var(--color-cosmos-text-muted);
 }
@@ -1032,7 +1035,7 @@
   gap: 6px;
   padding: 3px 8px;
   border-radius: 999px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 10.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1070,7 +1073,7 @@
   background: var(--muted);
   border: 1px solid var(--border);
   font-size: 10.5px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   color: var(--muted-foreground);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1103,7 +1106,7 @@
   color: var(--muted-foreground);
 }
 .market-section-head .count {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 11px;
   color: var(--muted-foreground);
 }
@@ -1145,7 +1148,7 @@
   margin-top: 2px;
 }
 .line-row .line-row-price {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 18px;
   font-weight: 600;
   color: var(--color-cosmos-text-bright);
@@ -1154,7 +1157,7 @@
   font-variant-numeric: tabular-nums;
 }
 .line-row .line-row-prob {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 12px;
   font-weight: 500;
   color: var(--muted-foreground);
@@ -1163,7 +1166,7 @@
   font-variant-numeric: tabular-nums;
 }
 .line-row .line-row-edge {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 14px;
   font-weight: 600;
   text-align: right;
@@ -1443,7 +1446,7 @@
 .trade-ticket .ticket-meta {
   font-size: 11px;
   color: var(--color-cosmos-text-muted);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 .trade-ticket .ticket-pair {
   display: grid;
@@ -1463,7 +1466,7 @@
   color: var(--color-cosmos-text-muted);
 }
 .trade-ticket .ticket-stat-value {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 16px;
   font-weight: 600;
   margin-top: 4px;
@@ -1592,7 +1595,7 @@
 .cosmos-toolbar-meta {
   font-size: 11.5px;
   color: var(--color-cosmos-text-muted);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
 /* ── Cosmos table wrap ── */
@@ -1702,7 +1705,7 @@
 }
 .pred-card-time {
   font-size: 10.5px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   color: var(--color-cosmos-text-muted);
   white-space: nowrap;
 }
@@ -1719,7 +1722,7 @@
 }
 .pred-card-stat-value {
   margin-top: 2px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 13px;
   color: var(--color-cosmos-text-bright);
 }
@@ -1808,7 +1811,7 @@
   color: var(--muted-foreground);
 }
 .stats-header-eyebrow .path {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   letter-spacing: 0;
   text-transform: none;
   color: var(--muted-foreground);
@@ -2004,7 +2007,7 @@
   color: var(--muted-foreground);
 }
 .stats-result-source {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 11px;
   color: var(--muted-foreground);
   padding: 4px 8px;
@@ -2037,7 +2040,7 @@
 }
 .stats-metric-value {
   margin-top: 2px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 16px;
   color: var(--foreground);
   font-variant-numeric: tabular-nums;
@@ -2088,7 +2091,7 @@
   color: var(--muted-foreground);
 }
 .stats-log-score {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 12px;
   color: var(--foreground);
   font-variant-numeric: tabular-nums;
@@ -2146,7 +2149,7 @@
 .sa-title-row { display: flex; align-items: center; gap: 8px; }
 
 .sa-eyebrow {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.18em;
@@ -2163,7 +2166,7 @@
 }
 
 .sa-endpoint {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 10.5px;
   color: rgba(140, 200, 255, 0.75);
 }
@@ -2192,7 +2195,7 @@
   background-color: hsl(var(--color-cosmos-success-hsl) / 0.08);
   border: 0.625px solid hsl(var(--color-cosmos-success-hsl) / 0.25);
   border-radius: 999px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.12em;
@@ -2288,7 +2291,7 @@
   background-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.12);
   border: 0.625px solid hsl(var(--color-cosmos-violet-500-hsl) / 0.22);
   border-radius: 5px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 10px;
   color: rgba(200, 190, 240, 0.75);
   flex: 0 0 auto;
@@ -2412,7 +2415,7 @@
 .sa-result-bar:nth-child(3) { width: 60%; }
 .sa-result-scan {
   margin-top: 10px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 11.5px;
   color: var(--muted-foreground);
 }
@@ -2435,7 +2438,7 @@
 }
 
 .sa-answer-eyebrow {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.18em;
@@ -2458,7 +2461,7 @@
   background-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.08);
   border: 0.625px solid hsl(var(--color-cosmos-violet-500-hsl) / 0.20);
   border-radius: 999px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: 0.1em;
@@ -2481,14 +2484,37 @@
 }
 
 .sa-stat {
+  display: block;
+  width: 100%;
+  text-align: left;
   padding: 10px 12px;
   background-color: hsl(var(--color-cosmos-ink-700-hsl) / 0.55);
   border: 0.625px solid hsl(var(--color-cosmos-violet-500-hsl) / 0.12);
   border-radius: 9px;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, transform 0.05s;
+  font: inherit;
+  color: inherit;
+}
+.sa-stat:hover:not(:disabled):not(.is-active) {
+  border-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.35);
+  background-color: hsl(var(--color-cosmos-ink-700-hsl) / 0.75);
+}
+.sa-stat:active:not(:disabled) {
+  transform: scale(0.99);
+}
+.sa-stat.is-active {
+  border-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.55);
+  background-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.18);
+  box-shadow: 0 0 12px hsl(var(--color-cosmos-violet-500-hsl) / 0.25) inset;
+}
+.sa-stat.is-static,
+.sa-stat:disabled {
+  cursor: default;
 }
 
 .sa-stat-l {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2497,7 +2523,7 @@
 
 .sa-stat-v {
   margin-top: 4px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 18px;
   font-weight: 600;
   color: hsl(var(--color-cosmos-violet-50-hsl) / 0.98);
@@ -2505,7 +2531,7 @@
 
 .sa-stat-s {
   margin-top: 3px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 11px;
   color: hsl(var(--color-cosmos-violet-soft-hsl) / 0.60);
 }
@@ -2527,7 +2553,7 @@
 }
 
 .sa-answer-chart-meta {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   color: var(--muted-foreground);
 }
 
@@ -2538,7 +2564,7 @@
 }
 
 .sa-answer-coverage {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 11px;
   color: hsl(var(--color-cosmos-violet-soft-hsl) / 0.55);
 }
@@ -2559,7 +2585,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 11px;
   color: rgba(200, 192, 230, 0.78);
 }
@@ -2570,7 +2596,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 12px;
   font-weight: 600;
 }
@@ -2587,7 +2613,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 10.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2617,7 +2643,7 @@
 .orbit-hint {
   position: fixed; right: 20px; bottom: 20px; z-index: 45;
   padding: 5px 10px;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 10.5px;
   color: var(--muted-foreground);
   background: hsl(var(--color-cosmos-ink-800-hsl) / 0.75);
@@ -2894,7 +2920,7 @@
 }
 .sync-sub {
   font-size: 10.5px;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-family: var(--font-sans, system-ui, sans-serif);
   color: var(--muted-foreground);
 }
 .sync-refresh {
@@ -2925,7 +2951,7 @@
   align-items: center;
   gap: 16px;
   padding: 12px 20px;
-  background: hsl(var(--color-cosmos-ink-800-hsl) / 0.55);
+  background: hsl(var(--color-cosmos-ink-800-hsl) / 0.92);
   backdrop-filter: blur(14px) saturate(1.1);
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
@@ -3018,7 +3044,7 @@
   gap: 6px;
   padding: 4px 10px;
   border-radius: 999px;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 11px;
   border: 1px solid var(--border);
   background: var(--muted);
@@ -3041,12 +3067,35 @@
   animation: pulse 1.6s ease-in-out infinite;
 }
 .topbar-chip.chip-utc {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-family: var(--font-sans, system-ui, sans-serif);
 }
 
 @keyframes pulse {
   0% { transform: scale(0.9); opacity: 1; }
   100% { transform: scale(1.8); opacity: 0; }
+}
+
+.topbar-chip.chip-refreshing {
+  color: hsl(var(--color-cosmos-violet-300-hsl));
+  border-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.55);
+  background: hsl(var(--color-cosmos-violet-500-hsl) / 0.18);
+  animation: chip-refreshing-flash 1.4s ease-in-out infinite;
+}
+.topbar-chip.chip-refreshing .dot {
+  background: hsl(var(--color-cosmos-violet-300-hsl));
+  box-shadow: 0 0 8px hsl(var(--color-cosmos-violet-300-hsl) / 0.7);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes chip-refreshing-flash {
+  0%, 100% {
+    box-shadow: 0 0 0 0 hsl(var(--color-cosmos-violet-500-hsl) / 0);
+    background: hsl(var(--color-cosmos-violet-500-hsl) / 0.12);
+  }
+  50% {
+    box-shadow: 0 0 14px 2px hsl(var(--color-cosmos-violet-500-hsl) / 0.45);
+    background: hsl(var(--color-cosmos-violet-500-hsl) / 0.28);
+  }
 }
 
 /* ---------- Reduced motion ---------- */
@@ -3060,7 +3109,9 @@
   .sync-orb::after,
   .sync-refresh.spin svg,
   .crumb-orb::before,
-  .topbar-chip.chip-live .dot {
+  .topbar-chip.chip-live .dot,
+  .topbar-chip.chip-refreshing,
+  .topbar-chip.chip-refreshing .dot {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;

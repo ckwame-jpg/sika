@@ -88,7 +88,6 @@ export function RunsDesk() {
         <div className="cosmos-panel-head">
           <div className="cosmos-panel-head-text">
             <h2 className="cosmos-panel-title">Recent Runs</h2>
-            <p className="cosmos-panel-desc">Refresh history, diagnostics, and emitted recommendations</p>
           </div>
         </div>
         <div className="cosmos-panel-body min-h-0 pb-0">
@@ -167,9 +166,11 @@ export function RunsDesk() {
             <h2 className="cosmos-panel-title">
               {detail ? `${runKindLabel(detail.kind)} #${detail.id}` : "Run Detail"}
             </h2>
-            <p className="cosmos-panel-desc">
-              {detail ? `${fmtDatetime(detail.started_at)} · ${detail.records_processed} processed` : "Select a run to inspect details"}
-            </p>
+            {detail && (
+              <p className="cosmos-panel-desc">
+                {fmtDatetime(detail.started_at)} · {detail.records_processed} processed
+              </p>
+            )}
           </div>
         </div>
         <div className="cosmos-panel-body min-h-0">

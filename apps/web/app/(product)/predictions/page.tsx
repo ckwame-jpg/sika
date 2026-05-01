@@ -7,10 +7,7 @@ import { PredictionsDesk } from "@/components/predictions/predictions-desk";
 export default function PredictionsPage() {
   return (
     <>
-      <Header
-        title="Predictions"
-        description="Model prediction ledger with settlement tracking and accuracy stats"
-      />
+      <Header title="Predictions" />
       <main className="flex-1 overflow-y-auto p-4">
         <Suspense>
           <PredictionsDesk />

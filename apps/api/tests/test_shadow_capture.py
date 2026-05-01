@@ -228,6 +228,7 @@ def test_shadow_backfill_captures_uncaptured_historical_predictions_and_parlays(
         captured_at=now - timedelta(days=1),
         capture_scope="coverage",
     )
+    # Heuristic-only families (NFL singles) are still excluded by the active_study_only gate.
     _seed_prediction(
         db_session,
         ticker="NFL-HEURISTIC",
@@ -296,9 +297,17 @@ def test_shadow_backfill_captures_uncaptured_historical_predictions_and_parlays(
     single_rows = db_session.scalars(select(ShadowInference).order_by(ShadowInference.id.asc())).all()
     parlay_rows = db_session.scalars(select(ShadowParlayInference).order_by(ShadowParlayInference.id.asc())).all()
 
-    assert shadow_run.records_processed == 2
+    # Coverage-scoped predictions (NBA-COVERAGE, NBA-PARLAY-A, NBA-PARLAY-B) are now first-class
+    # for shadow capture so the active ML study can learn from every scored watchlist market.
+    assert shadow_run.records_processed == 5
     assert shadow_run.details["shadow_capture_scope"] == "backfill"
-    assert {row.ticker for row in single_rows} == {"NBA-COVERED", "NBA-UNCAPTURED"}
+    assert {row.ticker for row in single_rows} == {
+        "NBA-COVERED",
+        "NBA-UNCAPTURED",
+        "NBA-COVERAGE",
+        "NBA-PARLAY-A",
+        "NBA-PARLAY-B",
+    }
     assert all(row.source_prediction_id is not None for row in single_rows)
     assert len(parlay_rows) == 1
     assert parlay_rows[0].source_parlay_prediction_id == parlay.id
@@ -339,35 +348,36 @@ def test_shadow_backfill_skips_legacy_unlinked_duplicates(db_session, monkeypatc
         captured_at=now - timedelta(days=2),
         leg_predictions=[leg_a, leg_b],
     )
-    db_session.add(
-        ShadowInference(
-            run_id=single.run_id,
-            event_id=single.event_id,
-            market_id=single.market_id,
-            ticker=single.ticker,
-            sport_key=single.sport_key,
-            event_name=single.event_name,
-            market_title=single.market_title,
-            market_family=single.market_family,
-            market_kind=single.market_kind,
-            inference_scope="single",
-            recommended_side=single.side,
-            suggested_price=single.suggested_price,
-            fair_yes_price=0.6,
-            fair_no_price=0.4,
-            edge=0.15,
-            confidence=0.6,
-            model_name="nba_singles-model",
-            model_version="v1",
-            calibration_version="cal-v1",
-            feature_set_version="features-v1",
-            model_metadata={"family_key": "nba_singles"},
-            rationale="Legacy shadow",
-            reasons=["shadow"],
-            features={},
-            captured_at=single.captured_at,
+    for source in (single, leg_a, leg_b):
+        db_session.add(
+            ShadowInference(
+                run_id=source.run_id,
+                event_id=source.event_id,
+                market_id=source.market_id,
+                ticker=source.ticker,
+                sport_key=source.sport_key,
+                event_name=source.event_name,
+                market_title=source.market_title,
+                market_family=source.market_family,
+                market_kind=source.market_kind,
+                inference_scope="single",
+                recommended_side=source.side,
+                suggested_price=source.suggested_price,
+                fair_yes_price=0.6,
+                fair_no_price=0.4,
+                edge=0.15,
+                confidence=0.6,
+                model_name="nba_singles-model",
+                model_version="v1",
+                calibration_version="cal-v1",
+                feature_set_version="features-v1",
+                model_metadata={"family_key": "nba_singles"},
+                rationale="Legacy shadow",
+                reasons=["shadow"],
+                features={},
+                captured_at=source.captured_at,
+            )
         )
-    )
     db_session.add(
         ShadowParlayInference(
             run_id=parlay.run_id,
@@ -395,7 +405,7 @@ def test_shadow_backfill_skips_legacy_unlinked_duplicates(db_session, monkeypatc
     db_session.commit()
 
     assert shadow_run.records_processed == 0
-    assert db_session.query(ShadowInference).count() == 1
+    assert db_session.query(ShadowInference).count() == 3
     assert db_session.query(ShadowParlayInference).count() == 1
 
 

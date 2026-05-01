@@ -45,12 +45,7 @@ export function TradeTicket({
         <div className="trade-ticket-empty-orb" aria-hidden>
           <div className="trade-ticket-empty-orb-core" />
         </div>
-        <p className="text-sm text-muted-foreground">
-          Pick a market to chart its course.
-        </p>
-        <p className="mt-1 text-xs italic text-muted-foreground">
-          The sky is quiet — for now.
-        </p>
+        <p className="text-sm text-muted-foreground">Pick a market.</p>
       </div>
     );
   }

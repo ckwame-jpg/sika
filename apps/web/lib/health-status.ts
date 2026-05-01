@@ -210,6 +210,7 @@ export function getOperatorBanner(health?: HealthResponse | null) {
   if (isAnyJobStalled(health)) {
     return {
       tone: "warning" as const,
+      active: false,
       message: "A refresh job appears stalled (running over 30 minutes). See Runs for details.",
     };
   }
@@ -220,12 +221,14 @@ export function getOperatorBanner(health?: HealthResponse | null) {
   if (health.refresh_status === "queued" && !health.scheduler_enabled) {
     return {
       tone: "warning" as const,
+      active: false,
       message: "Refresh queued, but the scheduler worker is not running. See Runs for details.",
     };
   }
   if (health.refresh_status === "queued" || health.refresh_status === "running") {
     return {
       tone: "neutral" as const,
+      active: health.refresh_status === "running",
       message:
         activeRefreshScope === "current_slate"
           ? health.refresh_status === "queued"
@@ -239,6 +242,7 @@ export function getOperatorBanner(health?: HealthResponse | null) {
   if (health.refresh_status === "failed") {
     return {
       tone: "warning" as const,
+      active: false,
       message: refreshError
         ? `Refresh failed. ${refreshError} See Runs for details.`
         : "Refresh failed. See Runs for details.",
@@ -247,12 +251,14 @@ export function getOperatorBanner(health?: HealthResponse | null) {
   if (health.prop_refresh_status === "queued" || health.prop_refresh_status === "running") {
     return {
       tone: "neutral" as const,
+      active: health.prop_refresh_status === "running",
       message: "Maintenance refresh running in background.",
     };
   }
   if (health.prop_refresh_status === "failed") {
     return {
       tone: "warning" as const,
+      active: false,
       message: propRefreshError
         ? `Maintenance refresh failed. ${propRefreshError} See Runs for details.`
         : "Maintenance refresh failed. See Runs for details.",
