@@ -262,13 +262,6 @@
   --color-cosmos-accent-bright: var(--color-cosmos-violet-300);
   --color-cosmos-satellite: var(--color-cosmos-cyan-300);
 
-  /* Bloom alphas — whisper-faint corner glow, almost imperceptible. */
-  --bloom-primary-hsl: 262 60% 40%;
-  --bloom-primary-alpha: 0.022;
-  --bloom-secondary-hsl: 190 75% 45%;
-  --bloom-secondary-alpha: 0.014;
-  --bloom-central-hsl: 272 70% 60%;
-  --bloom-central-alpha: 0.005;
 }
 
 /* ── Dark mode CSS variables (product default) ── */
@@ -323,15 +316,9 @@
     text-transform: lowercase;
   }
 
-  /* Cosmos bloom backdrop — only active in dark mode.
-     Sits UNDER the starfield canvas; starfield handles stars + nebulae.
-     Phase 3 item #3: primary/secondary alphas bumped to match mockup saturation. */
+  /* Cosmos backdrop — pure void. Stars and galaxies live entirely in the canvas overlay. */
   .dark body {
-    background:
-      radial-gradient(1200px 900px at 72% 8%, hsl(var(--bloom-primary-hsl) / var(--bloom-primary-alpha)), transparent 55%),
-      radial-gradient(1000px 900px at 15% 92%, hsl(var(--bloom-secondary-hsl) / var(--bloom-secondary-alpha)), transparent 55%),
-      radial-gradient(800px 600px at 50% 40%, hsl(var(--bloom-central-hsl) / var(--bloom-central-alpha)), transparent 60%),
-      hsl(var(--color-cosmos-ink-900-hsl));
+    background: hsl(var(--color-cosmos-ink-900-hsl));
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
