@@ -239,11 +239,11 @@
   --color-cosmos-surface-hsl: 222 42% 9%;       /* panel surface base */
   --color-cosmos-surface-deep-hsl: 222 45% 6%;  /* panel surface — deeper */
 
-  /* Ink / neutrals */
-  --color-cosmos-ink-900-hsl: 250 55% 4%;       /* body base */
-  --color-cosmos-ink-850-hsl: 252 57% 5%;       /* rgb(8,6,22) — ink between 900 and 800 */
-  --color-cosmos-ink-800-hsl: 248 67% 2%;       /* rgb(3,2,10) deep ink base */
-  --color-cosmos-ink-700-hsl: 252 50% 8%;       /* rgb(14,10,30) elevated ink */
+  /* Ink / neutrals — true-black floor for a deep-space feel. */
+  --color-cosmos-ink-900-hsl: 0 0% 0%;          /* body base — pure black */
+  --color-cosmos-ink-850-hsl: 240 30% 1%;       /* ink between 900 and 800 */
+  --color-cosmos-ink-800-hsl: 240 50% 0.5%;     /* deep ink base */
+  --color-cosmos-ink-700-hsl: 245 35% 4%;       /* elevated ink */
 
   /* Semantic status */
   --color-cosmos-success-hsl: 154 67% 59%;      /* rgb(80,220,160) success / positive */
@@ -262,18 +262,11 @@
   --color-cosmos-accent-bright: var(--color-cosmos-violet-300);
   --color-cosmos-satellite: var(--color-cosmos-cyan-300);
 
-  /* Bloom alphas — Phase 3 tuned. One-line tuning in Phase 5+. */
-  --bloom-primary-hsl: 262 60% 40%;
-  --bloom-primary-alpha: 0.32;
-  --bloom-secondary-hsl: 190 75% 45%;
-  --bloom-secondary-alpha: 0.20;
-  --bloom-central-hsl: 272 70% 60%;
-  --bloom-central-alpha: 0.06;
 }
 
 /* ── Dark mode CSS variables (product default) ── */
 .dark {
-  --background: hsl(222 47% 4%);
+  --background: hsl(0 0% 0%);
   --surface: hsl(220 42% 8%);
   --surface-hover: hsl(220 40% 12%);
   --border: hsl(220 28% 16%);
@@ -323,15 +316,9 @@
     text-transform: lowercase;
   }
 
-  /* Cosmos bloom backdrop — only active in dark mode.
-     Sits UNDER the starfield canvas; starfield handles stars + nebulae.
-     Phase 3 item #3: primary/secondary alphas bumped to match mockup saturation. */
+  /* Cosmos backdrop — pure void. Stars and galaxies live entirely in the canvas overlay. */
   .dark body {
-    background:
-      radial-gradient(1200px 900px at 72% 8%, hsl(var(--bloom-primary-hsl) / var(--bloom-primary-alpha)), transparent 55%),
-      radial-gradient(1000px 900px at 15% 92%, hsl(var(--bloom-secondary-hsl) / var(--bloom-secondary-alpha)), transparent 55%),
-      radial-gradient(800px 600px at 50% 40%, hsl(var(--bloom-central-hsl) / var(--bloom-central-alpha)), transparent 60%),
-      hsl(var(--color-cosmos-ink-900-hsl));
+    background: hsl(var(--color-cosmos-ink-900-hsl));
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }

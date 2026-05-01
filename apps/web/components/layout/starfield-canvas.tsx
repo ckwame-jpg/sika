@@ -25,21 +25,87 @@ interface Star {
   tint: string;
 }
 
-interface Nebula {
+interface GalaxyDot {
+  x: number;
+  y: number;
+  r: number;
+  brightness: number;
+  tint: string;
+}
+
+interface Galaxy {
   cx: number;
   cy: number;
-  r: number;
-  tint: string;
+  scale: number;
+  tilt: number;
+  aspect: number;
   alpha: number;
-  sp: number;
-  ph: number;
   depth: number;
+  coreTint: string;
+  haloTint: string;
+  dots: GalaxyDot[];
+}
+
+interface GalaxySpec {
+  cxR: number;
+  cyR: number;
+  scaleR: number;
+  tilt: number;
+  aspect: number;
+  alpha: number;
+  depth: number;
+  coreTint: string;
+  haloTint: string;
+  armTint: string;
+  armCount: number;
+  twist: number;
+  dotsPerArm: number;
 }
 
 declare global {
   interface Window {
     __sikaSky?: SkyState;
   }
+}
+
+function buildSpiralDots(
+  scale: number,
+  armCount: number,
+  twist: number,
+  dotsPerArm: number,
+  armTint: string,
+  dpr: number,
+): GalaxyDot[] {
+  const dots: GalaxyDot[] = [];
+  const turnRange = Math.PI * 3.4;
+  for (let arm = 0; arm < armCount; arm++) {
+    const armOffset = (arm / armCount) * Math.PI * 2;
+    for (let i = 0; i < dotsPerArm; i++) {
+      const t = i / dotsPerArm;
+      const theta = t * turnRange + armOffset;
+      const radius = scale * 0.12 * Math.exp(twist * theta);
+      if (radius > scale) break;
+      const armWidth = scale * 0.06 * (0.4 + t * 0.8);
+      const scatter = (Math.random() - 0.5) * armWidth * 2;
+      const tangentScatter = (Math.random() - 0.5) * armWidth * 0.8;
+      const cosT = Math.cos(theta);
+      const sinT = Math.sin(theta);
+      const px = (radius + tangentScatter) * cosT + scatter * -sinT;
+      const py = (radius + tangentScatter) * sinT + scatter * cosT;
+      const dotR = (Math.random() * 0.9 + 0.35) * dpr;
+      const radial = radius / scale;
+      const brightness = (1 - radial * 0.55) * (0.55 + Math.random() * 0.45);
+      const isHotStar = Math.random() < 0.18;
+      dots.push({
+        x: px,
+        y: py,
+        r: dotR,
+        brightness,
+        tint: isHotStar ? "230,230,255" : armTint,
+      });
+    }
+  }
+  return dots;
 }
 
 export function StarfieldCanvas() {
@@ -64,27 +130,73 @@ export function StarfieldCanvas() {
     let w = 0;
     let h = 0;
     let stars: Star[] = [];
-    let nebulae: Nebula[] = [];
+    let galaxies: Galaxy[] = [];
+
+    const galaxySpecs: GalaxySpec[] = [
+      {
+        cxR: 0.13,
+        cyR: 0.24,
+        scaleR: 0.115,
+        tilt: -0.55,
+        aspect: 0.45,
+        alpha: 0.78,
+        depth: 0.55,
+        coreTint: "255,238,205",
+        haloTint: "190,165,225",
+        armTint: "180,200,245",
+        armCount: 2,
+        twist: 0.22,
+        dotsPerArm: 240,
+      },
+      {
+        cxR: 0.88,
+        cyR: 0.78,
+        scaleR: 0.095,
+        tilt: 0.95,
+        aspect: 0.32,
+        alpha: 0.65,
+        depth: 0.5,
+        coreTint: "255,232,200",
+        haloTint: "200,160,120",
+        armTint: "200,210,240",
+        armCount: 3,
+        twist: 0.18,
+        dotsPerArm: 180,
+      },
+      {
+        cxR: 0.78,
+        cyR: 0.18,
+        scaleR: 0.062,
+        tilt: -1.4,
+        aspect: 0.6,
+        alpha: 0.55,
+        depth: 0.65,
+        coreTint: "245,235,210",
+        haloTint: "160,150,210",
+        armTint: "190,205,240",
+        armCount: 2,
+        twist: 0.26,
+        dotsPerArm: 150,
+      },
+    ];
 
     function resize() {
       w = canvas!.width = window.innerWidth * dpr;
       h = canvas!.height = window.innerHeight * dpr;
       canvas!.style.width = window.innerWidth + "px";
       canvas!.style.height = window.innerHeight + "px";
-      // Density: ~1.5x prior tuning (4500 -> 3000) — closes gap to mockup star count.
-      const count = Math.floor((window.innerWidth * window.innerHeight) / 3000);
+
+      const count = Math.floor((window.innerWidth * window.innerHeight) / 700);
       stars = Array.from({ length: count }, () => ({
         x0: Math.random() * w,
         y0: Math.random() * h,
-        r: Math.random() * 1.3 * dpr + 0.25 * dpr,
-        // Brightness: ~1.3x prior distribution, clipped at 1.0. ~27% of stars
-        // saturate -> visible "anchor" stars per mockup reference.
+        r: Math.random() * 1.3 * dpr + 0.2 * dpr,
         a: Math.min(1, Math.random() * 0.975 + 0.286),
         ph: Math.random() * Math.PI * 2,
         sp: 0.0006 + Math.random() * 0.0018,
         drift: 0.3 + Math.random() * 1.4,
         depth: 0.2 + Math.random() * 1.0,
-        bloom: Math.random() < 0.28,
+        bloom: Math.random() < 0.18,
         tint:
           Math.random() < 0.16
             ? "180,140,255"
@@ -92,12 +204,23 @@ export function StarfieldCanvas() {
               ? "140,220,255"
               : "230,230,255",
       }));
-      nebulae = [
-        { cx: w * 0.72, cy: h * 0.18, r: Math.max(w, h) * 0.40, tint: "120,70,220", alpha: 0.28, sp: 0.00003, ph: 0.3, depth: 0.3 },
-        { cx: w * 0.18, cy: h * 0.82, r: Math.max(w, h) * 0.36, tint: "60,160,220", alpha: 0.16, sp: 0.00002, ph: 1.7, depth: 0.25 },
-        { cx: w * 0.55, cy: h * 0.55, r: Math.max(w, h) * 0.30, tint: "180,120,255", alpha: 0.10, sp: 0.00004, ph: 2.2, depth: 0.4 },
-        { cx: w * 0.88, cy: h * 0.62, r: Math.max(w, h) * 0.22, tint: "100,200,255", alpha: 0.08, sp: 0.00003, ph: 3.7, depth: 0.5 },
-      ];
+
+      const longSide = Math.max(w, h);
+      galaxies = galaxySpecs.map((spec) => {
+        const scale = longSide * spec.scaleR;
+        return {
+          cx: w * spec.cxR,
+          cy: h * spec.cyR,
+          scale,
+          tilt: spec.tilt,
+          aspect: spec.aspect,
+          alpha: spec.alpha,
+          depth: spec.depth,
+          coreTint: spec.coreTint,
+          haloTint: spec.haloTint,
+          dots: buildSpiralDots(scale, spec.armCount, spec.twist, spec.dotsPerArm, spec.armTint, dpr),
+        };
+      });
     }
 
     let raf = 0;
@@ -109,19 +232,54 @@ export function StarfieldCanvas() {
       const py = (sky.oy + sky.ty) * dpr;
 
       ctx!.clearRect(0, 0, w, h);
+
       ctx!.globalCompositeOperation = "screen";
-      for (const n of nebulae) {
-        const pulse = 0.85 + 0.15 * Math.sin(n.ph + dt * n.sp * 20);
-        const cx = n.cx + px * n.depth + Math.sin(dt * n.sp + n.ph) * 40 * dpr;
-        const cy = n.cy + py * n.depth + Math.cos(dt * n.sp * 1.3 + n.ph) * 30 * dpr;
-        const grad = ctx!.createRadialGradient(cx, cy, 0, cx, cy, n.r * pulse);
-        grad.addColorStop(0, `rgba(${n.tint},${n.alpha})`);
-        grad.addColorStop(0.5, `rgba(${n.tint},${n.alpha * 0.35})`);
-        grad.addColorStop(1, `rgba(${n.tint},0)`);
-        ctx!.fillStyle = grad;
+      for (const g of galaxies) {
+        const cx = g.cx + px * g.depth;
+        const cy = g.cy + py * g.depth;
+        ctx!.save();
+        ctx!.translate(cx, cy);
+        ctx!.rotate(g.tilt);
+        ctx!.scale(1, g.aspect);
+
+        const halo = ctx!.createRadialGradient(0, 0, 0, 0, 0, g.scale);
+        halo.addColorStop(0, `rgba(${g.haloTint},${g.alpha * 0.32})`);
+        halo.addColorStop(0.45, `rgba(${g.haloTint},${g.alpha * 0.10})`);
+        halo.addColorStop(1, `rgba(${g.haloTint},0)`);
+        ctx!.fillStyle = halo;
         ctx!.beginPath();
-        ctx!.arc(cx, cy, n.r * pulse, 0, Math.PI * 2);
+        ctx!.arc(0, 0, g.scale, 0, Math.PI * 2);
         ctx!.fill();
+
+        for (const d of g.dots) {
+          ctx!.globalAlpha = Math.min(1, d.brightness * g.alpha);
+          ctx!.fillStyle = `rgba(${d.tint},1)`;
+          ctx!.beginPath();
+          ctx!.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+          ctx!.fill();
+        }
+        ctx!.globalAlpha = 1;
+
+        const coreSize = g.scale * 0.34;
+        const core = ctx!.createRadialGradient(0, 0, 0, 0, 0, coreSize);
+        core.addColorStop(0, `rgba(${g.coreTint},${Math.min(1, g.alpha * 1.2)})`);
+        core.addColorStop(0.35, `rgba(${g.coreTint},${g.alpha * 0.55})`);
+        core.addColorStop(1, `rgba(${g.coreTint},0)`);
+        ctx!.fillStyle = core;
+        ctx!.beginPath();
+        ctx!.arc(0, 0, coreSize, 0, Math.PI * 2);
+        ctx!.fill();
+
+        const hotSize = g.scale * 0.08;
+        const hot = ctx!.createRadialGradient(0, 0, 0, 0, 0, hotSize);
+        hot.addColorStop(0, `rgba(255,250,235,${Math.min(1, g.alpha * 1.6)})`);
+        hot.addColorStop(1, `rgba(255,250,235,0)`);
+        ctx!.fillStyle = hot;
+        ctx!.beginPath();
+        ctx!.arc(0, 0, hotSize, 0, Math.PI * 2);
+        ctx!.fill();
+
+        ctx!.restore();
       }
       ctx!.globalCompositeOperation = "source-over";
 
