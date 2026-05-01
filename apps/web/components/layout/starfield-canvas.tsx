@@ -136,7 +136,7 @@ export function StarfieldCanvas() {
       {
         cxR: 0.13,
         cyR: 0.24,
-        scaleR: 0.16,
+        scaleR: 0.115,
         tilt: -0.55,
         aspect: 0.45,
         alpha: 0.78,
@@ -151,7 +151,7 @@ export function StarfieldCanvas() {
       {
         cxR: 0.88,
         cyR: 0.78,
-        scaleR: 0.13,
+        scaleR: 0.095,
         tilt: 0.95,
         aspect: 0.32,
         alpha: 0.65,
@@ -166,7 +166,7 @@ export function StarfieldCanvas() {
       {
         cxR: 0.78,
         cyR: 0.18,
-        scaleR: 0.085,
+        scaleR: 0.062,
         tilt: -1.4,
         aspect: 0.6,
         alpha: 0.55,
