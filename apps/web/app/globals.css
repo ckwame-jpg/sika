@@ -239,11 +239,11 @@
   --color-cosmos-surface-hsl: 222 42% 9%;       /* panel surface base */
   --color-cosmos-surface-deep-hsl: 222 45% 6%;  /* panel surface — deeper */
 
-  /* Ink / neutrals */
-  --color-cosmos-ink-900-hsl: 250 55% 4%;       /* body base */
-  --color-cosmos-ink-850-hsl: 252 57% 5%;       /* rgb(8,6,22) — ink between 900 and 800 */
-  --color-cosmos-ink-800-hsl: 248 67% 2%;       /* rgb(3,2,10) deep ink base */
-  --color-cosmos-ink-700-hsl: 252 50% 8%;       /* rgb(14,10,30) elevated ink */
+  /* Ink / neutrals — pushed toward true black for a deeper space feel. */
+  --color-cosmos-ink-900-hsl: 240 30% 1.5%;     /* body base — near-black with faint cool cast */
+  --color-cosmos-ink-850-hsl: 245 35% 2.5%;     /* ink between 900 and 800 */
+  --color-cosmos-ink-800-hsl: 248 50% 1%;       /* deep ink base */
+  --color-cosmos-ink-700-hsl: 250 40% 5%;       /* elevated ink */
 
   /* Semantic status */
   --color-cosmos-success-hsl: 154 67% 59%;      /* rgb(80,220,160) success / positive */
@@ -262,18 +262,18 @@
   --color-cosmos-accent-bright: var(--color-cosmos-violet-300);
   --color-cosmos-satellite: var(--color-cosmos-cyan-300);
 
-  /* Bloom alphas — Phase 3 tuned. One-line tuning in Phase 5+. */
+  /* Bloom alphas — toned down so the void reads more like deep space than a purple wash. */
   --bloom-primary-hsl: 262 60% 40%;
-  --bloom-primary-alpha: 0.32;
+  --bloom-primary-alpha: 0.16;
   --bloom-secondary-hsl: 190 75% 45%;
-  --bloom-secondary-alpha: 0.20;
+  --bloom-secondary-alpha: 0.10;
   --bloom-central-hsl: 272 70% 60%;
-  --bloom-central-alpha: 0.06;
+  --bloom-central-alpha: 0.03;
 }
 
 /* ── Dark mode CSS variables (product default) ── */
 .dark {
-  --background: hsl(222 47% 4%);
+  --background: hsl(240 30% 1.5%);
   --surface: hsl(220 42% 8%);
   --surface-hover: hsl(220 40% 12%);
   --border: hsl(220 28% 16%);

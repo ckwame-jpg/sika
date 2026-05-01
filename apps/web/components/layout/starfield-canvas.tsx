@@ -71,20 +71,17 @@ export function StarfieldCanvas() {
       h = canvas!.height = window.innerHeight * dpr;
       canvas!.style.width = window.innerWidth + "px";
       canvas!.style.height = window.innerHeight + "px";
-      // Density: ~1.5x prior tuning (4500 -> 3000) — closes gap to mockup star count.
-      const count = Math.floor((window.innerWidth * window.innerHeight) / 3000);
+      const count = Math.floor((window.innerWidth * window.innerHeight) / 1600);
       stars = Array.from({ length: count }, () => ({
         x0: Math.random() * w,
         y0: Math.random() * h,
-        r: Math.random() * 1.3 * dpr + 0.25 * dpr,
-        // Brightness: ~1.3x prior distribution, clipped at 1.0. ~27% of stars
-        // saturate -> visible "anchor" stars per mockup reference.
+        r: Math.random() * 1.3 * dpr + 0.22 * dpr,
         a: Math.min(1, Math.random() * 0.975 + 0.286),
         ph: Math.random() * Math.PI * 2,
         sp: 0.0006 + Math.random() * 0.0018,
         drift: 0.3 + Math.random() * 1.4,
         depth: 0.2 + Math.random() * 1.0,
-        bloom: Math.random() < 0.28,
+        bloom: Math.random() < 0.22,
         tint:
           Math.random() < 0.16
             ? "180,140,255"
