@@ -1011,14 +1011,25 @@ def warm_mlb_advanced_for_athletes(
     pitcher_ids: Iterable[str] | None = None,
     client: MlbStatsClient | None = None,
     savant: BaseballSavantClient | None = None,
+    savant_pitcher: BaseballSavantClient | None = None,
+    savant_batter: BaseballSavantClient | None = None,
 ) -> dict[str, int]:
     """Refresh batter + pitcher caches for a list of player IDs.
 
     ``mlb_stats_player_ids`` warms batter sabermetrics + Statcast batter
     caches; ``pitcher_ids`` warms ``mlb_pitcher_advanced_cache`` and
     ``mlb_statcast_pitcher_cache``. Both lists may overlap (a two-way
-    player gets warmed in both halves) — dedup is per-list. Statcast
-    fetches require ``savant`` to be supplied.
+    player gets warmed in both halves) — dedup is per-list.
+
+    Statcast clients are split:
+    - ``savant_pitcher`` triggers per-pitcher Statcast warming.
+    - ``savant_batter`` triggers per-batter Statcast warming.
+    - ``savant`` is a backwards-compat shorthand that fills both when the
+      more specific kwargs are not supplied.
+
+    Codex round 4 note: the cron now passes ``savant_pitcher`` only so
+    growing the prop-subject sidecar list doesn't fan out an O(N) Savant
+    fetch budget on the daily warm tick.
     """
     summary = {
         "mlb_batters_attempted": 0,
@@ -1028,6 +1039,8 @@ def warm_mlb_advanced_for_athletes(
         "mlb_roster_loaded": 0,
     }
     mlb_client = client or MlbStatsClient()
+    pitcher_savant = savant_pitcher or savant
+    batter_savant = savant_batter or savant
 
     roster_result = load_mlb_player_roster(db, season=season, client=mlb_client, allow_network=True)
     summary["mlb_roster_loaded"] = 1 if roster_result.complete else 0
@@ -1046,9 +1059,9 @@ def warm_mlb_advanced_for_athletes(
         )
         if result.complete and result.cache_status in {"hit", "miss"}:
             summary["mlb_batters_succeeded"] += 1
-        if savant is not None:
+        if batter_savant is not None:
             load_mlb_statcast_batter(
-                db, mlb_player_id=player_id, season=season, client=savant, allow_network=True
+                db, mlb_player_id=player_id, season=season, client=batter_savant, allow_network=True
             )
 
     seen_pitchers: set[str] = set()
@@ -1065,9 +1078,9 @@ def warm_mlb_advanced_for_athletes(
         )
         if pitcher_result.complete and pitcher_result.cache_status in {"hit", "miss"}:
             summary["mlb_pitchers_succeeded"] += 1
-        if savant is not None:
+        if pitcher_savant is not None:
             load_mlb_statcast_pitcher(
-                db, mlb_player_id=player_id, season=season, client=savant, allow_network=True
+                db, mlb_player_id=player_id, season=season, client=pitcher_savant, allow_network=True
             )
 
     return summary

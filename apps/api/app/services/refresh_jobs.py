@@ -926,32 +926,47 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     if pid
                 })
 
+                # Codex round 4 #1: the warm cron is invoked on two paths now
+                # — the daily 05:15 cron with no flag, and the late-day
+                # `lineup_refresh` enqueue with pitchers_only=True. The flag
+                # short-circuits batter warming so the late-day tick costs
+                # only the small probable-starter set, not the N-batter
+                # sidecar list.
+                pitchers_only = bool(details.get("pitchers_only"))
                 nba_season = int(details.get("nba_season") or default_season_for_sport("NBA"))
                 mlb_season = int(details.get("mlb_season") or default_season_for_sport("MLB"))
-                nba_summary = warm_nba_advanced_for_athletes(
-                    db, nba_stats_player_ids=nba_player_ids, season=nba_season
-                )
-                # Codex round 3 also flagged that mlb_statcast_pitcher_cache had
-                # no scheduled producer because the warm path never built a
-                # BaseballSavantClient. Hand one in here so pitcher Statcast
-                # rows are populated alongside sabermetrics.
+                if pitchers_only:
+                    nba_summary_dict: dict[str, int] = {}
+                    effective_mlb_player_ids: list[str] = []
+                else:
+                    nba_summary = warm_nba_advanced_for_athletes(
+                        db, nba_stats_player_ids=nba_player_ids, season=nba_season
+                    )
+                    nba_summary_dict = nba_summary.as_dict()
+                    effective_mlb_player_ids = mlb_player_ids
+                # Codex round 4 #2: the cron used to pass a single ``savant``
+                # client which fanned out batter Statcast for every
+                # ``mlb_stats_player_ids`` sidecar, not just probable
+                # starters. Pass ``savant_pitcher`` only so the operational
+                # cost stays bounded by the probable-starter set.
                 mlb_summary = warm_mlb_advanced_for_athletes(
                     db,
-                    mlb_stats_player_ids=mlb_player_ids,
+                    mlb_stats_player_ids=effective_mlb_player_ids,
                     pitcher_ids=merged_pitcher_ids,
                     season=mlb_season,
-                    savant=BaseballSavantClient(),
+                    savant_pitcher=BaseballSavantClient(),
                 )
                 job.details = {
                     **details,
-                    **nba_summary.as_dict(),
+                    **nba_summary_dict,
                     **mlb_summary,
                     "nba_season": nba_season,
                     "mlb_season": mlb_season,
-                    "nba_stats_player_ids_warmed": len(nba_player_ids),
-                    "mlb_stats_player_ids_warmed": len(mlb_player_ids),
+                    "nba_stats_player_ids_warmed": len(nba_player_ids) if not pitchers_only else 0,
+                    "mlb_stats_player_ids_warmed": len(effective_mlb_player_ids),
                     "mlb_probable_pitcher_ids_warmed": len(probable_pitcher_ids),
                     "schedule_probable_fetch_failed": schedule_probable_failed,
+                    "pitchers_only": pitchers_only,
                 }
             elif job.kind == "weather_refresh":
                 # Placeholder: per-event weather is loaded lazily via the resolver
@@ -984,6 +999,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 games_unmatched = 0
                 games_failed = 0
                 schedule_failed = False
+                late_day_pitcher_ids: list[str] = []
                 try:
                     mlb_client = MlbStatsClient()
                     schedule = mlb_client.fetch_schedule(target)
@@ -1026,6 +1042,37 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                                     game_pk,
                                     exc,
                                 )
+                    late_day_pitcher_ids = _extract_probable_pitcher_ids(schedule)
+
+                # Codex round 4 #2: the 05:15 advanced_stats_warm tick can
+                # miss TBD starters / late scratches. ``lineup_refresh``
+                # already has the schedule in hand, so enqueue a
+                # pitchers-only warm pass with the discovered probable IDs.
+                # This is the cheap "second tick" Codex asked for without
+                # adding a new cron.
+                pitcher_warm_enqueued = False
+                if late_day_pitcher_ids:
+                    try:
+                        warm_job, created = enqueue_refresh_job(
+                            db,
+                            kind="advanced_stats_warm",
+                            scope="lineup_refresh_pitchers",
+                            reason=f"lineup_refresh discovered {len(late_day_pitcher_ids)} probable starters",
+                        )
+                        # ``coalesce`` may have returned an existing queued
+                        # job. Either way, refresh the details so the worker
+                        # picks up the latest probable-pitcher set.
+                        warm_job.details = {
+                            **(warm_job.details or {}),
+                            "pitcher_ids": late_day_pitcher_ids,
+                            "pitchers_only": True,
+                        }
+                        db.flush()
+                        pitcher_warm_enqueued = bool(created)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "lineup_refresh pitcher-warm enqueue failed: %s", exc
+                        )
 
                 job.details = {
                     **(job.details or {}),
@@ -1034,6 +1081,8 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     "lineups_failed": games_failed,
                     "target_date": target.isoformat(),
                     "schedule_fetch_failed": schedule_failed,
+                    "pitcher_warm_enqueued": pitcher_warm_enqueued,
+                    "late_day_pitcher_ids_seen": len(late_day_pitcher_ids),
                 }
             elif job.kind == "advanced_stats_audit":
                 # Placeholder reconciliation: counts unmapped athlete IDs.
