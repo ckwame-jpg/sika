@@ -23,7 +23,7 @@ function makeResult(overrides: Partial<StatsQueryRead> = {}): StatsQueryRead {
     summary: {
       stat_line: "28.4 PTS · 7.1 AST · 3.3 3PM",
       metrics: { pts: 28.4, ast: 7.1, fg3m: 3.3 },
-    },
+    } as StatsQueryRead["summary"],
     metric_labels: { pts: "PTS", ast: "AST", fg3m: "3PM" },
     explanation: "Hot stretch; line 25.5 hit 7-of-10.",
     coverage_note: "Coverage: NBA logs through last night.",

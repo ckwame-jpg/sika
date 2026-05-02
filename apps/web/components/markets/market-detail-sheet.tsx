@@ -28,6 +28,7 @@ import {
 } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { TradeDialog } from "@/components/positions/trade-dialog";
+import { WhyThisPrediction } from "./why-this-prediction";
 import { usePriceDisplay } from "@/lib/price-display";
 import { EDGE_EXPLANATION, ENTRY_LABEL, HEURISTIC_RELIABILITY_EXPLANATION, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
 
@@ -198,6 +199,9 @@ function MarketDetailContent({ ticker }: { ticker: string }) {
                 ))}
               </ul>
             )}
+            <div className="mt-3">
+              <WhyThisPrediction features={signal.features} />
+            </div>
           </div>
         </>
       )}
