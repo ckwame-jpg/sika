@@ -340,15 +340,22 @@ class PropStatsResolver:
     ) -> tuple[dict[str, Any], str]:
         """Load sport-specific advanced stats.
 
-        PR 2a: NBA player advanced + ID resolution. Resolves NBA Stats
-        PERSON_ID via ``resolve_nba_stats_player_id`` (cached commonallplayers
-        + name match) on first encounter, then caches the mapping back to
-        the EspnPlayerSearchCache row so subsequent calls are O(1).
+        Dispatches by sport: NBA goes through ``advanced_stats``, MLB goes
+        through ``mlb_advanced``. Both follow the same cache-hit → stale →
+        upstream-fetch flow and resolve their player ID via the search-cache
+        sidecar mapping (``nba_stats_id`` / ``mlb_stats_id``).
         """
         if not get_settings().advanced_stats_enabled:
             return {}, "disabled"
-        if sport_key.upper() != "NBA":
-            return {}, "unsupported_sport"
+        if sport_key.upper() == "NBA":
+            return self._load_nba_advanced(player, season)
+        if sport_key.upper() == "MLB":
+            return self._load_mlb_advanced(player, season)
+        return {}, "unsupported_sport"
+
+    def _load_nba_advanced(
+        self, player: dict[str, Any], season: int
+    ) -> tuple[dict[str, Any], str]:
         from app.services.advanced_stats import (
             load_nba_advanced,
             resolve_nba_stats_player_id,
@@ -375,6 +382,55 @@ class PropStatsResolver:
             now=self.now,
         )
         return dict(result.payload or {}), result.cache_status
+
+    def _load_mlb_advanced(
+        self, player: dict[str, Any], season: int
+    ) -> tuple[dict[str, Any], str]:
+        from app.services.mlb_advanced import (
+            load_mlb_batter_advanced,
+            load_mlb_statcast_batter,
+            resolve_mlb_stats_player_id,
+        )
+
+        mlb_stats_id = (player or {}).get("mlb_stats_id")
+        if not mlb_stats_id:
+            mlb_stats_id = resolve_mlb_stats_player_id(
+                self.db,
+                espn_athlete_id=(player or {}).get("athlete_id"),
+                full_name=(player or {}).get("display_name") or "",
+                team_abbreviation=_team_abbreviation_from_player(player),
+                season=season,
+                allow_network=self.allow_network,
+            )
+        if not mlb_stats_id:
+            return {}, "missing_id"
+
+        sabermetrics_result = load_mlb_batter_advanced(
+            self.db,
+            mlb_player_id=str(mlb_stats_id),
+            season=season,
+            allow_network=self.allow_network,
+            now=self.now,
+        )
+        statcast_result = load_mlb_statcast_batter(
+            self.db,
+            mlb_player_id=str(mlb_stats_id),
+            season=season,
+            allow_network=self.allow_network,
+            now=self.now,
+        )
+        combined = {
+            "batter_sabermetrics": sabermetrics_result.payload,
+            "batter_statcast": statcast_result.payload,
+        }
+        # Cache status reflects the more-degraded of the two
+        if "stale" in {sabermetrics_result.cache_status, statcast_result.cache_status}:
+            status = "stale"
+        elif sabermetrics_result.cache_status == "miss" and statcast_result.cache_status == "miss":
+            status = "miss"
+        else:
+            status = "hit" if sabermetrics_result.cache_status == "hit" else "miss"
+        return combined, status
 
 
 def _team_abbreviation_from_player(player: dict[str, Any] | None) -> str | None:
@@ -1438,6 +1494,39 @@ def _score_player_prop(
                 if opponent_team_result.payload:
                     features.update(emit_nba_opponent_team_features(opponent_team_result.payload))
                     features["opponent_team_cache_status"] = opponent_team_result.cache_status
+
+    elif resolved.sport_key.upper() == "MLB":
+        from app.services.mlb_advanced import (
+            emit_mlb_batter_features,
+            emit_park_features,
+            emit_weather_features,
+            load_park_factors,
+            load_weather,
+        )
+
+        if resolved.advanced_payload:
+            sabermetrics = resolved.advanced_payload.get("batter_sabermetrics")
+            statcast = resolved.advanced_payload.get("batter_statcast")
+            features.update(emit_mlb_batter_features(sabermetrics, statcast))
+
+        venue_id = (event.raw_data or {}).get("venue_id") if isinstance(event.raw_data, dict) else None
+        park = load_park_factors(venue_id)
+        features.update(emit_park_features(park))
+
+        venue_indoor_flag = bool(features.get("venue_indoor"))
+        weather_result = load_weather(
+            db,
+            event_id=str(event.id),
+            lat=None,
+            lon=None,
+            game_time_utc=None,
+            is_dome=venue_indoor_flag,
+            allow_network=False,
+        )
+        if weather_result.payload:
+            features.update(emit_weather_features(weather_result.payload))
+            features["weather_cache_status"] = weather_result.cache_status
+
     features["advanced_cache_status"] = resolved.advanced_cache_status
     reasons.append(f"Model probability of clearing {threshold:.1f}: {probability_yes:.0%}")
     if resolved.context_stale:

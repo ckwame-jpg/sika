@@ -87,6 +87,23 @@ class Settings(BaseSettings):
     nba_player_roster_cache_minutes: int = 1440
     nba_league_percentiles_cache_minutes: int = 1440
 
+    # MLB advanced stats
+    mlb_batter_advanced_cache_minutes: int = 360
+    mlb_pitcher_advanced_cache_minutes: int = 360
+    mlb_statcast_batter_cache_minutes: int = 720
+    mlb_statcast_pitcher_cache_minutes: int = 720
+    mlb_player_splits_cache_minutes: int = 1440
+    mlb_team_gamelog_cache_minutes: int = 360
+    mlb_bullpen_state_cache_minutes: int = 60
+    mlb_lineup_cache_minutes: int = 60
+    mlb_weather_cache_minutes: int = 30
+    mlb_player_roster_cache_minutes: int = 1440
+    mlb_league_percentiles_cache_minutes: int = 1440
+    mlb_injury_report_cache_minutes: int = 240
+
+    # Weather
+    openweather_api_key: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

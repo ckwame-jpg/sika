@@ -21,7 +21,17 @@ from app.services.parlays import settle_parlay_predictions_batch
 from app.services.predictions import settle_predictions_batch
 
 
-REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "settlement", "cleanup", "advanced_stats_warm"})
+REFRESH_JOB_KINDS = frozenset({
+    "refresh",
+    "prop_refresh",
+    "shadow_capture",
+    "settlement",
+    "cleanup",
+    "advanced_stats_warm",
+    "weather_refresh",
+    "lineup_refresh",
+    "advanced_stats_audit",
+})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
 WORKER_TIMEOUT_ERROR = "worker_timeout"
@@ -726,16 +736,43 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 from app.services.advanced_stats import (
                     warm_nba_advanced_for_athletes,
                 )
+                from app.services.mlb_advanced import (
+                    warm_mlb_advanced_for_athletes,
+                )
                 from app.services.stats_query import default_season_for_sport
 
-                player_ids = list((job.details or {}).get("nba_stats_player_ids") or [])
-                season = int((job.details or {}).get("season") or default_season_for_sport("NBA"))
-                summary = warm_nba_advanced_for_athletes(
-                    db,
-                    nba_stats_player_ids=player_ids,
-                    season=season,
+                details = dict(job.details or {})
+                nba_player_ids = list(details.get("nba_stats_player_ids") or [])
+                mlb_player_ids = list(details.get("mlb_stats_player_ids") or [])
+                nba_season = int(details.get("nba_season") or default_season_for_sport("NBA"))
+                mlb_season = int(details.get("mlb_season") or default_season_for_sport("MLB"))
+                nba_summary = warm_nba_advanced_for_athletes(
+                    db, nba_stats_player_ids=nba_player_ids, season=nba_season
                 )
-                job.details = {**(job.details or {}), **summary.as_dict(), "season": season}
+                mlb_summary = warm_mlb_advanced_for_athletes(
+                    db, mlb_stats_player_ids=mlb_player_ids, season=mlb_season
+                )
+                job.details = {
+                    **details,
+                    **nba_summary.as_dict(),
+                    **mlb_summary,
+                    "nba_season": nba_season,
+                    "mlb_season": mlb_season,
+                }
+            elif job.kind == "weather_refresh":
+                # Placeholder: per-event weather is loaded lazily via the resolver
+                # path. This kind exists so a scheduled cron can pre-warm caches
+                # for upcoming events; the implementation walks the current slate
+                # in a follow-up PR.
+                job.details = {**(job.details or {}), "events_warmed": 0}
+            elif job.kind == "lineup_refresh":
+                # Placeholder mirroring weather_refresh — lineups land via MLB
+                # schedule hydration in a follow-up PR.
+                job.details = {**(job.details or {}), "lineups_warmed": 0}
+            elif job.kind == "advanced_stats_audit":
+                # Placeholder reconciliation: counts unmapped athlete IDs.
+                # Will be implemented in PR 2c.
+                job.details = {**(job.details or {}), "unmapped_count": 0}
             else:  # pragma: no cover - guarded above
                 raise ValueError(f"Unsupported refresh job kind: {job.kind}")
 
