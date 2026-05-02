@@ -177,24 +177,12 @@ def _compute_feature_medians(frame: pd.DataFrame, keys: list[str]) -> dict[str, 
     """Median of non-null numeric values for each key across all rows.
     Keys absent from every row return 0.0 (the historical default).
 
-    Kept as a thin wrapper around the new ``_collect_feature_values`` /
-    ``_medians_from_accumulator`` pair for backward compatibility with the
-    public test surface in ``test_pr3d_training_v2``.
+    Thin wrapper around ``_collect_feature_values`` /
+    ``_medians_from_accumulator`` so future tweaks to either helper
+    flow through here automatically. Kept as a public symbol for the
+    test surface in ``test_pr3d_training_v2``.
     """
-    accumulator: dict[str, list[float]] = {key: [] for key in keys}
-    for features in frame["features"]:
-        feats = dict(features or {})
-        for key in keys:
-            value = _safe_float(feats.get(key))
-            if value is not None:
-                accumulator[key].append(value)
-    medians: dict[str, float] = {}
-    for key, values in accumulator.items():
-        if not values:
-            medians[key] = 0.0
-            continue
-        medians[key] = float(np.median(values))
-    return medians
+    return _medians_from_accumulator(_collect_feature_values(frame, keys))
 
 
 def _row_is_advanced_complete(features: dict[str, Any]) -> bool:
