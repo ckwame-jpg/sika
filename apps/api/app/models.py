@@ -448,6 +448,42 @@ class EspnPlayerGamelogCache(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
 
+class NbaAdvancedGamelogCache(Base):
+    __tablename__ = "nba_advanced_gamelog_cache"
+    __table_args__ = (UniqueConstraint("athlete_id", "season", name="uq_nba_advanced_gamelog_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    athlete_id = Column(String, nullable=False, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NbaTeamAdvancedCache(Base):
+    __tablename__ = "nba_team_advanced_cache"
+    __table_args__ = (UniqueConstraint("team_id", "season", name="uq_nba_team_advanced_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    team_id = Column(String, nullable=False, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NbaLeaguePercentilesCache(Base):
+    __tablename__ = "nba_league_percentiles_cache"
+    __table_args__ = (UniqueConstraint("season", "metric_key", name="uq_nba_league_percentiles_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    metric_key = Column(String, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class ModelFamilyRuntimeHealth(Base):
     __tablename__ = "model_family_runtime_health"
 

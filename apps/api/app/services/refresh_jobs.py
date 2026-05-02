@@ -21,7 +21,7 @@ from app.services.parlays import settle_parlay_predictions_batch
 from app.services.predictions import settle_predictions_batch
 
 
-REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "settlement", "cleanup"})
+REFRESH_JOB_KINDS = frozenset({"refresh", "prop_refresh", "shadow_capture", "settlement", "cleanup", "advanced_stats_warm"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
 WORKER_TIMEOUT_ERROR = "worker_timeout"
@@ -722,6 +722,20 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     return _refresh_job_snapshot(db, job.id)
             elif job.kind == "cleanup":
                 job.details = prune_runtime_artifacts(db)
+            elif job.kind == "advanced_stats_warm":
+                from app.services.advanced_stats import (
+                    warm_nba_advanced_for_athletes,
+                )
+                from app.services.stats_query import default_season_for_sport
+
+                player_ids = list((job.details or {}).get("nba_stats_player_ids") or [])
+                season = int((job.details or {}).get("season") or default_season_for_sport("NBA"))
+                summary = warm_nba_advanced_for_athletes(
+                    db,
+                    nba_stats_player_ids=player_ids,
+                    season=season,
+                )
+                job.details = {**(job.details or {}), **summary.as_dict(), "season": season}
             else:  # pragma: no cover - guarded above
                 raise ValueError(f"Unsupported refresh job kind: {job.kind}")
 

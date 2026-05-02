@@ -49,6 +49,8 @@ class ResolvedPropSubject:
     player_search_cache_status: str = "miss"
     gamelog_cache_status: str = "miss"
     context_stale: bool = False
+    advanced_payload: dict[str, Any] = field(default_factory=dict)
+    advanced_cache_status: str = "miss"
 
 
 @dataclass(slots=True)
@@ -315,6 +317,7 @@ class PropStatsResolver:
         season = default_season_for_sport(sport_key)
         gamelog_payload, gamelog_cache_status = self._load_player_gamelog(sport_key, player["athlete_id"], season)
         game_logs = _build_game_logs(sport_key, gamelog_payload)
+        advanced_payload, advanced_status = self._load_advanced(sport_key, player, season)
         resolved = ResolvedPropSubject(
             sport_key=sport_key,
             athlete_id=player["athlete_id"],
@@ -325,10 +328,40 @@ class PropStatsResolver:
             player_search_cache_status=player_cache_status,
             gamelog_cache_status=gamelog_cache_status,
             context_stale=gamelog_cache_status == "stale",
+            advanced_payload=advanced_payload,
+            advanced_cache_status=advanced_status,
         )
         self._cache[key] = resolved
         self.stats.prop_subjects_warmed += 1
         return resolved
+
+    def _load_advanced(
+        self, sport_key: str, player: dict[str, Any], season: int
+    ) -> tuple[dict[str, Any], str]:
+        """Load sport-specific advanced stats.
+
+        PR 1: NBA only. Falls through to ``("", "missing_id")`` when the player
+        has not yet been mapped to an NBA Stats PERSON_ID — that mapping is
+        populated by a separate resolver (added in a subsequent PR), so for
+        now most calls return empty and scoring stays box-score-only.
+        """
+        if not get_settings().advanced_stats_enabled:
+            return {}, "disabled"
+        if sport_key.upper() != "NBA":
+            return {}, "unsupported_sport"
+        nba_stats_id = (player or {}).get("nba_stats_id")
+        if not nba_stats_id:
+            return {}, "missing_id"
+        from app.services.advanced_stats import load_nba_advanced
+
+        result = load_nba_advanced(
+            self.db,
+            nba_stats_player_id=str(nba_stats_id),
+            season=season,
+            allow_network=self.allow_network,
+            now=self.now,
+        )
+        return dict(result.payload or {}), result.cache_status
 
 
 def warm_prop_context_cache(
@@ -1347,6 +1380,13 @@ def _score_player_prop(
     features["has_team_context"] = team_entry is not None
     features["has_opponent_context"] = opponent_entry is not None
     features["latest_log_days_ago"] = round(_days_since_latest_log(season_logs, event.starts_at) or 0.0, 3)
+
+    if resolved.advanced_payload:
+        from app.services.advanced_stats import emit_nba_player_features
+
+        if resolved.sport_key.upper() == "NBA":
+            features.update(emit_nba_player_features(resolved.advanced_payload))
+    features["advanced_cache_status"] = resolved.advanced_cache_status
     reasons.append(f"Model probability of clearing {threshold:.1f}: {probability_yes:.0%}")
     if resolved.context_stale:
         reasons.append("Using stale cached prop context while live ESPN refresh catches up.")

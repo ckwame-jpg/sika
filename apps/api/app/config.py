@@ -74,6 +74,15 @@ class Settings(BaseSettings):
         ]
     )
 
+    advanced_stats_enabled: bool = True
+    nba_stats_base_url: str = "https://stats.nba.com/stats"
+    nba_stats_rate_limit_rps: float = 0.6
+    nba_stats_rate_limit_burst: float = 2.0
+    nba_stats_daily_request_cap: int = 500
+    nba_advanced_cache_minutes: int = 240
+    nba_team_advanced_cache_minutes: int = 1440
+    nba_league_percentiles_cache_minutes: int = 1440
+
 
 @lru_cache
 def get_settings() -> Settings:

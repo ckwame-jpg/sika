@@ -254,6 +254,16 @@ def _queue_cleanup_job() -> bool:
     return _queue_job(kind="cleanup", scope="retention", reason="interval")
 
 
+def _queue_advanced_stats_warm_job() -> bool:
+    """Queue an advanced-stats warm-up job.
+
+    PR 1: only refreshes NBA team rollups and league percentile breakpoints.
+    Per-player NBA Stats fetches need an athlete_id mapping that is added in
+    a follow-up PR — until then this job is a low-cost daily refresh.
+    """
+    return _queue_job(kind="advanced_stats_warm", scope="nba", reason="interval")
+
+
 def queue_startup_refresh_if_stale() -> bool:
     if not startup_refresh_needed():
         return False
@@ -473,6 +483,15 @@ def start_scheduler() -> None:
         coalesce=True,
         max_instances=1,
     )
+    if get_settings().advanced_stats_enabled:
+        scheduler.add_job(
+            _queue_advanced_stats_warm_job,
+            trigger=CronTrigger(hour=5, minute=15),
+            id="advanced_stats_warm_daily",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
     scheduler.start()
     schedule_event_refreshes()
 
