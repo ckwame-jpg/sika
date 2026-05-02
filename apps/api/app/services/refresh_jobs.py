@@ -31,6 +31,7 @@ REFRESH_JOB_KINDS = frozenset({
     "weather_refresh",
     "lineup_refresh",
     "advanced_stats_audit",
+    "market_discovery",
 })
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
@@ -773,6 +774,30 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 # Placeholder reconciliation: counts unmapped athlete IDs.
                 # Will be implemented in PR 2c.
                 job.details = {**(job.details or {}), "unmapped_count": 0}
+            elif job.kind == "market_discovery":
+                # Pulls a deep page of Kalshi standalone markets and maps any
+                # new ones to existing events. Targets game-winner / first-five
+                # tickers (KXMLBGAME-, KXNBAGAME-, KXMLBF5-) which otherwise
+                # get buried behind tens of thousands of prop tickers.
+                from app.services.ingestion import refresh_kalshi_markets
+                from app.services.market_mapping import map_markets_to_events
+
+                summary = refresh_kalshi_markets(
+                    db,
+                    include_standalone=True,
+                    refresh_combo_prop_tickers=False,
+                    discover_combo_props=False,
+                )
+                mapped = map_markets_to_events(db)
+                job.details = {
+                    **(job.details or {}),
+                    "processed": int(summary.get("processed") or 0),
+                    "total_kalshi_markets_seen": int(summary.get("total_kalshi_markets_seen") or 0),
+                    "supported_nba_props_seen": int(summary.get("supported_nba_props_seen") or 0),
+                    "supported_mlb_props_seen": int(summary.get("supported_mlb_props_seen") or 0),
+                    "market_snapshots_written": int(summary.get("market_snapshots_written") or 0),
+                    "newly_mapped_to_events": int(mapped),
+                }
             else:  # pragma: no cover - guarded above
                 raise ValueError(f"Unsupported refresh job kind: {job.kind}")
 

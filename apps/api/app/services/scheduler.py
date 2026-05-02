@@ -264,6 +264,18 @@ def _queue_advanced_stats_warm_job() -> bool:
     return _queue_job(kind="advanced_stats_warm", scope="nba", reason="interval")
 
 
+def _queue_market_discovery_job() -> bool:
+    """Queue a Kalshi standalone-market discovery + event-mapping job.
+
+    Runs ``refresh_kalshi_markets(include_standalone=True)`` to pull new
+    market tickers (incl. KXMLBGAME / KXNBAGAME / KXMLBF5 game-winner
+    tickers that get buried behind tens of thousands of prop tickers in
+    Kalshi's default ordering) and maps them to existing events so the
+    next slate refresh picks them up as candidates.
+    """
+    return _queue_job(kind="market_discovery", scope="standalone", reason="interval")
+
+
 def queue_startup_refresh_if_stale() -> bool:
     if not startup_refresh_needed():
         return False
@@ -492,6 +504,18 @@ def start_scheduler() -> None:
             coalesce=True,
             max_instances=1,
         )
+    # Kalshi standalone discovery — twice a day so newly-listed game-winner
+    # markets land in the DB ahead of the slate refresh that scores them.
+    # 09:00 catches morning slate (early MLB matinees + NBA load-in);
+    # 16:00 catches the late evening US slate.
+    scheduler.add_job(
+        _queue_market_discovery_job,
+        trigger=CronTrigger(hour="9,16", minute=0),
+        id="market_discovery_twice_daily",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.start()
     schedule_event_refreshes()
 

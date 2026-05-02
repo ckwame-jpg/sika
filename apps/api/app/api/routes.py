@@ -1430,6 +1430,28 @@ def refresh_jobs(db: Session = Depends(get_db)) -> JobRefreshResponse:
     )
 
 
+@ops_router.post("/jobs/market-discovery", response_model=JobRefreshResponse, status_code=202)
+def queue_market_discovery_job(db: Session = Depends(get_db)) -> JobRefreshResponse:
+    """Queue a Kalshi standalone-market discovery job on demand.
+
+    Useful when you need to ingest newly-listed game-winner markets ahead
+    of the next scheduled cron tick (e.g. just before a slate of games).
+    """
+    job, _created = enqueue_refresh_job(
+        db,
+        kind="market_discovery",
+        scope="standalone",
+        reason="manual",
+    )
+    db.commit()
+    return JobRefreshResponse(
+        job_id=job.id,
+        kind=job.kind,
+        scope=job.scope,
+        status=job.status,
+    )
+
+
 @ops_router.get("/jobs/{job_id}", response_model=RefreshJobRead)
 def refresh_job_detail(job_id: int, db: Session = Depends(get_db)) -> RefreshJobRead:
     if reconcile_stale_refresh_jobs(db):
