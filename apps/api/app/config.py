@@ -108,6 +108,7 @@ class Settings(BaseSettings):
 
     # Weather
     openweather_api_key: str = ""
+    nws_user_agent: str = "sika-sports-copilot"
 
 
 @lru_cache

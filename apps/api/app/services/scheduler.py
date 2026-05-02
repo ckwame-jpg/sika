@@ -276,6 +276,16 @@ def _queue_market_discovery_job() -> bool:
     return _queue_job(kind="market_discovery", scope="standalone", reason="interval")
 
 
+def _queue_lineup_refresh_job() -> bool:
+    """Queue an MLB lineup-refresh job.
+
+    Fetches today's schedule with ``hydrate=lineups,probablePitcher,…`` and
+    persists per-event lineup payloads into ``mlb_lineup_cache`` so the
+    scoring path's ``emit_lineup_features`` actually finds data to read.
+    """
+    return _queue_job(kind="lineup_refresh", scope="mlb", reason="interval")
+
+
 def queue_startup_refresh_if_stale() -> bool:
     if not startup_refresh_needed():
         return False
@@ -512,6 +522,18 @@ def start_scheduler() -> None:
         _queue_market_discovery_job,
         trigger=CronTrigger(hour="9,16", minute=0),
         id="market_discovery_twice_daily",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # MLB lineup refresh — confirmed lineups generally post 2-4h before first
+    # pitch. Two daily ticks (15:00 ahead of evening slate, 11:00 ahead of
+    # afternoon games) give us a sub-30-min staleness window without
+    # hammering statsapi.mlb.com.
+    scheduler.add_job(
+        _queue_lineup_refresh_job,
+        trigger=CronTrigger(hour="11,15", minute=0),
+        id="mlb_lineup_refresh_twice_daily",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

@@ -1008,13 +1008,17 @@ def warm_mlb_advanced_for_athletes(
     *,
     mlb_stats_player_ids: Iterable[str],
     season: int,
+    pitcher_ids: Iterable[str] | None = None,
     client: MlbStatsClient | None = None,
     savant: BaseballSavantClient | None = None,
 ) -> dict[str, int]:
     """Refresh batter + pitcher caches for a list of player IDs.
 
-    Statcast batter/pitcher fetches are gated behind the same loader flow,
-    so passing a savant client also warms those caches.
+    ``mlb_stats_player_ids`` warms batter sabermetrics + Statcast batter
+    caches; ``pitcher_ids`` warms ``mlb_pitcher_advanced_cache`` and
+    ``mlb_statcast_pitcher_cache``. Both lists may overlap (a two-way
+    player gets warmed in both halves) — dedup is per-list. Statcast
+    fetches require ``savant`` to be supplied.
     """
     summary = {
         "mlb_batters_attempted": 0,
@@ -1028,14 +1032,14 @@ def warm_mlb_advanced_for_athletes(
     roster_result = load_mlb_player_roster(db, season=season, client=mlb_client, allow_network=True)
     summary["mlb_roster_loaded"] = 1 if roster_result.complete else 0
 
-    seen: set[str] = set()
+    seen_batters: set[str] = set()
     for raw_id in mlb_stats_player_ids:
         if raw_id is None:
             continue
         player_id = str(raw_id)
-        if player_id in seen:
+        if player_id in seen_batters:
             continue
-        seen.add(player_id)
+        seen_batters.add(player_id)
         summary["mlb_batters_attempted"] += 1
         result = load_mlb_batter_advanced(
             db, mlb_player_id=player_id, season=season, client=mlb_client, allow_network=True
@@ -1046,4 +1050,24 @@ def warm_mlb_advanced_for_athletes(
             load_mlb_statcast_batter(
                 db, mlb_player_id=player_id, season=season, client=savant, allow_network=True
             )
+
+    seen_pitchers: set[str] = set()
+    for raw_id in pitcher_ids or []:
+        if raw_id is None:
+            continue
+        player_id = str(raw_id)
+        if player_id in seen_pitchers:
+            continue
+        seen_pitchers.add(player_id)
+        summary["mlb_pitchers_attempted"] += 1
+        pitcher_result = load_mlb_pitcher_advanced(
+            db, mlb_player_id=player_id, season=season, client=mlb_client, allow_network=True
+        )
+        if pitcher_result.complete and pitcher_result.cache_status in {"hit", "miss"}:
+            summary["mlb_pitchers_succeeded"] += 1
+        if savant is not None:
+            load_mlb_statcast_pitcher(
+                db, mlb_player_id=player_id, season=season, client=savant, allow_network=True
+            )
+
     return summary

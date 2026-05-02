@@ -768,13 +768,24 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                         if payload.get("mlb_stats_id")
                     })
 
+                # Probable starters from today's MLB events — every starter
+                # the resolver has touched gets persisted as `mlb_stats_id`
+                # on its own EspnPlayerSearchCache row, so the sidecar list
+                # already covers them. We pass the full mlb_player_ids list
+                # as both batter and pitcher candidates; the loaders are
+                # idempotent, and the warm function dedups internally.
+                pitcher_ids = list(details.get("pitcher_ids") or mlb_player_ids)
+
                 nba_season = int(details.get("nba_season") or default_season_for_sport("NBA"))
                 mlb_season = int(details.get("mlb_season") or default_season_for_sport("MLB"))
                 nba_summary = warm_nba_advanced_for_athletes(
                     db, nba_stats_player_ids=nba_player_ids, season=nba_season
                 )
                 mlb_summary = warm_mlb_advanced_for_athletes(
-                    db, mlb_stats_player_ids=mlb_player_ids, season=mlb_season
+                    db,
+                    mlb_stats_player_ids=mlb_player_ids,
+                    pitcher_ids=pitcher_ids,
+                    season=mlb_season,
                 )
                 job.details = {
                     **details,
@@ -792,9 +803,53 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 # in a follow-up PR.
                 job.details = {**(job.details or {}), "events_warmed": 0}
             elif job.kind == "lineup_refresh":
-                # Placeholder mirroring weather_refresh — lineups land via MLB
-                # schedule hydration in a follow-up PR.
-                job.details = {**(job.details or {}), "lineups_warmed": 0}
+                # Fetch today's MLB schedule with lineups + probablePitcher
+                # hydration and persist the per-event payload via
+                # ``load_lineup_for_event``. Each event's lineup row is what
+                # ``emit_lineup_features`` reads at scoring time, so this
+                # is the producer that PR 6's lineup-feature consumer was
+                # missing.
+                from datetime import date as _date
+
+                from app.clients.mlb_stats import MlbStatsClient
+                from app.services.mlb_advanced import load_lineup_for_event
+
+                target = _date.today()
+                events_warmed = 0
+                schedule_failed = False
+                try:
+                    mlb_client = MlbStatsClient()
+                    schedule = mlb_client.fetch_schedule(target)
+                except Exception as exc:  # noqa: BLE001 — upstream MLB API is unpredictable
+                    logger.warning("lineup_refresh schedule fetch failed: %s", exc)
+                    schedule = None
+                    schedule_failed = True
+
+                if schedule is not None:
+                    for date_block in schedule.get("dates") or []:
+                        for game in date_block.get("games") or []:
+                            game_pk = game.get("gamePk") or game.get("game_pk")
+                            if not game_pk:
+                                continue
+                            # Wrap each per-game payload in the same envelope
+                            # ``emit_lineup_features`` expects: payload["raw"]
+                            # is a schedule-shaped dict so the parser walks
+                            # the same path it does for the live schedule.
+                            single_game_envelope = {"dates": [{"games": [game]}]}
+                            result = load_lineup_for_event(
+                                db,
+                                event_id=str(game_pk),
+                                schedule_payload=single_game_envelope,
+                            )
+                            if result.complete:
+                                events_warmed += 1
+
+                job.details = {
+                    **(job.details or {}),
+                    "lineups_warmed": events_warmed,
+                    "target_date": target.isoformat(),
+                    "schedule_fetch_failed": schedule_failed,
+                }
             elif job.kind == "advanced_stats_audit":
                 # Placeholder reconciliation: counts unmapped athlete IDs.
                 # Will be implemented in PR 2c.

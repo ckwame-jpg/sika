@@ -36,9 +36,18 @@ logger = logging.getLogger(__name__)
 
 _OPENWEATHER_URL = "https://api.openweathermap.org/data/3.0/onecall"
 _NWS_POINTS_URL = "https://api.weather.gov/points/{lat},{lon}"
-_NWS_USER_AGENT = "sika-sports-copilot (chris@example.com)"
 _RATE_LIMIT_RPS = 1.0
 _RATE_LIMIT_BURST = 2.0
+
+
+def _nws_user_agent() -> str:
+    """NWS asks consumers to identify themselves in the User-Agent header so
+    they can contact the operator if traffic looks abusive. We use a plain
+    product token sourced from settings — no email baked into source so
+    nothing has to be redacted on a fork. Operators wanting the contactable
+    form per NWS guidance can set ``NWS_USER_AGENT="myorg (ops@example.com)"``
+    via env."""
+    return (get_settings().nws_user_agent or "sika-sports-copilot").strip()
 
 
 class WeatherClient:
@@ -113,7 +122,7 @@ class WeatherClient:
         lon: float,
         game_time_utc: datetime,
     ) -> dict[str, Any]:
-        headers = {"User-Agent": _NWS_USER_AGENT, "Accept": "application/geo+json"}
+        headers = {"User-Agent": _nws_user_agent(), "Accept": "application/geo+json"}
         points_response = self._get(
             _NWS_POINTS_URL.format(lat=f"{lat:.4f}", lon=f"{lon:.4f}"),
             params={},
