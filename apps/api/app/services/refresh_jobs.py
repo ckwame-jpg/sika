@@ -734,6 +734,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
             elif job.kind == "cleanup":
                 job.details = prune_runtime_artifacts(db)
             elif job.kind == "advanced_stats_warm":
+                from app.models import EspnPlayerSearchCache
                 from app.services.advanced_stats import (
                     warm_nba_advanced_for_athletes,
                 )
@@ -743,8 +744,30 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 from app.services.stats_query import default_season_for_sport
 
                 details = dict(job.details or {})
+                # Allow callers to pre-pin a list (tests, manual runs); otherwise
+                # derive from EspnPlayerSearchCache rows that already have a
+                # resolved nba_stats_id / mlb_stats_id sidecar. This is the set
+                # the resolver has touched on real prop scoring, so warming
+                # them keeps the cache fresh for tomorrow's slate without
+                # needing the full active roster.
                 nba_player_ids = list(details.get("nba_stats_player_ids") or [])
                 mlb_player_ids = list(details.get("mlb_stats_player_ids") or [])
+
+                if not nba_player_ids:
+                    nba_player_ids = sorted({
+                        str(payload.get("nba_stats_id"))
+                        for entry in db.query(EspnPlayerSearchCache).filter(EspnPlayerSearchCache.sport_key == "NBA").all()
+                        for payload in [entry.payload or {}]
+                        if payload.get("nba_stats_id")
+                    })
+                if not mlb_player_ids:
+                    mlb_player_ids = sorted({
+                        str(payload.get("mlb_stats_id"))
+                        for entry in db.query(EspnPlayerSearchCache).filter(EspnPlayerSearchCache.sport_key == "MLB").all()
+                        for payload in [entry.payload or {}]
+                        if payload.get("mlb_stats_id")
+                    })
+
                 nba_season = int(details.get("nba_season") or default_season_for_sport("NBA"))
                 mlb_season = int(details.get("mlb_season") or default_season_for_sport("MLB"))
                 nba_summary = warm_nba_advanced_for_athletes(
@@ -759,6 +782,8 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     **mlb_summary,
                     "nba_season": nba_season,
                     "mlb_season": mlb_season,
+                    "nba_stats_player_ids_warmed": len(nba_player_ids),
+                    "mlb_stats_player_ids_warmed": len(mlb_player_ids),
                 }
             elif job.kind == "weather_refresh":
                 # Placeholder: per-event weather is loaded lazily via the resolver

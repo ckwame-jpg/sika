@@ -888,6 +888,30 @@ def _probable_pitcher_era(event: Event, role: str) -> float | None:
     return None
 
 
+def _probable_pitcher_identity(event: Event, role: str) -> tuple[str | None, str | None]:
+    """Return ``(display_name, espn_athlete_id)`` for the probable starter.
+
+    Used by MLB advanced-stats wiring to resolve the starter's
+    MLB Stats PERSON_ID via name + team match. Falls back to ``(None, None)``
+    when ESPN's payload lacks the field.
+    """
+    competitor = _competitor_for_role(event, role)
+    probables = competitor.get("probables") or []
+    if not probables:
+        return None, None
+    probable = probables[0]
+    athlete = probable.get("athlete") or probable
+    display_name = (
+        athlete.get("displayName")
+        or athlete.get("fullName")
+        or athlete.get("shortName")
+        or probable.get("displayName")
+    )
+    athlete_id_raw = athlete.get("id") or athlete.get("uid")
+    athlete_id = str(athlete_id_raw) if athlete_id_raw is not None else None
+    return (str(display_name) if display_name else None, athlete_id)
+
+
 def _score_mlb_first_five(
     db: Session,
     event: Event,
@@ -1014,7 +1038,7 @@ def _score_team_winner(
     if abs(workload_edge) >= 0.01:
         fresher = left.participant.display_name if workload_edge >= 0 else right.participant.display_name
         reasons.append(f"Recent workload favors {fresher}")
-    features = {
+    features: dict[str, Any] = {
         "left_win_rate": left_win_rate,
         "right_win_rate": right_win_rate,
         "left_avg_score": left_avg_score,
@@ -1037,7 +1061,100 @@ def _score_team_winner(
         "left_sample_size": len(left_results),
         "right_sample_size": len(right_results),
     }
+
+    # Apply advanced-stats team context as an additive nudge to win probability.
+    # Cached only (allow_network=False) — caches are populated by the daily
+    # advanced_stats_warm cron and the per-prop scoring path.
+    advanced_edge = _winner_advanced_team_edge(db, event, left, right, features)
+    if advanced_edge is not None:
+        edge_value = clamp(advanced_edge, -0.06, 0.06)
+        left_win_probability = clamp(left_win_probability + edge_value, 0.05, 0.95)
+        features["advanced_team_edge"] = round(edge_value, 4)
+        if abs(edge_value) >= 0.01:
+            stronger = left.participant.display_name if edge_value > 0 else right.participant.display_name
+            reasons.append(f"Advanced team form favors {stronger} ({edge_value:+.1%})")
+
     return left_win_probability, confidence, reasons, features
+
+
+def _winner_advanced_team_edge(
+    db: Session,
+    event: Event,
+    left: EventParticipant,
+    right: EventParticipant,
+    features: dict[str, Any],
+) -> float | None:
+    """Compute an additive win-probability nudge from advanced team stats.
+
+    NBA: uses each team's recent_5 NetRating from ``nba_team_gamelog_cache``.
+    MLB: uses opposing probable starters' xFIP gap (lower xFIP → favors the
+    team facing the *other* starter).
+
+    Returns ``None`` when no advanced caches are populated for either team
+    so the caller can leave the prediction untouched.
+    """
+    sport = (event.sport_key or "").upper()
+    if sport == "NBA":
+        from app.services.advanced_stats import find_nba_team_id_by_name, load_nba_team_gamelog
+
+        left_team_id = find_nba_team_id_by_name(db, team_name=left.participant.display_name or "", season=event.starts_at.year if event.starts_at else 0)
+        right_team_id = find_nba_team_id_by_name(db, team_name=right.participant.display_name or "", season=event.starts_at.year if event.starts_at else 0)
+        if not left_team_id or not right_team_id:
+            return None
+        season = event.starts_at.year if event.starts_at else 0
+        left_log = load_nba_team_gamelog(db, team_id=left_team_id, season=season, allow_network=False)
+        right_log = load_nba_team_gamelog(db, team_id=right_team_id, season=season, allow_network=False)
+        left_recent = (left_log.payload.get("recent_5_avg") if left_log.payload else None) or {}
+        right_recent = (right_log.payload.get("recent_5_avg") if right_log.payload else None) or {}
+        left_net = left_recent.get("net_rating")
+        right_net = right_recent.get("net_rating")
+        if not isinstance(left_net, (int, float)) or not isinstance(right_net, (int, float)):
+            return None
+        features["left_recent_net_rating"] = round(float(left_net), 3)
+        features["right_recent_net_rating"] = round(float(right_net), 3)
+        # 10 NetRating points ≈ 6% win probability shift (rough literature value).
+        return (float(left_net) - float(right_net)) * 0.006
+
+    if sport == "MLB":
+        # Pitcher xFIP gap — lower xFIP suppresses opposing offense, so the
+        # team facing the *higher*-xFIP starter has the edge.
+        from app.services.mlb_advanced import load_mlb_pitcher_advanced, resolve_mlb_stats_player_id
+
+        left_starter_name, _ = _probable_pitcher_identity(event, left.role)
+        right_starter_name, _ = _probable_pitcher_identity(event, right.role)
+        if not left_starter_name or not right_starter_name:
+            return None
+        season = event.starts_at.year if event.starts_at else 0
+
+        def _xfip(name: str, team_short: str | None) -> float | None:
+            mlb_id = resolve_mlb_stats_player_id(
+                db,
+                espn_athlete_id=None,
+                full_name=name,
+                team_abbreviation=(team_short or "").upper() or None,
+                season=season,
+                allow_network=False,
+            )
+            if not mlb_id:
+                return None
+            result = load_mlb_pitcher_advanced(
+                db, mlb_player_id=str(mlb_id), season=season, allow_network=False
+            )
+            saber = (result.payload or {}).get("season_avg") or {}
+            value = saber.get("xfip") or saber.get("fip")
+            return float(value) if isinstance(value, (int, float)) else None
+
+        left_xfip = _xfip(left_starter_name, left.participant.short_name)
+        right_xfip = _xfip(right_starter_name, right.participant.short_name)
+        if left_xfip is None or right_xfip is None:
+            return None
+        features["left_starter_xfip"] = round(left_xfip, 3)
+        features["right_starter_xfip"] = round(right_xfip, 3)
+        # 1 run/9 xFIP gap ≈ ~5% win prob (very rough); flipped sign because
+        # the team whose starter has the LOWER xFIP wins more.
+        return (right_xfip - left_xfip) * 0.05
+
+    return None
 
 
 def _recent_score_pairs(
@@ -1537,12 +1654,19 @@ def _score_player_prop(
             features.update(emit_nba_clutch_features(clutch_result.payload, str(nba_stats_id)))
 
     elif resolved.sport_key.upper() == "MLB":
+        from app.models import EspnPlayerSearchCache, MlbLineupCache, MlbWeatherCache  # noqa: F401
         from app.services.mlb_advanced import (
+            emit_lineup_features,
             emit_mlb_batter_features,
+            emit_mlb_pitcher_features,
             emit_park_features,
             emit_weather_features,
+            load_lineup_for_event,
+            load_mlb_pitcher_advanced,
+            load_mlb_statcast_pitcher,
             load_park_factors,
             load_weather,
+            resolve_mlb_stats_player_id,
         )
 
         if resolved.advanced_payload:
@@ -1567,6 +1691,65 @@ def _score_player_prop(
         if weather_result.payload:
             features.update(emit_weather_features(weather_result.payload))
             features["weather_cache_status"] = weather_result.cache_status
+
+        # Opposing probable starter — name comes from ESPN's competitor
+        # `probables` list. We try to resolve their MLB Stats PERSON_ID via
+        # the cached league roster (the resolver also writes the mapping
+        # back to EspnPlayerSearchCache for next time) and emit pitcher
+        # sabermetrics + Statcast features. allow_network=False on the read
+        # path keeps the synchronous scoring fast — pitcher caches are warmed
+        # by the daily cron + warm_mlb_advanced_for_athletes path.
+        starter_name, _ = _probable_pitcher_identity(event, opponent_entry.role) if opponent_entry else (None, None)
+        if starter_name:
+            starter_team = opponent_entry.participant.short_name if opponent_entry else None
+            starter_id = resolve_mlb_stats_player_id(
+                db,
+                espn_athlete_id=None,
+                full_name=starter_name,
+                team_abbreviation=(starter_team or "").upper() or None,
+                season=resolved.season,
+                allow_network=False,
+            )
+            if starter_id:
+                pitcher_result = load_mlb_pitcher_advanced(
+                    db,
+                    mlb_player_id=str(starter_id),
+                    season=resolved.season,
+                    allow_network=False,
+                )
+                pitcher_statcast_result = load_mlb_statcast_pitcher(
+                    db,
+                    mlb_player_id=str(starter_id),
+                    season=resolved.season,
+                    allow_network=False,
+                )
+                features.update(
+                    emit_mlb_pitcher_features(
+                        pitcher_result.payload,
+                        pitcher_statcast_result.payload,
+                    )
+                )
+
+        # Lineup context — batting-order position drives the lineup_factor.
+        lineup_result = load_lineup_for_event(db, event_id=str(event.id))
+        if lineup_result.payload:
+            mlb_player_id = (resolved.advanced_payload or {}).get("_mlb_stats_id")
+            if not mlb_player_id and resolved.athlete_id:
+                # The resolver writes mlb_stats_id back to the search cache;
+                # look it up the same way the NBA path does for nba_stats_id.
+                from app.models import EspnPlayerSearchCache as _SearchCache
+
+                for entry in (
+                    db.query(_SearchCache)
+                    .filter(_SearchCache.sport_key == "MLB")
+                    .all()
+                ):
+                    payload = entry.payload or {}
+                    if str(payload.get("athlete_id")) == str(resolved.athlete_id):
+                        mlb_player_id = payload.get("mlb_stats_id")
+                        break
+            if mlb_player_id:
+                features.update(emit_lineup_features(lineup_result.payload, str(mlb_player_id)))
 
     features["advanced_cache_status"] = resolved.advanced_cache_status
 

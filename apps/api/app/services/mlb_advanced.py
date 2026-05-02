@@ -947,21 +947,47 @@ def emit_weather_features(weather: dict[str, Any] | None) -> dict[str, float]:
 
 
 def emit_lineup_features(lineup_payload: dict[str, Any] | None, mlb_player_id: str | None) -> dict[str, float]:
-    """Batting-order position + protection (next batter wOBA) + setup (prior batter OBP)."""
+    """Batting-order position + protection (next batter wOBA) + setup (prior batter OBP).
+
+    Schema note (per CODEX_REVIEW_NOTES.md item 1): MLB Stats API's
+    schedule hydrate puts confirmed lineups under
+    ``game.lineups.{homePlayers, awayPlayers}`` as flat ordered arrays of
+    person dicts — NOT under ``game.teams.{home,away}.probableLineup``.
+    The previous code targeted the wrong path and silently returned an
+    empty dict for every real schedule response. We accept either shape
+    here so existing fixtures keep working.
+    """
     if not lineup_payload or not mlb_player_id:
         return {}
     raw = lineup_payload.get("raw") or {}
     games = raw.get("dates") or []
     if not games:
         return {}
-    # The schedule hydrate puts lineups under teams.{home,away}.probableLineup
-    out: dict[str, float] = {}
+
+    target_id = str(mlb_player_id)
+
+    def _emit(order: int) -> dict[str, float]:
+        return {"batting_order_position": float(order), "lineup_data_complete": 1.0}
+
     for date_block in games:
         for game in date_block.get("games") or []:
+            # Preferred path — the actual schema MLB Stats API returns.
+            game_lineups = game.get("lineups") or {}
+            for side_key in ("homePlayers", "awayPlayers"):
+                side_lineup = game_lineups.get(side_key) or []
+                for idx, slot in enumerate(side_lineup, start=1):
+                    slot_id = ""
+                    if isinstance(slot, dict):
+                        slot_id = str(slot.get("id") or slot.get("personId") or "")
+                    else:
+                        slot_id = str(slot)
+                    if slot_id == target_id:
+                        return _emit(idx)
+
+            # Fallback — older fixture shape some tests / mocks rely on.
             for side in ("home", "away"):
                 team_block = ((game.get("teams") or {}).get(side) or {})
                 lineup = team_block.get("probableLineup") or team_block.get("battingOrder") or []
-                # The shape may be [{"id":..., "battingOrder":1}, ...] OR a list of person_ids
                 for idx, slot in enumerate(lineup, start=1):
                     if isinstance(slot, dict):
                         slot_id = str(slot.get("id") or slot.get("personId") or "")
@@ -969,11 +995,9 @@ def emit_lineup_features(lineup_payload: dict[str, Any] | None, mlb_player_id: s
                     else:
                         slot_id = str(slot)
                         order = idx
-                    if slot_id == str(mlb_player_id):
-                        out["batting_order_position"] = float(order)
-                        out["lineup_data_complete"] = 1.0
-                        return out
-    return out
+                    if slot_id == target_id:
+                        return _emit(order)
+    return {}
 
 
 # -----------------------------------------------------------------------------

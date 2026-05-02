@@ -128,17 +128,31 @@ _NBA_FACTOR_FNS = {
 # MLB factors
 
 def _mlb_xstats_anchor_factor(features: dict[str, Any]) -> float:
-    """Hits-style props: regress recent toward expected (xBA) to capture luck."""
+    """Hits-style props: regress recent average toward season-level expected
+    stats (xBA / xwOBA) to capture luck.
+
+    The blend is between two ratios:
+      - actual: how the player has performed recently vs season AVG.
+      - expected: where the player's season-level xBA sits vs their season AVG.
+
+    A future enhancement (called out in CODEX_REVIEW_NOTES.md) is to cache
+    *rolling-window* xBA so we can compare recent-xBA → season-xBA for a
+    proper luck-regression view. Until that cache exists, this factor only
+    nudges the prediction toward season-level expected stats — useful when
+    a player's actual AVG is well below their xBA (positive regression),
+    or above (negative regression).
+    """
     recent_avg = features.get("recent_3_average") or features.get("recent_10_average")
     season_avg = features.get("season_average")
-    recent_xba = features.get("season_xba")
     season_xba = features.get("season_xba")
-    if not all(isinstance(v, (int, float)) for v in (recent_avg, season_avg, recent_xba, season_xba)):
+    if not all(isinstance(v, (int, float)) for v in (recent_avg, season_avg, season_xba)):
         return 1.0
-    if season_avg in (None, 0) or season_xba in (None, 0):
+    if season_avg in (None, 0):
         return 1.0
     actual_ratio = float(recent_avg) / float(season_avg)
-    expected_ratio = float(recent_xba) / float(season_xba)
+    # season_xba / season_avg captures luck-regression direction for the
+    # season as a whole; ~1.0 when actual matches expected.
+    expected_ratio = float(season_xba) / float(season_avg)
     return _clamp(0.5 * actual_ratio + 0.5 * expected_ratio)
 
 
