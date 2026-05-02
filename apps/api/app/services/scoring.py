@@ -1556,77 +1556,20 @@ def _score_player_prop(
             if abs(rest_factor - 1.0) >= 0.02:
                 reasons.append(f"Schedule context factor: {rest_factor:.2f}x")
 
-    if sport_key == "NBA":
-        recent_minutes = _log_average(short_term_logs, sport_key, "minutes")
-        season_minutes = _log_average(season_logs, sport_key, "minutes")
-        minute_factor = 1.0
-        if season_minutes > 0:
-            minute_factor = clamp(1 + ((recent_minutes - season_minutes) / season_minutes) * 0.25, 0.88, 1.12)
-            expected *= minute_factor
-        recent_usage = sum(_usage_proxy(item["raw_metrics"]) for item in short_term_logs) / max(len(short_term_logs), 1)
-        season_usage = sum(_usage_proxy(item["raw_metrics"]) for item in season_logs) / max(len(season_logs), 1)
-        usage_factor = 1.0
-        if season_usage > 0:
-            usage_factor = clamp(1 + ((recent_usage - season_usage) / season_usage) * 0.15, 0.90, 1.10)
-            expected *= usage_factor
-        features["recent_minutes"] = round(recent_minutes, 2)
-        features["season_minutes"] = round(season_minutes, 2)
-        features["minute_factor"] = round(minute_factor, 3)
-        features["usage_factor"] = round(usage_factor, 3)
-        reasons.append(f"Recent minutes trend factor: {minute_factor:.2f}x")
-        if opponent_entry:
-            opponent_recent_scores = _recent_participant_results(db, opponent_entry.participant_id, event.starts_at)
-            if opponent_recent_scores:
-                opponent_offense = _avg_score(opponent_recent_scores)
-                pace_factor = clamp(1 + ((opponent_offense - 110.0) / 110.0) * 0.08, 0.95, 1.05)
-                expected *= pace_factor
-                features["opponent_recent_avg_score"] = round(opponent_offense, 3)
-                features["pace_factor"] = round(pace_factor, 3)
-                features["has_pace_context"] = True
-                if abs(pace_factor - 1.0) >= 0.015:
-                    reasons.append(f"Opponent pace context factor: {pace_factor:.2f}x")
-            else:
-                features["has_pace_context"] = False
-    else:
-        recent_pa = sum(_plate_appearances(item["raw_metrics"]) for item in short_term_logs) / max(len(short_term_logs), 1)
-        season_pa = sum(_plate_appearances(item["raw_metrics"]) for item in season_logs) / max(len(season_logs), 1)
-        pa_factor = 1.0
-        if season_pa > 0:
-            pa_factor = clamp(1 + ((recent_pa - season_pa) / season_pa) * 0.18, 0.88, 1.12)
-            expected *= pa_factor
-        starter_era = _probable_pitcher_era(event, opponent_entry.role) if opponent_entry else None
-        era_factor = 1.0
-        if starter_era is not None:
-            era_factor = clamp(1 + ((starter_era - 4.00) * 0.03), 0.90, 1.10)
-            expected *= era_factor
-        features["recent_plate_appearances"] = round(recent_pa, 2)
-        features["season_plate_appearances"] = round(season_pa, 2)
-        features["plate_appearance_factor"] = round(pa_factor, 3)
-        features["opposing_probable_era"] = starter_era
-        features["starter_era_factor"] = round(era_factor, 3)
-        reasons.append(f"Recent plate appearance factor: {pa_factor:.2f}x")
-        if starter_era is not None:
-            reasons.append(f"Opposing probable starter ERA context: {starter_era:.2f}")
+    # Lift MLB venue context before the advanced-stats emission so the weather
+    # loader downstream can consult ``venue_indoor`` to short-circuit dome games.
+    if sport_key.upper() == "MLB":
         venue_context = _event_venue_context(event)
         features["venue_indoor"] = venue_context.get("venue_indoor")
         features["venue_city"] = venue_context.get("venue_city")
         features["venue_state"] = venue_context.get("venue_state")
 
-    expected_before_advanced = expected
-    features["expected_before_advanced"] = round(expected_before_advanced, 3)
-
-    probability_yes = _poisson_yes_probability(expected, threshold)
-    sample_size = min(len(recent_logs), 10)
-    confidence = clamp(0.32 + (sample_size / 18.0) + abs(probability_yes - 0.5) * 0.45, 0.25, 0.93)
-    if len(short_term_logs) < 3:
-        confidence = clamp(confidence - 0.08, 0.25, 0.93)
-
-    features["expected_stat_output"] = round(expected, 3)
-    features["yes_probability"] = round(probability_yes, 4)
-    features["has_team_context"] = team_entry is not None
-    features["has_opponent_context"] = opponent_entry is not None
-    features["latest_log_days_ago"] = round(_days_since_latest_log(season_logs, event.starts_at) or 0.0, 3)
-
+    # Emit advanced features FIRST so the proxy block below can detect when a
+    # real advanced replacement (USG%, opponent pace, opposing starter xFIP/FIP)
+    # is present and skip the corresponding box-score proxy. The handoff
+    # (PR3_HANDOFF.md) calls this out as the highest-risk backend change:
+    # advanced stats must be PRIMARY, proxies fallback only — so we don't
+    # multiply both a proxy and its advanced replacement for the same concept.
     if resolved.sport_key.upper() == "NBA":
         from app.services.advanced_stats import (
             emit_nba_opponent_team_features,
@@ -1773,6 +1716,106 @@ def _score_player_prop(
             features.update(emit_lineup_features(lineup_result.payload, str(resolved.mlb_stats_id)))
 
     features["advanced_cache_status"] = resolved.advanced_cache_status
+
+    # Sport-specific proxy block. Proxies that have a real advanced replacement
+    # in the features dict are skipped (set to 1.0) so we don't multiply both
+    # the proxy and the advanced factor for the same concept. Each gate keys
+    # off the exact feature names the heuristic_factors module reads, keeping
+    # the "advanced primary, proxy fallback" rule honest.
+    if sport_key == "NBA":
+        has_advanced_usage = (
+            isinstance(features.get("recent_usage_pct"), (int, float))
+            and isinstance(features.get("season_usage_pct"), (int, float))
+        )
+        has_advanced_opp_pace = isinstance(
+            features.get("opponent_pace_recent_5"), (int, float)
+        ) or isinstance(features.get("opponent_pace_season"), (int, float))
+
+        recent_minutes = _log_average(short_term_logs, sport_key, "minutes")
+        season_minutes = _log_average(season_logs, sport_key, "minutes")
+        minute_factor = 1.0
+        if season_minutes > 0:
+            minute_factor = clamp(1 + ((recent_minutes - season_minutes) / season_minutes) * 0.25, 0.88, 1.12)
+            expected *= minute_factor
+
+        usage_factor = 1.0
+        if has_advanced_usage:
+            features["usage_factor_proxy_superseded"] = True
+        else:
+            recent_usage = sum(_usage_proxy(item["raw_metrics"]) for item in short_term_logs) / max(len(short_term_logs), 1)
+            season_usage = sum(_usage_proxy(item["raw_metrics"]) for item in season_logs) / max(len(season_logs), 1)
+            if season_usage > 0:
+                usage_factor = clamp(1 + ((recent_usage - season_usage) / season_usage) * 0.15, 0.90, 1.10)
+                expected *= usage_factor
+
+        features["recent_minutes"] = round(recent_minutes, 2)
+        features["season_minutes"] = round(season_minutes, 2)
+        features["minute_factor"] = round(minute_factor, 3)
+        features["usage_factor"] = round(usage_factor, 3)
+        reasons.append(f"Recent minutes trend factor: {minute_factor:.2f}x")
+
+        if opponent_entry:
+            if has_advanced_opp_pace:
+                features["pace_factor"] = 1.0
+                features["pace_factor_proxy_superseded"] = True
+                features["has_pace_context"] = True
+            else:
+                opponent_recent_scores = _recent_participant_results(db, opponent_entry.participant_id, event.starts_at)
+                if opponent_recent_scores:
+                    opponent_offense = _avg_score(opponent_recent_scores)
+                    pace_factor = clamp(1 + ((opponent_offense - 110.0) / 110.0) * 0.08, 0.95, 1.05)
+                    expected *= pace_factor
+                    features["opponent_recent_avg_score"] = round(opponent_offense, 3)
+                    features["pace_factor"] = round(pace_factor, 3)
+                    features["has_pace_context"] = True
+                    if abs(pace_factor - 1.0) >= 0.015:
+                        reasons.append(f"Opponent pace context factor: {pace_factor:.2f}x")
+                else:
+                    features["has_pace_context"] = False
+    else:
+        has_advanced_starter = (
+            isinstance(features.get("opposing_starter_xfip"), (int, float))
+            or isinstance(features.get("opposing_starter_fip"), (int, float))
+        )
+
+        recent_pa = sum(_plate_appearances(item["raw_metrics"]) for item in short_term_logs) / max(len(short_term_logs), 1)
+        season_pa = sum(_plate_appearances(item["raw_metrics"]) for item in season_logs) / max(len(season_logs), 1)
+        pa_factor = 1.0
+        if season_pa > 0:
+            pa_factor = clamp(1 + ((recent_pa - season_pa) / season_pa) * 0.18, 0.88, 1.12)
+            expected *= pa_factor
+
+        starter_era = _probable_pitcher_era(event, opponent_entry.role) if opponent_entry else None
+        era_factor = 1.0
+        if starter_era is not None and not has_advanced_starter:
+            era_factor = clamp(1 + ((starter_era - 4.00) * 0.03), 0.90, 1.10)
+            expected *= era_factor
+
+        features["recent_plate_appearances"] = round(recent_pa, 2)
+        features["season_plate_appearances"] = round(season_pa, 2)
+        features["plate_appearance_factor"] = round(pa_factor, 3)
+        features["opposing_probable_era"] = starter_era
+        features["starter_era_factor"] = round(era_factor, 3)
+        if has_advanced_starter:
+            features["starter_era_factor_proxy_superseded"] = True
+        reasons.append(f"Recent plate appearance factor: {pa_factor:.2f}x")
+        if starter_era is not None and not has_advanced_starter:
+            reasons.append(f"Opposing probable starter ERA context: {starter_era:.2f}")
+
+    expected_before_advanced = expected
+    features["expected_before_advanced"] = round(expected_before_advanced, 3)
+
+    probability_yes = _poisson_yes_probability(expected, threshold)
+    sample_size = min(len(recent_logs), 10)
+    confidence = clamp(0.32 + (sample_size / 18.0) + abs(probability_yes - 0.5) * 0.45, 0.25, 0.93)
+    if len(short_term_logs) < 3:
+        confidence = clamp(confidence - 0.08, 0.25, 0.93)
+
+    features["expected_stat_output"] = round(expected, 3)
+    features["yes_probability"] = round(probability_yes, 4)
+    features["has_team_context"] = team_entry is not None
+    features["has_opponent_context"] = opponent_entry is not None
+    features["latest_log_days_ago"] = round(_days_since_latest_log(season_logs, event.starts_at) or 0.0, 3)
 
     # Apply advanced-stats factors AFTER all box-score / proxy factors. Each
     # factor defaults to 1.0 when its source data is missing, so this is a
