@@ -37,6 +37,20 @@ HEURISTIC_DERIVED_KEYS = {
 }
 
 
+# PR 3d — keys emitted by the advanced-stats pass that signal a row had
+# real advanced data when the prediction was captured. Any of these set
+# to 1.0 means "this row is advanced-complete" for sample weighting and
+# v2-only filtering.
+ADVANCED_COMPLETENESS_MARKERS = (
+    "advanced_data_complete",         # NBA player advanced
+    "mlb_batter_data_complete",       # MLB batter sabermetrics + Statcast
+    "pitcher_data_complete",          # MLB opposing-starter advanced
+    "opponent_team_data_complete",    # NBA opponent recent form
+    "park_data_complete",             # MLB park factors
+    "weather_data_complete",          # MLB weather (non-dome)
+)
+
+
 @dataclass(frozen=True, slots=True)
 class TrainingResult:
     artifact_dir: Path
@@ -63,6 +77,7 @@ def build_feature_spec(
     *,
     version: str,
     mode: str = "residual",
+    use_median_imputation: bool = True,
 ) -> FeatureSpec:
     keys: set[str] = set()
     default_values: dict[str, float] = {}
@@ -78,12 +93,85 @@ def build_feature_spec(
             keys.add(str(key))
             default_values.setdefault(str(key), 0.0)
     family_keys = sorted({str(value) for value in frame["family_key"].dropna().unique()})
+
+    if use_median_imputation:
+        # PR 3d — replace the static 0.0 default with the median of rows
+        # that DID have the key set. Without this, advanced features default
+        # to 0.0 for historical rows captured before the advanced cache was
+        # populated, which biases the model toward "no advanced data → bad"
+        # patterns instead of letting the median fill in a sensible prior.
+        medians = _compute_feature_medians(frame, sorted(keys))
+        for key, median_value in medians.items():
+            default_values[key] = median_value
+
     return FeatureSpec(
         version=version,
         ordered_keys=sorted(keys),
         default_values=default_values,
         family_one_hot_keys=family_keys,
     )
+
+
+def _compute_feature_medians(frame: pd.DataFrame, keys: list[str]) -> dict[str, float]:
+    """Median of non-null numeric values for each key across all rows.
+    Keys absent from every row return 0.0 (the historical default)."""
+    accumulator: dict[str, list[float]] = {key: [] for key in keys}
+    for features in frame["features"]:
+        feats = dict(features or {})
+        for key in keys:
+            value = _safe_float(feats.get(key))
+            if value is not None:
+                accumulator[key].append(value)
+    medians: dict[str, float] = {}
+    for key, values in accumulator.items():
+        if not values:
+            medians[key] = 0.0
+            continue
+        medians[key] = float(np.median(values))
+    return medians
+
+
+def _row_is_advanced_complete(features: dict[str, Any]) -> bool:
+    """Return True when at least one ADVANCED_COMPLETENESS_MARKERS key is 1.0."""
+    feats = dict(features or {})
+    for marker in ADVANCED_COMPLETENESS_MARKERS:
+        if _safe_float(feats.get(marker)) == 1.0:
+            return True
+    return False
+
+
+def _advanced_completeness_mask(frame: pd.DataFrame) -> np.ndarray:
+    """Boolean array — True for rows that have at least one advanced
+    completeness marker set to 1.0."""
+    return np.asarray(
+        [_row_is_advanced_complete(features) for features in frame["features"]],
+        dtype=bool,
+    )
+
+
+def _advanced_completeness_counts(frame: pd.DataFrame) -> dict[str, int]:
+    """Per-family count of advanced-complete rows, plus a ``__total__`` key."""
+    mask = _advanced_completeness_mask(frame)
+    counts: dict[str, int] = {"__total__": int(mask.sum())}
+    family_series = frame["family_key"].astype(str)
+    for family in sorted(family_series.unique()):
+        family_mask = family_series.eq(family).to_numpy() & mask
+        counts[family] = int(family_mask.sum())
+    return counts
+
+
+def _build_sample_weights(
+    frame: pd.DataFrame,
+    *,
+    advanced_weight: float,
+) -> np.ndarray:
+    """1.0 for rows without advanced data, ``advanced_weight`` for rows
+    with any completeness marker set. Used to up-weight high-signal rows
+    during mixed-mode training."""
+    mask = _advanced_completeness_mask(frame)
+    weights = np.ones(len(frame), dtype=np.float64)
+    weights[mask] = float(advanced_weight)
+    return weights
 
 
 def _matrix(frame: pd.DataFrame, feature_spec: FeatureSpec) -> np.ndarray:
@@ -150,14 +238,37 @@ def _candidate_estimators(sample_count: int):
     }
 
 
-def _fit_estimator(estimator, x_train: np.ndarray, y_train: np.ndarray):
+def _fit_estimator(
+    estimator,
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    *,
+    sample_weight: np.ndarray | None = None,
+) -> Any:
+    """Fit an estimator with optional sample weights.
+
+    Sample weights are only forwarded to estimators that natively accept
+    them via ``fit(sample_weight=...)``. Pipeline-wrapped estimators (our
+    LR candidate is a ``StandardScaler → LogisticRegression`` pipeline)
+    require ``<step>__sample_weight`` routing which doesn't compose
+    cleanly through CalibratedClassifierCV; for those we silently fall
+    back to uniform weights (the handoff says "if supported"). When
+    ``sample_weight`` is None, behaviour is identical to the pre-PR3d
+    code path.
+    """
+    from sklearn.pipeline import Pipeline
+
     class_counts = np.bincount(y_train, minlength=2)
     cv = int(min(3, class_counts.min()))
+    fit_kwargs: dict[str, Any] = {}
+    weight_supported = sample_weight is not None and not isinstance(estimator, Pipeline)
+    if weight_supported:
+        fit_kwargs["sample_weight"] = sample_weight
     if cv >= 2 and len(y_train) >= 500:
         method = "isotonic" if len(y_train) >= 500 else "sigmoid"
         calibrated = CalibratedClassifierCV(estimator=estimator, method=method, cv=cv)
-        return calibrated.fit(x_train, y_train)
-    return estimator.fit(x_train, y_train)
+        return calibrated.fit(x_train, y_train, **fit_kwargs)
+    return estimator.fit(x_train, y_train, **fit_kwargs)
 
 
 def _evaluate_candidates(frame: pd.DataFrame, feature_spec: FeatureSpec) -> tuple[str, dict[str, Any]]:
@@ -193,19 +304,93 @@ def train_and_package(
     feature_set_version: str = "public-feature-set-v2",
     model_version: str | None = None,
     dry_run: bool = False,
+    # PR 3d additions — opt-in but ON by default for v2:
+    use_median_imputation: bool = True,
+    advanced_sample_weight: float = 3.0,
+    advanced_only_threshold: int = 2000,
+    advanced_only: bool | None = None,
+    promotion_baseline_brier: float | None = None,
 ) -> TrainingResult:
+    """Train and package a model.
+
+    PR 3d behaviour additions:
+      - ``use_median_imputation``: when True, FeatureSpec.default_values are
+        the median of present values (per key) instead of 0.0. This stops
+        rows that simply lack advanced data from being treated as "all
+        zeros".
+      - ``advanced_sample_weight``: rows whose features include any
+        completeness marker (``advanced_data_complete`` etc.) are weighted
+        ``advanced_sample_weight``x during fit. Default 3.0.
+      - ``advanced_only_threshold``: if any single family has at least this
+        many advanced-complete rows, training is filtered to those rows
+        for that family and median imputation + weighting are dropped
+        (uniform weights). Pass ``advanced_only=True`` to force this mode
+        even when below threshold.
+      - ``promotion_baseline_brier``: when provided, the manifest
+        ``serving_mode`` becomes ``"serving"`` only if the new model's
+        time-split Brier is <= baseline; otherwise ``"shadow"`` (default).
+    """
     dataset = frame if frame is not None else load_settled_predictions(database_url)
     if dataset is None or dataset.empty:
         raise ValueError("No settled prediction rows available for training.")
     if dataset["target"].nunique() < 2:
         raise ValueError("Training requires both won and lost outcomes.")
 
+    completeness_counts = _advanced_completeness_counts(dataset)
+    family_max_count = max((count for key, count in completeness_counts.items() if key != "__total__"), default=0)
+    auto_advanced_only = family_max_count >= advanced_only_threshold
+    advanced_only_active = bool(advanced_only) if advanced_only is not None else auto_advanced_only
+
+    if advanced_only_active:
+        mask = _advanced_completeness_mask(dataset)
+        if mask.sum() == 0:
+            raise ValueError("advanced_only requested but no advanced-complete rows found")
+        dataset = dataset[mask].reset_index(drop=True)
+        if dataset["target"].nunique() < 2:
+            raise ValueError("advanced-only filter dropped a target class.")
+
     model_version = model_version or datetime.now(timezone.utc).date().isoformat()
-    feature_spec = build_feature_spec(dataset, version=feature_set_version, mode="residual")
+    feature_spec = build_feature_spec(
+        dataset,
+        version=feature_set_version,
+        mode="residual",
+        # In advanced-only mode, every row has the data — median imputation
+        # is unnecessary and biases the defaults toward the population
+        # average. Use the historical 0.0 default (it never gets read since
+        # there's nothing missing).
+        use_median_imputation=use_median_imputation and not advanced_only_active,
+    )
     winner, evaluations = _evaluate_candidates(dataset, feature_spec)
     x = _matrix(dataset, feature_spec)
     y = dataset["target"].to_numpy()
-    final_estimator = _fit_estimator(_candidate_estimators(len(dataset))[winner], x, y)
+
+    sample_weights: np.ndarray | None = None
+    if not advanced_only_active and advanced_sample_weight != 1.0:
+        sample_weights = _build_sample_weights(dataset, advanced_weight=advanced_sample_weight)
+    final_estimator = _fit_estimator(
+        _candidate_estimators(len(dataset))[winner],
+        x,
+        y,
+        sample_weight=sample_weights,
+    )
+
+    # PR 3d — promotion gate. If a baseline brier is supplied, only flip
+    # serving_mode to "serving" when v2 strictly beats it on the held-out
+    # time slice; otherwise stay in shadow so the API runtime keeps using
+    # the heuristic / previous serving model.
+    time_brier = float(evaluations[winner]["time"]["brier"])
+    if promotion_baseline_brier is None:
+        serving_mode = "shadow"
+        promotion_decision: dict[str, Any] = {"baseline_brier": None, "candidate_brier": time_brier, "promoted": False}
+    else:
+        promoted = time_brier <= float(promotion_baseline_brier)
+        serving_mode = "serving" if promoted else "shadow"
+        promotion_decision = {
+            "baseline_brier": float(promotion_baseline_brier),
+            "candidate_brier": time_brier,
+            "promoted": promoted,
+        }
+
     model_name = f"global_{winner}_residual"
     timestamp = model_version.replace("-", "")
     artifact_dir = Path(artifact_root) / f"global_v1_{timestamp}"
@@ -220,6 +405,14 @@ def train_and_package(
         "feature_mode": "residual_calibration",
         "metrics": evaluations,
         "hyperparameters": {"candidates": list(_candidate_estimators(len(dataset)).keys())},
+        # PR 3d — observability for the v2 training pipeline:
+        "advanced_completeness_counts": completeness_counts,
+        "advanced_only_threshold": advanced_only_threshold,
+        "advanced_only_active": advanced_only_active,
+        "advanced_sample_weight": float(advanced_sample_weight) if not advanced_only_active else 1.0,
+        "use_median_imputation": bool(use_median_imputation and not advanced_only_active),
+        "advanced_feature_medians": dict(feature_spec.default_values) if (use_median_imputation and not advanced_only_active) else {},
+        "promotion": promotion_decision,
     }
     if not dry_run:
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -231,7 +424,7 @@ def train_and_package(
             relative_artifact = Path(os.path.relpath(artifact_dir.resolve(), manifest_path.parent.resolve()))
             manifest = ModelManifest(
                 version=model_version,
-                serving_mode="shadow",
+                serving_mode=serving_mode,
                 families=[
                     ModelArtifact(
                         family_key="global_v1",
@@ -241,7 +434,7 @@ def train_and_package(
                         calibration_version="calibrated_v1",
                         feature_set_version=feature_set_version,
                         artifact_path=str(relative_artifact),
-                        mode="shadow",
+                        mode=serving_mode,
                         metadata={"behavior": "sklearn_predict_proba", "feature_mode": "residual_calibration"},
                     )
                 ],
