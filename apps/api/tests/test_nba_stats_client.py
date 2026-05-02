@@ -144,3 +144,67 @@ def test_fetch_team_advanced_uses_advanced_measure_type(monkeypatch):
     assert seen["params"]["MeasureType"] == "Advanced"
     rows = parse_result_set(payload)
     assert rows[0]["TEAM_NAME"] == "LA Lakers"
+
+
+def test_fetch_team_advanced_gamelog_passes_team_id(monkeypatch):
+    seen: dict = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen["url"] = url
+        seen["params"] = params
+        return _ok_response({"resultSets": [{"name": "TeamGameLogs", "headers": [], "rowSet": []}]})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    NbaStatsClient().fetch_team_advanced_gamelog("1610612747", 2024)
+    assert seen["url"].endswith("/teamgamelogs")
+    assert seen["params"]["TeamID"] == "1610612747"
+    assert seen["params"]["MeasureType"] == "Advanced"
+    assert seen["params"]["Season"] == "2024-25"
+
+
+def test_fetch_lineup_advanced_passes_group_quantity(monkeypatch):
+    seen: dict = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen["url"] = url
+        seen["params"] = params
+        return _ok_response({"resultSets": []})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    NbaStatsClient().fetch_lineup_advanced(2024, group_quantity=3)
+    assert seen["url"].endswith("/leaguedashlineups")
+    assert seen["params"]["GroupQuantity"] == "3"
+    assert seen["params"]["MeasureType"] == "Advanced"
+
+
+def test_fetch_boxscore_advanced_passes_game_id(monkeypatch):
+    seen: dict = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen["url"] = url
+        seen["params"] = params
+        return _ok_response({"resultSets": []})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    NbaStatsClient().fetch_boxscore_advanced("0022400900")
+    assert seen["url"].endswith("/boxscoreadvancedv2")
+    assert seen["params"]["GameID"] == "0022400900"
+
+
+def test_fetch_common_all_players_passes_season(monkeypatch):
+    seen: dict = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen["url"] = url
+        seen["params"] = params
+        return _ok_response({"resultSets": []})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    NbaStatsClient().fetch_common_all_players(2024)
+    assert seen["url"].endswith("/commonallplayers")
+    assert seen["params"]["Season"] == "2024-25"
+    assert seen["params"]["IsOnlyCurrentSeason"] == "1"

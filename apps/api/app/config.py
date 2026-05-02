@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     nba_stats_daily_request_cap: int = 500
     nba_advanced_cache_minutes: int = 240
     nba_team_advanced_cache_minutes: int = 1440
+    nba_team_gamelog_cache_minutes: int = 360
+    nba_lineup_advanced_cache_minutes: int = 1440
+    nba_boxscore_advanced_cache_minutes: int = 10080  # historical games — 1 week
+    nba_player_roster_cache_minutes: int = 1440
     nba_league_percentiles_cache_minutes: int = 1440
 
 

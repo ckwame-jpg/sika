@@ -484,6 +484,52 @@ class NbaLeaguePercentilesCache(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
 
+class NbaTeamGamelogCache(Base):
+    __tablename__ = "nba_team_gamelog_cache"
+    __table_args__ = (UniqueConstraint("team_id", "season", name="uq_nba_team_gamelog_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    team_id = Column(String, nullable=False, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NbaLineupAdvancedCache(Base):
+    __tablename__ = "nba_lineup_advanced_cache"
+    __table_args__ = (UniqueConstraint("season", "group_quantity", name="uq_nba_lineup_advanced_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    group_quantity = Column(Integer, nullable=False, index=True, default=5)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NbaBoxscoreAdvancedCache(Base):
+    __tablename__ = "nba_boxscore_advanced_cache"
+    __table_args__ = (UniqueConstraint("game_id", name="uq_nba_boxscore_advanced_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    game_id = Column(String, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NbaPlayerRosterCache(Base):
+    __tablename__ = "nba_player_roster_cache"
+    __table_args__ = (UniqueConstraint("season", name="uq_nba_player_roster_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class ModelFamilyRuntimeHealth(Base):
     __tablename__ = "model_family_runtime_health"
 

@@ -340,19 +340,32 @@ class PropStatsResolver:
     ) -> tuple[dict[str, Any], str]:
         """Load sport-specific advanced stats.
 
-        PR 1: NBA only. Falls through to ``("", "missing_id")`` when the player
-        has not yet been mapped to an NBA Stats PERSON_ID — that mapping is
-        populated by a separate resolver (added in a subsequent PR), so for
-        now most calls return empty and scoring stays box-score-only.
+        PR 2a: NBA player advanced + ID resolution. Resolves NBA Stats
+        PERSON_ID via ``resolve_nba_stats_player_id`` (cached commonallplayers
+        + name match) on first encounter, then caches the mapping back to
+        the EspnPlayerSearchCache row so subsequent calls are O(1).
         """
         if not get_settings().advanced_stats_enabled:
             return {}, "disabled"
         if sport_key.upper() != "NBA":
             return {}, "unsupported_sport"
+        from app.services.advanced_stats import (
+            load_nba_advanced,
+            resolve_nba_stats_player_id,
+        )
+
         nba_stats_id = (player or {}).get("nba_stats_id")
         if not nba_stats_id:
+            nba_stats_id = resolve_nba_stats_player_id(
+                self.db,
+                espn_athlete_id=(player or {}).get("athlete_id"),
+                full_name=(player or {}).get("display_name") or "",
+                team_abbreviation=_team_abbreviation_from_player(player),
+                season=season,
+                allow_network=self.allow_network,
+            )
+        if not nba_stats_id:
             return {}, "missing_id"
-        from app.services.advanced_stats import load_nba_advanced
 
         result = load_nba_advanced(
             self.db,
@@ -362,6 +375,24 @@ class PropStatsResolver:
             now=self.now,
         )
         return dict(result.payload or {}), result.cache_status
+
+
+def _team_abbreviation_from_player(player: dict[str, Any] | None) -> str | None:
+    """Best-effort team abbreviation extraction from an ESPN search payload.
+
+    ESPN's player search returns ``team_name`` ("Los Angeles Lakers") and
+    sometimes ``team_abbreviation``. We try a few fields and fall back to
+    ``None`` when nothing matches — name-only resolution is the fallback.
+    """
+    if not player:
+        return None
+    raw_team = player.get("team_abbreviation") or ""
+    if raw_team:
+        return raw_team.upper()
+    nested_raw = (player.get("raw") or {}).get("subtitle") or ""
+    if nested_raw:
+        return None  # subtitle is the team name; downstream uses name-only fallback
+    return None
 
 
 def warm_prop_context_cache(
@@ -1381,11 +1412,32 @@ def _score_player_prop(
     features["has_opponent_context"] = opponent_entry is not None
     features["latest_log_days_ago"] = round(_days_since_latest_log(season_logs, event.starts_at) or 0.0, 3)
 
-    if resolved.advanced_payload:
-        from app.services.advanced_stats import emit_nba_player_features
+    if resolved.sport_key.upper() == "NBA":
+        from app.services.advanced_stats import (
+            emit_nba_opponent_team_features,
+            emit_nba_player_features,
+            find_nba_team_id_by_name,
+            load_nba_team_gamelog,
+        )
 
-        if resolved.sport_key.upper() == "NBA":
+        if resolved.advanced_payload:
             features.update(emit_nba_player_features(resolved.advanced_payload))
+
+        if opponent_entry is not None:
+            opponent_name = opponent_entry.participant.display_name or ""
+            opponent_team_id = find_nba_team_id_by_name(
+                db, team_name=opponent_name, season=resolved.season
+            )
+            if opponent_team_id:
+                opponent_team_result = load_nba_team_gamelog(
+                    db,
+                    team_id=opponent_team_id,
+                    season=resolved.season,
+                    allow_network=False,
+                )
+                if opponent_team_result.payload:
+                    features.update(emit_nba_opponent_team_features(opponent_team_result.payload))
+                    features["opponent_team_cache_status"] = opponent_team_result.cache_status
     features["advanced_cache_status"] = resolved.advanced_cache_status
     reasons.append(f"Model probability of clearing {threshold:.1f}: {probability_yes:.0%}")
     if resolved.context_stale:

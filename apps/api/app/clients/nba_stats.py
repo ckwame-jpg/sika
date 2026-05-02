@@ -203,6 +203,104 @@ class NbaStatsClient:
             },
         )
 
+    def fetch_team_advanced_gamelog(
+        self,
+        team_id: str,
+        season: int,
+        season_type: str = "Regular Season",
+    ) -> dict[str, Any]:
+        """Per-game Advanced log for one team. Each row = one game's team stats."""
+        return self._get(
+            "/teamgamelogs",
+            {
+                "TeamID": str(team_id),
+                "Season": season_param(season),
+                "SeasonType": season_type,
+                "MeasureType": "Advanced",
+                "PerMode": "PerGame",
+                "LastNGames": "0",
+                "Month": "0",
+                "OpponentTeamID": "0",
+                "Period": "0",
+                "LeagueID": "00",
+            },
+        )
+
+    def fetch_lineup_advanced(
+        self,
+        season: int,
+        season_type: str = "Regular Season",
+        group_quantity: int = 5,
+    ) -> dict[str, Any]:
+        """League-wide 5-man lineup Advanced stats.
+
+        ``group_quantity=5`` returns starting-style lineups; supports 2/3/4
+        for partial lineup combinations.
+        """
+        return self._get(
+            "/leaguedashlineups",
+            {
+                "MeasureType": "Advanced",
+                "Season": season_param(season),
+                "SeasonType": season_type,
+                "PerMode": "PerGame",
+                "GroupQuantity": str(group_quantity),
+                "LastNGames": "0",
+                "Month": "0",
+                "OpponentTeamID": "0",
+                "Period": "0",
+                "LeagueID": "00",
+                "PaceAdjust": "N",
+                "PlusMinus": "N",
+                "Rank": "N",
+                "Conference": "",
+                "Division": "",
+                "GameSegment": "",
+                "GameScope": "",
+                "Location": "",
+                "Outcome": "",
+                "SeasonSegment": "",
+                "ShotClockRange": "",
+                "TeamID": "0",
+                "VsConference": "",
+                "VsDivision": "",
+            },
+        )
+
+    def fetch_boxscore_advanced(self, game_id: str) -> dict[str, Any]:
+        """Per-game four-factors and per-player advanced for a single completed game."""
+        return self._get(
+            "/boxscoreadvancedv2",
+            {
+                "GameID": str(game_id),
+                "StartPeriod": "0",
+                "EndPeriod": "10",
+                "RangeType": "0",
+                "StartRange": "0",
+                "EndRange": "28800",
+            },
+        )
+
+    def fetch_common_all_players(
+        self,
+        season: int,
+        is_only_current_season: int = 1,
+    ) -> dict[str, Any]:
+        """Roster snapshot for player-ID resolution.
+
+        Returns rows with PERSON_ID, DISPLAY_FIRST_LAST, TEAM_ID,
+        TEAM_ABBREVIATION, ROSTERSTATUS — used to map ESPN athlete_ids
+        to NBA Stats PERSON_IDs by (normalized name, team) match.
+        """
+        return self._get(
+            "/commonallplayers",
+            {
+                "LeagueID": "00",
+                "Season": season_param(season),
+                "IsOnlyCurrentSeason": str(is_only_current_season),
+            },
+        )
+
     # ------------------------------------------------------------------
     # Internal
 
