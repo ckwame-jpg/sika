@@ -253,7 +253,9 @@ def test_training_with_advanced_data_records_completeness_metadata(tmp_path):
 
 def test_training_uniform_weights_when_advanced_only_active(tmp_path):
     """When a family crosses the advanced_only_threshold, the dataset is
-    filtered to advanced-complete rows and weights drop to uniform."""
+    filtered to advanced-complete rows and weights drop to uniform.
+    Median imputation stays on (per-key coverage within advanced rows is
+    still sparse) — only weighting collapses."""
     frame = settled_predictions_from_records(
         _records(total=240, advanced_only_for_family="mlb_props", advanced_only_count=120)
     )
@@ -267,7 +269,8 @@ def test_training_uniform_weights_when_advanced_only_active(tmp_path):
     )
     metadata = json.loads((result.artifact_dir / "training_metadata.json").read_text())
     assert metadata["advanced_only_active"] is True
-    assert metadata["use_median_imputation"] is False
+    # Median imputation is independent of advanced_only mode now.
+    assert metadata["use_median_imputation"] is True
     assert metadata["advanced_sample_weight"] == 1.0
     # Training rows are now filtered to the advanced-complete subset.
     assert metadata["training_rows"] <= 120
@@ -307,6 +310,38 @@ def test_training_promotion_gate_promotes_when_candidate_beats_baseline(tmp_path
     manifest = json.loads(result.manifest_path.read_text())
     assert manifest["serving_mode"] == "serving"
     assert manifest["families"][0]["mode"] == "serving"
+
+
+def test_training_promotion_gate_does_not_promote_on_tie(tmp_path):
+    """The promotion gate is strictly less-than: a baseline equal to the
+    candidate's time-split brier keeps the model in shadow."""
+    frame = settled_predictions_from_records(_records(total=240, advanced_complete_share=0.3))
+    # First training pass — no baseline, just to discover this dataset's
+    # candidate brier.
+    result = train_and_package(
+        frame,
+        artifact_root=tmp_path / "artifacts1",
+        manifest_out=tmp_path / "manifests1" / "current.json",
+        serve_family_key="mlb_props",
+        model_version="2026-04-30",
+    )
+    metadata = json.loads((result.artifact_dir / "training_metadata.json").read_text())
+    candidate_brier = metadata["promotion"]["candidate_brier"]
+
+    # Re-train with the baseline set EXACTLY to the candidate brier — a tie
+    # must keep us in shadow.
+    result_tie = train_and_package(
+        frame,
+        artifact_root=tmp_path / "artifacts2",
+        manifest_out=tmp_path / "manifests2" / "current.json",
+        serve_family_key="mlb_props",
+        model_version="2026-05-01",
+        promotion_baseline_brier=candidate_brier,
+    )
+    tie_metadata = json.loads((result_tie.artifact_dir / "training_metadata.json").read_text())
+    assert tie_metadata["promotion"]["promoted"] is False
+    tie_manifest = json.loads(result_tie.manifest_path.read_text())
+    assert tie_manifest["serving_mode"] == "shadow"
 
 
 def test_training_no_baseline_stays_shadow(tmp_path):

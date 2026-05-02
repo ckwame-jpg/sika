@@ -271,19 +271,36 @@ def _fit_estimator(
     return estimator.fit(x_train, y_train, **fit_kwargs)
 
 
-def _evaluate_candidates(frame: pd.DataFrame, feature_spec: FeatureSpec) -> tuple[str, dict[str, Any]]:
+def _evaluate_candidates(
+    frame: pd.DataFrame,
+    feature_spec: FeatureSpec,
+    *,
+    sample_weight: np.ndarray | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Pick a candidate by held-out brier across three splits.
+
+    ``sample_weight`` (when provided) is applied to the *training* slice of
+    each split via ``_fit_estimator``. Held-out evaluation stays unweighted —
+    we want the brier on the natural row distribution, not a weighted view.
+    Pipeline candidates that don't accept ``sample_weight`` silently fall
+    back to uniform weights (see ``_fit_estimator``).
+    """
     x = _matrix(frame, feature_spec)
     y = frame["target"].to_numpy()
     player_train, player_test = _split_by_group(frame, "player_group")
     event_train, event_test = _split_by_group(frame, "event_group")
     time_train, time_test = _split_by_time(frame)
+
+    def _train_weight(idx: np.ndarray) -> np.ndarray | None:
+        return None if sample_weight is None else sample_weight[idx]
+
     evaluations: dict[str, Any] = {}
     for name, estimator in _candidate_estimators(len(frame)).items():
-        fitted = _fit_estimator(estimator, x[player_train], y[player_train])
+        fitted = _fit_estimator(estimator, x[player_train], y[player_train], sample_weight=_train_weight(player_train))
         player_prob = fitted.predict_proba(x[player_test])[:, 1]
-        event_fitted = _fit_estimator(estimator, x[event_train], y[event_train])
+        event_fitted = _fit_estimator(estimator, x[event_train], y[event_train], sample_weight=_train_weight(event_train))
         event_prob = event_fitted.predict_proba(x[event_test])[:, 1]
-        time_fitted = _fit_estimator(estimator, x[time_train], y[time_train])
+        time_fitted = _fit_estimator(estimator, x[time_train], y[time_train], sample_weight=_train_weight(time_train))
         time_prob = time_fitted.predict_proba(x[time_test])[:, 1]
         evaluations[name] = {
             "player_group": _metrics_for_predictions(frame, player_test, player_prob),
@@ -322,13 +339,15 @@ def train_and_package(
         completeness marker (``advanced_data_complete`` etc.) are weighted
         ``advanced_sample_weight``x during fit. Default 3.0.
       - ``advanced_only_threshold``: if any single family has at least this
-        many advanced-complete rows, training is filtered to those rows
-        for that family and median imputation + weighting are dropped
-        (uniform weights). Pass ``advanced_only=True`` to force this mode
-        even when below threshold.
+        many advanced-complete rows, training auto-filters to that subset.
+        Median imputation still runs because a row "advanced-complete" by
+        marker doesn't guarantee every advanced feature key is populated;
+        weighting drops to uniform since every retained row is high-signal.
+        Pass ``advanced_only=True`` to force this mode even below threshold.
       - ``promotion_baseline_brier``: when provided, the manifest
-        ``serving_mode`` becomes ``"serving"`` only if the new model's
-        time-split Brier is <= baseline; otherwise ``"shadow"`` (default).
+        ``serving_mode`` becomes ``"serving"`` only if the candidate's
+        time-split Brier is **strictly less than** the baseline; ties keep
+        ``"shadow"`` (the default).
     """
     dataset = frame if frame is not None else load_settled_predictions(database_url)
     if dataset is None or dataset.empty:
@@ -350,23 +369,29 @@ def train_and_package(
             raise ValueError("advanced-only filter dropped a target class.")
 
     model_version = model_version or datetime.now(timezone.utc).date().isoformat()
+    # PR 3d — keep median imputation on even in advanced-only mode. The
+    # completeness markers we filter on (e.g. ``advanced_data_complete``)
+    # only assert that the corresponding emitter fired; per-key coverage
+    # within advanced features is still sparse, and sparse rows benefit
+    # from medians as much as the mixed-mode dataset does.
     feature_spec = build_feature_spec(
         dataset,
         version=feature_set_version,
         mode="residual",
-        # In advanced-only mode, every row has the data — median imputation
-        # is unnecessary and biases the defaults toward the population
-        # average. Use the historical 0.0 default (it never gets read since
-        # there's nothing missing).
-        use_median_imputation=use_median_imputation and not advanced_only_active,
+        use_median_imputation=use_median_imputation,
     )
-    winner, evaluations = _evaluate_candidates(dataset, feature_spec)
-    x = _matrix(dataset, feature_spec)
-    y = dataset["target"].to_numpy()
 
+    # Build sample weights up-front so candidate evaluation and the final
+    # refit see the same weighted view of the data. In advanced-only mode
+    # every row carries a completeness marker, so weighting collapses to
+    # uniform — skip the work.
     sample_weights: np.ndarray | None = None
     if not advanced_only_active and advanced_sample_weight != 1.0:
         sample_weights = _build_sample_weights(dataset, advanced_weight=advanced_sample_weight)
+
+    winner, evaluations = _evaluate_candidates(dataset, feature_spec, sample_weight=sample_weights)
+    x = _matrix(dataset, feature_spec)
+    y = dataset["target"].to_numpy()
     final_estimator = _fit_estimator(
         _candidate_estimators(len(dataset))[winner],
         x,
@@ -376,14 +401,14 @@ def train_and_package(
 
     # PR 3d — promotion gate. If a baseline brier is supplied, only flip
     # serving_mode to "serving" when v2 strictly beats it on the held-out
-    # time slice; otherwise stay in shadow so the API runtime keeps using
+    # time slice; ties stay in shadow so the API runtime keeps using
     # the heuristic / previous serving model.
     time_brier = float(evaluations[winner]["time"]["brier"])
     if promotion_baseline_brier is None:
         serving_mode = "shadow"
         promotion_decision: dict[str, Any] = {"baseline_brier": None, "candidate_brier": time_brier, "promoted": False}
     else:
-        promoted = time_brier <= float(promotion_baseline_brier)
+        promoted = time_brier < float(promotion_baseline_brier)
         serving_mode = "serving" if promoted else "shadow"
         promotion_decision = {
             "baseline_brier": float(promotion_baseline_brier),
@@ -410,8 +435,8 @@ def train_and_package(
         "advanced_only_threshold": advanced_only_threshold,
         "advanced_only_active": advanced_only_active,
         "advanced_sample_weight": float(advanced_sample_weight) if not advanced_only_active else 1.0,
-        "use_median_imputation": bool(use_median_imputation and not advanced_only_active),
-        "advanced_feature_medians": dict(feature_spec.default_values) if (use_median_imputation and not advanced_only_active) else {},
+        "use_median_imputation": bool(use_median_imputation),
+        "advanced_feature_medians": dict(feature_spec.default_values) if use_median_imputation else {},
         "promotion": promotion_decision,
     }
     if not dry_run:
