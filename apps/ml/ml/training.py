@@ -115,16 +115,28 @@ def build_feature_spec(
         # populated, which biases the model toward "no advanced data → bad"
         # patterns instead of letting the median fill in a sensible prior.
         #
-        # Exception: ADVANCED_COMPLETENESS_MARKERS are emitted only as the
-        # literal 1.0 (absent → false). Their median over present values is
-        # always 1.0, so imputing 1.0 for absent rows would collapse the
-        # column to a constant and destroy the marker signal. Keep the
-        # historical 0.0 default for those keys so the model still sees
-        # the present/absent distinction.
-        medians = _compute_feature_medians(frame, sorted(keys))
-        marker_set = set(ADVANCED_COMPLETENESS_MARKERS)
+        # Exclusions:
+        #   1. ``ADVANCED_COMPLETENESS_MARKERS`` are emitted only as the
+        #      literal 1.0 (absent → false). Their median is always 1.0,
+        #      so imputing it would collapse the column to a constant.
+        #   2. Any key whose training-time values are *all* in {0.0, 1.0}
+        #      — one-hot/boolean indicators like ``sport_is_nba`` and
+        #      ``has_team_context``. The median of a balanced binary set
+        #      is 0.5, a value the model never sees during training. Worse,
+        #      some of these keys (``sport_is_nba``/``sport_is_mlb``) are
+        #      training-only — the API scoring path doesn't emit them, so
+        #      every inference call would otherwise read the 0.5 default.
+        # Both classes keep the historical 0.0 default so the present/absent
+        # distinction stays meaningful and inference stays in-distribution.
+        accumulator = _collect_feature_values(frame, sorted(keys))
+        binary_only_keys = {
+            key for key, values in accumulator.items()
+            if values and all(v in (0.0, 1.0) for v in values)
+        }
+        skip_set = set(ADVANCED_COMPLETENESS_MARKERS) | binary_only_keys
+        medians = _medians_from_accumulator(accumulator)
         for key, median_value in medians.items():
-            if key in marker_set:
+            if key in skip_set:
                 continue
             default_values[key] = median_value
 
@@ -136,9 +148,39 @@ def build_feature_spec(
     )
 
 
+def _collect_feature_values(frame: pd.DataFrame, keys: list[str]) -> dict[str, list[float]]:
+    """Per-key list of present non-null numeric values across rows.
+
+    Used by both ``_compute_feature_medians`` and the binary-key detection
+    above. Returning the raw lists (instead of just medians) lets the caller
+    decide whether each column is binary, has zero variance, etc.
+    """
+    accumulator: dict[str, list[float]] = {key: [] for key in keys}
+    for features in frame["features"]:
+        feats = dict(features or {})
+        for key in keys:
+            value = _safe_float(feats.get(key))
+            if value is not None:
+                accumulator[key].append(value)
+    return accumulator
+
+
+def _medians_from_accumulator(accumulator: dict[str, list[float]]) -> dict[str, float]:
+    """Take per-key value lists and reduce to medians; empty lists → 0.0."""
+    medians: dict[str, float] = {}
+    for key, values in accumulator.items():
+        medians[key] = float(np.median(values)) if values else 0.0
+    return medians
+
+
 def _compute_feature_medians(frame: pd.DataFrame, keys: list[str]) -> dict[str, float]:
     """Median of non-null numeric values for each key across all rows.
-    Keys absent from every row return 0.0 (the historical default)."""
+    Keys absent from every row return 0.0 (the historical default).
+
+    Kept as a thin wrapper around the new ``_collect_feature_values`` /
+    ``_medians_from_accumulator`` pair for backward compatibility with the
+    public test surface in ``test_pr3d_training_v2``.
+    """
     accumulator: dict[str, list[float]] = {key: [] for key in keys}
     for features in frame["features"]:
         feats = dict(features or {})

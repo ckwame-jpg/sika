@@ -234,6 +234,29 @@ def test_build_feature_spec_keeps_zero_default_when_imputation_disabled():
     assert spec.default_values["ts_pct"] == 0.0
 
 
+def test_build_feature_spec_skips_binary_keys_during_imputation():
+    """One-hot / boolean indicators (e.g. ``sport_is_nba``,
+    ``has_team_context``) have training values exclusively in {0.0, 1.0}.
+    Median imputation would set their default to 0.5 — a value the model
+    never sees during training and that is fed at inference whenever the
+    API doesn't emit the key (which is always for ``sport_is_*``). Verify
+    these keys keep the historical 0.0 default."""
+    frame = settled_predictions_from_records(
+        _records(total=60, advanced_complete_share=0.5)
+    )
+    spec = build_feature_spec(frame, version="public-feature-set-v2", use_median_imputation=True)
+    # ``sport_is_nba`` / ``sport_is_mlb`` are written by ``_records`` via
+    # the dataset prep layer — they're guaranteed binary. Defaults must
+    # stay at 0.0 (the unseen-coordinate-of-an-indicator is "off").
+    assert spec.default_values["sport_is_nba"] == 0.0
+    assert spec.default_values["sport_is_mlb"] == 0.0
+    # ``has_team_context`` in the synthetic features is always True (1.0),
+    # so it's binary-only by virtue of being a constant True. It must
+    # also keep the 0.0 default (the model would otherwise see 1.0
+    # everywhere AND the absent default would silently shift to 1.0).
+    assert spec.default_values["has_team_context"] == 0.0
+
+
 # -----------------------------------------------------------------------------
 # Sample weights
 
