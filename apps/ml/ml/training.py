@@ -41,13 +41,27 @@ HEURISTIC_DERIVED_KEYS = {
 # real advanced data when the prediction was captured. Any of these set
 # to 1.0 means "this row is advanced-complete" for sample weighting and
 # v2-only filtering.
+#
+# IMPORTANT: this list must stay in sync with every ``*_data_complete``
+# write in ``apps/api/app/services``. The
+# ``test_advanced_completeness_markers_match_api_emitters`` test scans
+# the API service tree and fails if a new emitter lands without being
+# added here, so drift is caught at CI time.
 ADVANCED_COMPLETENESS_MARKERS = (
+    # advanced_stats.py
     "advanced_data_complete",         # NBA player advanced
-    "mlb_batter_data_complete",       # MLB batter sabermetrics + Statcast
-    "pitcher_data_complete",          # MLB opposing-starter advanced
     "opponent_team_data_complete",    # NBA opponent recent form
-    "park_data_complete",             # MLB park factors
-    "weather_data_complete",          # MLB weather (non-dome)
+    # nba_long_tail.py
+    "hustle_data_complete",
+    "drives_data_complete",
+    "clutch_data_complete",
+    "opponent_defender_data_complete",
+    # mlb_advanced.py
+    "mlb_batter_data_complete",       # batter sabermetrics + Statcast
+    "pitcher_data_complete",          # opposing-starter advanced
+    "park_data_complete",             # park factors
+    "weather_data_complete",          # weather (non-dome)
+    "lineup_data_complete",           # batting-order position
 )
 
 
@@ -100,8 +114,18 @@ def build_feature_spec(
         # to 0.0 for historical rows captured before the advanced cache was
         # populated, which biases the model toward "no advanced data → bad"
         # patterns instead of letting the median fill in a sensible prior.
+        #
+        # Exception: ADVANCED_COMPLETENESS_MARKERS are emitted only as the
+        # literal 1.0 (absent → false). Their median over present values is
+        # always 1.0, so imputing 1.0 for absent rows would collapse the
+        # column to a constant and destroy the marker signal. Keep the
+        # historical 0.0 default for those keys so the model still sees
+        # the present/absent distinction.
         medians = _compute_feature_medians(frame, sorted(keys))
+        marker_set = set(ADVANCED_COMPLETENESS_MARKERS)
         for key, median_value in medians.items():
+            if key in marker_set:
+                continue
             default_values[key] = median_value
 
     return FeatureSpec(
@@ -345,9 +369,10 @@ def train_and_package(
         weighting drops to uniform since every retained row is high-signal.
         Pass ``advanced_only=True`` to force this mode even below threshold.
       - ``promotion_baseline_brier``: when provided, the manifest
-        ``serving_mode`` becomes ``"serving"`` only if the candidate's
-        time-split Brier is **strictly less than** the baseline; ties keep
-        ``"shadow"`` (the default).
+        ``serving_mode`` flips from ``"shadow"`` to ``"ml"`` (the runtime
+        sentinel that activates the model) only if the candidate's
+        time-split Brier is **strictly less than** the baseline; ties
+        keep ``"shadow"``.
     """
     dataset = frame if frame is not None else load_settled_predictions(database_url)
     if dataset is None or dataset.empty:
@@ -400,16 +425,22 @@ def train_and_package(
     )
 
     # PR 3d — promotion gate. If a baseline brier is supplied, only flip
-    # serving_mode to "serving" when v2 strictly beats it on the held-out
-    # time slice; ties stay in shadow so the API runtime keeps using
-    # the heuristic / previous serving model.
+    # serving_mode to "ml" (the runtime sentinel that activates the model)
+    # when v2 strictly beats the baseline on the held-out time slice; ties
+    # stay in shadow so the API runtime keeps using the heuristic /
+    # previous serving model.
+    #
+    # NOTE on ``serving_mode`` values: ``apps/api/app/services/ml/runtime.py``
+    # accepts only ``"shadow"`` and ``"ml"`` from the manifest. ``"serving"``
+    # is rejected and falls back to auto-shadow, which would silently no-op
+    # the entire promotion path.
     time_brier = float(evaluations[winner]["time"]["brier"])
     if promotion_baseline_brier is None:
         serving_mode = "shadow"
         promotion_decision: dict[str, Any] = {"baseline_brier": None, "candidate_brier": time_brier, "promoted": False}
     else:
         promoted = time_brier < float(promotion_baseline_brier)
-        serving_mode = "serving" if promoted else "shadow"
+        serving_mode = "ml" if promoted else "shadow"
         promotion_decision = {
             "baseline_brier": float(promotion_baseline_brier),
             "candidate_brier": time_brier,
@@ -430,13 +461,25 @@ def train_and_package(
         "feature_mode": "residual_calibration",
         "metrics": evaluations,
         "hyperparameters": {"candidates": list(_candidate_estimators(len(dataset)).keys())},
-        # PR 3d — observability for the v2 training pipeline:
+        # PR 3d — observability for the v2 training pipeline. Note:
+        # ``feature_medians`` contains medians for EVERY feature key, not
+        # just advanced ones (it mirrors ``feature_spec.default_values``).
+        # ``evaluation_imputation_caveat`` records that median defaults are
+        # computed on the full dataset before train/test splits in
+        # ``_evaluate_candidates``, so candidate brier is mildly optimistic
+        # for keys missing on test rows. Magnitude is ~1/N per row; the
+        # promotion gate's ``<`` strictness gives some headroom.
         "advanced_completeness_counts": completeness_counts,
         "advanced_only_threshold": advanced_only_threshold,
         "advanced_only_active": advanced_only_active,
         "advanced_sample_weight": float(advanced_sample_weight) if not advanced_only_active else 1.0,
         "use_median_imputation": bool(use_median_imputation),
-        "advanced_feature_medians": dict(feature_spec.default_values) if use_median_imputation else {},
+        "feature_medians": dict(feature_spec.default_values) if use_median_imputation else {},
+        "evaluation_imputation_caveat": (
+            "median defaults computed on full dataset; held-out brier "
+            "for rows with missing keys is mildly optimistic"
+            if use_median_imputation else None
+        ),
         "promotion": promotion_decision,
     }
     if not dry_run:

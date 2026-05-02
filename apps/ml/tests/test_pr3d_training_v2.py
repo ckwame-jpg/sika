@@ -124,20 +124,51 @@ def test_row_is_advanced_complete_detects_marker():
     assert _row_is_advanced_complete({}) is False
 
 
-def test_advanced_completeness_markers_cover_known_emitters():
-    # Sanity-check the marker list matches the constants the API emitters
-    # actually write — when a new emitter is added, this test will need
-    # to grow. (No new emitters were added in PR 3d, so all six existing
-    # markers should be present.)
-    expected = {
-        "advanced_data_complete",
-        "mlb_batter_data_complete",
-        "pitcher_data_complete",
-        "opponent_team_data_complete",
-        "park_data_complete",
-        "weather_data_complete",
-    }
-    assert set(ADVANCED_COMPLETENESS_MARKERS) == expected
+def test_advanced_completeness_markers_match_api_emitters():
+    """Scan ``apps/api/app/services`` for every ``*_data_complete`` write
+    and assert the constant covers them. Catches drift when a new emitter
+    lands but isn't added to ADVANCED_COMPLETENESS_MARKERS — without this
+    scan, those rows would silently get sample weight 1.0 instead of 3.0
+    and would be filtered OUT in advanced_only mode.
+    """
+    import re
+    from pathlib import Path
+
+    api_services_root = Path(__file__).resolve().parents[3] / "apps" / "api" / "app" / "services"
+    assert api_services_root.is_dir(), f"expected API services dir at {api_services_root}"
+
+    # Match any ``*_data_complete`` key written into a dict that ends up
+    # in features. Three shapes show up in the codebase:
+    #   1. ``out["foo_data_complete"] = 1.0`` (most emitters)
+    #   2. ``"foo_data_complete": 1.0`` (dict-literal returns)
+    #   3. ``"foo_data_complete": float(...)`` (park factors compute the
+    #      flag from a payload field rather than the literal 1.0)
+    write_patterns = (
+        re.compile(r'\[\s*[\'"](\w+_data_complete)[\'"]\s*\]\s*=\s*'),
+        re.compile(r'[\'"](\w+_data_complete)[\'"]\s*:\s*'),
+    )
+    discovered: set[str] = set()
+    for py_file in api_services_root.rglob("*.py"):
+        text = py_file.read_text(encoding="utf-8")
+        for pattern in write_patterns:
+            for match in pattern.finditer(text):
+                discovered.add(match.group(1))
+
+    # Filter out the synthetic "_data_complete" key embedded inside park
+    # factors (it's a payload field, not a feature key) — emit_park_features
+    # exposes it as ``park_data_complete`` which is what we actually track.
+    discovered.discard("_data_complete")
+
+    declared = set(ADVANCED_COMPLETENESS_MARKERS)
+    missing = discovered - declared
+    extra = declared - discovered
+    assert not missing, (
+        f"ADVANCED_COMPLETENESS_MARKERS missing API emitters: {sorted(missing)}. "
+        "Add them to the constant in training.py so weighting + advanced_only mode pick up these rows."
+    )
+    assert not extra, (
+        f"ADVANCED_COMPLETENESS_MARKERS lists keys with no API emitter: {sorted(extra)}."
+    )
 
 
 def test_advanced_completeness_counts_per_family():
@@ -248,7 +279,11 @@ def test_training_with_advanced_data_records_completeness_metadata(tmp_path):
     counts = metadata["advanced_completeness_counts"]
     assert counts["__total__"] > 0
     # Median for ts_pct was learned from advanced-complete rows.
-    assert metadata["advanced_feature_medians"]["ts_pct"] != 0.0
+    assert metadata["feature_medians"]["ts_pct"] != 0.0
+    # Completeness markers must NOT have been median-imputed (their median
+    # would be 1.0, collapsing the column to a constant and destroying the
+    # marker signal). They keep the historical 0.0 default.
+    assert metadata["feature_medians"].get("advanced_data_complete", 0.0) == 0.0
 
 
 def test_training_uniform_weights_when_advanced_only_active(tmp_path):
@@ -308,8 +343,10 @@ def test_training_promotion_gate_promotes_when_candidate_beats_baseline(tmp_path
     metadata = json.loads((result.artifact_dir / "training_metadata.json").read_text())
     assert metadata["promotion"]["promoted"] is True
     manifest = json.loads(result.manifest_path.read_text())
-    assert manifest["serving_mode"] == "serving"
-    assert manifest["families"][0]["mode"] == "serving"
+    # ``"ml"`` is the runtime sentinel that actually activates the model;
+    # ``"serving"`` would be silently rejected by apps/api/app/services/ml/runtime.py.
+    assert manifest["serving_mode"] == "ml"
+    assert manifest["families"][0]["mode"] == "ml"
 
 
 def test_training_promotion_gate_does_not_promote_on_tie(tmp_path):
@@ -342,6 +379,28 @@ def test_training_promotion_gate_does_not_promote_on_tie(tmp_path):
     assert tie_metadata["promotion"]["promoted"] is False
     tie_manifest = json.loads(result_tie.manifest_path.read_text())
     assert tie_manifest["serving_mode"] == "shadow"
+
+
+def test_promoted_manifest_uses_runtime_compatible_mode(tmp_path):
+    """The runtime in apps/api/app/services/ml/runtime.py only accepts
+    ``"shadow"`` or ``"ml"`` from a manifest's ``mode`` field. A promoted
+    artifact MUST use one of those literals; ``"serving"`` (or anything
+    else) is rejected and falls back to auto-shadow, silently no-opping
+    the entire promotion path.
+    """
+    frame = settled_predictions_from_records(_records(total=240, advanced_complete_share=0.3))
+    result = train_and_package(
+        frame,
+        artifact_root=tmp_path / "artifacts",
+        manifest_out=tmp_path / "manifests" / "current.json",
+        serve_family_key="mlb_props",
+        model_version="2026-05-02",
+        promotion_baseline_brier=1.0,  # impossibly loose → promotes
+    )
+    manifest = json.loads(result.manifest_path.read_text())
+    assert manifest["serving_mode"] in {"shadow", "ml"}
+    for family in manifest["families"]:
+        assert family["mode"] in {"shadow", "ml"}
 
 
 def test_training_no_baseline_stays_shadow(tmp_path):
