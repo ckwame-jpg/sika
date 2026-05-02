@@ -5,6 +5,8 @@ from datetime import date, datetime, timezone
 import re
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.clients.espn import EspnPublicClient
 
 
@@ -129,6 +131,46 @@ _EXPLANATION_KEYS = {
     "SOCCER": ("goals", "assists", "shots", "starts"),
 }
 
+# Display labels for advanced metric keys added by stats_summary_augment.
+# Keep these in sync with the keys in stats_summary_augment._NBA_ADVANCED_KEYS
+# and _MLB_BATTER_ADVANCED_KEYS.
+_ADVANCED_METRIC_LABELS = {
+    "NBA": {
+        "ts_pct": "TS%",
+        "efg_pct": "eFG%",
+        "usg_pct": "USG%",
+        "off_rating": "ORtg",
+        "def_rating": "DRtg",
+        "net_rating": "Net Rtg",
+        "pie": "PIE",
+        "pace": "Pace",
+    },
+    "MLB": {
+        "woba": "wOBA",
+        "iso": "ISO",
+        "walk_rate": "BB%",
+        "strikeout_rate": "K%",
+        "wrc_plus": "wRC+",
+        "babip": "BABIP",
+        "xwoba": "xwOBA",
+        "xba": "xBA",
+        "xslg": "xSLG",
+        "barrel_rate": "Barrel%",
+        "hard_hit_rate": "Hard-Hit%",
+        "exit_velocity_avg": "Exit Velo",
+        "launch_angle_avg": "Launch Angle",
+        "sweet_spot_rate": "Sweet Spot%",
+    },
+}
+
+
+def _advanced_metric_labels(sport_key: str, metric_categories: dict[str, str]) -> dict[str, str]:
+    """Return display labels for any "advanced"-tagged keys in
+    ``metric_categories`` that have an entry in ``_ADVANCED_METRIC_LABELS``."""
+    table = _ADVANCED_METRIC_LABELS.get(sport_key, {})
+    return {key: table[key] for key, category in metric_categories.items() if category == "advanced" and key in table}
+
+
 _STAT_LINE_SPECS = {
     "NBA": (
         ("points", "point", "points"),
@@ -172,7 +214,14 @@ class StatsQueryService:
     def __init__(self, espn_client: EspnPublicClient | None = None):
         self.espn_client = espn_client or EspnPublicClient()
 
-    def query(self, question: str, sport_key: str = "NBA", season: int | None = None) -> dict[str, Any]:
+    def query(
+        self,
+        question: str,
+        sport_key: str = "NBA",
+        season: int | None = None,
+        *,
+        db: Session | None = None,
+    ) -> dict[str, Any]:
         parsed = parse_stats_question(question, sport_key=sport_key, season=season)
         player = self.espn_client.search_player(parsed.player_name, sport_key=parsed.sport_key)
         if parsed.sport_key == "SOCCER":
@@ -193,6 +242,22 @@ class StatsQueryService:
             raise LookupError(f"No {parsed.sport_key} game logs matched the query for {player['display_name']}")
 
         summary_metrics = _build_summary_metrics(parsed.sport_key, game_logs)
+        # PR 3c: layer in advanced metrics + percentile ranks + categories.
+        # Cache misses are graceful — basic metrics always survive.
+        from app.services.stats_summary_augment import augment_summary_with_advanced
+
+        summary_metrics, percentiles, metric_categories = augment_summary_with_advanced(
+            db,
+            sport_key=parsed.sport_key,
+            player=player,
+            season=parsed.season,
+            summary_metrics=summary_metrics,
+        )
+        # Extend the metric_labels map with display labels for any newly
+        # added advanced keys so the frontend can render their names.
+        metric_labels = _METRIC_LABELS[parsed.sport_key]
+        if metric_categories:
+            metric_labels = {**metric_labels, **_advanced_metric_labels(parsed.sport_key, metric_categories)}
         return {
             "question": question,
             "sport_key": parsed.sport_key,
@@ -205,7 +270,7 @@ class StatsQueryService:
             "games_analyzed": len(game_logs),
             "split": parsed.split,
             "opponent": parsed.opponent,
-            "metric_labels": _METRIC_LABELS[parsed.sport_key],
+            "metric_labels": metric_labels,
             "summary": {
                 "games": len(game_logs),
                 "wins": sum(1 for item in game_logs if item.get("result") == "W"),
@@ -213,6 +278,8 @@ class StatsQueryService:
                 "draws": sum(1 for item in game_logs if item.get("result") == "D"),
                 "metrics": summary_metrics,
                 "stat_line": _build_stat_line(parsed.sport_key, summary_metrics),
+                "percentiles": percentiles,
+                "metric_categories": metric_categories,
             },
             "game_logs": [_serialize_game_log(item) for item in game_logs],
             "explanation": _build_explanation(player["display_name"], parsed, summary_metrics, len(game_logs)),
