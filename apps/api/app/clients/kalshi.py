@@ -167,20 +167,26 @@ class KalshiPublicClient:
         max_pages: int = 5,
         cursor: str | None = None,
     ):
-        remaining = limit
+        """Iterate Kalshi market pages, ``limit`` markets per page (≤1000),
+        up to ``max_pages`` pages. Total cap is ``limit * max_pages``.
+
+        Previously ``limit`` was treated as a global cap which made
+        ``max_pages > 1`` meaningless — the caller would only ever see one
+        page worth of markets. Now ``limit`` is per-page (clamped to
+        Kalshi's 1000 max) and ``max_pages`` controls depth, so a caller
+        asking for ``limit=1000, max_pages=50`` gets up to 50K markets.
+        """
+        per_page = max(1, min(int(limit), 1000))
         next_cursor = cursor
         for _ in range(max_pages):
-            if remaining <= 0:
-                break
             page_markets, next_cursor = self.list_markets_page(
                 status=status,
-                limit=min(remaining, 1000),
+                limit=per_page,
                 mve_filter=mve_filter,
                 cursor=next_cursor,
             )
             if not page_markets:
                 break
-            remaining -= len(page_markets)
             yield page_markets, next_cursor
             if not next_cursor:
                 break
@@ -192,6 +198,14 @@ class KalshiPublicClient:
         mve_filter: str = "exclude",
         max_pages: int = 5,
     ) -> list[dict[str, Any]]:
+        """Return up to ``limit * max_pages`` markets across paginated calls.
+
+        ``limit`` is the per-page cap (Kalshi's max is 1000); ``max_pages``
+        is the total depth. Defaults of ``(1000, 5)`` give up to 5,000
+        markets — enough to surface NBA/MLB game-winner tickers that get
+        buried behind tens of thousands of music-streaming and prop
+        tickers in Kalshi's default ordering.
+        """
         markets: list[dict[str, Any]] = []
         for page_markets, _cursor in self.iter_market_pages(
             status=status,
@@ -200,8 +214,7 @@ class KalshiPublicClient:
             max_pages=max_pages,
         ):
             markets.extend(page_markets)
-
-        return markets[:limit]
+        return markets
 
     def get_market(self, ticker: str) -> dict[str, Any]:
         response = self._get(f"/markets/{ticker}", timeout=20)

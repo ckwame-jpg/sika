@@ -254,6 +254,38 @@ def _queue_cleanup_job() -> bool:
     return _queue_job(kind="cleanup", scope="retention", reason="interval")
 
 
+def _queue_advanced_stats_warm_job() -> bool:
+    """Queue an advanced-stats warm-up job.
+
+    PR 1: only refreshes NBA team rollups and league percentile breakpoints.
+    Per-player NBA Stats fetches need an athlete_id mapping that is added in
+    a follow-up PR — until then this job is a low-cost daily refresh.
+    """
+    return _queue_job(kind="advanced_stats_warm", scope="nba", reason="interval")
+
+
+def _queue_market_discovery_job() -> bool:
+    """Queue a Kalshi standalone-market discovery + event-mapping job.
+
+    Runs ``refresh_kalshi_markets(include_standalone=True)`` to pull new
+    market tickers (incl. KXMLBGAME / KXNBAGAME / KXMLBF5 game-winner
+    tickers that get buried behind tens of thousands of prop tickers in
+    Kalshi's default ordering) and maps them to existing events so the
+    next slate refresh picks them up as candidates.
+    """
+    return _queue_job(kind="market_discovery", scope="standalone", reason="interval")
+
+
+def _queue_lineup_refresh_job() -> bool:
+    """Queue an MLB lineup-refresh job.
+
+    Fetches today's schedule with ``hydrate=lineups,probablePitcher,…`` and
+    persists per-event lineup payloads into ``mlb_lineup_cache`` so the
+    scoring path's ``emit_lineup_features`` actually finds data to read.
+    """
+    return _queue_job(kind="lineup_refresh", scope="mlb", reason="interval")
+
+
 def queue_startup_refresh_if_stale() -> bool:
     if not startup_refresh_needed():
         return False
@@ -469,6 +501,39 @@ def start_scheduler() -> None:
         _weekly_model_retrain_job,
         trigger=CronTrigger(day_of_week="sun", hour=3, minute=0),
         id="weekly_model_retrain",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    if get_settings().advanced_stats_enabled:
+        scheduler.add_job(
+            _queue_advanced_stats_warm_job,
+            trigger=CronTrigger(hour=5, minute=15),
+            id="advanced_stats_warm_daily",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+        )
+    # Kalshi standalone discovery — twice a day so newly-listed game-winner
+    # markets land in the DB ahead of the slate refresh that scores them.
+    # 09:00 catches morning slate (early MLB matinees + NBA load-in);
+    # 16:00 catches the late evening US slate.
+    scheduler.add_job(
+        _queue_market_discovery_job,
+        trigger=CronTrigger(hour="9,16", minute=0),
+        id="market_discovery_twice_daily",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # MLB lineup refresh — confirmed lineups generally post 2-4h before first
+    # pitch. Two daily ticks (15:00 ahead of evening slate, 11:00 ahead of
+    # afternoon games) give us a sub-30-min staleness window without
+    # hammering statsapi.mlb.com.
+    scheduler.add_job(
+        _queue_lineup_refresh_job,
+        trigger=CronTrigger(hour="11,15", minute=0),
+        id="mlb_lineup_refresh_twice_daily",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

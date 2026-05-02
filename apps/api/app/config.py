@@ -74,6 +74,42 @@ class Settings(BaseSettings):
         ]
     )
 
+    advanced_stats_enabled: bool = True
+    nba_stats_base_url: str = "https://stats.nba.com/stats"
+    nba_stats_rate_limit_rps: float = 0.6
+    nba_stats_rate_limit_burst: float = 2.0
+    nba_stats_daily_request_cap: int = 500
+    nba_advanced_cache_minutes: int = 240
+    nba_team_advanced_cache_minutes: int = 1440
+    nba_team_gamelog_cache_minutes: int = 360
+    nba_lineup_advanced_cache_minutes: int = 1440
+    nba_boxscore_advanced_cache_minutes: int = 10080  # historical games — 1 week
+    nba_player_roster_cache_minutes: int = 1440
+    nba_league_percentiles_cache_minutes: int = 1440
+    nba_hustle_player_cache_minutes: int = 1440
+    nba_tracking_cache_minutes: int = 720
+    nba_clutch_cache_minutes: int = 1440
+    nba_player_defense_cache_minutes: int = 1440
+    nba_injury_report_cache_minutes: int = 60
+
+    # MLB advanced stats
+    mlb_batter_advanced_cache_minutes: int = 360
+    mlb_pitcher_advanced_cache_minutes: int = 360
+    mlb_statcast_batter_cache_minutes: int = 720
+    mlb_statcast_pitcher_cache_minutes: int = 720
+    mlb_player_splits_cache_minutes: int = 1440
+    mlb_team_gamelog_cache_minutes: int = 360
+    mlb_bullpen_state_cache_minutes: int = 60
+    mlb_lineup_cache_minutes: int = 60
+    mlb_weather_cache_minutes: int = 30
+    mlb_player_roster_cache_minutes: int = 1440
+    mlb_league_percentiles_cache_minutes: int = 1440
+    mlb_injury_report_cache_minutes: int = 240
+
+    # Weather
+    openweather_api_key: str = ""
+    nws_user_agent: str = "sika-sports-copilot"
+
 
 @lru_cache
 def get_settings() -> Settings:

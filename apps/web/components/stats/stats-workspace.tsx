@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { queryStats } from "@/lib/api";
 import { SPORT_LABELS, type SportKey, type StatsQueryRead } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { AdvancedMetricsGrid } from "./advanced-metrics-grid";
 
 const SUGGESTIONS = [
   "Jalen Brunson last 10 games",
@@ -220,9 +221,18 @@ function LoadingState({ sportKey }: { sportKey: SportKey }) {
 }
 
 function StatsAnswer({ result }: { result: StatsQueryRead }) {
-  // Metric grid: up to 6 populated metrics, labels from backend.
+  // Metric grid: when the backend tags metrics with categories, the basic
+  // ones render here and the advanced ones drop into AdvancedMetricsGrid
+  // below. When categories are absent (older API responses), every metric
+  // renders here just like before.
+  const categories = result.summary.metric_categories ?? {};
+  const hasCategories = Object.keys(categories).length > 0;
   const metricEntries = Object.entries(result.summary.metrics)
-    .filter(([, value]) => value != null)
+    .filter(([key, value]) => {
+      if (value == null) return false;
+      if (!hasCategories) return true;
+      return categories[key] !== "advanced";
+    })
     .slice(0, 6);
 
   // A metric is chartable if at least one game log has a finite numeric value for it.
@@ -313,6 +323,13 @@ function StatsAnswer({ result }: { result: StatsQueryRead }) {
           <MiniBars points={chartPoints.map((p) => p.value)} />
         </div>
       )}
+
+      <AdvancedMetricsGrid
+        metrics={result.summary.metrics}
+        labels={result.metric_labels}
+        percentiles={result.summary.percentiles ?? {}}
+        categories={result.summary.metric_categories ?? {}}
+      />
 
       {result.explanation && (
         <p className="sa-answer-explain">{result.explanation}</p>

@@ -49,6 +49,14 @@ class ResolvedPropSubject:
     player_search_cache_status: str = "miss"
     gamelog_cache_status: str = "miss"
     context_stale: bool = False
+    advanced_payload: dict[str, Any] = field(default_factory=dict)
+    advanced_cache_status: str = "miss"
+    # Cross-source player IDs resolved during _load_advanced. Threaded
+    # through here so downstream emitters (long-tail NBA, MLB lineup) can
+    # look up per-player records in O(1) without re-scanning the search
+    # cache. ``None`` until the resolver runs and finds a match.
+    nba_stats_id: str | None = None
+    mlb_stats_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -315,6 +323,7 @@ class PropStatsResolver:
         season = default_season_for_sport(sport_key)
         gamelog_payload, gamelog_cache_status = self._load_player_gamelog(sport_key, player["athlete_id"], season)
         game_logs = _build_game_logs(sport_key, gamelog_payload)
+        advanced_payload, advanced_status, resolved_ids = self._load_advanced(sport_key, player, season)
         resolved = ResolvedPropSubject(
             sport_key=sport_key,
             athlete_id=player["athlete_id"],
@@ -325,10 +334,149 @@ class PropStatsResolver:
             player_search_cache_status=player_cache_status,
             gamelog_cache_status=gamelog_cache_status,
             context_stale=gamelog_cache_status == "stale",
+            advanced_payload=advanced_payload,
+            advanced_cache_status=advanced_status,
+            nba_stats_id=resolved_ids.get("nba_stats_id"),
+            mlb_stats_id=resolved_ids.get("mlb_stats_id"),
         )
         self._cache[key] = resolved
         self.stats.prop_subjects_warmed += 1
         return resolved
+
+    def _load_advanced(
+        self, sport_key: str, player: dict[str, Any], season: int
+    ) -> tuple[dict[str, Any], str, dict[str, str]]:
+        """Load sport-specific advanced stats and surface resolved player IDs.
+
+        Returns ``(payload, cache_status, resolved_ids)`` where ``resolved_ids``
+        contains optional ``nba_stats_id`` / ``mlb_stats_id`` so the caller can
+        thread them onto ``ResolvedPropSubject`` and skip the
+        ``EspnPlayerSearchCache`` linear scan downstream.
+        """
+        if not get_settings().advanced_stats_enabled:
+            return {}, "disabled", {}
+        if sport_key.upper() == "NBA":
+            return self._load_nba_advanced(player, season)
+        if sport_key.upper() == "MLB":
+            return self._load_mlb_advanced(player, season)
+        return {}, "unsupported_sport", {}
+
+    def _load_nba_advanced(
+        self, player: dict[str, Any], season: int
+    ) -> tuple[dict[str, Any], str, dict[str, str]]:
+        from app.services.advanced_stats import (
+            load_nba_advanced,
+            resolve_nba_stats_player_id,
+        )
+
+        nba_stats_id = (player or {}).get("nba_stats_id")
+        if not nba_stats_id:
+            nba_stats_id = resolve_nba_stats_player_id(
+                self.db,
+                espn_athlete_id=(player or {}).get("athlete_id"),
+                full_name=(player or {}).get("display_name") or "",
+                team_abbreviation=_team_abbreviation_from_player(player),
+                season=season,
+                allow_network=self.allow_network,
+            )
+        if not nba_stats_id:
+            return {}, "missing_id", {}
+
+        result = load_nba_advanced(
+            self.db,
+            nba_stats_player_id=str(nba_stats_id),
+            season=season,
+            allow_network=self.allow_network,
+            now=self.now,
+        )
+        return dict(result.payload or {}), result.cache_status, {"nba_stats_id": str(nba_stats_id)}
+
+    def _load_mlb_advanced(
+        self, player: dict[str, Any], season: int
+    ) -> tuple[dict[str, Any], str, dict[str, str]]:
+        from app.services.mlb_advanced import (
+            load_mlb_batter_advanced,
+            load_mlb_statcast_batter,
+            resolve_mlb_stats_player_id,
+        )
+
+        mlb_stats_id = (player or {}).get("mlb_stats_id")
+        if not mlb_stats_id:
+            mlb_stats_id = resolve_mlb_stats_player_id(
+                self.db,
+                espn_athlete_id=(player or {}).get("athlete_id"),
+                full_name=(player or {}).get("display_name") or "",
+                team_abbreviation=_team_abbreviation_from_player(player),
+                season=season,
+                allow_network=self.allow_network,
+            )
+        if not mlb_stats_id:
+            return {}, "missing_id", {}
+
+        sabermetrics_result = load_mlb_batter_advanced(
+            self.db,
+            mlb_player_id=str(mlb_stats_id),
+            season=season,
+            allow_network=self.allow_network,
+            now=self.now,
+        )
+        statcast_result = load_mlb_statcast_batter(
+            self.db,
+            mlb_player_id=str(mlb_stats_id),
+            season=season,
+            allow_network=self.allow_network,
+            now=self.now,
+        )
+        combined = {
+            "batter_sabermetrics": sabermetrics_result.payload,
+            "batter_statcast": statcast_result.payload,
+        }
+        return (
+            combined,
+            _merge_cache_status(sabermetrics_result.cache_status, statcast_result.cache_status),
+            {"mlb_stats_id": str(mlb_stats_id)},
+        )
+
+
+_CACHE_STATUS_PRIORITY: dict[str, int] = {
+    "stale": 4,
+    "skipped": 3,
+    "miss": 2,
+    "missing_id": 2,
+    "hit": 1,
+    "dome": 0,
+    "disabled": 0,
+    "unsupported_sport": 0,
+}
+
+
+def _merge_cache_status(*statuses: str) -> str:
+    """Combine multiple per-source cache statuses using a 'most-degraded wins'
+    rule. ``stale`` outranks ``skipped`` outranks ``miss`` outranks ``hit`` —
+    so a partial-miss result is never reported as ``hit``. Unknown statuses
+    pass through unchanged.
+    """
+    if not statuses:
+        return "miss"
+    return max(statuses, key=lambda s: _CACHE_STATUS_PRIORITY.get(s, 5))
+
+
+def _team_abbreviation_from_player(player: dict[str, Any] | None) -> str | None:
+    """Best-effort team abbreviation extraction from an ESPN search payload.
+
+    ESPN's player search returns ``team_name`` ("Los Angeles Lakers") and
+    sometimes ``team_abbreviation``. We try a few fields and fall back to
+    ``None`` when nothing matches — name-only resolution is the fallback.
+    """
+    if not player:
+        return None
+    raw_team = player.get("team_abbreviation") or ""
+    if raw_team:
+        return raw_team.upper()
+    nested_raw = (player.get("raw") or {}).get("subtitle") or ""
+    if nested_raw:
+        return None  # subtitle is the team name; downstream uses name-only fallback
+    return None
 
 
 def warm_prop_context_cache(
@@ -768,6 +916,30 @@ def _probable_pitcher_era(event: Event, role: str) -> float | None:
     return None
 
 
+def _probable_pitcher_identity(event: Event, role: str) -> tuple[str | None, str | None]:
+    """Return ``(display_name, espn_athlete_id)`` for the probable starter.
+
+    Used by MLB advanced-stats wiring to resolve the starter's
+    MLB Stats PERSON_ID via name + team match. Falls back to ``(None, None)``
+    when ESPN's payload lacks the field.
+    """
+    competitor = _competitor_for_role(event, role)
+    probables = competitor.get("probables") or []
+    if not probables:
+        return None, None
+    probable = probables[0]
+    athlete = probable.get("athlete") or probable
+    display_name = (
+        athlete.get("displayName")
+        or athlete.get("fullName")
+        or athlete.get("shortName")
+        or probable.get("displayName")
+    )
+    athlete_id_raw = athlete.get("id") or athlete.get("uid")
+    athlete_id = str(athlete_id_raw) if athlete_id_raw is not None else None
+    return (str(display_name) if display_name else None, athlete_id)
+
+
 def _score_mlb_first_five(
     db: Session,
     event: Event,
@@ -894,7 +1066,7 @@ def _score_team_winner(
     if abs(workload_edge) >= 0.01:
         fresher = left.participant.display_name if workload_edge >= 0 else right.participant.display_name
         reasons.append(f"Recent workload favors {fresher}")
-    features = {
+    features: dict[str, Any] = {
         "left_win_rate": left_win_rate,
         "right_win_rate": right_win_rate,
         "left_avg_score": left_avg_score,
@@ -917,7 +1089,111 @@ def _score_team_winner(
         "left_sample_size": len(left_results),
         "right_sample_size": len(right_results),
     }
+
+    # Apply advanced-stats team context as an additive nudge to win probability.
+    # Cached only (allow_network=False) — caches are populated by the daily
+    # advanced_stats_warm cron and the per-prop scoring path.
+    advanced_edge = _winner_advanced_team_edge(db, event, left, right, features)
+    if advanced_edge is not None:
+        edge_value = clamp(advanced_edge, -0.06, 0.06)
+        left_win_probability = clamp(left_win_probability + edge_value, 0.05, 0.95)
+        features["advanced_team_edge"] = round(edge_value, 4)
+        if abs(edge_value) >= 0.01:
+            stronger = left.participant.display_name if edge_value > 0 else right.participant.display_name
+            reasons.append(f"Advanced team form favors {stronger} ({edge_value:+.1%})")
+
     return left_win_probability, confidence, reasons, features
+
+
+def _winner_advanced_team_edge(
+    db: Session,
+    event: Event,
+    left: EventParticipant,
+    right: EventParticipant,
+    features: dict[str, Any],
+) -> float | None:
+    """Compute an additive win-probability nudge from advanced team stats.
+
+    NBA: uses each team's recent_5 NetRating from ``nba_team_gamelog_cache``.
+    MLB: uses opposing probable starters' xFIP gap (lower xFIP → favors the
+    team facing the *other* starter).
+
+    Returns ``None`` when no advanced caches are populated for either team
+    so the caller can leave the prediction untouched.
+    """
+    sport = (event.sport_key or "").upper()
+    if sport == "NBA":
+        from app.services.advanced_stats import find_nba_team_id_by_name, load_nba_team_gamelog
+
+        # NBA season convention: a 2025-26 season starts in October 2025 but
+        # is keyed by 2026 (the ending year) throughout the codebase. Use the
+        # repo's authoritative resolver instead of raw ``event.starts_at.year``,
+        # which would mis-key October-December games to the prior season and
+        # miss the warm cache.
+        ref_date = event.starts_at.date() if event.starts_at else None
+        season = default_season_for_sport("NBA", ref_date)
+        left_team_id = find_nba_team_id_by_name(db, team_name=left.participant.display_name or "", season=season)
+        right_team_id = find_nba_team_id_by_name(db, team_name=right.participant.display_name or "", season=season)
+        if not left_team_id or not right_team_id:
+            return None
+        left_log = load_nba_team_gamelog(db, team_id=left_team_id, season=season, allow_network=False)
+        right_log = load_nba_team_gamelog(db, team_id=right_team_id, season=season, allow_network=False)
+        left_recent = (left_log.payload.get("recent_5_avg") if left_log.payload else None) or {}
+        right_recent = (right_log.payload.get("recent_5_avg") if right_log.payload else None) or {}
+        left_net = left_recent.get("net_rating")
+        right_net = right_recent.get("net_rating")
+        if not isinstance(left_net, (int, float)) or not isinstance(right_net, (int, float)):
+            return None
+        features["left_recent_net_rating"] = round(float(left_net), 3)
+        features["right_recent_net_rating"] = round(float(right_net), 3)
+        # 10 NetRating points ≈ 6% win probability shift (rough literature value).
+        return (float(left_net) - float(right_net)) * 0.006
+
+    if sport == "MLB":
+        # Pitcher xFIP gap — lower xFIP suppresses opposing offense, so the
+        # team facing the *higher*-xFIP starter has the edge.
+        from app.services.mlb_advanced import load_mlb_pitcher_advanced, resolve_mlb_stats_player_id
+
+        left_starter_name, left_starter_espn_id = _probable_pitcher_identity(event, left.role)
+        right_starter_name, right_starter_espn_id = _probable_pitcher_identity(event, right.role)
+        if not left_starter_name or not right_starter_name:
+            return None
+        ref_date = event.starts_at.date() if event.starts_at else None
+        season = default_season_for_sport("MLB", ref_date)
+
+        def _xfip(name: str, team_short: str | None, espn_athlete_id: str | None) -> float | None:
+            # Codex round 3: thread the ESPN athlete ID so a successful resolve
+            # writes the mlb_stats_id sidecar back to EspnPlayerSearchCache.
+            # That makes the warm cron's sidecar-derived list pick the starter
+            # up next pass instead of repeatedly resolving on every score.
+            mlb_id = resolve_mlb_stats_player_id(
+                db,
+                espn_athlete_id=espn_athlete_id,
+                full_name=name,
+                team_abbreviation=(team_short or "").upper() or None,
+                season=season,
+                allow_network=False,
+            )
+            if not mlb_id:
+                return None
+            result = load_mlb_pitcher_advanced(
+                db, mlb_player_id=str(mlb_id), season=season, allow_network=False
+            )
+            saber = (result.payload or {}).get("season_avg") or {}
+            value = saber.get("xfip") or saber.get("fip")
+            return float(value) if isinstance(value, (int, float)) else None
+
+        left_xfip = _xfip(left_starter_name, left.participant.short_name, left_starter_espn_id)
+        right_xfip = _xfip(right_starter_name, right.participant.short_name, right_starter_espn_id)
+        if left_xfip is None or right_xfip is None:
+            return None
+        features["left_starter_xfip"] = round(left_xfip, 3)
+        features["right_starter_xfip"] = round(right_xfip, 3)
+        # 1 run/9 xFIP gap ≈ ~5% win prob (very rough); flipped sign because
+        # the team whose starter has the LOWER xFIP wins more.
+        return (right_xfip - left_xfip) * 0.05
+
+    return None
 
 
 def _recent_score_pairs(
@@ -1336,6 +1612,9 @@ def _score_player_prop(
         features["venue_city"] = venue_context.get("venue_city")
         features["venue_state"] = venue_context.get("venue_state")
 
+    expected_before_advanced = expected
+    features["expected_before_advanced"] = round(expected_before_advanced, 3)
+
     probability_yes = _poisson_yes_probability(expected, threshold)
     sample_size = min(len(recent_logs), 10)
     confidence = clamp(0.32 + (sample_size / 18.0) + abs(probability_yes - 0.5) * 0.45, 0.25, 0.93)
@@ -1347,6 +1626,170 @@ def _score_player_prop(
     features["has_team_context"] = team_entry is not None
     features["has_opponent_context"] = opponent_entry is not None
     features["latest_log_days_ago"] = round(_days_since_latest_log(season_logs, event.starts_at) or 0.0, 3)
+
+    if resolved.sport_key.upper() == "NBA":
+        from app.services.advanced_stats import (
+            emit_nba_opponent_team_features,
+            emit_nba_player_features,
+            find_nba_team_id_by_name,
+            load_nba_team_gamelog,
+        )
+        from app.services.nba_long_tail import (
+            emit_nba_clutch_features,
+            emit_nba_drives_features,
+            emit_nba_hustle_features,
+            load_nba_clutch_player,
+            load_nba_hustle_player,
+            load_nba_tracking,
+        )
+
+        if resolved.advanced_payload:
+            features.update(emit_nba_player_features(resolved.advanced_payload))
+
+        if opponent_entry is not None:
+            opponent_name = opponent_entry.participant.display_name or ""
+            opponent_team_id = find_nba_team_id_by_name(
+                db, team_name=opponent_name, season=resolved.season
+            )
+            if opponent_team_id:
+                opponent_team_result = load_nba_team_gamelog(
+                    db,
+                    team_id=opponent_team_id,
+                    season=resolved.season,
+                    allow_network=False,
+                )
+                if opponent_team_result.payload:
+                    features.update(emit_nba_opponent_team_features(opponent_team_result.payload))
+                    features["opponent_team_cache_status"] = opponent_team_result.cache_status
+
+        # Long-tail NBA features — hustle, drives, clutch — for the prop subject.
+        # Cached only at scoring time (allow_network=False); the daily warm job
+        # populates these league-wide leaderboards. ``resolved.nba_stats_id``
+        # is set by ``_load_nba_advanced`` when resolution succeeds, so we
+        # avoid re-scanning EspnPlayerSearchCache here.
+        nba_stats_id = resolved.nba_stats_id
+
+        if nba_stats_id:
+            hustle_result = load_nba_hustle_player(db, season=resolved.season, allow_network=False)
+            features.update(emit_nba_hustle_features(hustle_result.payload, str(nba_stats_id)))
+
+            drives_result = load_nba_tracking(
+                db, season=resolved.season, pt_measure_type="Drives", allow_network=False
+            )
+            features.update(emit_nba_drives_features(drives_result.payload, str(nba_stats_id)))
+
+            clutch_result = load_nba_clutch_player(db, season=resolved.season, allow_network=False)
+            features.update(emit_nba_clutch_features(clutch_result.payload, str(nba_stats_id)))
+
+    elif resolved.sport_key.upper() == "MLB":
+        from app.models import EspnPlayerSearchCache, MlbLineupCache, MlbWeatherCache  # noqa: F401
+        from app.services.mlb_advanced import (
+            emit_lineup_features,
+            emit_mlb_batter_features,
+            emit_mlb_pitcher_features,
+            emit_park_features,
+            emit_weather_features,
+            load_lineup_for_event,
+            load_mlb_pitcher_advanced,
+            load_mlb_statcast_pitcher,
+            load_park_factors,
+            load_weather,
+            resolve_mlb_stats_player_id,
+        )
+
+        if resolved.advanced_payload:
+            sabermetrics = resolved.advanced_payload.get("batter_sabermetrics")
+            statcast = resolved.advanced_payload.get("batter_statcast")
+            features.update(emit_mlb_batter_features(sabermetrics, statcast))
+
+        venue_id = (event.raw_data or {}).get("venue_id") if isinstance(event.raw_data, dict) else None
+        park = load_park_factors(venue_id)
+        features.update(emit_park_features(park))
+
+        venue_indoor_flag = bool(features.get("venue_indoor"))
+        weather_result = load_weather(
+            db,
+            event_id=str(event.id),
+            lat=None,
+            lon=None,
+            game_time_utc=None,
+            is_dome=venue_indoor_flag,
+            allow_network=False,
+        )
+        if weather_result.payload:
+            features.update(emit_weather_features(weather_result.payload))
+            features["weather_cache_status"] = weather_result.cache_status
+
+        # Opposing probable starter — name comes from ESPN's competitor
+        # `probables` list. We try to resolve their MLB Stats PERSON_ID via
+        # the cached league roster (the resolver also writes the mapping
+        # back to EspnPlayerSearchCache for next time) and emit pitcher
+        # sabermetrics + Statcast features. allow_network=False on the read
+        # path keeps the synchronous scoring fast — pitcher caches are warmed
+        # by the daily cron + warm_mlb_advanced_for_athletes path.
+        starter_name, starter_espn_id = (
+            _probable_pitcher_identity(event, opponent_entry.role)
+            if opponent_entry
+            else (None, None)
+        )
+        if starter_name:
+            starter_team = opponent_entry.participant.short_name if opponent_entry else None
+            # Codex round 3: pass the ESPN athlete ID so a successful resolve
+            # persists the mlb_stats_id sidecar — keeps the warm cron's
+            # sidecar-derived starter list up to date without manual seeding.
+            starter_id = resolve_mlb_stats_player_id(
+                db,
+                espn_athlete_id=starter_espn_id,
+                full_name=starter_name,
+                team_abbreviation=(starter_team or "").upper() or None,
+                season=resolved.season,
+                allow_network=False,
+            )
+            if starter_id:
+                pitcher_result = load_mlb_pitcher_advanced(
+                    db,
+                    mlb_player_id=str(starter_id),
+                    season=resolved.season,
+                    allow_network=False,
+                )
+                pitcher_statcast_result = load_mlb_statcast_pitcher(
+                    db,
+                    mlb_player_id=str(starter_id),
+                    season=resolved.season,
+                    allow_network=False,
+                )
+                features.update(
+                    emit_mlb_pitcher_features(
+                        pitcher_result.payload,
+                        pitcher_statcast_result.payload,
+                    )
+                )
+
+        # Lineup context — batting-order position drives the lineup_factor.
+        # ``resolved.mlb_stats_id`` is set by ``_load_mlb_advanced``; no need
+        # to re-scan the search cache here.
+        lineup_result = load_lineup_for_event(db, event_id=str(event.id))
+        if lineup_result.payload and resolved.mlb_stats_id:
+            features.update(emit_lineup_features(lineup_result.payload, str(resolved.mlb_stats_id)))
+
+    features["advanced_cache_status"] = resolved.advanced_cache_status
+
+    # Apply advanced-stats factors AFTER all box-score / proxy factors. Each
+    # factor defaults to 1.0 when its source data is missing, so this is a
+    # safe no-op when advanced caches haven't populated yet for this player.
+    from app.services.heuristic_factors import apply_factors, compute_advanced_factors
+
+    advanced_factors = compute_advanced_factors(resolved.sport_key, stat_key, features)
+    if advanced_factors:
+        expected_after_advanced = apply_factors(expected, advanced_factors)
+        features["advanced_factors"] = advanced_factors
+        features["expected_stat_output"] = round(expected_after_advanced, 3)
+        # Recompute probability with the adjusted expected.
+        probability_yes = _poisson_yes_probability(expected_after_advanced, threshold)
+        features["yes_probability"] = round(probability_yes, 4)
+        for name, value in advanced_factors.items():
+            if abs(value - 1.0) >= 0.02:
+                reasons.append(f"{name.replace('_', ' ')}: {value:.2f}x")
     reasons.append(f"Model probability of clearing {threshold:.1f}: {probability_yes:.0%}")
     if resolved.context_stale:
         reasons.append("Using stale cached prop context while live ESPN refresh catches up.")

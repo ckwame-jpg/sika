@@ -804,6 +804,13 @@ export interface StatsSummaryRead {
   draws: number | null;
   metrics: Record<string, number | null>;
   stat_line: string | null;
+  /** 0-100 league percentile rank per metric key. Optional — populated only
+   *  for advanced metrics that have a league-wide distribution cached. */
+  percentiles?: Record<string, number>;
+  /** Tags each metric key as "basic" or "advanced" so the UI can group them
+   *  into separate sections. Optional — UI falls back to single-section
+   *  rendering when absent. */
+  metric_categories?: Record<string, "basic" | "advanced">;
 }
 
 export interface StatsGameLogRead {

@@ -158,3 +158,65 @@ def test_list_markets_page_returns_non_429_errors_without_retry():
         client.list_markets_page(status="open", limit=10, mve_filter="include")
 
     assert fake.calls == 1
+
+
+def test_list_markets_walks_max_pages_with_per_page_limit():
+    """``list_markets`` previously clipped at ``markets[:limit]`` after
+    paginating, so a caller asking for 5 pages of 1000 markets would only
+    see 1000 markets total — masking standalone game-winner tickers
+    buried behind tens of thousands of prop tickers in Kalshi's default
+    ordering. This regression test pins the new behavior: ``limit`` is the
+    per-page size and ``max_pages`` controls depth, so the caller gets
+    up to ``limit * max_pages`` markets across all pages."""
+    request = httpx.Request("GET", "https://example.test/markets")
+
+    class FakeHttpClient:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def get(self, url, **kwargs):
+            self.call_count += 1
+            params = kwargs.get("params") or {}
+            assert int(params["limit"]) == 1000
+            payload = {
+                "markets": [{"ticker": f"KX-page{self.call_count}-{i}"} for i in range(1000)],
+                "cursor": "next" if self.call_count < 3 else "",
+            }
+            return httpx.Response(200, request=request, json=payload)
+
+    fake = FakeHttpClient()
+    client = KalshiPublicClient(base_url="https://example.test", http_client=fake)
+    markets = client.list_markets(status="open", limit=1000, mve_filter="include", max_pages=3)
+
+    assert fake.call_count == 3, "expected three paginated requests"
+    assert len(markets) == 3000, "expected 3 pages × 1000 markets, not the old 1000-cap"
+    # Markers from each page must all be present so we know none of the
+    # later pages got dropped by a trailing slice.
+    assert markets[0]["ticker"] == "KX-page1-0"
+    assert markets[1500]["ticker"].startswith("KX-page2-")
+    assert markets[2999]["ticker"] == "KX-page3-999"
+
+
+def test_list_markets_stops_when_cursor_empties():
+    """If Kalshi runs out of markets before ``max_pages``, pagination
+    stops and we return everything fetched so far — without retrying."""
+    request = httpx.Request("GET", "https://example.test/markets")
+
+    class FakeHttpClient:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def get(self, url, **kwargs):
+            self.call_count += 1
+            payload = {
+                "markets": [{"ticker": f"KX-{self.call_count}"}],
+                "cursor": "",
+            }
+            return httpx.Response(200, request=request, json=payload)
+
+    fake = FakeHttpClient()
+    client = KalshiPublicClient(base_url="https://example.test", http_client=fake)
+    markets = client.list_markets(status="open", limit=1000, mve_filter="include", max_pages=10)
+
+    assert fake.call_count == 1
+    assert len(markets) == 1
