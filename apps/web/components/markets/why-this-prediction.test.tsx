@@ -62,4 +62,80 @@ describe("WhyThisPrediction", () => {
     expect(boostRow).toHaveTextContent("+12.0%");
     expect(suppressRow).toHaveTextContent("-12.0%");
   });
+
+  test("prefers server-built _drivers payload with detail strings", () => {
+    render(
+      <WhyThisPrediction
+        features={{
+          _drivers: [
+            {
+              key: "quality_of_contact_factor",
+              label: "Quality of contact",
+              delta_pct: 12.0,
+              direction: "up",
+              detail: "Season barrel rate: 14.0%",
+            },
+            {
+              key: "starter_factor_advanced",
+              label: "Opposing starter quality",
+              delta_pct: -8.0,
+              direction: "down",
+              detail: "Opposing starter xFIP: 3.20",
+            },
+          ],
+          // ``advanced_factors`` is also present but should be ignored when
+          // ``_drivers`` is provided.
+          advanced_factors: {
+            unrelated_factor: 1.99,
+          },
+        }}
+      />,
+    );
+    const qoc = screen.getByTestId("why-driver-quality_of_contact_factor");
+    expect(qoc).toHaveTextContent("Quality of contact");
+    expect(qoc).toHaveTextContent("+12.0%");
+    expect(screen.getByTestId("why-driver-quality_of_contact_factor-detail")).toHaveTextContent(
+      "Season barrel rate: 14.0%",
+    );
+    const starter = screen.getByTestId("why-driver-starter_factor_advanced");
+    expect(starter).toHaveTextContent("Opposing starter quality");
+    expect(starter).toHaveTextContent("-8.0%");
+    expect(screen.getByTestId("why-driver-starter_factor_advanced-detail")).toHaveTextContent(
+      "Opposing starter xFIP: 3.20",
+    );
+    // The fallback advanced_factors row must NOT render when _drivers is present.
+    expect(screen.queryByTestId("why-driver-unrelated_factor")).not.toBeInTheDocument();
+  });
+
+  test("falls back to advanced_factors when _drivers is empty", () => {
+    render(
+      <WhyThisPrediction
+        features={{
+          _drivers: [],
+          advanced_factors: { efficiency_factor: 1.10 },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("why-driver-efficiency_factor")).toBeInTheDocument();
+  });
+
+  test("omits detail row when detail is null in server payload", () => {
+    render(
+      <WhyThisPrediction
+        features={{
+          _drivers: [
+            {
+              key: "efficiency_factor",
+              label: "Shooting efficiency",
+              delta_pct: 10.0,
+              direction: "up",
+              detail: null,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByTestId("why-driver-efficiency_factor")).toBeInTheDocument();
+    expect(screen.queryByTestId("why-driver-efficiency_factor-detail")).not.toBeInTheDocument();
+  });
 });

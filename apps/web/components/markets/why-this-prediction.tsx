@@ -4,9 +4,9 @@ import { cn } from "@/lib/utils";
 
 /**
  * Top-3 driver row written by the backend's heuristic factor pass.
- * The shape comes from `signal.features.advanced_factors` and is decoded
- * here at the type boundary because the contract field is typed
- * Record<string, unknown>.
+ * Read first from ``features._drivers`` (new shape, includes a curated
+ * label and one-line ``detail`` string); falls back to deriving from
+ * ``features.advanced_factors`` for predictions captured before PR 3b.
  */
 interface DriverRow {
   /** factor key, e.g. "efficiency_factor" */
@@ -15,6 +15,8 @@ interface DriverRow {
   label: string;
   /** percentage delta vs neutral (1.0). +12 = +12% boost, -8 = -8% suppress. */
   deltaPct: number;
+  /** optional one-line explanation pulled from underlying features */
+  detail?: string | null;
 }
 
 interface WhyThisPredictionProps {
@@ -23,14 +25,11 @@ interface WhyThisPredictionProps {
 }
 
 /**
- * Renders the top-3 advanced factors driving the predicted line. Pulls the
- * data from ``features.advanced_factors`` (a dict of factor_name → multiplier
- * written by the heuristic pass in apps/api/app/services/scoring.py). Each
- * driver becomes a row showing the factor name, direction (↑/↓), and a bar
- * proportional to the delta.
- *
- * Hidden when there are no advanced factors — older predictions captured
- * before PR 3 ride along with no `advanced_factors` key, which is fine.
+ * Renders the top-3 advanced factors driving the predicted line. Prefers
+ * ``features._drivers`` (rich, server-rendered with detail strings); falls
+ * back to deriving rows from ``features.advanced_factors`` for older
+ * predictions. Each row shows direction (↑/↓), label, optional detail,
+ * a bar proportional to the delta, and the formatted percentage.
  */
 export function WhyThisPrediction({ features }: WhyThisPredictionProps) {
   const drivers = extractDrivers(features ?? null);
@@ -49,20 +48,30 @@ export function WhyThisPrediction({ features }: WhyThisPredictionProps) {
         {drivers.map((driver) => (
           <li
             key={driver.key}
-            className="flex items-center gap-3 text-sm"
+            className="flex flex-col gap-0.5 text-sm"
             data-testid={`why-driver-${driver.key}`}
           >
-            <DirectionArrow deltaPct={driver.deltaPct} />
-            <span className="flex-1 text-foreground/80">{driver.label}</span>
-            <DeltaBar deltaPct={driver.deltaPct} />
-            <span
-              className={cn(
-                "tabular-nums w-12 text-right text-xs",
-                driver.deltaPct > 0 ? "text-emerald-500" : "text-rose-500",
-              )}
-            >
-              {formatDelta(driver.deltaPct)}
-            </span>
+            <div className="flex items-center gap-3">
+              <DirectionArrow deltaPct={driver.deltaPct} />
+              <span className="flex-1 text-foreground/80">{driver.label}</span>
+              <DeltaBar deltaPct={driver.deltaPct} />
+              <span
+                className={cn(
+                  "tabular-nums w-12 text-right text-xs",
+                  driver.deltaPct > 0 ? "text-emerald-500" : "text-rose-500",
+                )}
+              >
+                {formatDelta(driver.deltaPct)}
+              </span>
+            </div>
+            {driver.detail ? (
+              <span
+                className="ml-8 text-xs text-foreground/60"
+                data-testid={`why-driver-${driver.key}-detail`}
+              >
+                {driver.detail}
+              </span>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -72,6 +81,28 @@ export function WhyThisPrediction({ features }: WhyThisPredictionProps) {
 
 function extractDrivers(features: Record<string, unknown> | null): DriverRow[] {
   if (!features) return [];
+
+  // Prefer the server-built ``_drivers`` payload — it carries curated labels
+  // and detail strings ("Recent USG% 32% vs season 28%") that the client
+  // can't reliably re-derive.
+  const serverDrivers = features["_drivers"];
+  if (Array.isArray(serverDrivers) && serverDrivers.length > 0) {
+    const rows: DriverRow[] = [];
+    for (const entry of serverDrivers) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as Record<string, unknown>;
+      const key = typeof e.key === "string" ? e.key : null;
+      const label = typeof e.label === "string" ? e.label : null;
+      const deltaPctRaw = e.delta_pct;
+      const deltaPct = typeof deltaPctRaw === "number" ? deltaPctRaw : Number(deltaPctRaw);
+      if (!key || !label || !Number.isFinite(deltaPct)) continue;
+      const detail = typeof e.detail === "string" ? e.detail : null;
+      rows.push({ key, label, deltaPct, detail });
+    }
+    if (rows.length > 0) return rows.slice(0, 3);
+  }
+
+  // Fallback: derive from raw factor multipliers (older predictions).
   const factors = features["advanced_factors"];
   if (!factors || typeof factors !== "object") return [];
 

@@ -1844,6 +1844,7 @@ def _score_player_prop(
     # Apply advanced-stats factors AFTER all box-score / proxy factors. Each
     # factor defaults to 1.0 when its source data is missing, so this is a
     # safe no-op when advanced caches haven't populated yet for this player.
+    from app.services.feature_attribution import driver_reason_strings, top_drivers
     from app.services.heuristic_factors import apply_factors, compute_advanced_factors
 
     advanced_factors = compute_advanced_factors(resolved.sport_key, stat_key, features)
@@ -1854,9 +1855,15 @@ def _score_player_prop(
         # Recompute probability with the adjusted expected.
         probability_yes = _poisson_yes_probability(expected_after_advanced, threshold)
         features["yes_probability"] = round(probability_yes, 4)
-        for name, value in advanced_factors.items():
-            if abs(value - 1.0) >= 0.02:
-                reasons.append(f"{name.replace('_', ' ')}: {value:.2f}x")
+        # Driver attribution — turn the multipliers into a sorted, labeled
+        # list with detail strings so the frontend can render rich rows
+        # without re-deriving them. Top-2 drivers also become reason
+        # strings on the recommendation rationale.
+        drivers = top_drivers(features, expected_before_advanced, expected_after_advanced)
+        if drivers:
+            features["_drivers"] = drivers
+            for line in driver_reason_strings(drivers):
+                reasons.append(line)
     reasons.append(f"Model probability of clearing {threshold:.1f}: {probability_yes:.0%}")
     if resolved.context_stale:
         reasons.append("Using stale cached prop context while live ESPN refresh catches up.")
