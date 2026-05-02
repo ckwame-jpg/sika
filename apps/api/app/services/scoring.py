@@ -1456,6 +1456,9 @@ def _score_player_prop(
         features["venue_city"] = venue_context.get("venue_city")
         features["venue_state"] = venue_context.get("venue_state")
 
+    expected_before_advanced = expected
+    features["expected_before_advanced"] = round(expected_before_advanced, 3)
+
     probability_yes = _poisson_yes_probability(expected, threshold)
     sample_size = min(len(recent_logs), 10)
     confidence = clamp(0.32 + (sample_size / 18.0) + abs(probability_yes - 0.5) * 0.45, 0.25, 0.93)
@@ -1566,6 +1569,23 @@ def _score_player_prop(
             features["weather_cache_status"] = weather_result.cache_status
 
     features["advanced_cache_status"] = resolved.advanced_cache_status
+
+    # Apply advanced-stats factors AFTER all box-score / proxy factors. Each
+    # factor defaults to 1.0 when its source data is missing, so this is a
+    # safe no-op when advanced caches haven't populated yet for this player.
+    from app.services.heuristic_factors import apply_factors, compute_advanced_factors
+
+    advanced_factors = compute_advanced_factors(resolved.sport_key, stat_key, features)
+    if advanced_factors:
+        expected_after_advanced = apply_factors(expected, advanced_factors)
+        features["advanced_factors"] = advanced_factors
+        features["expected_stat_output"] = round(expected_after_advanced, 3)
+        # Recompute probability with the adjusted expected.
+        probability_yes = _poisson_yes_probability(expected_after_advanced, threshold)
+        features["yes_probability"] = round(probability_yes, 4)
+        for name, value in advanced_factors.items():
+            if abs(value - 1.0) >= 0.02:
+                reasons.append(f"{name.replace('_', ' ')}: {value:.2f}x")
     reasons.append(f"Model probability of clearing {threshold:.1f}: {probability_yes:.0%}")
     if resolved.context_stale:
         reasons.append("Using stale cached prop context while live ESPN refresh catches up.")

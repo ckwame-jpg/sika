@@ -190,7 +190,7 @@ def train_and_package(
     artifact_root: str | Path = "artifacts",
     manifest_out: str | Path | None = "manifests/current.json",
     serve_family_key: str = "mlb_props",
-    feature_set_version: str = "public-feature-set-v1",
+    feature_set_version: str = "public-feature-set-v2",
     model_version: str | None = None,
     dry_run: bool = False,
 ) -> TrainingResult:

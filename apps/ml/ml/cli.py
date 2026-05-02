@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--artifact-root", default="artifacts")
     train.add_argument("--manifest-out", default=str(Path("manifests") / "current.json"))
     train.add_argument("--serve-family-key", default="mlb_props")
-    train.add_argument("--feature-set-version", default="public-feature-set-v1")
+    train.add_argument("--feature-set-version", default="public-feature-set-v2")
     train.add_argument("--model-version", default=None)
     train.add_argument("--dry-run", action="store_true")
     train.set_defaults(func=_train)
