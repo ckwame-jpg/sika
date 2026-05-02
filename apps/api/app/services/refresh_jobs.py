@@ -916,34 +916,54 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     logger.warning("advanced_stats_warm probable-pitcher fetch failed: %s", exc)
                     schedule_probable_failed = True
 
-                merged_pitcher_ids = sorted({
-                    str(pid)
-                    for pid in (
-                        list(details.get("pitcher_ids") or [])
-                        + list(mlb_player_ids)
-                        + list(probable_pitcher_ids)
-                    )
-                    if pid
-                })
-
-                # Codex round 4 #1: the warm cron is invoked on two paths now
-                # — the daily 05:15 cron with no flag, and the late-day
-                # `lineup_refresh` enqueue with pitchers_only=True. The flag
-                # short-circuits batter warming so the late-day tick costs
-                # only the small probable-starter set, not the N-batter
-                # sidecar list.
+                # Codex round 4 #1 / round 5: the warm cron is invoked on
+                # two paths now — the daily 05:15 cron with no flag, and the
+                # late-day `lineup_refresh` enqueue with
+                # ``details.pitchers_only=True``. The flag short-circuits
+                # batter + NBA warming AND scopes pitcher warming to the
+                # discovered late-day starter set so the tick stays cheap.
+                #
+                # Round 5 caught a real bug here: PR 9 built
+                # ``merged_pitcher_ids`` from
+                # ``explicit + sidecar_mlb_player_ids + probable_pitcher_ids``
+                # *before* checking the flag, so even a "pitchers only"
+                # job fanned out pitcher Statcast over every sidecar batter
+                # ID. The fix is to build the pitcher list per mode.
                 pitchers_only = bool(details.get("pitchers_only"))
                 nba_season = int(details.get("nba_season") or default_season_for_sport("NBA"))
                 mlb_season = int(details.get("mlb_season") or default_season_for_sport("MLB"))
                 if pitchers_only:
                     nba_summary_dict: dict[str, int] = {}
                     effective_mlb_player_ids: list[str] = []
+                    # Late-day path — only explicit IDs supplied by
+                    # ``lineup_refresh`` plus the schedule's probable
+                    # starters. NEVER include the sidecar batter list.
+                    pitcher_ids_for_warm = sorted({
+                        str(pid)
+                        for pid in (
+                            list(details.get("pitcher_ids") or [])
+                            + list(probable_pitcher_ids)
+                        )
+                        if pid
+                    })
                 else:
                     nba_summary = warm_nba_advanced_for_athletes(
                         db, nba_stats_player_ids=nba_player_ids, season=nba_season
                     )
                     nba_summary_dict = nba_summary.as_dict()
                     effective_mlb_player_ids = mlb_player_ids
+                    # Daily path — keep the sidecar IDs as a backstop so
+                    # any two-way player or starter who has shown up as a
+                    # prop subject still gets pitcher caches refreshed.
+                    pitcher_ids_for_warm = sorted({
+                        str(pid)
+                        for pid in (
+                            list(details.get("pitcher_ids") or [])
+                            + list(mlb_player_ids)
+                            + list(probable_pitcher_ids)
+                        )
+                        if pid
+                    })
                 # Codex round 4 #2: the cron used to pass a single ``savant``
                 # client which fanned out batter Statcast for every
                 # ``mlb_stats_player_ids`` sidecar, not just probable
@@ -952,7 +972,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 mlb_summary = warm_mlb_advanced_for_athletes(
                     db,
                     mlb_stats_player_ids=effective_mlb_player_ids,
-                    pitcher_ids=merged_pitcher_ids,
+                    pitcher_ids=pitcher_ids_for_warm,
                     season=mlb_season,
                     savant_pitcher=BaseballSavantClient(),
                 )
@@ -964,6 +984,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     "mlb_season": mlb_season,
                     "nba_stats_player_ids_warmed": len(nba_player_ids) if not pitchers_only else 0,
                     "mlb_stats_player_ids_warmed": len(effective_mlb_player_ids),
+                    "mlb_pitcher_ids_warmed": len(pitcher_ids_for_warm),
                     "mlb_probable_pitcher_ids_warmed": len(probable_pitcher_ids),
                     "schedule_probable_fetch_failed": schedule_probable_failed,
                     "pitchers_only": pitchers_only,
@@ -1060,11 +1081,21 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                             reason=f"lineup_refresh discovered {len(late_day_pitcher_ids)} probable starters",
                         )
                         # ``coalesce`` may have returned an existing queued
-                        # job. Either way, refresh the details so the worker
-                        # picks up the latest probable-pitcher set.
+                        # job from an earlier lineup_refresh tick. Codex
+                        # round 5: union the existing + newly-discovered
+                        # pitcher IDs rather than overwriting, so a partial
+                        # earlier schedule fetch (e.g. 11:00) doesn't drop
+                        # starters the second tick still sees.
+                        prior_details = dict(warm_job.details or {})
+                        prior_ids = list(prior_details.get("pitcher_ids") or [])
+                        merged_late_ids = sorted({
+                            str(pid)
+                            for pid in prior_ids + late_day_pitcher_ids
+                            if pid
+                        })
                         warm_job.details = {
-                            **(warm_job.details or {}),
-                            "pitcher_ids": late_day_pitcher_ids,
+                            **prior_details,
+                            "pitcher_ids": merged_late_ids,
                             "pitchers_only": True,
                         }
                         db.flush()
