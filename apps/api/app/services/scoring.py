@@ -1154,17 +1154,21 @@ def _winner_advanced_team_edge(
         # team facing the *higher*-xFIP starter has the edge.
         from app.services.mlb_advanced import load_mlb_pitcher_advanced, resolve_mlb_stats_player_id
 
-        left_starter_name, _ = _probable_pitcher_identity(event, left.role)
-        right_starter_name, _ = _probable_pitcher_identity(event, right.role)
+        left_starter_name, left_starter_espn_id = _probable_pitcher_identity(event, left.role)
+        right_starter_name, right_starter_espn_id = _probable_pitcher_identity(event, right.role)
         if not left_starter_name or not right_starter_name:
             return None
         ref_date = event.starts_at.date() if event.starts_at else None
         season = default_season_for_sport("MLB", ref_date)
 
-        def _xfip(name: str, team_short: str | None) -> float | None:
+        def _xfip(name: str, team_short: str | None, espn_athlete_id: str | None) -> float | None:
+            # Codex round 3: thread the ESPN athlete ID so a successful resolve
+            # writes the mlb_stats_id sidecar back to EspnPlayerSearchCache.
+            # That makes the warm cron's sidecar-derived list pick the starter
+            # up next pass instead of repeatedly resolving on every score.
             mlb_id = resolve_mlb_stats_player_id(
                 db,
-                espn_athlete_id=None,
+                espn_athlete_id=espn_athlete_id,
                 full_name=name,
                 team_abbreviation=(team_short or "").upper() or None,
                 season=season,
@@ -1179,8 +1183,8 @@ def _winner_advanced_team_edge(
             value = saber.get("xfip") or saber.get("fip")
             return float(value) if isinstance(value, (int, float)) else None
 
-        left_xfip = _xfip(left_starter_name, left.participant.short_name)
-        right_xfip = _xfip(right_starter_name, right.participant.short_name)
+        left_xfip = _xfip(left_starter_name, left.participant.short_name, left_starter_espn_id)
+        right_xfip = _xfip(right_starter_name, right.participant.short_name, right_starter_espn_id)
         if left_xfip is None or right_xfip is None:
             return None
         features["left_starter_xfip"] = round(left_xfip, 3)
@@ -1723,12 +1727,19 @@ def _score_player_prop(
         # sabermetrics + Statcast features. allow_network=False on the read
         # path keeps the synchronous scoring fast — pitcher caches are warmed
         # by the daily cron + warm_mlb_advanced_for_athletes path.
-        starter_name, _ = _probable_pitcher_identity(event, opponent_entry.role) if opponent_entry else (None, None)
+        starter_name, starter_espn_id = (
+            _probable_pitcher_identity(event, opponent_entry.role)
+            if opponent_entry
+            else (None, None)
+        )
         if starter_name:
             starter_team = opponent_entry.participant.short_name if opponent_entry else None
+            # Codex round 3: pass the ESPN athlete ID so a successful resolve
+            # persists the mlb_stats_id sidecar — keeps the warm cron's
+            # sidecar-derived starter list up to date without manual seeding.
             starter_id = resolve_mlb_stats_player_id(
                 db,
-                espn_athlete_id=None,
+                espn_athlete_id=starter_espn_id,
                 full_name=starter_name,
                 team_abbreviation=(starter_team or "").upper() or None,
                 season=resolved.season,

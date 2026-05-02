@@ -85,6 +85,133 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+_MLB_GAME_TIME_WINDOW_SECONDS = 3 * 60 * 60  # ±3h match window — covers rain delays + TZ drift.
+
+
+def _build_mlb_event_index(
+    db: Session,
+) -> list[tuple[Any, datetime, set[str]]]:
+    """Return a list of (event, starts_at_utc, team_tokens) for active MLB events.
+
+    Cached once per ``lineup_refresh`` invocation so we don't re-scan the
+    Event table per scheduled game. Token comparison mirrors
+    ``map_markets_to_events`` so behavior stays consistent across pipelines.
+    """
+    from sqlalchemy import select as _select
+    from sqlalchemy.orm import selectinload
+
+    from app.models import Event, EventParticipant
+    from app.sports.base import alias_tokens
+
+    rows = db.scalars(
+        _select(Event)
+        .options(
+            selectinload(Event.participants).selectinload(
+                EventParticipant.participant
+            )
+        )
+        .where(Event.sport_key == "MLB")
+        .where(Event.status != "completed")
+    ).all()
+    index: list[tuple[Any, datetime, set[str]]] = []
+    for event in rows:
+        starts_at = _as_utc(event.starts_at) if event.starts_at else None
+        if starts_at is None:
+            continue
+        tokens = alias_tokens(event.name)
+        for entry in event.participants:
+            participant = entry.participant
+            tokens.update(
+                alias_tokens(participant.display_name, participant.short_name)
+            )
+        index.append((event, starts_at, tokens))
+    return index
+
+
+def _match_mlb_event(
+    event_index: list[tuple[Any, datetime, set[str]]],
+    game: dict[str, Any],
+) -> Any | None:
+    """Find the sika ``Event`` matching an MLB Stats schedule game.
+
+    Match key is ``sport_key == "MLB"`` (already filtered by the index) plus
+    a start-time window (±3h) plus a team-name token overlap. Returns the
+    closest-in-time best-token-overlap event, or ``None`` if no event meets
+    the threshold (Codex round 3: this replaces the old `event_id=str(gamePk)`
+    write that never met scoring's `event_id=str(event.id)` read).
+    """
+    from app.sports.base import alias_tokens
+
+    game_iso = game.get("gameDate") or game.get("game_date")
+    game_time: datetime | None = None
+    if isinstance(game_iso, str):
+        try:
+            game_time = datetime.fromisoformat(game_iso.replace("Z", "+00:00"))
+        except ValueError:
+            game_time = None
+    if game_time is not None and game_time.tzinfo is None:
+        game_time = game_time.replace(tzinfo=timezone.utc)
+    elif game_time is not None:
+        game_time = game_time.astimezone(timezone.utc)
+
+    teams = game.get("teams") or {}
+    home_name = ((teams.get("home") or {}).get("team") or {}).get("name")
+    away_name = ((teams.get("away") or {}).get("team") or {}).get("name")
+    game_tokens = alias_tokens(home_name, away_name)
+    if not game_tokens:
+        return None
+
+    best: tuple[Any, float, float] | None = None  # (event, -overlap, |dt|)
+    for event, starts_at, event_tokens in event_index:
+        shared = game_tokens & event_tokens
+        if not shared:
+            continue
+        # Both teams must overlap by at least one strong token each. We can't
+        # cheaply prove "one token per team" without participant-level
+        # tokenisation, so require >=2 shared tokens of length >= 4 as a
+        # conservative proxy (e.g. {"yankees", "redsox"}).
+        strong = [t for t in shared if len(t) >= 4]
+        if len(strong) < 2:
+            continue
+        if game_time is not None:
+            dt = abs((starts_at - game_time).total_seconds())
+            if dt > _MLB_GAME_TIME_WINDOW_SECONDS:
+                continue
+        else:
+            dt = 0.0
+        score = -float(len(shared))
+        if best is None or (score, dt) < (best[1], best[2]):
+            best = (event, score, dt)
+    return best[0] if best else None
+
+
+def _extract_probable_pitcher_ids(schedule_payload: dict[str, Any]) -> list[str]:
+    """Pull MLB Stats PERSON_IDs for both probable starters from a hydrated schedule.
+
+    The `hydrate=probablePitcher` query string puts each starter under
+    ``game.teams.{home,away}.probablePitcher``. We deduplicate across the
+    whole slate and return them as strings ready for
+    ``warm_mlb_advanced_for_athletes(pitcher_ids=...)``.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for date_block in (schedule_payload or {}).get("dates") or []:
+        for game in date_block.get("games") or []:
+            teams = game.get("teams") or {}
+            for side_key in ("home", "away"):
+                side = teams.get(side_key) or {}
+                pitcher = side.get("probablePitcher") or {}
+                pid = pitcher.get("id")
+                if pid is None:
+                    continue
+                pid_str = str(pid)
+                if pid_str in seen:
+                    continue
+                seen.add(pid_str)
+                out.append(pid_str)
+    return out
+
+
 def _worker_timeout_seconds(job: RefreshJob) -> float:
     settings = get_settings()
     default_timeout = max(float(settings.maintenance_claim_budget_seconds), 0.0) + WORKER_TIMEOUT_GRACE_SECONDS
@@ -734,6 +861,10 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
             elif job.kind == "cleanup":
                 job.details = prune_runtime_artifacts(db)
             elif job.kind == "advanced_stats_warm":
+                from datetime import date as _date
+
+                from app.clients.baseball_savant import BaseballSavantClient
+                from app.clients.mlb_stats import MlbStatsClient
                 from app.models import EspnPlayerSearchCache
                 from app.services.advanced_stats import (
                     warm_nba_advanced_for_athletes,
@@ -768,24 +899,48 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                         if payload.get("mlb_stats_id")
                     })
 
-                # Probable starters from today's MLB events — every starter
-                # the resolver has touched gets persisted as `mlb_stats_id`
-                # on its own EspnPlayerSearchCache row, so the sidecar list
-                # already covers them. We pass the full mlb_player_ids list
-                # as both batter and pitcher candidates; the loaders are
-                # idempotent, and the warm function dedups internally.
-                pitcher_ids = list(details.get("pitcher_ids") or mlb_player_ids)
+                # Probable starters from today's MLB schedule — Codex round 3
+                # called out that the EspnPlayerSearchCache sidecar list only
+                # contains players the resolver has previously touched as a
+                # prop subject, so a starter-only pitcher would never get
+                # warmed. Pull the schedule with probablePitcher hydration and
+                # extract every starter ID directly so the cron actually
+                # warms the slate's mlb_pitcher_advanced_cache /
+                # mlb_statcast_pitcher_cache rows.
+                probable_pitcher_ids: list[str] = []
+                schedule_probable_failed = False
+                try:
+                    schedule_payload = MlbStatsClient().fetch_schedule(_date.today())
+                    probable_pitcher_ids = _extract_probable_pitcher_ids(schedule_payload)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("advanced_stats_warm probable-pitcher fetch failed: %s", exc)
+                    schedule_probable_failed = True
+
+                merged_pitcher_ids = sorted({
+                    str(pid)
+                    for pid in (
+                        list(details.get("pitcher_ids") or [])
+                        + list(mlb_player_ids)
+                        + list(probable_pitcher_ids)
+                    )
+                    if pid
+                })
 
                 nba_season = int(details.get("nba_season") or default_season_for_sport("NBA"))
                 mlb_season = int(details.get("mlb_season") or default_season_for_sport("MLB"))
                 nba_summary = warm_nba_advanced_for_athletes(
                     db, nba_stats_player_ids=nba_player_ids, season=nba_season
                 )
+                # Codex round 3 also flagged that mlb_statcast_pitcher_cache had
+                # no scheduled producer because the warm path never built a
+                # BaseballSavantClient. Hand one in here so pitcher Statcast
+                # rows are populated alongside sabermetrics.
                 mlb_summary = warm_mlb_advanced_for_athletes(
                     db,
                     mlb_stats_player_ids=mlb_player_ids,
-                    pitcher_ids=pitcher_ids,
+                    pitcher_ids=merged_pitcher_ids,
                     season=mlb_season,
+                    savant=BaseballSavantClient(),
                 )
                 job.details = {
                     **details,
@@ -795,6 +950,8 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     "mlb_season": mlb_season,
                     "nba_stats_player_ids_warmed": len(nba_player_ids),
                     "mlb_stats_player_ids_warmed": len(mlb_player_ids),
+                    "mlb_probable_pitcher_ids_warmed": len(probable_pitcher_ids),
+                    "schedule_probable_fetch_failed": schedule_probable_failed,
                 }
             elif job.kind == "weather_refresh":
                 # Placeholder: per-event weather is loaded lazily via the resolver
@@ -809,6 +966,14 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 # ``emit_lineup_features`` reads at scoring time, so this
                 # is the producer that PR 6's lineup-feature consumer was
                 # missing.
+                #
+                # Codex round 3 flagged the key mismatch: scoring reads
+                # ``event_id=str(event.id)`` (sika DB primary key) but the
+                # producer was writing ``event_id=str(gamePk)`` (MLB Stats
+                # API key), so cache rows never met. We now match each
+                # MLB game to its sika ``Event`` by sport_key + start time
+                # window + team-name token overlap and persist under the
+                # app event id.
                 from datetime import date as _date
 
                 from app.clients.mlb_stats import MlbStatsClient
@@ -816,6 +981,8 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
 
                 target = _date.today()
                 events_warmed = 0
+                games_unmatched = 0
+                games_failed = 0
                 schedule_failed = False
                 try:
                     mlb_client = MlbStatsClient()
@@ -826,27 +993,45 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     schedule_failed = True
 
                 if schedule is not None:
+                    event_index = _build_mlb_event_index(db)
                     for date_block in schedule.get("dates") or []:
                         for game in date_block.get("games") or []:
                             game_pk = game.get("gamePk") or game.get("game_pk")
                             if not game_pk:
                                 continue
-                            # Wrap each per-game payload in the same envelope
-                            # ``emit_lineup_features`` expects: payload["raw"]
-                            # is a schedule-shaped dict so the parser walks
-                            # the same path it does for the live schedule.
-                            single_game_envelope = {"dates": [{"games": [game]}]}
-                            result = load_lineup_for_event(
-                                db,
-                                event_id=str(game_pk),
-                                schedule_payload=single_game_envelope,
-                            )
-                            if result.complete:
-                                events_warmed += 1
+                            try:
+                                event = _match_mlb_event(event_index, game)
+                                if event is None:
+                                    games_unmatched += 1
+                                    continue
+                                # Wrap each per-game payload in the same
+                                # envelope ``emit_lineup_features`` expects:
+                                # payload["raw"] is a schedule-shaped dict so
+                                # the parser walks the same path it does for
+                                # the live schedule.
+                                single_game_envelope = {"dates": [{"games": [game]}]}
+                                result = load_lineup_for_event(
+                                    db,
+                                    event_id=str(event.id),
+                                    schedule_payload=single_game_envelope,
+                                )
+                                if result.complete:
+                                    events_warmed += 1
+                            except Exception as exc:  # noqa: BLE001
+                                # Codex round 3 hardening: one bad game payload
+                                # must not poison the whole slate's warm pass.
+                                games_failed += 1
+                                logger.warning(
+                                    "lineup_refresh per-game failure (gamePk=%s): %s",
+                                    game_pk,
+                                    exc,
+                                )
 
                 job.details = {
                     **(job.details or {}),
                     "lineups_warmed": events_warmed,
+                    "lineups_unmatched": games_unmatched,
+                    "lineups_failed": games_failed,
                     "target_date": target.isoformat(),
                     "schedule_fetch_failed": schedule_failed,
                 }
