@@ -80,6 +80,20 @@ class _StubNbaStatsClient:
             raise self.raise_with
         return self.roster or {"resultSets": []}
 
+    # Long-tail endpoints — return empty resultSets so the warm path completes
+    # without requiring callers to wire detailed fixtures.
+    def fetch_hustle_stats_player(self, season, season_type="Regular Season"):
+        return {"resultSets": []}
+
+    def fetch_player_tracking(self, season, pt_measure_type, season_type="Regular Season"):
+        return {"resultSets": []}
+
+    def fetch_player_clutch(self, season, **kwargs):
+        return {"resultSets": []}
+
+    def fetch_player_defense_dashboard(self, season, defense_category="Overall", **kwargs):
+        return {"resultSets": []}
+
 
 @pytest.fixture(autouse=True)
 def _reset_settings_cache():

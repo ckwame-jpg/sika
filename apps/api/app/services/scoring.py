@@ -1475,6 +1475,14 @@ def _score_player_prop(
             find_nba_team_id_by_name,
             load_nba_team_gamelog,
         )
+        from app.services.nba_long_tail import (
+            emit_nba_clutch_features,
+            emit_nba_drives_features,
+            emit_nba_hustle_features,
+            load_nba_clutch_player,
+            load_nba_hustle_player,
+            load_nba_tracking,
+        )
 
         if resolved.advanced_payload:
             features.update(emit_nba_player_features(resolved.advanced_payload))
@@ -1494,6 +1502,36 @@ def _score_player_prop(
                 if opponent_team_result.payload:
                     features.update(emit_nba_opponent_team_features(opponent_team_result.payload))
                     features["opponent_team_cache_status"] = opponent_team_result.cache_status
+
+        # Long-tail NBA features — hustle, drives, clutch — for the prop subject.
+        # Cached only at scoring time (allow_network=False); the daily warm job
+        # populates these league-wide leaderboards.
+        nba_stats_id = (resolved.advanced_payload or {}).get("_nba_stats_id")
+        if not nba_stats_id and resolved.athlete_id:
+            from app.models import EspnPlayerSearchCache
+
+            search_row = (
+                db.query(EspnPlayerSearchCache)
+                .filter(EspnPlayerSearchCache.sport_key == "NBA")
+                .all()
+            )
+            for entry in search_row:
+                payload = entry.payload or {}
+                if str(payload.get("athlete_id")) == str(resolved.athlete_id):
+                    nba_stats_id = payload.get("nba_stats_id")
+                    break
+
+        if nba_stats_id:
+            hustle_result = load_nba_hustle_player(db, season=resolved.season, allow_network=False)
+            features.update(emit_nba_hustle_features(hustle_result.payload, str(nba_stats_id)))
+
+            drives_result = load_nba_tracking(
+                db, season=resolved.season, pt_measure_type="Drives", allow_network=False
+            )
+            features.update(emit_nba_drives_features(drives_result.payload, str(nba_stats_id)))
+
+            clutch_result = load_nba_clutch_player(db, season=resolved.season, allow_network=False)
+            features.update(emit_nba_clutch_features(clutch_result.payload, str(nba_stats_id)))
 
     elif resolved.sport_key.upper() == "MLB":
         from app.services.mlb_advanced import (

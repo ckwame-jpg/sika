@@ -301,6 +301,203 @@ class NbaStatsClient:
             },
         )
 
+    def fetch_hustle_stats_player(
+        self,
+        season: int,
+        season_type: str = "Regular Season",
+    ) -> dict[str, Any]:
+        """League-wide per-player hustle stats: contested shots, deflections,
+        charges drawn, screen assists, box-outs, loose-balls recovered.
+        """
+        return self._get(
+            "/leaguehustlestatsplayer",
+            {
+                "Season": season_param(season),
+                "SeasonType": season_type,
+                "PerMode": "PerGame",
+                "LeagueID": "00",
+                "PORound": "0",
+                "Conference": "",
+                "Division": "",
+                "GameSegment": "",
+                "Location": "",
+                "Outcome": "",
+                "PaceAdjust": "N",
+                "PlayerExperience": "",
+                "PlayerPosition": "",
+                "PlusMinus": "N",
+                "Rank": "N",
+                "SeasonSegment": "",
+                "ShotClockRange": "",
+                "TeamID": "0",
+                "VsConference": "",
+                "VsDivision": "",
+                "Weight": "",
+                "DateFrom": "",
+                "DateTo": "",
+                "DraftPick": "",
+                "DraftYear": "",
+                "Height": "",
+                "College": "",
+                "Country": "",
+                "GameScope": "",
+                "Month": "0",
+                "OpponentTeamID": "0",
+                "Period": "0",
+            },
+        )
+
+    def fetch_player_tracking(
+        self,
+        season: int,
+        pt_measure_type: str,
+        season_type: str = "Regular Season",
+    ) -> dict[str, Any]:
+        """League-wide per-player tracking data.
+
+        ``pt_measure_type`` is one of: ``Drives``, ``CatchShoot``,
+        ``PullUpShot``, ``Defense``, ``Possessions``, ``Passing``,
+        ``Rebounding``, ``SpeedDistance``, ``Touches``, ``Efficiency``,
+        ``ElbowTouch``, ``PostTouch``, ``PaintTouch``.
+        """
+        return self._get(
+            "/leaguedashptstats",
+            {
+                "PtMeasureType": pt_measure_type,
+                "PlayerOrTeam": "Player",
+                "Season": season_param(season),
+                "SeasonType": season_type,
+                "PerMode": "PerGame",
+                "LeagueID": "00",
+                "LastNGames": "0",
+                "Month": "0",
+                "OpponentTeamID": "0",
+                "PORound": "0",
+                "TeamID": "0",
+                "College": "",
+                "Conference": "",
+                "Country": "",
+                "DateFrom": "",
+                "DateTo": "",
+                "Division": "",
+                "DraftPick": "",
+                "DraftYear": "",
+                "GameScope": "",
+                "Height": "",
+                "Location": "",
+                "Outcome": "",
+                "PlayerExperience": "",
+                "PlayerPosition": "",
+                "SeasonSegment": "",
+                "StarterBench": "",
+                "VsConference": "",
+                "VsDivision": "",
+                "Weight": "",
+            },
+        )
+
+    def fetch_player_clutch(
+        self,
+        season: int,
+        season_type: str = "Regular Season",
+        clutch_time: str = "Last 5 Minutes",
+        ahead_behind: str = "Ahead or Behind",
+        point_diff: int = 5,
+    ) -> dict[str, Any]:
+        """League-wide per-player clutch stats — performance in close-game crunch time."""
+        return self._get(
+            "/leaguedashplayerclutch",
+            {
+                "Season": season_param(season),
+                "SeasonType": season_type,
+                "PerMode": "PerGame",
+                "MeasureType": "Base",
+                "ClutchTime": clutch_time,
+                "AheadBehind": ahead_behind,
+                "PointDiff": str(point_diff),
+                "LeagueID": "00",
+                "LastNGames": "0",
+                "Month": "0",
+                "OpponentTeamID": "0",
+                "PORound": "0",
+                "Period": "0",
+                "PaceAdjust": "N",
+                "PlusMinus": "N",
+                "Rank": "N",
+                "TeamID": "0",
+                "College": "",
+                "Conference": "",
+                "Country": "",
+                "DateFrom": "",
+                "DateTo": "",
+                "Division": "",
+                "DraftPick": "",
+                "DraftYear": "",
+                "GameScope": "",
+                "GameSegment": "",
+                "Height": "",
+                "Location": "",
+                "Outcome": "",
+                "PlayerExperience": "",
+                "PlayerPosition": "",
+                "SeasonSegment": "",
+                "ShotClockRange": "",
+                "StarterBench": "",
+                "VsConference": "",
+                "VsDivision": "",
+                "Weight": "",
+            },
+        )
+
+    def fetch_player_defense_dashboard(
+        self,
+        season: int,
+        defense_category: str = "Overall",
+        season_type: str = "Regular Season",
+    ) -> dict[str, Any]:
+        """League-wide per-defender FG% allowed.
+
+        ``defense_category``: ``Overall``, ``3 Pointers``, ``2 Pointers``,
+        ``Less Than 6Ft``, ``Less Than 10Ft``, ``Greater Than 15Ft``.
+        """
+        return self._get(
+            "/leaguedashptdefend",
+            {
+                "DefenseCategory": defense_category,
+                "Season": season_param(season),
+                "SeasonType": season_type,
+                "PerMode": "PerGame",
+                "PlayerID": "0",
+                "LeagueID": "00",
+                "LastNGames": "0",
+                "Month": "0",
+                "OpponentTeamID": "0",
+                "PORound": "0",
+                "Period": "0",
+                "TeamID": "0",
+                "College": "",
+                "Conference": "",
+                "Country": "",
+                "DateFrom": "",
+                "DateTo": "",
+                "Division": "",
+                "DraftPick": "",
+                "DraftYear": "",
+                "GameScope": "",
+                "GameSegment": "",
+                "Height": "",
+                "Location": "",
+                "Outcome": "",
+                "PlayerExperience": "",
+                "PlayerPosition": "",
+                "SeasonSegment": "",
+                "StarterBench": "",
+                "VsConference": "",
+                "VsDivision": "",
+                "Weight": "",
+            },
+        )
+
     # ------------------------------------------------------------------
     # Internal
 

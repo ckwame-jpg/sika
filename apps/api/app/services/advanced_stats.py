@@ -921,6 +921,10 @@ class WarmAdvancedStatsSummary:
     nba_lineup_loaded: bool = False
     nba_roster_loaded: bool = False
     nba_percentiles_loaded: bool = False
+    nba_hustle_loaded: bool = False
+    nba_drives_loaded: bool = False
+    nba_clutch_loaded: bool = False
+    nba_defense_loaded: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -932,6 +936,10 @@ class WarmAdvancedStatsSummary:
             "nba_lineup_loaded": self.nba_lineup_loaded,
             "nba_roster_loaded": self.nba_roster_loaded,
             "nba_percentiles_loaded": self.nba_percentiles_loaded,
+            "nba_hustle_loaded": self.nba_hustle_loaded,
+            "nba_drives_loaded": self.nba_drives_loaded,
+            "nba_clutch_loaded": self.nba_clutch_loaded,
+            "nba_defense_loaded": self.nba_defense_loaded,
         }
 
 
@@ -958,6 +966,28 @@ def warm_nba_advanced_for_athletes(
 
     roster_result = load_nba_player_roster(db, season=season, client=nba_client, allow_network=True)
     summary.nba_roster_loaded = roster_result.complete
+
+    # Long-tail leaderboards — hustle / drives tracking / clutch / defense.
+    # Each is a single league-wide call so they're cheap to refresh.
+    from app.services.nba_long_tail import (
+        load_nba_clutch_player,
+        load_nba_hustle_player,
+        load_nba_player_defense,
+        load_nba_tracking,
+    )
+
+    summary.nba_hustle_loaded = load_nba_hustle_player(
+        db, season=season, client=nba_client, allow_network=True
+    ).complete
+    summary.nba_drives_loaded = load_nba_tracking(
+        db, season=season, pt_measure_type="Drives", client=nba_client, allow_network=True
+    ).complete
+    summary.nba_clutch_loaded = load_nba_clutch_player(
+        db, season=season, client=nba_client, allow_network=True
+    ).complete
+    summary.nba_defense_loaded = load_nba_player_defense(
+        db, season=season, defense_category="Overall", client=nba_client, allow_network=True
+    ).complete
 
     # Derive team-id list when not explicitly supplied: pull all 30 from the
     # team-advanced cache populated above. Saves callers from having to know

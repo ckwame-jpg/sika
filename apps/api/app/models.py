@@ -678,6 +678,69 @@ class MlbInjuryReportCache(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
 
+class NbaHustlePlayerCache(Base):
+    __tablename__ = "nba_hustle_player_cache"
+    __table_args__ = (UniqueConstraint("season", name="uq_nba_hustle_player_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NbaTrackingCache(Base):
+    __tablename__ = "nba_tracking_cache"
+    __table_args__ = (
+        UniqueConstraint("season", "pt_measure_type", name="uq_nba_tracking_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    pt_measure_type = Column(String, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NbaClutchPlayerCache(Base):
+    __tablename__ = "nba_clutch_player_cache"
+    __table_args__ = (UniqueConstraint("season", name="uq_nba_clutch_player_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NbaPlayerDefenseCache(Base):
+    __tablename__ = "nba_player_defense_cache"
+    __table_args__ = (
+        UniqueConstraint("season", "defense_category", name="uq_nba_player_defense_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    defense_category = Column(String, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NbaInjuryReportCache(Base):
+    __tablename__ = "nba_injury_report_cache"
+    __table_args__ = (
+        UniqueConstraint("fetched_date", name="uq_nba_injury_report_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    fetched_date = Column(String, nullable=False, index=True)  # YYYY-MM-DD
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class ModelFamilyRuntimeHealth(Base):
     __tablename__ = "model_family_runtime_health"
 

@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     nba_boxscore_advanced_cache_minutes: int = 10080  # historical games — 1 week
     nba_player_roster_cache_minutes: int = 1440
     nba_league_percentiles_cache_minutes: int = 1440
+    nba_hustle_player_cache_minutes: int = 1440
+    nba_tracking_cache_minutes: int = 720
+    nba_clutch_cache_minutes: int = 1440
+    nba_player_defense_cache_minutes: int = 1440
+    nba_injury_report_cache_minutes: int = 60
 
     # MLB advanced stats
     mlb_batter_advanced_cache_minutes: int = 360
