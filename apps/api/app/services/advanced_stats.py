@@ -649,6 +649,11 @@ def emit_nba_opponent_team_features(payload: dict[str, Any] | None) -> dict[str,
     _set("opponent_def_rating_recent_5", recent_5.get("def_rating"))
     _set("opponent_net_rating_recent_5", recent_5.get("net_rating"))
     _set("opponent_pace_recent_5", recent_5.get("pace"))
+    # Season-level pace is consumed both by the heuristic_factors fallback
+    # in _nba_pace_factor_advanced and by the proxy-suppression gate in
+    # scoring.py — emit it so those paths actually fire when the recent-5
+    # pace is missing (early season, partial cache).
+    _set("opponent_pace_season", season_avg.get("pace"))
 
     if (
         isinstance(recent_5.get("off_rating"), (int, float))

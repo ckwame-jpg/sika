@@ -44,6 +44,12 @@ def _safe_ratio(numerator: Any, denominator: Any, *, default: float = 1.0) -> fl
 _NBA_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
     "points": ("efficiency_factor", "opp_def_factor", "opp_recent_form_factor",
                "pace_factor_advanced", "usage_factor_advanced"),
+    # ``made_threes`` is the canonical stat_key produced by market_support's
+    # alias normalization; ``three_points_made`` is the raw_metrics column
+    # name. Both must map to the same gating tuple so props arriving as
+    # either key receive the advanced factors.
+    "made_threes": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
+                     "usage_factor_advanced"),
     "three_points_made": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
                            "usage_factor_advanced"),
     "field_goals_made": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
@@ -296,6 +302,26 @@ def compute_advanced_factors(
         if abs(value - 1.0) >= 1e-4:  # Drop no-op factors so the dict stays clean
             out[name] = round(value, 4)
     return out
+
+
+def factor_applies(sport_key: str, stat_key: str, factor_name: str) -> bool:
+    """Return True when ``factor_name`` is wired into the per-stat gating
+    tuple for the given (sport, stat) pair.
+
+    Used by the scoring kernel to decide whether suppressing the
+    corresponding box-score proxy is safe: if the advanced replacement is
+    NOT in the tuple, ``compute_advanced_factors`` won't emit it, so the
+    proxy must continue to apply (otherwise both drop out and the
+    prediction loses signal entirely).
+    """
+    sport = sport_key.upper()
+    if sport == "NBA":
+        gating = _NBA_FACTORS_BY_STAT.get(stat_key) or _NBA_FACTORS_BY_STAT.get(stat_key.lower())
+    elif sport == "MLB":
+        gating = _MLB_FACTORS_BY_STAT.get(stat_key) or _MLB_FACTORS_BY_STAT.get(stat_key.lower())
+    else:
+        return False
+    return bool(gating) and factor_name in gating
 
 
 def apply_factors(expected: float, factors: dict[str, float]) -> float:
