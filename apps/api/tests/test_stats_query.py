@@ -686,7 +686,7 @@ def test_stats_query_service_returns_ufc_season_summary():
 
 def test_stats_query_endpoint(client):
     class FakeService:
-        def query(self, question: str, sport_key: str = "NBA", season: int | None = None):
+        def query(self, question: str, sport_key: str = "NBA", season: int | None = None, *, db=None):
             assert question == "Patrick Mahomes last 2 games"
             assert sport_key == "NFL"
             assert season == 2025

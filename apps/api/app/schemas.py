@@ -909,6 +909,13 @@ class StatsSummaryRead(BaseModel):
     draws: int | None = None
     metrics: dict[str, float | None]
     stat_line: str | None = None
+    # PR 3c: 0-100 league percentile rank per metric_key, populated only
+    # for advanced metrics that have a cached league distribution.
+    percentiles: dict[str, float] = Field(default_factory=dict)
+    # PR 3c: tags each metric key as "basic" or "advanced" so the UI can
+    # group them. Default empty so older callers (no augmentation) don't
+    # get noise.
+    metric_categories: dict[str, str] = Field(default_factory=dict)
 
 
 class StatsGameLogRead(BaseModel):

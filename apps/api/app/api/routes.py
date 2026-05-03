@@ -1474,9 +1474,10 @@ def settle_prediction_job(db: Session = Depends(get_db)) -> PredictionSettlement
 def query_stats(
     payload: StatsQueryRequest,
     service: StatsQueryService = Depends(get_stats_query_service),
+    db: Session = Depends(get_db),
 ) -> StatsQueryRead:
     try:
-        result = service.query(payload.question, sport_key=payload.sport_key, season=payload.season)
+        result = service.query(payload.question, sport_key=payload.sport_key, season=payload.season, db=db)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:
