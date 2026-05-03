@@ -137,17 +137,14 @@ def _augment_nba(
 
     nba_stats_id = player.get("nba_stats_id")
     if not nba_stats_id:
-        try:
-            nba_stats_id = resolve_nba_stats_player_id(
-                db,
-                espn_athlete_id=player.get("athlete_id"),
-                full_name=player.get("display_name") or "",
-                team_abbreviation=None,
-                season=season,
-                allow_network=False,
-            )
-        except Exception:
-            return
+        nba_stats_id = resolve_nba_stats_player_id(
+            db,
+            espn_athlete_id=player.get("athlete_id"),
+            full_name=player.get("display_name") or "",
+            team_abbreviation=None,
+            season=season,
+            allow_network=False,
+        )
     if not nba_stats_id:
         return
 
@@ -195,17 +192,14 @@ def _augment_mlb(
 
     mlb_player_id = player.get("mlb_stats_id")
     if not mlb_player_id:
-        try:
-            mlb_player_id = resolve_mlb_stats_player_id(
-                db,
-                espn_athlete_id=player.get("athlete_id"),
-                full_name=player.get("display_name") or "",
-                team_abbreviation=None,
-                season=season,
-                allow_network=False,
-            )
-        except Exception:
-            return
+        mlb_player_id = resolve_mlb_stats_player_id(
+            db,
+            espn_athlete_id=player.get("athlete_id"),
+            full_name=player.get("display_name") or "",
+            team_abbreviation=None,
+            season=season,
+            allow_network=False,
+        )
     if not mlb_player_id:
         return
 

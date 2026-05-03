@@ -20,6 +20,7 @@ Coverage:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any
 
 import pytest
@@ -227,6 +228,32 @@ def test_nba_missing_player_id_skips_advanced(db_session):
     assert categories["points"] == "basic"
 
 
+def test_nba_resolver_exception_is_logged_and_basic_metrics_survive(db_session, monkeypatch, caplog):
+    from app.services import advanced_stats
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("resolver boom")
+
+    monkeypatch.setattr(advanced_stats, "resolve_nba_stats_player_id", boom)
+    caplog.set_level(logging.WARNING, logger="app.services.stats_summary_augment")
+
+    augmented, percentiles, categories = augment_summary_with_advanced(
+        db_session,
+        sport_key="NBA",
+        player={"athlete_id": "999", "display_name": "Resolver Crash"},
+        season=2026,
+        summary_metrics={"points": 28.0},
+    )
+
+    assert augmented == {"points": 28.0}
+    assert percentiles == {}
+    assert categories == {"points": "basic"}
+    records = [record for record in caplog.records if record.name == "app.services.stats_summary_augment"]
+    assert any("stats_summary_augment failed" in record.getMessage() for record in records)
+    assert any("Resolver Crash" in record.getMessage() for record in records)
+    assert any(record.exc_info is not None for record in records)
+
+
 # -----------------------------------------------------------------------------
 # MLB augmentation
 
@@ -270,6 +297,33 @@ def _seed_mlb_batter_advanced(db_session, *, mlb_player_id: str, season: int, sa
         )
     )
     db_session.flush()
+
+
+def test_mlb_resolver_exception_is_logged_and_basic_metrics_survive(db_session, monkeypatch, caplog):
+    """Mirror of the NBA resolver-exception test for the MLB code path."""
+    from app.services import mlb_advanced
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("resolver boom")
+
+    monkeypatch.setattr(mlb_advanced, "resolve_mlb_stats_player_id", boom)
+    caplog.set_level(logging.WARNING, logger="app.services.stats_summary_augment")
+
+    augmented, percentiles, categories = augment_summary_with_advanced(
+        db_session,
+        sport_key="MLB",
+        player={"athlete_id": "999", "display_name": "MLB Resolver Crash"},
+        season=2026,
+        summary_metrics={"hits": 1.5},
+    )
+
+    assert augmented == {"hits": 1.5}
+    assert percentiles == {}
+    assert categories == {"hits": "basic"}
+    records = [record for record in caplog.records if record.name == "app.services.stats_summary_augment"]
+    assert any("stats_summary_augment failed" in record.getMessage() for record in records)
+    assert any("MLB Resolver Crash" in record.getMessage() for record in records)
+    assert any(record.exc_info is not None for record in records)
 
 
 def test_mlb_advanced_metrics_emitted_and_tagged(db_session):
@@ -334,6 +388,32 @@ def test_mlb_percentile_rank_when_league_cache_present(db_session):
     assert percentiles["woba"] == pytest.approx(85.0)
     # barrel_rate 0.14 = p90 → 90
     assert percentiles["barrel_rate"] == pytest.approx(90.0)
+
+
+def test_mlb_resolver_exception_is_logged_and_basic_metrics_survive(db_session, monkeypatch, caplog):
+    from app.services import mlb_advanced
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("resolver boom")
+
+    monkeypatch.setattr(mlb_advanced, "resolve_mlb_stats_player_id", boom)
+    caplog.set_level(logging.WARNING, logger="app.services.stats_summary_augment")
+
+    augmented, percentiles, categories = augment_summary_with_advanced(
+        db_session,
+        sport_key="MLB",
+        player={"athlete_id": "999", "display_name": "Resolver Crash"},
+        season=2026,
+        summary_metrics={"hits": 1.5},
+    )
+
+    assert augmented == {"hits": 1.5}
+    assert percentiles == {}
+    assert categories == {"hits": "basic"}
+    records = [record for record in caplog.records if record.name == "app.services.stats_summary_augment"]
+    assert any("stats_summary_augment failed" in record.getMessage() for record in records)
+    assert any("Resolver Crash" in record.getMessage() for record in records)
+    assert any(record.exc_info is not None for record in records)
 
 
 # -----------------------------------------------------------------------------
