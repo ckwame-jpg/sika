@@ -369,3 +369,15 @@ def test_percentile_rank_inverts_def_rating():
     # raw rank for 105 = 10 + (5/20) * (90-10) = 10 + 20 = 30
     # inverted: 100 - 30 = 70
     assert rank == pytest.approx(70.0)
+
+
+def test_percentile_rank_inverts_strikeout_rate():
+    """Lower batter K% is better — a player at the 90th percentile of raw
+    strikeout rate (high K%) should display as a 10th-percentile hitter."""
+    bp = {"p10": 0.10, "p25": 0.15, "p50": 0.20, "p75": 0.25, "p90": 0.30}
+    # Value at p90 raw → 100 - 90 = 10 inverted
+    rank = _percentile_rank(0.30, bp, "strikeout_rate")
+    assert rank == pytest.approx(10.0)
+    # Value at p10 raw (low K%, very good) → 100 - 10 = 90 inverted
+    rank_good = _percentile_rank(0.10, bp, "strikeout_rate")
+    assert rank_good == pytest.approx(90.0)

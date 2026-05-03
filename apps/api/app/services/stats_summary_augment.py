@@ -17,9 +17,13 @@ must always be returned intact.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
+
+
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
@@ -37,8 +41,14 @@ _NBA_ADVANCED_KEYS: tuple[str, ...] = (
     "pace",
 )
 
-# Metrics where lower is better — invert the percentile rank.
-_LOWER_IS_BETTER: frozenset[str] = frozenset({"def_rating"})
+# Metrics where lower is better — invert the percentile rank so the UI's
+# "high = good" shading reads correctly.
+#   - ``def_rating``: lower defensive rating = better defense
+#   - ``strikeout_rate``: lower batter K% = better contact
+# (``babip`` is intentionally NOT inverted — it's contextual luck rather than
+#  a one-directional skill metric, so a raw rank is more honest than a forced
+#  inversion. Reviewer judgement; revisit if the UI calls for it.)
+_LOWER_IS_BETTER: frozenset[str] = frozenset({"def_rating", "strikeout_rate"})
 
 _MLB_BATTER_ADVANCED_KEYS: dict[str, tuple[str, str]] = {
     # summary key → (sub-payload key, source field name)
@@ -92,8 +102,17 @@ def augment_summary_with_advanced(
         elif sport == "MLB":
             _augment_mlb(db, player or {}, season, augmented, categories, percentiles)
     except Exception:
-        # Cache reads must never break the user-facing query response.
-        pass
+        # Cache reads must never break the user-facing query response, but
+        # silent failure makes regressions invisible. Log with the player
+        # context so an oncall has a thread to pull on if augmentation
+        # starts dropping out in production.
+        logger.warning(
+            "stats_summary_augment failed for sport=%s player=%s season=%s",
+            sport_key,
+            (player or {}).get("display_name"),
+            season,
+            exc_info=True,
+        )
 
     return augmented, percentiles, categories
 
