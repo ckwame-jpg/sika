@@ -107,8 +107,11 @@ describe("WhyThisPrediction", () => {
     expect(screen.queryByTestId("why-driver-unrelated_factor")).not.toBeInTheDocument();
   });
 
-  test("falls back to advanced_factors when _drivers is empty", () => {
-    render(
+  test("renders nothing when _drivers is empty (server is authoritative)", () => {
+    // When the server emits ``_drivers`` (even as an empty array), it is
+    // the authority. Falling back to ``advanced_factors`` here would surface
+    // stale or pre-PR3b derivations that the server intentionally suppressed.
+    const { container } = render(
       <WhyThisPrediction
         features={{
           _drivers: [],
@@ -116,7 +119,41 @@ describe("WhyThisPrediction", () => {
         }}
       />,
     );
+    expect(container.firstChild).toBeNull();
+    expect(screen.queryByTestId("why-driver-efficiency_factor")).not.toBeInTheDocument();
+  });
+
+  test("falls back to advanced_factors only when _drivers is absent (older predictions)", () => {
+    // Older predictions captured before PR 3b have no ``_drivers`` field at
+    // all — that's the only path that should derive from ``advanced_factors``.
+    render(
+      <WhyThisPrediction
+        features={{
+          advanced_factors: { efficiency_factor: 1.10 },
+        }}
+      />,
+    );
     expect(screen.getByTestId("why-driver-efficiency_factor")).toBeInTheDocument();
+  });
+
+  test("rejects null/string delta_pct in server payload (no '+0.0%' ghost rows)", () => {
+    // ``Number(null) === 0`` and ``Number("") === 0``, both pass
+    // ``Number.isFinite``. Earlier code coerced these and rendered a misleading
+    // "+0.0%" row. The fix is to require a real numeric ``delta_pct``.
+    const { container } = render(
+      <WhyThisPrediction
+        features={{
+          _drivers: [
+            { key: "a", label: "A", delta_pct: null, direction: "neutral", detail: null },
+            { key: "b", label: "B", delta_pct: "8.0", direction: "up", detail: null },
+            { key: "c", label: "C", delta_pct: 12.0, direction: "up", detail: null },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByTestId("why-driver-c")).toBeInTheDocument();
+    expect(screen.queryByTestId("why-driver-a")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("why-driver-b")).not.toBeInTheDocument();
   });
 
   test("omits detail row when detail is null in server payload", () => {

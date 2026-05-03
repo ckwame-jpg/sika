@@ -84,25 +84,34 @@ function extractDrivers(features: Record<string, unknown> | null): DriverRow[] {
 
   // Prefer the server-built ``_drivers`` payload — it carries curated labels
   // and detail strings ("Recent USG% 32% vs season 28%") that the client
-  // can't reliably re-derive.
+  // can't reliably re-derive. The server is the authority: if ``_drivers`` is
+  // present on the payload (even as ``[]``), do NOT silently fall back to
+  // ``advanced_factors`` — empty/all-malformed should render the empty state,
+  // not a stale derivation. Only when ``_drivers`` is absent entirely (older
+  // predictions captured before this field existed) do we fall through.
+  const hasServerDriversField = "_drivers" in features;
   const serverDrivers = features["_drivers"];
-  if (Array.isArray(serverDrivers) && serverDrivers.length > 0) {
+  if (hasServerDriversField && Array.isArray(serverDrivers)) {
     const rows: DriverRow[] = [];
     for (const entry of serverDrivers) {
       if (!entry || typeof entry !== "object") continue;
       const e = entry as Record<string, unknown>;
-      const key = typeof e.key === "string" ? e.key : null;
-      const label = typeof e.label === "string" ? e.label : null;
-      const deltaPctRaw = e.delta_pct;
-      const deltaPct = typeof deltaPctRaw === "number" ? deltaPctRaw : Number(deltaPctRaw);
-      if (!key || !label || !Number.isFinite(deltaPct)) continue;
+      const key = typeof e.key === "string" && e.key.length > 0 ? e.key : null;
+      const label = typeof e.label === "string" && e.label.length > 0 ? e.label : null;
+      // Strict: server-side ``_drivers`` MUST carry a numeric ``delta_pct``.
+      // Reject ``null`` / ``undefined`` / strings outright instead of coercing
+      // (``Number(null) === 0``, ``Number("") === 0`` would render misleading
+      // "+0.0%" ghost rows).
+      if (typeof e.delta_pct !== "number" || !Number.isFinite(e.delta_pct)) continue;
+      if (!key || !label) continue;
       const detail = typeof e.detail === "string" ? e.detail : null;
-      rows.push({ key, label, deltaPct, detail });
+      rows.push({ key, label, deltaPct: e.delta_pct, detail });
     }
-    if (rows.length > 0) return rows.slice(0, 3);
+    return rows.slice(0, 3);
   }
 
-  // Fallback: derive from raw factor multipliers (older predictions).
+  // Fallback: derive from raw factor multipliers (older predictions captured
+  // before _drivers existed).
   const factors = features["advanced_factors"];
   if (!factors || typeof factors !== "object") return [];
 

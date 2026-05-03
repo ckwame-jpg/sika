@@ -20,6 +20,7 @@ renders in the "Why this prediction?" panel. Each driver:
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -233,9 +234,17 @@ def top_drivers(
 
     rows: list[dict[str, Any]] = []
     for key, raw in advanced_factors.items():
+        if not key:
+            continue
         try:
             multiplier = float(raw)
         except (TypeError, ValueError):
+            continue
+        # NaN/Inf slip past the near-zero filter (NaN comparisons are always
+        # False) and would render as "Label nan%" or sort to the top of the
+        # list. Drop them — same philosophy as the type-coercion guard above:
+        # garbage in → skip.
+        if not math.isfinite(multiplier):
             continue
         delta_pct = round((multiplier - 1.0) * 100.0, 2)
         if abs(delta_pct) < min_abs_delta_pct:

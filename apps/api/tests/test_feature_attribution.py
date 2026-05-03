@@ -47,6 +47,27 @@ def test_driver_row_shape():
     assert row["detail"] == "Recent TS% 66.0% vs season 60.0%"
 
 
+def test_nan_multiplier_is_dropped():
+    """NaN slips past the near-zero filter (NaN comparisons are always
+    False) and would otherwise render as ``"Label nan%"`` and sort to an
+    undefined position. The math.isfinite guard rejects it."""
+    features = {"advanced_factors": {"bad_factor": float("nan")}}
+    assert top_drivers(features, 1.0, 1.0) == []
+
+
+def test_inf_multiplier_is_dropped():
+    """Inf would sort to the top and render as ``"Label inf%"``. Reject it."""
+    features = {"advanced_factors": {"big_factor": float("inf")}}
+    assert top_drivers(features, 1.0, 1.0) == []
+
+
+def test_empty_string_factor_key_is_dropped():
+    """A factor with an empty string key would render with an empty label;
+    skip it rather than emit a degenerate row."""
+    features = {"advanced_factors": {"": 1.10}}
+    assert top_drivers(features, 1.0, 1.1) == []
+
+
 # -----------------------------------------------------------------------------
 # Sorting
 
