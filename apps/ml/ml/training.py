@@ -301,28 +301,61 @@ def _fit_estimator(
 ) -> Any:
     """Fit an estimator with optional sample weights.
 
-    Sample weights are only forwarded to estimators that natively accept
-    them via ``fit(sample_weight=...)``. Pipeline-wrapped estimators (our
-    LR candidate is a ``StandardScaler → LogisticRegression`` pipeline)
-    require ``<step>__sample_weight`` routing which doesn't compose
-    cleanly through CalibratedClassifierCV; for those we silently fall
-    back to uniform weights (the handoff says "if supported"). When
-    ``sample_weight`` is None, behaviour is identical to the pre-PR3d
-    code path.
+    Direct estimators (HistGradientBoostingClassifier) accept
+    ``sample_weight`` natively via ``fit(sample_weight=...)``.
+
+    Pipeline candidates (our LR is ``StandardScaler → LogisticRegression``)
+    need step-prefixed routing — ``pipeline.fit(X, y, logisticregression__sample_weight=w)``
+    — because the unprefixed kwarg is ambiguous and sklearn raises. We
+    route weights to the pipeline's final classifier step so the LR also
+    sees the weighted distribution. Without this, candidate selection
+    becomes asymmetric: HGBC trains on a weighted dataset while LR
+    trains uniform, and they're then compared on the same held-out
+    brier — biasing winner selection toward whichever candidate
+    accidentally aligned with the weighted distribution.
+
+    Calibration path (``cv >= 2 and len(y_train) >= 500``):
+    ``CalibratedClassifierCV.fit(sample_weight=...)`` accepts the kwarg
+    and forwards it to the base estimator's ``.fit``. For a Pipeline
+    base, that becomes ``pipeline.fit(X, y, sample_weight=w)`` —
+    unprefixed — which raises. There's no clean way to thread a
+    prefixed kwarg through CCCV in current sklearn, so the pipeline
+    path drops weights only when calibration is active. The
+    non-calibration branch (which is the test fixtures' path and the
+    early-rollout production path with <500 settled rows) still
+    weights the LR pipeline correctly.
+
+    When ``sample_weight`` is None, behaviour is identical to the
+    pre-PR3d code path.
     """
     from sklearn.pipeline import Pipeline
 
     class_counts = np.bincount(y_train, minlength=2)
     cv = int(min(3, class_counts.min()))
-    fit_kwargs: dict[str, Any] = {}
-    weight_supported = sample_weight is not None and not isinstance(estimator, Pipeline)
-    if weight_supported:
-        fit_kwargs["sample_weight"] = sample_weight
+
+    is_pipeline = isinstance(estimator, Pipeline)
+
+    direct_fit_kwargs: dict[str, Any] = {}
+    if sample_weight is not None:
+        if is_pipeline:
+            classifier_step = estimator.steps[-1][0]
+            direct_fit_kwargs[f"{classifier_step}__sample_weight"] = sample_weight
+        else:
+            direct_fit_kwargs["sample_weight"] = sample_weight
+
     if cv >= 2 and len(y_train) >= 500:
         method = "isotonic" if len(y_train) >= 500 else "sigmoid"
         calibrated = CalibratedClassifierCV(estimator=estimator, method=method, cv=cv)
-        return calibrated.fit(x_train, y_train, **fit_kwargs)
-    return estimator.fit(x_train, y_train, **fit_kwargs)
+        # CCCV doesn't propagate prefixed kwargs cleanly. Drop weights for
+        # pipelines in this path; HGBC still receives them.
+        if is_pipeline:
+            return calibrated.fit(x_train, y_train)
+        cccv_fit_kwargs: dict[str, Any] = {}
+        if sample_weight is not None:
+            cccv_fit_kwargs["sample_weight"] = sample_weight
+        return calibrated.fit(x_train, y_train, **cccv_fit_kwargs)
+
+    return estimator.fit(x_train, y_train, **direct_fit_kwargs)
 
 
 def _evaluate_candidates(

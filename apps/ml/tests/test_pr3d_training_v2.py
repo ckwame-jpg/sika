@@ -280,6 +280,68 @@ def test_build_sample_weights_returns_uniform_when_weight_is_one():
     np.testing.assert_array_equal(weights, np.ones(len(frame)))
 
 
+def test_fit_estimator_routes_sample_weight_to_pipeline_classifier_step():
+    """The reviewer-flagged candidate-selection asymmetry: pre-fix,
+    Pipeline candidates (LR) silently dropped ``sample_weight`` while
+    HGBC accepted it. Now both estimators receive the weights via the
+    appropriate routing — Pipeline gets ``<step>__sample_weight``, HGBC
+    gets unprefixed.
+
+    Verified directly by spying on the LR step's ``fit``: assert it was
+    called with the same ``sample_weight`` array we passed in.
+    """
+    from ml.training import _candidate_estimators, _fit_estimator
+
+    rng = np.random.default_rng(42)
+    x_train = rng.normal(size=(50, 3))
+    y_train = (rng.random(50) > 0.5).astype(int)
+    weights = rng.uniform(0.5, 3.0, size=50)
+
+    pipeline = _candidate_estimators(len(y_train))["logistic_regression"]
+    classifier_step = pipeline.steps[-1][0]  # 'logisticregression'
+    classifier = pipeline.named_steps[classifier_step]
+    original_fit = classifier.fit
+    captured: dict[str, Any] = {}
+
+    def spy_fit(X, y, **kwargs):
+        captured["sample_weight"] = kwargs.get("sample_weight")
+        return original_fit(X, y, **kwargs)
+
+    classifier.fit = spy_fit  # type: ignore[method-assign]
+    _fit_estimator(pipeline, x_train, y_train, sample_weight=weights)
+
+    assert "sample_weight" in captured, "LR step.fit was never called"
+    assert captured["sample_weight"] is not None, (
+        "LR step.fit received no sample_weight — Pipeline routing is broken"
+    )
+    np.testing.assert_array_equal(captured["sample_weight"], weights)
+
+
+def test_fit_estimator_routes_sample_weight_to_hgbc_directly():
+    """Companion to the LR test — confirms HGBC (non-Pipeline) still
+    receives sample_weight via the unprefixed path."""
+    from ml.training import _candidate_estimators, _fit_estimator
+
+    rng = np.random.default_rng(7)
+    x_train = rng.normal(size=(50, 3))
+    y_train = (rng.random(50) > 0.5).astype(int)
+    weights = rng.uniform(0.5, 3.0, size=50)
+
+    hgbc = _candidate_estimators(len(y_train))["hist_gradient_boosting"]
+    original_fit = hgbc.fit
+    captured: dict[str, Any] = {}
+
+    def spy_fit(X, y, **kwargs):
+        captured["sample_weight"] = kwargs.get("sample_weight")
+        return original_fit(X, y, **kwargs)
+
+    hgbc.fit = spy_fit  # type: ignore[method-assign]
+    _fit_estimator(hgbc, x_train, y_train, sample_weight=weights)
+
+    assert captured["sample_weight"] is not None
+    np.testing.assert_array_equal(captured["sample_weight"], weights)
+
+
 # -----------------------------------------------------------------------------
 # train_and_package — integration
 
