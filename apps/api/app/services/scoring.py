@@ -1819,6 +1819,13 @@ def _score_player_prop(
         if starter_era is not None and not suppress_starter_proxy:
             reasons.append(f"Opposing probable starter ERA context: {starter_era:.2f}")
 
+    # ``expected_before_advanced`` snapshots ``expected`` AFTER the box-score
+    # proxy block has multiplied in (gated proxies for usage / pace / ERA;
+    # always-on volume proxies for minutes / PAs; schedule + opponent context)
+    # but BEFORE the heuristic_factors advanced multipliers fire below. The
+    # name reflects "before the advanced-factor pass," not "before any
+    # adjustment." Same meaning as pre-PR3a — only the numeric value moves
+    # because the proxy block is now gated.
     expected_before_advanced = expected
     features["expected_before_advanced"] = round(expected_before_advanced, 3)
 
