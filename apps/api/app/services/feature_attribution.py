@@ -177,7 +177,10 @@ def _detail_for_factor(key: str, features: dict[str, Any]) -> str | None:
         return None
 
     if key == "weather_factor":
-        if features.get("weather_is_dome") == 1.0:
+        # Robust truthy check — emitters today write 1.0, but accept any
+        # non-falsy value (1, 1.0, True) so a future emitter that switches
+        # to a bool doesn't silently break the dome short-circuit.
+        if features.get("weather_is_dome"):
             return None  # weather_factor never fires in domes
         temp = _fmt_num(features.get("weather_temp_f"), 0)
         wind = _fmt_num(features.get("weather_wind_speed_mph"), 0)

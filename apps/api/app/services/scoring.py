@@ -1859,11 +1859,16 @@ def _score_player_prop(
         # list with detail strings so the frontend can render rich rows
         # without re-deriving them. Top-2 drivers also become reason
         # strings on the recommendation rationale.
+        #
+        # Always write ``_drivers`` (even as ``[]``) when advanced factors
+        # fired. The frontend treats the field as authoritative when
+        # present: an empty list means "we computed but nothing met the
+        # near-zero filter" — render the empty state, do NOT fall back to
+        # deriving rows from raw ``advanced_factors``.
         drivers = top_drivers(features, expected_before_advanced, expected_after_advanced)
-        if drivers:
-            features["_drivers"] = drivers
-            for line in driver_reason_strings(drivers):
-                reasons.append(line)
+        features["_drivers"] = drivers
+        for line in driver_reason_strings(drivers):
+            reasons.append(line)
     reasons.append(f"Model probability of clearing {threshold:.1f}: {probability_yes:.0%}")
     if resolved.context_stale:
         reasons.append("Using stale cached prop context while live ESPN refresh catches up.")

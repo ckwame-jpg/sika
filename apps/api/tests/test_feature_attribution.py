@@ -201,6 +201,27 @@ def test_detail_is_none_when_source_data_missing():
     assert drivers[0]["detail"] is None
 
 
+def test_detail_for_weather_factor_short_circuits_in_dome_with_float_flag():
+    """Reviewer flag: ``weather_is_dome == 1.0`` is fragile if a future
+    emitter writes the bool ``True`` instead of the float. We now use a
+    truthy check; verify the dome short-circuit fires for both forms."""
+    features_float = {
+        "advanced_factors": {"weather_factor": 1.07},
+        "weather_is_dome": 1.0,  # current emitter shape
+        "weather_temp_f": 95.0,
+    }
+    drivers_float = top_drivers(features_float, 1.0, 1.07)
+    assert drivers_float[0]["detail"] is None
+
+    features_bool = {
+        "advanced_factors": {"weather_factor": 1.07},
+        "weather_is_dome": True,  # hypothetical future shape
+        "weather_temp_f": 95.0,
+    }
+    drivers_bool = top_drivers(features_bool, 1.0, 1.07)
+    assert drivers_bool[0]["detail"] is None
+
+
 # -----------------------------------------------------------------------------
 # driver_reason_strings
 
