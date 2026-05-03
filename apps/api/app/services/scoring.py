@@ -1720,16 +1720,30 @@ def _score_player_prop(
     # Sport-specific proxy block. Proxies that have a real advanced replacement
     # in the features dict are skipped (set to 1.0) so we don't multiply both
     # the proxy and the advanced factor for the same concept. Each gate keys
-    # off the exact feature names the heuristic_factors module reads, keeping
-    # the "advanced primary, proxy fallback" rule honest.
+    # off the exact feature names the heuristic_factors module reads AND
+    # confirms via ``factor_applies`` that the per-stat gating tuple actually
+    # wires the advanced replacement for ``stat_key`` — otherwise the proxy
+    # must continue to apply, since suppressing it would drop the signal
+    # entirely (no replacement runs and the proxy is gone).
+    from app.services.heuristic_factors import factor_applies
+
     if sport_key == "NBA":
-        has_advanced_usage = (
+        has_advanced_usage_data = (
             isinstance(features.get("recent_usage_pct"), (int, float))
             and isinstance(features.get("season_usage_pct"), (int, float))
         )
-        has_advanced_opp_pace = isinstance(
+        has_advanced_opp_pace_data = isinstance(
             features.get("opponent_pace_recent_5"), (int, float)
         ) or isinstance(features.get("opponent_pace_season"), (int, float))
+
+        # Per-stat gating: only suppress the proxy when the advanced
+        # replacement is wired for this stat_key in heuristic_factors.
+        suppress_usage_proxy = has_advanced_usage_data and factor_applies(
+            sport_key, stat_key, "usage_factor_advanced"
+        )
+        suppress_pace_proxy = has_advanced_opp_pace_data and factor_applies(
+            sport_key, stat_key, "pace_factor_advanced"
+        )
 
         recent_minutes = _log_average(short_term_logs, sport_key, "minutes")
         season_minutes = _log_average(season_logs, sport_key, "minutes")
@@ -1739,7 +1753,7 @@ def _score_player_prop(
             expected *= minute_factor
 
         usage_factor = 1.0
-        if has_advanced_usage:
+        if suppress_usage_proxy:
             features["usage_factor_proxy_superseded"] = True
         else:
             recent_usage = sum(_usage_proxy(item["raw_metrics"]) for item in short_term_logs) / max(len(short_term_logs), 1)
@@ -1755,7 +1769,7 @@ def _score_player_prop(
         reasons.append(f"Recent minutes trend factor: {minute_factor:.2f}x")
 
         if opponent_entry:
-            if has_advanced_opp_pace:
+            if suppress_pace_proxy:
                 features["pace_factor"] = 1.0
                 features["pace_factor_proxy_superseded"] = True
                 features["has_pace_context"] = True
@@ -1773,9 +1787,12 @@ def _score_player_prop(
                 else:
                     features["has_pace_context"] = False
     else:
-        has_advanced_starter = (
+        has_advanced_starter_data = (
             isinstance(features.get("opposing_starter_xfip"), (int, float))
             or isinstance(features.get("opposing_starter_fip"), (int, float))
+        )
+        suppress_starter_proxy = has_advanced_starter_data and factor_applies(
+            sport_key, stat_key, "starter_factor_advanced"
         )
 
         recent_pa = sum(_plate_appearances(item["raw_metrics"]) for item in short_term_logs) / max(len(short_term_logs), 1)
@@ -1787,7 +1804,7 @@ def _score_player_prop(
 
         starter_era = _probable_pitcher_era(event, opponent_entry.role) if opponent_entry else None
         era_factor = 1.0
-        if starter_era is not None and not has_advanced_starter:
+        if starter_era is not None and not suppress_starter_proxy:
             era_factor = clamp(1 + ((starter_era - 4.00) * 0.03), 0.90, 1.10)
             expected *= era_factor
 
@@ -1796,10 +1813,10 @@ def _score_player_prop(
         features["plate_appearance_factor"] = round(pa_factor, 3)
         features["opposing_probable_era"] = starter_era
         features["starter_era_factor"] = round(era_factor, 3)
-        if has_advanced_starter:
+        if suppress_starter_proxy:
             features["starter_era_factor_proxy_superseded"] = True
         reasons.append(f"Recent plate appearance factor: {pa_factor:.2f}x")
-        if starter_era is not None and not has_advanced_starter:
+        if starter_era is not None and not suppress_starter_proxy:
             reasons.append(f"Opposing probable starter ERA context: {starter_era:.2f}")
 
     expected_before_advanced = expected

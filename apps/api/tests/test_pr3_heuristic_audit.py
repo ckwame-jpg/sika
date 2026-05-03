@@ -100,14 +100,14 @@ def _mlb_game_logs(*, hits: float = 1.5) -> list[dict[str, Any]]:
     ]
 
 
-def _seed_nba_event(db_session) -> tuple[Event, Market, MarketSnapshot]:
-    home = Participant(external_id="nyk", sport_key="NBA", display_name="New York Knicks", short_name="Knicks", participant_type="team")
-    away = Participant(external_id="bos", sport_key="NBA", display_name="Boston Celtics", short_name="Celtics", participant_type="team")
+def _seed_nba_event(db_session, *, stat_key: str = "points", threshold: float = 30.0) -> tuple[Event, Market, MarketSnapshot]:
+    home = Participant(external_id=f"nyk-{stat_key}", sport_key="NBA", display_name="New York Knicks", short_name="Knicks", participant_type="team")
+    away = Participant(external_id=f"bos-{stat_key}", sport_key="NBA", display_name="Boston Celtics", short_name="Celtics", participant_type="team")
     db_session.add_all([home, away])
     db_session.flush()
 
     event = Event(
-        external_id="nba-prop-fixture",
+        external_id=f"nba-prop-fixture-{stat_key}",
         sport_key="NBA",
         name="Boston Celtics at New York Knicks",
         status="scheduled",
@@ -122,16 +122,16 @@ def _seed_nba_event(db_session) -> tuple[Event, Market, MarketSnapshot]:
         ]
     )
     market = Market(
-        ticker="KXNBAPTS-FIXTURE",
+        ticker=f"KXNBA-{stat_key.upper()}-FIXTURE",
         sport_key="NBA",
         event_id=event.id,
-        title="Jalen Brunson: 30+ points?",
+        title=f"Jalen Brunson: {stat_key} prop",
         status="active",
         raw_data={
             "copilot_market_family": "player_prop",
             "copilot_market_kind": "player_prop",
-            "copilot_stat_key": "points",
-            "copilot_threshold": 30.0,
+            "copilot_stat_key": stat_key,
+            "copilot_threshold": threshold,
             "copilot_direction": "over",
             "copilot_subject_name": "Jalen Brunson",
             "copilot_subject_team": "NYK",
@@ -143,14 +143,14 @@ def _seed_nba_event(db_session) -> tuple[Event, Market, MarketSnapshot]:
     return event, market, snapshot
 
 
-def _seed_mlb_event(db_session) -> tuple[Event, Market, MarketSnapshot]:
-    home = Participant(external_id="phi", sport_key="MLB", display_name="Philadelphia Phillies", short_name="Phillies", participant_type="team")
-    away = Participant(external_id="nym", sport_key="MLB", display_name="New York Mets", short_name="Mets", participant_type="team")
+def _seed_mlb_event(db_session, *, stat_key: str = "hits", threshold: float = 1.0) -> tuple[Event, Market, MarketSnapshot]:
+    home = Participant(external_id=f"phi-{stat_key}", sport_key="MLB", display_name="Philadelphia Phillies", short_name="Phillies", participant_type="team")
+    away = Participant(external_id=f"nym-{stat_key}", sport_key="MLB", display_name="New York Mets", short_name="Mets", participant_type="team")
     db_session.add_all([home, away])
     db_session.flush()
 
     event = Event(
-        external_id="mlb-prop-fixture",
+        external_id=f"mlb-prop-fixture-{stat_key}",
         sport_key="MLB",
         name="New York Mets at Philadelphia Phillies",
         status="scheduled",
@@ -166,16 +166,16 @@ def _seed_mlb_event(db_session) -> tuple[Event, Market, MarketSnapshot]:
         ]
     )
     market = Market(
-        ticker="KXMLBHITS-FIXTURE",
+        ticker=f"KXMLB-{stat_key.upper()}-FIXTURE",
         sport_key="MLB",
         event_id=event.id,
-        title="Bryce Harper: 1+ hits?",
+        title=f"Bryce Harper: {stat_key} prop",
         status="active",
         raw_data={
             "copilot_market_family": "player_prop",
             "copilot_market_kind": "player_prop",
-            "copilot_stat_key": "hits",
-            "copilot_threshold": 1.0,
+            "copilot_stat_key": stat_key,
+            "copilot_threshold": threshold,
             "copilot_direction": "over",
             "copilot_subject_name": "Bryce Harper",
             "copilot_subject_team": "PHI",
@@ -427,3 +427,199 @@ def test_mlb_pa_factor_unaffected_by_advanced_starter_data(db_session, monkeypat
     assert "plate_appearance_factor" in features
     # And advanced data did make it into features.
     assert features["opposing_starter_xfip"] == pytest.approx(4.40)
+
+
+# -----------------------------------------------------------------------------
+# Per-stat gating regressions (Codex round-1 ultrareview, merged_bug_001)
+#
+# Pre-fix: the proxy gates suppressed usage_factor / pace_factor / era_factor
+# whenever the SOURCE advanced feature (recent_usage_pct / opponent_pace_recent_5
+# / opposing_starter_xfip) was present in features, but compute_advanced_factors
+# only emits the replacement when it's listed in the per-stat tuple. For stats
+# that didn't list the replacement, BOTH dropped out — strictly worse than pre-PR.
+#
+# These tests pin the corrected behaviour: when the replacement isn't wired
+# for a stat_key, the proxy must continue to apply.
+
+
+def test_nba_rebounds_keeps_usage_proxy_when_replacement_not_wired(db_session, monkeypatch):
+    """``rebounds`` gating tuple does NOT include ``usage_factor_advanced`` —
+    the proxy must continue to fire even when advanced USG% is cached."""
+    from app.services import advanced_stats
+
+    event, market, snapshot = _seed_nba_event(db_session, stat_key="rebounds", threshold=8.0)
+    fake_team_payload = {
+        "season_avg": {"off_rating": 116.0, "def_rating": 110.0, "pace": 99.0},
+        "recent_5_avg": {"off_rating": 118.0, "def_rating": 105.0, "pace": 102.0},
+    }
+    monkeypatch.setattr(advanced_stats, "find_nba_team_id_by_name", lambda *a, **kw: "1610612738")
+    monkeypatch.setattr(
+        advanced_stats,
+        "load_nba_team_gamelog",
+        lambda *a, **kw: type("R", (), {"payload": fake_team_payload, "cache_status": "hit"})(),
+    )
+    resolved = ResolvedPropSubject(
+        sport_key="NBA",
+        athlete_id="3934672",
+        display_name="Jalen Brunson",
+        team_name="New York Knicks",
+        season=2026,
+        game_logs=_nba_game_logs(),
+        advanced_payload={
+            "season_avg": {"usg_pct": 0.28, "ts_pct": 0.60},
+            "recent_10_avg": {"usg_pct": 0.32, "ts_pct": 0.62},
+        },
+        advanced_cache_status="hit",
+    )
+    result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
+    assert result is not None
+    _prob, _confidence, _reasons, features = result
+    # USG% data IS in features...
+    assert features["recent_usage_pct"] == pytest.approx(0.32)
+    # ...but rebounds doesn't wire usage_factor_advanced, so the proxy must
+    # NOT have been suppressed.
+    assert "usage_factor_proxy_superseded" not in features
+    # Same for pace: rebounds DOES include pace_factor_advanced, so the
+    # proxy IS superseded for pace specifically.
+    assert features.get("pace_factor_proxy_superseded") is True
+
+
+def test_nba_turnovers_keeps_pace_proxy_when_replacement_not_wired(db_session, monkeypatch):
+    """``turnovers`` gating tuple has only ``usage_factor_advanced`` — pace
+    is NOT in it. With opponent_pace_recent_5 cached, the pace proxy must
+    continue to apply."""
+    from app.services import advanced_stats
+
+    event, market, snapshot = _seed_nba_event(db_session, stat_key="turnovers", threshold=2.5)
+    fake_team_payload = {
+        "season_avg": {"off_rating": 116.0, "def_rating": 110.0, "pace": 99.0},
+        "recent_5_avg": {"off_rating": 118.0, "def_rating": 105.0, "pace": 102.0},
+    }
+    monkeypatch.setattr(advanced_stats, "find_nba_team_id_by_name", lambda *a, **kw: "1610612738")
+    monkeypatch.setattr(
+        advanced_stats,
+        "load_nba_team_gamelog",
+        lambda *a, **kw: type("R", (), {"payload": fake_team_payload, "cache_status": "hit"})(),
+    )
+    resolved = ResolvedPropSubject(
+        sport_key="NBA",
+        athlete_id="3934672",
+        display_name="Jalen Brunson",
+        team_name="New York Knicks",
+        season=2026,
+        game_logs=_nba_game_logs(),
+        advanced_payload={"season_avg": {"usg_pct": 0.28}, "recent_10_avg": {"usg_pct": 0.32}},
+        advanced_cache_status="hit",
+    )
+    result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
+    assert result is not None
+    _prob, _confidence, _reasons, features = result
+    # Pace IS in features...
+    assert features["opponent_pace_recent_5"] == pytest.approx(102.0)
+    # ...but turnovers doesn't wire pace_factor_advanced — proxy stays.
+    assert "pace_factor_proxy_superseded" not in features
+    # USG% IS wired for turnovers, so usage proxy IS superseded.
+    assert features.get("usage_factor_proxy_superseded") is True
+
+
+def test_nba_made_threes_alias_routes_to_three_points_made_gating(db_session, monkeypatch):
+    """``made_threes`` is the canonical key from market_support; the gating
+    tables historically only listed ``three_points_made``. Both must map to
+    the same tuple so the advanced replacement actually fires."""
+    from app.services import advanced_stats
+
+    event, market, snapshot = _seed_nba_event(db_session, stat_key="made_threes", threshold=3.0)
+    fake_team_payload = {
+        "season_avg": {"off_rating": 116.0, "def_rating": 110.0, "pace": 99.0},
+        "recent_5_avg": {"off_rating": 118.0, "def_rating": 105.0, "pace": 102.0},
+    }
+    monkeypatch.setattr(advanced_stats, "find_nba_team_id_by_name", lambda *a, **kw: "1610612738")
+    monkeypatch.setattr(
+        advanced_stats,
+        "load_nba_team_gamelog",
+        lambda *a, **kw: type("R", (), {"payload": fake_team_payload, "cache_status": "hit"})(),
+    )
+    resolved = ResolvedPropSubject(
+        sport_key="NBA",
+        athlete_id="3934672",
+        display_name="Jalen Brunson",
+        team_name="New York Knicks",
+        season=2026,
+        game_logs=_nba_game_logs(),
+        advanced_payload={
+            "season_avg": {"usg_pct": 0.28, "ts_pct": 0.60},
+            "recent_10_avg": {"usg_pct": 0.32, "ts_pct": 0.62},
+        },
+        advanced_cache_status="hit",
+    )
+    result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
+    assert result is not None
+    _prob, _confidence, _reasons, features = result
+    # Both proxies should be superseded (made_threes wires both replacements)...
+    assert features.get("usage_factor_proxy_superseded") is True
+    assert features.get("pace_factor_proxy_superseded") is True
+    # ...and BOTH advanced factors must actually appear in advanced_factors.
+    advanced_factors = features.get("advanced_factors") or {}
+    assert "usage_factor_advanced" in advanced_factors
+    assert "pace_factor_advanced" in advanced_factors
+
+
+def test_mlb_runs_keeps_starter_era_proxy_when_replacement_not_wired(db_session, monkeypatch):
+    """``runs`` gating tuple has only ``lineup_factor`` and
+    ``park_factor_runs_mult`` — opposing-pitcher quality (
+    ``starter_factor_advanced``) is NOT in it. With xFIP cached and a
+    probable ERA, the ERA proxy must continue to multiply expected."""
+    from app.services import scoring as scoring_module
+    from app.services import mlb_advanced
+
+    event, market, snapshot = _seed_mlb_event(db_session, stat_key="runs", threshold=1.0)
+    monkeypatch.setattr(scoring_module, "_probable_pitcher_era", lambda *a, **kw: 5.50)
+    monkeypatch.setattr(
+        scoring_module,
+        "_probable_pitcher_identity",
+        lambda *a, **kw: ("Kodai Senga", "12345"),
+    )
+    fake_pitcher_payload = type("R", (), {"payload": {"season_avg": {"xfip": 4.40}}, "cache_status": "hit"})()
+    fake_statcast_payload = type("R", (), {"payload": {"season_avg": {}}, "cache_status": "hit"})()
+    monkeypatch.setattr(mlb_advanced, "resolve_mlb_stats_player_id", lambda *a, **kw: "543037")
+    monkeypatch.setattr(mlb_advanced, "load_mlb_pitcher_advanced", lambda *a, **kw: fake_pitcher_payload)
+    monkeypatch.setattr(mlb_advanced, "load_mlb_statcast_pitcher", lambda *a, **kw: fake_statcast_payload)
+    resolved = ResolvedPropSubject(
+        sport_key="MLB",
+        athlete_id="3408",
+        display_name="Bryce Harper",
+        team_name="Philadelphia Phillies",
+        season=2026,
+        game_logs=_mlb_game_logs(),
+        advanced_payload={},
+        advanced_cache_status="hit",
+    )
+    result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
+    assert result is not None
+    _prob, _confidence, _reasons, features = result
+    # xFIP IS in features...
+    assert features["opposing_starter_xfip"] == pytest.approx(4.40)
+    # ...but runs doesn't wire starter_factor_advanced — proxy stays.
+    assert "starter_era_factor_proxy_superseded" not in features
+    # The ERA proxy actually fired (5.50 vs 4.00 baseline → factor > 1.0).
+    assert features["starter_era_factor"] > 1.0
+
+
+def test_factor_applies_helper_returns_correct_per_stat_decisions():
+    """Direct unit coverage of the helper that powers the gates."""
+    from app.services.heuristic_factors import factor_applies
+
+    # Wired:
+    assert factor_applies("NBA", "points", "usage_factor_advanced") is True
+    assert factor_applies("NBA", "made_threes", "usage_factor_advanced") is True
+    assert factor_applies("MLB", "hits", "starter_factor_advanced") is True
+
+    # Not wired (the regression cases):
+    assert factor_applies("NBA", "rebounds", "usage_factor_advanced") is False
+    assert factor_applies("NBA", "turnovers", "pace_factor_advanced") is False
+    assert factor_applies("MLB", "runs", "starter_factor_advanced") is False
+    assert factor_applies("MLB", "walks", "starter_factor_advanced") is False
+
+    # Unknown sport / stat:
+    assert factor_applies("NFL", "passing_yards", "usage_factor_advanced") is False
+    assert factor_applies("NBA", "made_up_stat", "usage_factor_advanced") is False
