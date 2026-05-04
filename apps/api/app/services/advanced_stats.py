@@ -21,7 +21,8 @@ from typing import Any, Iterable
 from sqlalchemy.orm import Session
 
 from app.clients.nba_stats import (
-    NbaStatsClient,
+    NbaClientLike,
+    make_nba_client,
     parse_result_set,
 )
 from app.config import get_settings
@@ -231,7 +232,7 @@ def load_nba_advanced(
     *,
     nba_stats_player_id: str,
     season: int,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
@@ -267,7 +268,7 @@ def load_nba_advanced(
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="skipped", complete=False)
 
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
     try:
         raw = nba_client.fetch_player_advanced_gamelog(nba_stats_player_id, season)
         _increment_daily_count(db)
@@ -355,7 +356,7 @@ def load_nba_team_advanced(
     db: Session,
     *,
     season: int,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
@@ -381,7 +382,7 @@ def load_nba_team_advanced(
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
 
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
     try:
         raw = nba_client.fetch_team_advanced(season)
         _increment_daily_count(db)
@@ -433,7 +434,7 @@ def load_nba_league_percentiles(
     db: Session,
     *,
     season: int,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
@@ -454,7 +455,7 @@ def load_nba_league_percentiles(
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
 
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
     try:
         raw = nba_client.fetch_league_player_advanced(season)
         _increment_daily_count(db)
@@ -523,7 +524,7 @@ def load_nba_team_gamelog(
     *,
     team_id: str,
     season: int,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
@@ -549,7 +550,7 @@ def load_nba_team_gamelog(
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
 
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
     try:
         raw = nba_client.fetch_team_advanced_gamelog(team_id, season)
         _increment_daily_count(db)
@@ -683,7 +684,7 @@ def load_nba_lineup_advanced(
     *,
     season: int,
     group_quantity: int = 5,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
@@ -712,7 +713,7 @@ def load_nba_lineup_advanced(
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
 
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
     try:
         raw = nba_client.fetch_lineup_advanced(season, group_quantity=group_quantity)
         _increment_daily_count(db)
@@ -774,7 +775,7 @@ def load_nba_player_roster(
     db: Session,
     *,
     season: int,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
@@ -798,7 +799,7 @@ def load_nba_player_roster(
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
 
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
     try:
         raw = nba_client.fetch_common_all_players(season)
         _increment_daily_count(db)
@@ -848,7 +849,7 @@ def resolve_nba_stats_player_id(
     full_name: str,
     team_abbreviation: str | None = None,
     season: int,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
 ) -> str | None:
     """Find an NBA Stats PERSON_ID for an ESPN-known player.
@@ -954,11 +955,23 @@ def warm_nba_advanced_for_athletes(
     nba_stats_player_ids: Iterable[str],
     season: int,
     nba_team_ids: Iterable[str] | None = None,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
 ) -> WarmAdvancedStatsSummary:
     """Refresh advanced caches for the given player + team IDs, plus league rollups."""
+    from time import perf_counter
+
     summary = WarmAdvancedStatsSummary()
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
+    started = perf_counter()
+    logger.info(
+        "refresh_job_phase",
+        extra={
+            "kind": "advanced_stats_warm",
+            "phase": "nba_warm_started",
+            "season": season,
+            "client": type(nba_client).__name__,
+        },
+    )
 
     team_result = load_nba_team_advanced(db, season=season, client=nba_client, allow_network=True)
     summary.nba_team_loaded = team_result.complete
@@ -1029,4 +1042,16 @@ def warm_nba_advanced_for_athletes(
             summary.nba_players_succeeded += 1
         else:
             summary.nba_players_skipped += 1
+    logger.info(
+        "refresh_job_phase",
+        extra={
+            "kind": "advanced_stats_warm",
+            "phase": "nba_warm_completed",
+            "season": season,
+            "elapsed_seconds": round(perf_counter() - started, 3),
+            "players_attempted": summary.nba_players_attempted,
+            "players_succeeded": summary.nba_players_succeeded,
+            "team_gamelogs_loaded": summary.nba_team_gamelogs_loaded,
+        },
+    )
     return summary

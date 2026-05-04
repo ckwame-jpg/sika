@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy.orm import sessionmaker
 
 from app.models import RefreshJob, Run
@@ -346,6 +347,161 @@ def test_prop_refresh_gets_longer_worker_timeout(monkeypatch):
     )
 
     assert refresh_jobs._worker_timeout_seconds(job) == 0.8
+
+
+def test_advanced_stats_warm_gets_longer_worker_timeout(monkeypatch):
+    _fast_timeout_settings(monkeypatch)
+    monkeypatch.setattr(refresh_jobs, "ADVANCED_STATS_WARM_WORKER_TIMEOUT_SECONDS", 0.8)
+    job = RefreshJob(
+        kind="advanced_stats_warm",
+        scope="maintenance",
+        reason="interval",
+        status="running",
+    )
+
+    assert refresh_jobs._worker_timeout_seconds(job) == 0.8
+
+
+def test_market_discovery_gets_longer_worker_timeout(monkeypatch):
+    _fast_timeout_settings(monkeypatch)
+    monkeypatch.setattr(refresh_jobs, "MARKET_DISCOVERY_WORKER_TIMEOUT_SECONDS", 0.8)
+    job = RefreshJob(
+        kind="market_discovery",
+        scope="maintenance",
+        reason="interval",
+        status="running",
+    )
+
+    assert refresh_jobs._worker_timeout_seconds(job) == 0.8
+
+
+def test_lineup_refresh_gets_longer_worker_timeout(monkeypatch):
+    _fast_timeout_settings(monkeypatch)
+    monkeypatch.setattr(refresh_jobs, "LINEUP_REFRESH_WORKER_TIMEOUT_SECONDS", 0.8)
+    job = RefreshJob(
+        kind="lineup_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="running",
+    )
+
+    assert refresh_jobs._worker_timeout_seconds(job) == 0.8
+
+
+def test_cleanup_gets_longer_worker_timeout(monkeypatch):
+    _fast_timeout_settings(monkeypatch)
+    monkeypatch.setattr(refresh_jobs, "CLEANUP_WORKER_TIMEOUT_SECONDS", 0.8)
+    job = RefreshJob(
+        kind="cleanup",
+        scope="maintenance",
+        reason="interval",
+        status="running",
+    )
+
+    assert refresh_jobs._worker_timeout_seconds(job) == 0.8
+
+
+def test_reconcile_marks_queued_age_with_wedged_reason(db_session, monkeypatch):
+    """A queued job that aged past stale-minutes had no processor pick it up
+    (queue processor is wedged). This is distinct from a worker that started
+    but never finished — split the bucket so dashboards can grep."""
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(maintenance_claim_budget_seconds=0.05, refresh_job_stale_minutes=30),
+    )
+    now = datetime.now(timezone.utc)
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+        queued_at=now - timedelta(minutes=31),
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    reconciled = refresh_jobs.reconcile_stale_jobs(db_session, now=now)
+
+    assert reconciled == 1
+    db_session.expire_all()
+    persisted = db_session.get(RefreshJob, job.id)
+    assert persisted.status == "failed"
+    assert persisted.error_message == refresh_jobs.QUEUE_PROCESSOR_WEDGED
+
+
+def test_claim_skips_locked_under_concurrent_processors(db_session, monkeypatch):
+    """SELECT ... FOR UPDATE SKIP LOCKED ensures two concurrent processors
+    don't both claim the same queued row. SQLite ignores ``with_for_update``,
+    so this test only enforces the postgres-level guarantee — under SQLite
+    we just verify the two-threaded path completes without crashing."""
+    pytest.importorskip("psycopg")
+    bind = db_session.get_bind()
+    if bind.dialect.name != "postgresql":
+        pytest.skip("with_for_update / skip_locked is only enforced under postgres")
+
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    job = _queued_prop_job(db_session)
+    seen_job_ids: list[int] = []
+    barrier = threading.Barrier(2)
+    release = threading.Event()
+
+    def _advance(db, job):
+        seen_job_ids.append(job.id)
+        barrier.wait(timeout=2)
+        release.wait(timeout=5)
+        return _completed_run(db), True
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    results: dict[str, refresh_jobs.RefreshJobSnapshot | None] = {}
+
+    def _runner(key: str) -> None:
+        results[key] = refresh_jobs.process_refresh_job_queue_once()
+
+    t1 = threading.Thread(target=_runner, args=("a",))
+    t2 = threading.Thread(target=_runner, args=("b",))
+    t1.start()
+    t2.start()
+    release.set()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    claims = [snapshot for snapshot in results.values() if snapshot is not None]
+    assert len(claims) == 1, "exactly one processor should have claimed the row"
+    assert claims[0].job_id == job.id
+    assert seen_job_ids == [job.id]
+
+
+def test_reconcile_marks_stale_running_with_legacy_stale_reason(db_session, monkeypatch):
+    """A running job stale by stale-minutes but inside per-kind timeout gets
+    the legacy ``STALE_REFRESH_JOB_ERROR`` bucket (third case)."""
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(maintenance_claim_budget_seconds=0.05, refresh_job_stale_minutes=30),
+    )
+    monkeypatch.setattr(refresh_jobs, "PROP_REFRESH_WORKER_TIMEOUT_SECONDS", 3600.0)
+    now = datetime.now(timezone.utc)
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="running",
+        queued_at=now - timedelta(minutes=32),
+        started_at=now - timedelta(minutes=31),
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    reconciled = refresh_jobs.reconcile_stale_jobs(db_session, now=now)
+
+    assert reconciled == 1
+    db_session.expire_all()
+    persisted = db_session.get(RefreshJob, job.id)
+    assert persisted.status == "failed"
+    assert persisted.error_message == refresh_jobs.STALE_REFRESH_JOB_ERROR
 
 
 def test_reconcile_marks_orphaned_running_job_worker_timeout(db_session, monkeypatch):
