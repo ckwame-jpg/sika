@@ -23,12 +23,28 @@ const EXAMPLES: Record<SportKey, string[]> = {
   TENNIS: ["Novak Djokovic last 5 matches", "Carlos Alcaraz this season"],
 };
 
-const CURRENT_SEASON = "2025-26";
-const SEASON_OPTIONS = ["2025-26", "2024-25", "2023-24", "2022-23"];
+const SEASON_OPTIONS = ["2026-27", "2025-26", "2024-25", "2023-24", "2022-23"];
 
 // ESPN's `season` parameter is sport-specific:
 //   NBA + Tennis (multi-year span): use the END year (e.g. "2025-26" -> 2026).
 //   NFL + MLB + Soccer + UFC: use the START / single year (e.g. "2025-26" -> 2025).
+// The picker default is sport-aware so MLB/NFL/Soccer/UFC pick the
+// span whose start year is the active calendar season; NBA/Tennis pick
+// the span whose end year matches the active season.
+function defaultSeasonForSport(sport: SportKey, today: Date = new Date()): string {
+  const year = today.getFullYear();
+  const month = today.getMonth() + 1;
+  if (sport === "NBA" || sport === "TENNIS") {
+    const endYear = month >= 10 ? year + 1 : year;
+    return `${endYear - 1}-${String(endYear).slice(2)}`;
+  }
+  // MLB/NFL/Soccer/UFC: use the calendar-year start that's currently active.
+  // MLB starts in March; before March, the previous calendar year is still
+  // the most recent completed season.
+  const startYear = sport === "MLB" && month < 3 ? year - 1 : year;
+  return `${startYear}-${String(startYear + 1).slice(2)}`;
+}
+
 function resolveSeasonYear(season: string, sport: SportKey): number | undefined {
   if (!season) return undefined;
   const dashIdx = season.indexOf("-");
@@ -48,7 +64,7 @@ interface StatsWorkspaceProps {
 export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
   const [sportKey, setSportKey] = useState<SportKey>(initialSport);
   const [question, setQuestion] = useState(SUGGESTIONS[0]);
-  const [season, setSeason] = useState(CURRENT_SEASON);
+  const [season, setSeason] = useState(() => defaultSeasonForSport(initialSport));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<StatsQueryRead | null>(null);
@@ -147,6 +163,7 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
               onChange={(event) => {
                 const nextSport = event.target.value as SportKey;
                 setSportKey(nextSport);
+                setSeason(defaultSeasonForSport(nextSport));
                 const nextExample = EXAMPLES[nextSport]?.[0];
                 if (nextExample) setQuestion(nextExample);
               }}
