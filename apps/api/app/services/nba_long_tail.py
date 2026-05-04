@@ -15,7 +15,7 @@ from typing import Any
 
 from sqlalchemy.orm import Query, Session
 
-from app.clients.nba_stats import NbaStatsClient, parse_result_set
+from app.clients.nba_stats import NbaClientLike, make_nba_client, parse_result_set
 from app.config import get_settings
 from app.models import (
     NbaClutchPlayerCache,
@@ -86,14 +86,14 @@ def load_nba_hustle_player(
     db: Session,
     *,
     season: int,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
     moment = now or utcnow()
     settings = get_settings()
     ttl = timedelta(minutes=settings.nba_hustle_player_cache_minutes)
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
 
     cached_query = db.query(NbaHustlePlayerCache).filter(NbaHustlePlayerCache.season == season)
 
@@ -156,14 +156,14 @@ def load_nba_tracking(
     *,
     season: int,
     pt_measure_type: str = "Drives",
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
     moment = now or utcnow()
     settings = get_settings()
     ttl = timedelta(minutes=settings.nba_tracking_cache_minutes)
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
 
     cached_query = db.query(NbaTrackingCache).filter(
         NbaTrackingCache.season == season,
@@ -211,14 +211,14 @@ def load_nba_clutch_player(
     db: Session,
     *,
     season: int,
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
     moment = now or utcnow()
     settings = get_settings()
     ttl = timedelta(minutes=settings.nba_clutch_cache_minutes)
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
 
     cached_query = db.query(NbaClutchPlayerCache).filter(NbaClutchPlayerCache.season == season)
 
@@ -278,14 +278,14 @@ def load_nba_player_defense(
     *,
     season: int,
     defense_category: str = "Overall",
-    client: NbaStatsClient | None = None,
+    client: NbaClientLike | None = None,
     allow_network: bool = False,
     now: datetime | None = None,
 ) -> AdvancedLoadResult:
     moment = now or utcnow()
     settings = get_settings()
     ttl = timedelta(minutes=settings.nba_player_defense_cache_minutes)
-    nba_client = client or NbaStatsClient()
+    nba_client = client or make_nba_client()
 
     cached_query = db.query(NbaPlayerDefenseCache).filter(
         NbaPlayerDefenseCache.season == season,

@@ -35,11 +35,19 @@ REFRESH_JOB_KINDS = frozenset({
 })
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
+QUEUE_PROCESSOR_WEDGED = "queue_processor_wedged"
 WORKER_TIMEOUT_ERROR = "worker_timeout"
 WORKER_TIMEOUT_GRACE_SECONDS = 10.0
 CURRENT_SLATE_WORKER_TIMEOUT_SECONDS = 300.0
 PROP_REFRESH_WORKER_TIMEOUT_SECONDS = 300.0
 SETTLEMENT_WORKER_TIMEOUT_SECONDS = 120.0
+ADVANCED_STATS_WARM_WORKER_TIMEOUT_SECONDS = 600.0
+MARKET_DISCOVERY_WORKER_TIMEOUT_SECONDS = 300.0
+LINEUP_REFRESH_WORKER_TIMEOUT_SECONDS = 180.0
+WEATHER_REFRESH_WORKER_TIMEOUT_SECONDS = 120.0
+CLEANUP_WORKER_TIMEOUT_SECONDS = 120.0
+SHADOW_CAPTURE_WORKER_TIMEOUT_SECONDS = 180.0
+ADVANCED_STATS_AUDIT_WORKER_TIMEOUT_SECONDS = 120.0
 PREDICTION_SETTLEMENT_BATCH_SIZE = 100
 PARLAY_SETTLEMENT_BATCH_SIZE = 50
 logger = logging.getLogger(__name__)
@@ -221,6 +229,20 @@ def _worker_timeout_seconds(job: RefreshJob) -> float:
         return max(default_timeout, PROP_REFRESH_WORKER_TIMEOUT_SECONDS)
     if job.kind == "settlement":
         return max(default_timeout, SETTLEMENT_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "advanced_stats_warm":
+        return max(default_timeout, ADVANCED_STATS_WARM_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "market_discovery":
+        return max(default_timeout, MARKET_DISCOVERY_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "lineup_refresh":
+        return max(default_timeout, LINEUP_REFRESH_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "weather_refresh":
+        return max(default_timeout, WEATHER_REFRESH_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "cleanup":
+        return max(default_timeout, CLEANUP_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "shadow_capture":
+        return max(default_timeout, SHADOW_CAPTURE_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "advanced_stats_audit":
+        return max(default_timeout, ADVANCED_STATS_AUDIT_WORKER_TIMEOUT_SECONDS)
     return default_timeout
 
 
@@ -283,7 +305,14 @@ def reconcile_stale_jobs(db: Session, *, now: datetime | None = None) -> int:
         timed_out = job.status == "running" and job.started_at is not None and age_seconds > _worker_timeout_seconds(job)
         stale = (age_seconds / 60) > settings.refresh_job_stale_minutes
         if timed_out or stale:
-            job.error_message = WORKER_TIMEOUT_ERROR if timed_out else STALE_REFRESH_JOB_ERROR
+            if timed_out:
+                job.error_message = WORKER_TIMEOUT_ERROR
+            elif job.status == "queued":
+                # Queued past stale-minutes means no processor ever picked it
+                # up — distinct from a worker that started but timed out.
+                job.error_message = QUEUE_PROCESSOR_WEDGED
+            else:
+                job.error_message = STALE_REFRESH_JOB_ERROR
             stale_jobs.append(job)
     for job in stale_jobs:
         job.status = "failed"
@@ -424,6 +453,7 @@ def _claim_next_job(db: Session) -> RefreshJob | None:
         .where(RefreshJob.status == "queued")
         .order_by(_job_priority_order(), RefreshJob.queued_at.asc(), RefreshJob.id.asc())
         .limit(1)
+        .with_for_update(skip_locked=True)
     )
     if queued is None:
         return None

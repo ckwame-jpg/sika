@@ -85,7 +85,7 @@ def test_fetch_player_advanced_gamelog_retries_on_429_with_retry_after(monkeypat
     def fake_get(url, params=None, headers=None, timeout=None):
         attempts.append(1)
         request = httpx.Request("GET", url)
-        if len(attempts) < 3:
+        if len(attempts) < NbaStatsClient._MAX_ATTEMPTS:
             return httpx.Response(429, headers={"Retry-After": "0"}, request=request, json={"error": "rate"})
         return _ok_response({"resultSets": []}, request=request)
 
@@ -95,8 +95,8 @@ def test_fetch_player_advanced_gamelog_retries_on_429_with_retry_after(monkeypat
 
     client = NbaStatsClient()
     client.fetch_player_advanced_gamelog("123", 2024)
-    assert len(attempts) == 3
-    # First two attempts each slept on the bucket-refill plus 0s Retry-After
+    assert len(attempts) == NbaStatsClient._MAX_ATTEMPTS
+    # The first attempt slept on the bucket-refill plus 0s Retry-After.
     assert any(sleep == 0 for sleep in sleeps), "Retry-After=0 should produce a 0-second sleep"
 
 

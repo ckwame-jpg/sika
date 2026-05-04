@@ -16,15 +16,25 @@ from __future__ import annotations
 import logging
 import random
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING, TypeAlias
 
 import httpx
 
 from app.clients._rate_limit import parse_retry_after, shared_bucket
-from app.config import get_settings
+from app.config import Settings, get_settings
+
+
+if TYPE_CHECKING:
+    from app.clients.basketball_reference import BasketballReferenceClient
 
 
 logger = logging.getLogger(__name__)
+
+
+# Either NBA-Stats or basketball-reference client — both expose the same
+# 11 fetch methods returning NBA-Stats-shaped ``{"resultSets": [...]}`` payloads
+# so callers can swap between them via ``make_nba_client``.
+NbaClientLike: TypeAlias = "NbaStatsClient | BasketballReferenceClient"
 
 
 _USER_AGENTS: tuple[str, ...] = (
@@ -72,9 +82,12 @@ class NbaStatsRateLimitError(RuntimeError):
 
 
 class NbaStatsClient:
-    _MAX_ATTEMPTS = 4
+    _MAX_ATTEMPTS = 2
     _BACKOFF_SCHEDULE_SECONDS: tuple[float, ...] = (10.0, 30.0, 90.0, 300.0)
     _MAX_BACKOFF_SECONDS = 300.0
+    # Bounded so a black-holed network can't outlive the worker watchdog.
+    # Worst case per call: connect 5s + read 15s + one 30s 429 backoff ≈ 50s.
+    _HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
 
     def __init__(self, http_client: httpx.Client | None = None, base_url: str | None = None) -> None:
         settings = get_settings()
@@ -513,7 +526,13 @@ class NbaStatsClient:
             "Connection": "keep-alive",
         }
 
-    def _do_get(self, url: str, params: dict[str, Any], headers: dict[str, str], timeout: float) -> httpx.Response:
+    def _do_get(
+        self,
+        url: str,
+        params: dict[str, Any],
+        headers: dict[str, str],
+        timeout: httpx.Timeout | float,
+    ) -> httpx.Response:
         if self._http_client is not None:
             return self._http_client.get(url, params=params, headers=headers, timeout=timeout)
         return httpx.get(url, params=params, headers=headers, timeout=timeout)
@@ -524,7 +543,7 @@ class NbaStatsClient:
         for attempt in range(1, self._MAX_ATTEMPTS + 1):
             self._bucket.acquire()
             try:
-                response = self._do_get(url, params, self._headers(), timeout=20.0)
+                response = self._do_get(url, params, self._headers(), timeout=self._HTTP_TIMEOUT)
             except httpx.TransportError as exc:
                 last_error = exc
                 if attempt >= self._MAX_ATTEMPTS:
@@ -550,3 +569,19 @@ class NbaStatsClient:
 
         assert last_error is not None
         raise last_error
+
+
+def make_nba_client(settings: Settings | None = None) -> NbaClientLike:
+    """Construct the configured NBA client.
+
+    Defaults to ``BasketballReferenceClient`` because stats.nba.com is
+    unreachable from many home / cloud egresses; operators can opt back into
+    the original NBA Stats client by setting ``nba_stats_source=nba_stats``.
+    """
+    settings = settings or get_settings()
+    if settings.nba_stats_source == "basketball_reference":
+        # Lazy-import to keep this module import-cheap and avoid a cycle.
+        from app.clients.basketball_reference import BasketballReferenceClient
+
+        return BasketballReferenceClient()
+    return NbaStatsClient()

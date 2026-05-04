@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta, timezone
 from time import perf_counter
 from typing import Any, Iterable
@@ -5,6 +6,9 @@ from typing import Any, Iterable
 import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+
+logger = logging.getLogger(__name__)
 
 from app.clients.espn import EspnPublicClient
 from app.clients.kalshi import KalshiPublicClient, snapshot_from_market_payload
@@ -1406,6 +1410,19 @@ def advance_current_slate_refresh_job(
         else:
             raise ValueError(f"Unsupported current-slate phase: {phase}")
 
+    elapsed = round(perf_counter() - stage_started, 3)
+    logger.info(
+        "refresh_job_phase",
+        extra={
+            "job_id": job.id,
+            "kind": "refresh",
+            "scope": "current_slate",
+            "phase": phase,
+            "elapsed_seconds": elapsed,
+            "complete": complete,
+        },
+    )
+
     details.update(
         {
             "phase": phase,
@@ -1649,6 +1666,19 @@ def advance_prop_refresh_job(
                 cursor_payload = next_cursor
         else:
             raise ValueError(f"Unsupported prop refresh phase: {phase}")
+
+    elapsed = round(perf_counter() - batch_started, 3)
+    logger.info(
+        "refresh_job_phase",
+        extra={
+            "job_id": job.id,
+            "kind": "prop_refresh",
+            "scope": "maintenance",
+            "phase": phase,
+            "elapsed_seconds": elapsed,
+            "complete": complete,
+        },
+    )
 
     details.update(
         {
