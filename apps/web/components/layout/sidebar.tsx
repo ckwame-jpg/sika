@@ -9,20 +9,10 @@ import {
   ChevronRight,
   DatabaseZap,
   FileText,
-  Menu,
   RefreshCw,
   Settings2,
   Target,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   getMarketSyncBadge,
@@ -246,38 +236,8 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
 
 export function Sidebar() {
   return (
-    <aside className="sidebar hidden lg:flex">
+    <aside className="sidebar">
       <SidebarBody />
     </aside>
-  );
-}
-
-export function MobileSidebarTrigger() {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-muted-foreground lg:hidden"
-          aria-label="Open navigation"
-        >
-          <Menu size={16} />
-        </Button>
-      </SheetTrigger>
-      <SheetContent side="left" className="w-[86vw] max-w-[320px] border-r border-l-0 p-0">
-        <SheetHeader className="sr-only">
-          <SheetTitle>Navigation menu</SheetTitle>
-          <SheetDescription>
-            Open the app navigation, switch sections, and trigger a refresh.
-          </SheetDescription>
-        </SheetHeader>
-        <div className="sidebar flex h-full flex-col">
-          <SidebarBody onNavigate={() => setOpen(false)} />
-        </div>
-      </SheetContent>
-    </Sheet>
   );
 }

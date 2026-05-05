@@ -46,11 +46,6 @@ export interface RefreshJobRead {
   finished_at: string | null;
 }
 
-export interface SportRead {
-  key: string;
-  name: string;
-}
-
 export interface EventParticipantRead {
   participant_id: number;
   display_name: string;
@@ -108,50 +103,7 @@ export interface RecommendationRead {
   captured_at: string;
 }
 
-export interface ParlayRecommendationLegRead {
-  leg_index: number;
-  ticker: string;
-  sport_key: string | null;
-  event_name: string | null;
-  market_title: string;
-  market_family: string | null;
-  market_kind: string | null;
-  stat_key: string | null;
-  threshold: number | null;
-  subject_name: string | null;
-  subject_team: string | null;
-  side: string;
-  action: string;
-  suggested_price: number;
-  fair_yes_price: number | null;
-  fair_no_price: number | null;
-  edge: number;
-  confidence: number;
-}
-
-export interface ParlayRecommendationRead {
-  id: number;
-  run_id: number | null;
-  leg_count: number;
-  sport_scope: string;
-  participating_sports: string[];
-  status: string;
-  combined_market_price: number;
-  combined_model_probability: number;
-  american_odds: string;
-  edge: number;
-  confidence: number;
-  model_name: string | null;
-  model_version: string | null;
-  calibration_version: string | null;
-  feature_set_version: string | null;
-  invalidation: string;
-  rationale: string;
-  captured_at: string;
-  legs: ParlayRecommendationLegRead[];
-}
-
-export interface MarketSnapshotRead {
+interface MarketSnapshotRead {
   captured_at: string;
   yes_bid: number | null;
   yes_ask: number | null;
@@ -162,7 +114,7 @@ export interface MarketSnapshotRead {
   open_interest: number | null;
 }
 
-export interface SignalSnapshotRead {
+interface SignalSnapshotRead {
   captured_at: string;
   model_name: string;
   model_version: string | null;
@@ -197,48 +149,7 @@ export interface MarketDetailRead {
   recommendations: RecommendationRead[];
 }
 
-export interface MarketListRead {
-  ticker: string;
-  title: string;
-  subtitle: string | null;
-  sport_key: string | null;
-  market_family: string | null;
-  market_kind: string | null;
-  stat_key: string | null;
-  threshold: number | null;
-  direction: string | null;
-  subject_name: string | null;
-  subject_team: string | null;
-  status: string;
-  close_time: string | null;
-  event_name: string | null;
-  latest_snapshot: MarketSnapshotRead | null;
-  latest_recommendation: RecommendationRead | null;
-}
-
-export interface WatchlistCoverageRowRead {
-  ticker: string;
-  event_id: number | null;
-  event_name: string | null;
-  event_status: string | null;
-  starts_at: string | null;
-  sport_key: string | null;
-  market_title: string;
-  market_family: string | null;
-  market_kind: string | null;
-  stat_key: string | null;
-  threshold: number | null;
-  direction: string | null;
-  subject_name: string | null;
-  subject_team: string | null;
-  coverage_status: "recommendation" | "prediction" | "market";
-  prop_context_stale: boolean;
-  latest_snapshot: MarketSnapshotRead | null;
-  latest_recommendation: RecommendationRead | null;
-  latest_prediction: PredictionRead | null;
-}
-
-export interface SportAvailabilityRead {
+interface SportAvailabilityRead {
   sport_key: string;
   availability_mode: "live" | "research_only";
   events_count: number;
@@ -274,7 +185,7 @@ export interface TradeDeskThreshold {
   kalshi_url: string | null;
 }
 
-export interface TradeDeskStatGroup {
+interface TradeDeskStatGroup {
   stat_key: string;
   thresholds: TradeDeskThreshold[];
 }
@@ -328,7 +239,7 @@ export interface TradeDeskResponse {
   previous_slate: TradeDeskArchivedSlate | null;
 }
 
-export interface MarketHistoryPointRead {
+interface MarketHistoryPointRead {
   timestamp: string;
   yes_bid: number | null;
   yes_ask: number | null;
@@ -407,43 +318,6 @@ export interface RunDetailRead extends RunRead {
   details: Record<string, unknown>;
 }
 
-export interface WatchlistDiagnosticsRead {
-  status: string;
-  environment: string;
-  scheduler_enabled: boolean;
-  refresh_status: "idle" | "queued" | "running" | "failed";
-  refresh_reason: "none" | "startup" | "interval" | "manual" | "pregame";
-  last_successful_refresh_at: string | null;
-  data_stale: boolean;
-  refresh_error_message: string | null;
-  prop_refresh_status: "idle" | "queued" | "running" | "failed";
-  prop_refresh_reason: "none" | "startup" | "interval" | "manual";
-  last_prop_refresh_at: string | null;
-  prop_data_stale: boolean;
-  prop_refresh_error_message: string | null;
-  latest_refresh_run: RunRead | null;
-  latest_refresh_succeeded: boolean | null;
-  latest_supported_markets_kept: number;
-  latest_recommendations_emitted: number;
-  latest_current_slate_event_count: number;
-  latest_current_slate_candidate_market_count: number;
-  latest_current_slate_loaded_candidate_market_count: number;
-  latest_current_slate_filtered_candidate_market_count: number;
-  latest_current_slate_candidate_filter_reason_counts: Record<string, number>;
-  latest_current_slate_scored_market_count: number;
-  latest_current_slate_coverage_prediction_count: number;
-  latest_current_slate_blocking_reason: string | null;
-  latest_scorer_outcome_counts: Record<string, number>;
-  latest_watchlist_counts_by_sport: Record<string, number>;
-  current_recommendation_count: number;
-  watchlist_min_edge: number;
-  watchlist_min_confidence: number;
-  active_refresh_job: RefreshJobRead | null;
-  latest_refresh_job: RefreshJobRead | null;
-  active_prop_refresh_job: RefreshJobRead | null;
-  latest_prop_refresh_job: RefreshJobRead | null;
-}
-
 export interface JobRefreshResponse {
   job_id: number;
   kind: string;
@@ -460,7 +334,7 @@ export type ReadinessStatus =
   | "serving";
 
 export type RuntimeHealthStatus = "healthy" | "degraded" | "unavailable";
-export type StudyTrack = "active" | "heuristic_only";
+type StudyTrack = "active" | "heuristic_only";
 
 export interface ReadinessBucketRead {
   label: string;
@@ -581,7 +455,7 @@ export interface DemoOrderRead {
   last_synced_at: string | null;
 }
 
-export interface KalshiAccountBalanceRead {
+interface KalshiAccountBalanceRead {
   cash_balance_dollars: number | null;
   portfolio_value_dollars: number | null;
   updated_ts: number | null;
@@ -622,7 +496,7 @@ export interface KalshiAccountFillRead {
   created_time: string | null;
 }
 
-export interface KalshiAccountRead {
+interface KalshiAccountRead {
   configured: boolean;
   status: "connected" | "not_configured" | "error";
   error_message: string | null;
@@ -730,7 +604,7 @@ export interface PredictionSummaryRead {
   by_outcome: Record<string, number>;
 }
 
-export interface ParlayPredictionLegRead {
+interface ParlayPredictionLegRead {
   leg_index: number;
   ticker: string;
   sport_key: string | null;
@@ -797,7 +671,7 @@ export interface ParlayPredictionSummaryRead {
   by_outcome: Record<string, number>;
 }
 
-export interface StatsSummaryRead {
+interface StatsSummaryRead {
   games: number;
   wins: number | null;
   losses: number | null;
@@ -813,7 +687,7 @@ export interface StatsSummaryRead {
   metric_categories?: Record<string, "basic" | "advanced">;
 }
 
-export interface StatsGameLogRead {
+interface StatsGameLogRead {
   game_id: string;
   game_date: string;
   competition: string | null;
