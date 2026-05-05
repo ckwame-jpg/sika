@@ -136,54 +136,6 @@ export function getMarketSyncBadge(health?: HealthResponse | null): SyncBadge | 
   };
 }
 
-export function getPropSyncBadge(health?: HealthResponse | null): SyncBadge | null {
-  if (!health) return null;
-
-  if (health.prop_refresh_status === "queued" || health.prop_refresh_status === "running") {
-    return {
-      text: "Maintenance refreshing",
-      title: "Maintenance refresh is queued or running.",
-      variant: "warning",
-    };
-  }
-
-  if (health.prop_refresh_status === "failed" && health.prop_data_stale) {
-    const relative = health.last_prop_refresh_at ? fmtRelativeCompact(health.last_prop_refresh_at) : null;
-    return {
-      text: relative ? `Maintenance failed ${relative}` : "Maintenance failed",
-      title: health.last_prop_refresh_at
-        ? `Maintenance refresh failed; last success ${fmtRelative(health.last_prop_refresh_at)}.`
-        : "Maintenance refresh failed before the first successful sync.",
-      variant: "negative",
-    };
-  }
-
-  if (health.prop_data_stale) {
-    const relative = health.last_prop_refresh_at ? fmtRelativeCompact(health.last_prop_refresh_at) : null;
-    return {
-      text: relative ? `Maintenance stale ${relative}` : "Maintenance stale",
-      title: health.last_prop_refresh_at
-        ? `Maintenance data is stale; last success ${fmtRelative(health.last_prop_refresh_at)}.`
-        : "Maintenance data is stale and awaiting the first successful refresh.",
-      variant: "warning",
-    };
-  }
-
-  if (health.last_prop_refresh_at) {
-    return {
-      text: `Maintenance synced ${fmtRelativeCompact(health.last_prop_refresh_at)}`,
-      title: `Maintenance data last synced ${fmtRelative(health.last_prop_refresh_at)}.`,
-      variant: "positive",
-    };
-  }
-
-  return {
-    text: "Maintenance awaiting refresh",
-    title: "Maintenance data is waiting for the first successful refresh.",
-    variant: "warning",
-  };
-}
-
 function getUserSafeRefreshErrorMessage(message?: string | null) {
   if (!message) {
     return null;

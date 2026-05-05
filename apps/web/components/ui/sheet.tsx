@@ -6,11 +6,9 @@ import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const Sheet = DialogPrimitive.Root;
-export const SheetTrigger = DialogPrimitive.Trigger;
-export const SheetClose = DialogPrimitive.Close;
-export const SheetPortal = DialogPrimitive.Portal;
+const SheetPortal = DialogPrimitive.Portal;
 
-export function SheetOverlay({
+function SheetOverlay({
   className,
   ...props
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>) {
@@ -109,20 +107,5 @@ export function SheetBody({
 }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div className={cn("flex-1 overflow-y-auto px-5 py-4", className)} {...props} />
-  );
-}
-
-export function SheetFooter({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn(
-        "flex items-center justify-end gap-2 px-5 py-3 border-t border-border",
-        className,
-      )}
-      {...props}
-    />
   );
 }

@@ -6,11 +6,9 @@ import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const Dialog = DialogPrimitive.Root;
-export const DialogTrigger = DialogPrimitive.Trigger;
-export const DialogClose = DialogPrimitive.Close;
-export const DialogPortal = DialogPrimitive.Portal;
+const DialogPortal = DialogPrimitive.Portal;
 
-export function DialogOverlay({
+function DialogOverlay({
   className,
   ...props
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>) {

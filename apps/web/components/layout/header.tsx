@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { MobileSidebarTrigger } from "@/components/layout/sidebar";
 import { OperatorBanner } from "@/components/layout/operator-banner";
 import { ProductFreshnessBanner } from "@/components/layout/product-freshness-banner";
 
@@ -13,9 +12,6 @@ interface HeaderProps {
 export function Header({ title, actions }: HeaderProps) {
   return (
     <header className="topbar">
-      <div className="lg:hidden -ml-1">
-        <MobileSidebarTrigger />
-      </div>
       <div className="crumbs">
         <span className="crumb-orb" />
         <Link href="/" className="crumb-root">

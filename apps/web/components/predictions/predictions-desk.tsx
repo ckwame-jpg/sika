@@ -31,7 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Badge, SportBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
-import { Sparkline, randomWalk } from "@/components/ui/sparkline";
+import { Sparkline } from "@/components/ui/sparkline";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
 import { ENTRY_LABEL, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
 import { RefreshCw } from "lucide-react";
@@ -56,37 +56,108 @@ function settlementPillClass(status: string): string {
   return "";
 }
 
-function seedFromString(value: string): number {
-  let h = 0;
-  for (let i = 0; i < value.length; i++) {
-    h = (h * 31 + value.charCodeAt(i)) >>> 0;
-  }
-  return h || 1;
-}
-
 interface KpiSpec {
   label: string;
   value: string;
   sub?: string;
   tone?: "pos" | "neg" | "warn";
-  trendUp: boolean;
+  series: number[];
 }
 
 function KpiCard({ spec }: { spec: KpiSpec }) {
-  const seed = seedFromString(spec.label);
-  const series = randomWalk(14, spec.trendUp, seed);
   return (
     <div className="trade-kpi">
       <div className="trade-kpi-orb" aria-hidden />
       <p className="trade-kpi-label">{spec.label}</p>
       <p className={cn("trade-kpi-value", spec.tone)}>{spec.value}</p>
       {spec.sub && <p className="trade-kpi-sub">{spec.sub}</p>}
-      <Sparkline values={series} width={120} height={16} className="trade-kpi-spark" />
+      {spec.series.length >= 2 && (
+        <Sparkline values={spec.series} width={120} height={16} className="trade-kpi-spark" />
+      )}
     </div>
   );
 }
 
-function buildSummaryKpis(summary: PredictionSummaryRead): KpiSpec[] {
+const SPARK_BUCKETS = 14;
+
+interface PredictionSeries {
+  total: number[];
+  pending: number[];
+  winRate: number[];
+  avgEdge: number[];
+  avgConfidence: number[];
+  avgPnl: number[];
+}
+
+const EMPTY_SERIES: PredictionSeries = {
+  total: [],
+  pending: [],
+  winRate: [],
+  avgEdge: [],
+  avgConfidence: [],
+  avgPnl: [],
+};
+
+function mean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  let sum = 0;
+  for (const v of values) sum += v;
+  return sum / values.length;
+}
+
+function buildPredictionSeries(predictions: PredictionRead[]): PredictionSeries {
+  if (predictions.length === 0) return EMPTY_SERIES;
+
+  const sorted = [...predictions].sort(
+    (a, b) => new Date(a.captured_at).getTime() - new Date(b.captured_at).getTime(),
+  );
+  const bucketSize = Math.max(1, Math.ceil(sorted.length / SPARK_BUCKETS));
+  const series: PredictionSeries = {
+    total: [],
+    pending: [],
+    winRate: [],
+    avgEdge: [],
+    avgConfidence: [],
+    avgPnl: [],
+  };
+
+  let lastWinRate = 0;
+  let lastAvgPnl = 0;
+
+  for (let i = 0; i < SPARK_BUCKETS; i++) {
+    const upTo = Math.min((i + 1) * bucketSize, sorted.length);
+    if (upTo === 0) continue;
+    const cumulative = sorted.slice(0, upTo);
+    const bucket = sorted.slice(i * bucketSize, upTo);
+
+    series.total.push(cumulative.length);
+    series.pending.push(
+      cumulative.filter((p) => p.settlement_status.toLowerCase() === "pending").length,
+    );
+
+    const settled = cumulative.filter((p) => p.settlement_status.toLowerCase() === "settled");
+    if (settled.length > 0) {
+      const won = settled.filter((p) => p.prediction_outcome.toLowerCase() === "won").length;
+      lastWinRate = won / settled.length;
+      const pnls = settled.map((p) => p.realized_pnl).filter((v): v is number => v != null);
+      lastAvgPnl = mean(pnls) ?? lastAvgPnl;
+    }
+    series.winRate.push(lastWinRate);
+    series.avgPnl.push(lastAvgPnl);
+
+    series.avgEdge.push(mean(bucket.map((p) => p.edge)) ?? 0);
+    series.avgConfidence.push(mean(bucket.map((p) => p.confidence)) ?? 0);
+
+    if (upTo === sorted.length) break;
+  }
+
+  return series;
+}
+
+function buildSummaryKpis(
+  summary: PredictionSummaryRead,
+  series: PredictionSeries,
+): KpiSpec[] {
   const winRateTone =
     summary.win_rate == null
       ? undefined
@@ -107,36 +178,36 @@ function buildSummaryKpis(summary: PredictionSummaryRead): KpiSpec[] {
       label: "Total",
       value: String(summary.total_predictions),
       sub: `${summary.settled_predictions} settled`,
-      trendUp: true,
+      series: series.total,
     },
     {
       label: "Pending",
       value: String(summary.pending_predictions),
       sub: `${summary.unresolved_predictions} unresolved`,
-      trendUp: false,
+      series: series.pending,
     },
     {
       label: "Win Rate",
       value: fmtPercent(summary.win_rate),
       sub: `${summary.won_predictions}W / ${summary.lost_predictions}L / ${summary.push_predictions}P`,
       tone: winRateTone,
-      trendUp: (summary.win_rate ?? 0) >= 0.5,
+      series: series.winRate,
     },
     {
       label: "Avg Edge",
       value: summary.average_edge != null ? fmtEdge(summary.average_edge) : "—",
-      trendUp: (summary.average_edge ?? 0) >= 0,
+      series: series.avgEdge,
     },
     {
       label: "Avg Confidence",
       value: fmtPercent(summary.average_confidence),
-      trendUp: true,
+      series: series.avgConfidence,
     },
     {
       label: "Avg PnL",
       value: fmtContractPnl(summary.average_realized_pnl),
       tone: pnlTone,
-      trendUp: (summary.average_realized_pnl ?? 0) >= 0,
+      series: series.avgPnl,
     },
   ];
 }
@@ -332,7 +403,8 @@ export function PredictionsDesk() {
     ? predsError.message
     : "Unknown error";
   const filteredPredictions = (predictions ?? []).filter((item) => matchesRecommendationViewMode(item, qualityMode));
-  const summaryKpis = summary ? buildSummaryKpis(summary) : null;
+  const kpiSeries = buildPredictionSeries(predictions ?? []);
+  const summaryKpis = summary ? buildSummaryKpis(summary, kpiSeries) : null;
 
   return (
     <div className="flex flex-col gap-4">

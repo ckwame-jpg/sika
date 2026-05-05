@@ -85,15 +85,3 @@ export function TableCell({
     />
   );
 }
-
-export function TableCaption({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLTableCaptionElement>) {
-  return (
-    <caption
-      className={cn("mt-4 text-xs text-muted-foreground", className)}
-      {...props}
-    />
-  );
-}
