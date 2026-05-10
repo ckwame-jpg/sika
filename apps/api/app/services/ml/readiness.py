@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from math import isfinite
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, load_only, selectinload
 
 from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
@@ -13,6 +13,7 @@ from app.services.ml.runtime import read_family_runtime, shadow_capture_blocker
 from app.services.ml.study_progress import (
     MIN_SETTLED_FOR_REVIEW,
     MIN_SHADOW_COVERAGE,
+    SETTLED_OUTCOMES,
     history_ready_for_shadow,
     retained_study_cutoff,
     shadow_coverage_ratio,
@@ -21,6 +22,8 @@ from app.services.ml.study_progress import (
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition, parlay_family_key, single_family_key
 from app.services.operator_settings import effective_ml_serving_mode
 
+# Sample size for diagnostic aggregations (buckets, rates, recent-row averages).
+# Headline counts come from SQL aggregation and are unaffected by this limit.
 READINESS_ROW_LIMIT = 5_000
 
 
@@ -184,6 +187,112 @@ def _edge_buckets(rows: list[Any]) -> list[dict[str, Any]]:
     )
 
 
+def _single_outcome_counts(db: Session, *, cutoff: datetime) -> dict[str, dict[str, dict[str, int]]]:
+    """Per-family per-scope per-outcome counts of single predictions in the readiness window.
+
+    Returned shape: ``{family_key: {capture_scope: {outcome: count}}}``.
+    """
+    capture_scope = func.coalesce(Prediction.capture_scope, "recommendation").label("scope")
+    outcome = func.coalesce(Prediction.prediction_outcome, "pending").label("outcome")
+    stmt = (
+        select(
+            Prediction.sport_key,
+            Prediction.market_family,
+            capture_scope,
+            outcome,
+            func.count(Prediction.id),
+        )
+        .where(Prediction.captured_at >= cutoff)
+        .group_by(Prediction.sport_key, Prediction.market_family, capture_scope, outcome)
+    )
+    by_family: dict[str, dict[str, dict[str, int]]] = {}
+    for sport_key, market_family, scope, outcome_value, count in db.execute(stmt).all():
+        family_key = single_family_key(sport_key, market_family)
+        scope_bucket = by_family.setdefault(family_key, {}).setdefault(str(scope), {})
+        scope_bucket[str(outcome_value)] = scope_bucket.get(str(outcome_value), 0) + int(count or 0)
+    return by_family
+
+
+def _single_shadow_match_counts(db: Session, *, cutoff: datetime) -> dict[str, int]:
+    """Per-family count of in-window predictions that have a matching shadow inference."""
+    matched_ids = (
+        select(ShadowInference.source_prediction_id)
+        .where(ShadowInference.captured_at >= cutoff)
+        .where(ShadowInference.source_prediction_id.is_not(None))
+    )
+    stmt = (
+        select(
+            Prediction.sport_key,
+            Prediction.market_family,
+            func.count(Prediction.id),
+        )
+        .where(Prediction.captured_at >= cutoff)
+        .where(Prediction.id.in_(matched_ids))
+        .group_by(Prediction.sport_key, Prediction.market_family)
+    )
+    by_family: dict[str, int] = {}
+    for sport_key, market_family, count in db.execute(stmt).all():
+        family_key = single_family_key(sport_key, market_family)
+        by_family[family_key] = by_family.get(family_key, 0) + int(count or 0)
+    return by_family
+
+
+def _parlay_outcome_counts(db: Session, *, cutoff: datetime) -> dict[str, dict[str, int]]:
+    """Per-family per-outcome counts for parlay predictions in the readiness window.
+
+    Group key uses ``sport_scope`` (the same fallback the row-iterator uses when
+    ``participating_sports`` is empty) so we can aggregate without unnesting JSON.
+    """
+    outcome = func.coalesce(ParlayPrediction.prediction_outcome, "pending").label("outcome")
+    stmt = (
+        select(
+            ParlayPrediction.leg_count,
+            ParlayPrediction.sport_scope,
+            outcome,
+            func.count(ParlayPrediction.id),
+        )
+        .where(ParlayPrediction.captured_at >= cutoff)
+        .group_by(ParlayPrediction.leg_count, ParlayPrediction.sport_scope, outcome)
+    )
+    by_family: dict[str, dict[str, int]] = {}
+    for leg_count, sport_scope, outcome_value, count in db.execute(stmt).all():
+        family_key = parlay_family_key(int(leg_count), [sport_scope or "MIXED"])
+        bucket = by_family.setdefault(family_key, {})
+        bucket[str(outcome_value)] = bucket.get(str(outcome_value), 0) + int(count or 0)
+    return by_family
+
+
+def _parlay_shadow_match_counts(db: Session, *, cutoff: datetime) -> dict[str, int]:
+    matched_ids = (
+        select(ShadowParlayInference.source_parlay_prediction_id)
+        .where(ShadowParlayInference.captured_at >= cutoff)
+        .where(ShadowParlayInference.source_parlay_prediction_id.is_not(None))
+    )
+    stmt = (
+        select(
+            ParlayPrediction.leg_count,
+            ParlayPrediction.sport_scope,
+            func.count(ParlayPrediction.id),
+        )
+        .where(ParlayPrediction.captured_at >= cutoff)
+        .where(ParlayPrediction.id.in_(matched_ids))
+        .group_by(ParlayPrediction.leg_count, ParlayPrediction.sport_scope)
+    )
+    by_family: dict[str, int] = {}
+    for leg_count, sport_scope, count in db.execute(stmt).all():
+        family_key = parlay_family_key(int(leg_count), [sport_scope or "MIXED"])
+        by_family[family_key] = by_family.get(family_key, 0) + int(count or 0)
+    return by_family
+
+
+def _scope_total(scope_counts: dict[str, int]) -> int:
+    return sum(scope_counts.values())
+
+
+def _scope_settled(scope_counts: dict[str, int]) -> int:
+    return sum(scope_counts.get(outcome, 0) for outcome in SETTLED_OUTCOMES)
+
+
 def _rates_from_diagnostics(rows: list[Any]) -> tuple[dict[str, float], dict[str, float], dict[str, int]]:
     feature_hits: dict[str, int] = {}
     missing_hits: dict[str, int] = {}
@@ -250,6 +359,11 @@ def _summary_for_family(
     parlay_predictions: list[ParlayPrediction],
     shadow_singles: list[ShadowInference],
     shadow_parlays: list[ShadowParlayInference],
+    *,
+    single_outcome_counts: dict[str, dict[str, dict[str, int]]] | None = None,
+    parlay_outcome_counts: dict[str, dict[str, int]] | None = None,
+    single_shadow_match_counts: dict[str, int] | None = None,
+    parlay_shadow_match_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     definition = family_definition(family_key)
     scope = definition.scope
@@ -259,38 +373,53 @@ def _summary_for_family(
     if scope == "single":
         coverage_predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") == "coverage"]
         predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") != "coverage"]
-        # Coverage predictions are first-class for the active ML study: shadow inference
-        # runs over them too, and they count toward the settled-history gate. The visibility
-        # split (settled vs coverage_settled) stays so operators can still see how many of
-        # the rows came from heuristic recommendations vs unrecommended scored markets.
-        gate_predictions = predictions + coverage_predictions
-        covered_shadow_predictions, shadow_backlog_predictions = _single_shadow_coverage_count(gate_predictions, shadow_singles)
+        # Headline counts come from SQL aggregation (`single_outcome_counts`) so they
+        # stay accurate beyond the diagnostic row sample. The row lists above remain
+        # the basis for averages, buckets, and feature-rate diagnostics.
+        scope_counts = (single_outcome_counts or {}).get(family_key, {})
+        rec_counts = scope_counts.get("recommendation", {})
+        cov_counts = scope_counts.get("coverage", {})
+        total_predictions = _scope_total(rec_counts)
+        settled_count = _scope_settled(rec_counts)
+        pending_count = rec_counts.get("pending", 0)
+        wins = rec_counts.get("won", 0)
+        losses = rec_counts.get("lost", 0)
+        pushes = rec_counts.get("push", 0)
+        cancelled = rec_counts.get("cancelled", 0)
+        coverage_total = _scope_total(cov_counts)
+        coverage_settled_count = _scope_settled(cov_counts)
+        coverage_pending_count = cov_counts.get("pending", 0)
+        gate_settled_predictions = settled_count + coverage_settled_count
+        gate_total = total_predictions + coverage_total
+        covered_shadow_predictions = (single_shadow_match_counts or {}).get(family_key, 0)
+        shadow_backlog_predictions = max(gate_total - covered_shadow_predictions, 0)
         shadow_backlog_parlays = 0
     else:
         coverage_predictions = []
         predictions = all_predictions
-        gate_predictions = predictions
-        covered_shadow_predictions, shadow_backlog_parlays = _parlay_shadow_coverage_count(predictions, shadow_parlays)
+        family_outcomes = (parlay_outcome_counts or {}).get(family_key, {})
+        total_predictions = _scope_total(family_outcomes)
+        settled_count = _scope_settled(family_outcomes)
+        pending_count = family_outcomes.get("pending", 0)
+        wins = family_outcomes.get("won", 0)
+        losses = family_outcomes.get("lost", 0)
+        pushes = family_outcomes.get("push", 0)
+        cancelled = family_outcomes.get("cancelled", 0)
+        coverage_total = 0
+        coverage_settled_count = 0
+        coverage_pending_count = 0
+        gate_settled_predictions = settled_count
+        gate_total = total_predictions
+        covered_shadow_predictions = (parlay_shadow_match_counts or {}).get(family_key, 0)
+        shadow_backlog_parlays = max(gate_total - covered_shadow_predictions, 0)
         shadow_backlog_predictions = 0
-    total_predictions = len(predictions)
-    settled = [row for row in predictions if getattr(row, "prediction_outcome", None) in {"won", "lost", "push", "cancelled"}]
-    pending = [row for row in predictions if getattr(row, "prediction_outcome", None) == "pending"]
-    coverage_settled = [
-        row for row in coverage_predictions if getattr(row, "prediction_outcome", None) in {"won", "lost", "push", "cancelled"}
-    ]
-    coverage_pending = [row for row in coverage_predictions if getattr(row, "prediction_outcome", None) == "pending"]
-    wins = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "won")
-    losses = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "lost")
-    pushes = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "push")
-    cancelled = sum(1 for row in predictions if getattr(row, "prediction_outcome", None) == "cancelled")
     edges = [value for row in predictions if (value := _safe_float(getattr(row, "edge", None))) is not None]
     confidences = [value for row in predictions if (value := _safe_float(getattr(row, "confidence", None))) is not None]
     pnls = [value for row in predictions if (value := _safe_float(getattr(row, "realized_pnl", None))) is not None]
     desired_mode = _runtime_mode(runtime.desired_mode)
     effective_mode = _runtime_mode(runtime.effective_mode)
     runtime_health = _runtime_health(runtime.runtime_health)
-    shadow_ratio = shadow_coverage_ratio(total_predictions=len(gate_predictions), shadow_predictions=covered_shadow_predictions)
-    gate_settled_predictions = len(settled) + len(coverage_settled)
+    shadow_ratio = shadow_coverage_ratio(total_predictions=gate_total, shadow_predictions=covered_shadow_predictions)
     readiness_status, why_not_ready = _readiness_status(
         db=db,
         family_key=family_key,
@@ -302,7 +431,8 @@ def _summary_for_family(
         shadow_coverage_ratio=shadow_ratio,
     )
     feature_rates, missing_rates, top_failures = _rates_from_diagnostics(predictions)
-    last_settled_at = max((row.settled_at for row in settled if row.settled_at is not None), default=None)
+    settled_rows = [row for row in predictions if getattr(row, "prediction_outcome", None) in SETTLED_OUTCOMES]
+    last_settled_at = max((row.settled_at for row in settled_rows if row.settled_at is not None), default=None)
     last_shadow_capture_at = max((row.captured_at for row in shadows if row.captured_at is not None), default=None)
 
     return {
@@ -338,11 +468,11 @@ def _summary_for_family(
             "promotion_updated_at": runtime.promotion_updated_at,
         },
         "total_predictions": total_predictions,
-        "settled_predictions": len(settled),
-        "pending_predictions": len(pending),
-        "coverage_predictions": len(coverage_predictions),
-        "coverage_settled_predictions": len(coverage_settled),
-        "coverage_pending_predictions": len(coverage_pending),
+        "settled_predictions": settled_count,
+        "pending_predictions": pending_count,
+        "coverage_predictions": coverage_total,
+        "coverage_settled_predictions": coverage_settled_count,
+        "coverage_pending_predictions": coverage_pending_count,
         "shadow_predictions": covered_shadow_predictions,
         "shadow_coverage_ratio": shadow_ratio,
         "shadow_backlog_predictions": shadow_backlog_predictions,
@@ -468,6 +598,11 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
     for item in shadow_parlays:
         shadow_parlays_by_family.setdefault(_shadow_parlay_family_key(item), []).append(item)
 
+    single_counts = _single_outcome_counts(db, cutoff=cutoff)
+    parlay_counts = _parlay_outcome_counts(db, cutoff=cutoff)
+    single_shadow_matches = _single_shadow_match_counts(db, cutoff=cutoff)
+    parlay_shadow_matches = _parlay_shadow_match_counts(db, cutoff=cutoff)
+
     families = []
     for definition in FAMILY_DEFINITIONS:
         families.append(
@@ -478,6 +613,10 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
                 parlays_by_family.get(definition.key, []),
                 shadow_singles_by_family.get(definition.key, []),
                 shadow_parlays_by_family.get(definition.key, []),
+                single_outcome_counts=single_counts,
+                parlay_outcome_counts=parlay_counts,
+                single_shadow_match_counts=single_shadow_matches,
+                parlay_shadow_match_counts=parlay_shadow_matches,
             )
         )
 
@@ -558,6 +697,8 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
             [],
             shadow_singles,
             [],
+            single_outcome_counts=_single_outcome_counts(db, cutoff=cutoff),
+            single_shadow_match_counts=_single_shadow_match_counts(db, cutoff=cutoff),
         )
 
     parlay_predictions = [
@@ -615,4 +756,6 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
         parlay_predictions,
         [],
         shadow_parlays,
+        parlay_outcome_counts=_parlay_outcome_counts(db, cutoff=cutoff),
+        parlay_shadow_match_counts=_parlay_shadow_match_counts(db, cutoff=cutoff),
     )

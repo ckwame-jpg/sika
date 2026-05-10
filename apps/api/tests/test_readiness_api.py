@@ -571,3 +571,102 @@ def test_models_readiness_endpoint_does_not_mutate_runtime_health_on_get(client,
     assert after.desired_mode == snapshot["desired_mode"]
     assert after.effective_mode == snapshot["effective_mode"]
     assert after.runtime_health == snapshot["runtime_health"]
+
+
+def test_models_readiness_endpoint_counts_older_settled_rows_under_high_pending_volume(client, db_session):
+    # Regression: when capture volume exceeded READINESS_ROW_LIMIT and the
+    # query was ordered by captured_at DESC, older settled predictions were
+    # silently truncated, leaving every active family at 0 settled even though
+    # the settlement worker had resolved them.
+    now = datetime.now(timezone.utc)
+    older = now - timedelta(days=2)
+    newer = now - timedelta(hours=1)
+    settled_at_value = older + timedelta(hours=2)
+
+    settled_count = 50
+    pending_count = 5_000
+
+    for index in range(settled_count):
+        db_session.add(
+            Prediction(
+                run_id=1,
+                event_id=None,
+                market_id=10_000 + index,
+                ticker=f"NBA-OLD-SETTLED-{index}",
+                sport_key="NBA",
+                event_name="Old game",
+                market_title="Old market",
+                market_family="winner",
+                market_kind="game_winner",
+                side="yes",
+                action="buy",
+                suggested_price=0.45,
+                fair_yes_price=0.58,
+                fair_no_price=0.42,
+                edge=0.13,
+                confidence=0.68,
+                selection_score=0.17,
+                model_name="heuristic-v1",
+                rationale="Old rationale",
+                reasons=["regression"],
+                features={"family_key": "nba_singles"},
+                scoring_diagnostics={
+                    "feature_flags": {"market_snapshot": True},
+                    "missing_context": [],
+                    "penalties": {},
+                },
+                market_status_at_capture="settled",
+                settlement_status="settled",
+                prediction_outcome="won" if index % 2 == 0 else "lost",
+                settled_at=settled_at_value,
+                realized_pnl=0.18 if index % 2 == 0 else -0.42,
+                captured_at=older,
+            )
+        )
+
+    for index in range(pending_count):
+        db_session.add(
+            Prediction(
+                run_id=2,
+                event_id=None,
+                market_id=20_000 + index,
+                ticker=f"NBA-NEW-PENDING-{index}",
+                sport_key="NBA",
+                event_name="New game",
+                market_title="New market",
+                market_family="winner",
+                market_kind="game_winner",
+                side="yes",
+                action="buy",
+                suggested_price=0.45,
+                fair_yes_price=0.58,
+                fair_no_price=0.42,
+                edge=0.13,
+                confidence=0.68,
+                selection_score=0.17,
+                model_name="heuristic-v1",
+                rationale="New rationale",
+                reasons=["regression"],
+                features={"family_key": "nba_singles"},
+                scoring_diagnostics={
+                    "feature_flags": {"market_snapshot": True},
+                    "missing_context": [],
+                    "penalties": {},
+                },
+                market_status_at_capture="active",
+                settlement_status="pending",
+                prediction_outcome="pending",
+                settled_at=None,
+                realized_pnl=None,
+                captured_at=newer,
+            )
+        )
+    db_session.commit()
+
+    response = client.get("/ops/models/readiness/nba_singles")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["settled_predictions"] == settled_count
+    assert payload["pending_predictions"] == pending_count
+    assert payload["total_predictions"] == settled_count + pending_count
