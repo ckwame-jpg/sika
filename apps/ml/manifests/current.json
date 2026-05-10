@@ -1,14 +1,14 @@
 {
-  "version": "2026-05-03",
+  "version": "2026-05-10",
   "serving_mode": "shadow",
   "families": [
     {
       "family_key": "global_v1",
-      "model_name": "global_logistic_regression_residual",
-      "model_version": "2026-05-03",
+      "model_name": "global_hist_gradient_boosting_residual",
+      "model_version": "2026-05-10",
       "calibration_version": "calibrated_v1",
       "feature_set_version": "public-feature-set-v2",
-      "artifact_path": "../artifacts/global_v1_20260503",
+      "artifact_path": "../artifacts/global_v1_20260510",
       "serves_family_key": "mlb_props",
       "mode": "shadow",
       "metadata": {
@@ -18,11 +18,11 @@
     },
     {
       "family_key": "global_v1",
-      "model_name": "global_logistic_regression_residual",
-      "model_version": "2026-05-03",
+      "model_name": "global_hist_gradient_boosting_residual",
+      "model_version": "2026-05-10",
       "calibration_version": "calibrated_v1",
       "feature_set_version": "public-feature-set-v2",
-      "artifact_path": "../artifacts/global_v1_20260503",
+      "artifact_path": "../artifacts/global_v1_20260510",
       "serves_family_key": "nba_props",
       "mode": "shadow",
       "metadata": {
