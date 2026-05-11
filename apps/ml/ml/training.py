@@ -404,7 +404,8 @@ def train_and_package(
     database_url: str | None = None,
     artifact_root: str | Path = "artifacts",
     manifest_out: str | Path | None = "manifests/current.json",
-    serve_family_key: str = "mlb_props",
+    serve_family_key: str | None = None,
+    serve_family_keys: tuple[str, ...] | list[str] | None = None,
     feature_set_version: str = "public-feature-set-v2",
     model_version: str | None = None,
     dry_run: bool = False,
@@ -437,6 +438,17 @@ def train_and_package(
         time-split Brier is **strictly less than** the baseline; ties
         keep ``"shadow"``.
     """
+    if serve_family_keys is not None and serve_family_key is not None:
+        raise ValueError("Pass either serve_family_keys or serve_family_key, not both.")
+    if serve_family_keys is not None:
+        resolved_serve_keys: tuple[str, ...] = tuple(dict.fromkeys(serve_family_keys))
+    elif serve_family_key is not None:
+        resolved_serve_keys = (serve_family_key,)
+    else:
+        resolved_serve_keys = ("mlb_props", "nba_props", "mlb_singles", "nba_singles")
+    if not resolved_serve_keys:
+        raise ValueError("serve_family_keys must contain at least one family key.")
+
     dataset = frame if frame is not None else load_settled_predictions(database_url)
     if dataset is None or dataset.empty:
         raise ValueError("No settled prediction rows available for training.")
@@ -559,7 +571,7 @@ def train_and_package(
                 families=[
                     ModelArtifact(
                         family_key="global_v1",
-                        serves_family_key=serve_family_key,
+                        serves_family_key=serves_key,
                         model_name=model_name,
                         model_version=model_version,
                         calibration_version="calibrated_v1",
@@ -568,6 +580,7 @@ def train_and_package(
                         mode=serving_mode,
                         metadata={"behavior": "sklearn_predict_proba", "feature_mode": "residual_calibration"},
                     )
+                    for serves_key in resolved_serve_keys
                 ],
                 metadata={"source": "apps/ml training pipeline"},
             )

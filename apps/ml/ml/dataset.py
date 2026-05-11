@@ -57,7 +57,6 @@ def _prepare_frame(rows: pd.DataFrame, *, drop_pushes: bool, dedupe_markets: boo
     if drop_pushes:
         frame = frame[frame["prediction_outcome"].isin({"won", "lost"})]
     frame = frame[frame["sport_key"].astype(str).str.upper().isin({"NBA", "MLB"})]
-    frame = frame[frame["market_family"].astype(str).str.lower().eq("player_prop")]
     if "capture_scope" in frame.columns:
         frame = frame[(frame["capture_scope"].isna()) | (frame["capture_scope"] != "coverage")]
     frame["captured_at"] = pd.to_datetime(frame["captured_at"], utc=True)
