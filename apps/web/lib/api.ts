@@ -24,6 +24,7 @@ import type {
   RunDetailRead,
   RunRead,
   StatsQueryRead,
+  TeamHistoryRead,
   TradeDeskResponse,
 } from "./types";
 
@@ -247,6 +248,23 @@ export const queryStats = (body: {
     body: JSON.stringify(body),
   });
 
+/**
+ * Convenience wrapper around the natural-language stats endpoint, used by the
+ * trade-ticket pick-history strip. Phrasing matches the regex parser in
+ * apps/api/app/services/stats_query.py:25 ("X's last N games").
+ */
+export const fetchPlayerHistory = (subjectName: string, sportKey: string, n = 5) =>
+  queryStats({
+    question: `${subjectName}'s last ${n} games`,
+    sport_key: sportKey.toUpperCase(),
+  });
+
+export const fetchTeamHistory = (teamName: string, sportKey: string, n = 5) =>
+  request<TeamHistoryRead>("/research/teams/history", {
+    method: "POST",
+    body: JSON.stringify({ team_name: teamName, sport_key: sportKey.toUpperCase(), n }),
+  });
+
 export const keys = {
   health: "/health",
   sports: "/sports",
@@ -283,4 +301,8 @@ export const keys = {
     `/parlays/predictions?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,
   parlayPredictionSummary: (sportScope = "all", legCount?: number) =>
     `/parlays/predictions/summary?sport_scope=${sportScope}&leg_count=${legCount ?? ""}`,
+  playerHistory: (subjectName: string, sportKey: string, n = 5) =>
+    `pick-history:player:${sportKey.toUpperCase()}:${subjectName}:${n}`,
+  teamHistory: (teamName: string, sportKey: string, n = 5) =>
+    `pick-history:team:${sportKey.toUpperCase()}:${teamName}:${n}`,
 } as const;

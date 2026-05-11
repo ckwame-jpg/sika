@@ -26,6 +26,11 @@ ESPN_GAMELOG_URLS = {
     "NFL": "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{athlete_id}/gamelog",
     "MLB": "https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{athlete_id}/gamelog",
 }
+ESPN_TEAM_SCHEDULE_URLS = {
+    "NBA": "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}/schedule",
+    "NFL": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/schedule",
+    "MLB": "https://site.web.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/{team_id}/schedule",
+}
 
 
 # Bug #13: prop metadata sends ``team_hint`` as a three-letter ticker
@@ -189,6 +194,56 @@ class EspnPublicClient:
 
         return candidates[0]
 
+    def search_team(self, query: str, sport_key: str = "NBA") -> dict[str, Any]:
+        """Mirror of ``search_player`` for team-level lookups.
+
+        ESPN's ``/apis/search/v2`` endpoint returns ``type: "team"`` results
+        alongside player results. We filter to the matching sport slug and
+        return the first viable match, normalized to the same shape the
+        callers expect.
+        """
+        normalized_sport = sport_key.upper()
+        if normalized_sport not in ESPN_SEARCH_SLUGS:
+            raise ValueError(f"ESPN team search is not configured for {sport_key}")
+
+        response = self._get(ESPN_SEARCH_URL, params={"query": query}, timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+        for result in payload.get("results") or []:
+            if result.get("type") != "team":
+                continue
+            for team in result.get("contents") or []:
+                if not self._matches_sport(team, normalized_sport):
+                    continue
+                team_id = self._team_id_from_result(team)
+                if team_id:
+                    return {
+                        "team_id": team_id,
+                        "sport_key": normalized_sport,
+                        "display_name": team.get("displayName") or query,
+                        "abbreviation": team.get("abbreviation"),
+                        "logo_url": ((team.get("image") or {}).get("default")),
+                        "raw": team,
+                    }
+
+        raise LookupError(f"No {normalized_sport} team found for query: {query}")
+
+    def fetch_team_schedule(self, sport_key: str, team_id: str, season: int | None = None) -> dict[str, Any]:
+        """Fetch ESPN's team-schedule payload (includes past + upcoming events)."""
+        normalized_sport = sport_key.upper()
+        if normalized_sport not in ESPN_TEAM_SCHEDULE_URLS:
+            raise ValueError(f"ESPN team schedule is not configured for {sport_key}")
+        params: dict[str, Any] = {}
+        if season is not None:
+            params["season"] = season
+        response = self._get(
+            ESPN_TEAM_SCHEDULE_URLS[normalized_sport].format(team_id=team_id),
+            params=params or None,
+            timeout=20,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def fetch_player_gamelog(self, sport_key: str, athlete_id: str, season: int) -> dict[str, Any]:
         if sport_key.upper() not in ESPN_GAMELOG_URLS:
             raise ValueError(f"ESPN game log is not configured for {sport_key}")
@@ -331,6 +386,23 @@ class EspnPublicClient:
         ):
             return "in_progress"
         return "scheduled"
+
+    @staticmethod
+    def _team_id_from_result(team: dict[str, Any]) -> str | None:
+        """Extract the team id from a ``type: "team"`` search result.
+
+        ESPN packs the id into the ``uid`` (``s:40~l:46~t:5``) or the
+        ``link.web`` URL (``/team/_/name/cle/...``). The uid path is more
+        stable; fall back to the link parse only if the uid is missing.
+        """
+        uid = team.get("uid") or ""
+        match = re.search(r"~t:(\d+)$", uid)
+        if match:
+            return match.group(1)
+        identity = team.get("id")
+        if identity:
+            return str(identity)
+        return None
 
     @staticmethod
     def _athlete_id_from_player_result(player: dict[str, Any]) -> str | None:

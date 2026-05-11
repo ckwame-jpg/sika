@@ -59,6 +59,8 @@ from app.schemas import (
     SportRead,
     StatsQueryRead,
     StatsQueryRequest,
+    TeamHistoryRead,
+    TeamHistoryRequest,
     ProductFreshnessResponse,
     ProductScopeFreshnessRead,
     ProductSportsResponse,
@@ -1579,3 +1581,17 @@ def query_stats(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return StatsQueryRead.model_validate(result)
+
+
+@research_router.post("/teams/history", response_model=TeamHistoryRead)
+def query_team_history(
+    payload: TeamHistoryRequest,
+    service: StatsQueryService = Depends(get_stats_query_service),
+) -> TeamHistoryRead:
+    try:
+        result = service.query_team_history(payload.team_name, sport_key=payload.sport_key, n=payload.n)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return TeamHistoryRead.model_validate(result)

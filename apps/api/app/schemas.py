@@ -1036,3 +1036,26 @@ class StatsQueryRead(BaseModel):
     explanation: str
     coverage_note: str | None = None
     source: str
+
+
+class TeamHistoryRequest(BaseModel):
+    team_name: str = Field(min_length=2)
+    sport_key: str = "NBA"
+    n: int = Field(default=5, ge=1, le=20)
+
+
+class TeamGameResultRead(BaseModel):
+    game_date: UTCDateTime
+    opponent: str
+    opponent_abbreviation: str | None = None
+    location: str  # "home" | "away"
+    team_score: int
+    opp_score: int
+    result: str    # "W" | "L"
+
+
+class TeamHistoryRead(BaseModel):
+    entity_id: str
+    team_name: str
+    sport_key: str
+    results: list[TeamGameResultRead]

@@ -5,6 +5,7 @@ import { queryStats } from "@/lib/api";
 import { SPORT_LABELS, type SportKey, type StatsQueryRead } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AdvancedMetricsGrid } from "./advanced-metrics-grid";
+import { MiniBars } from "./mini-bars";
 
 const SUGGESTIONS = [
   "Jalen Brunson last 10 games",
@@ -385,75 +386,3 @@ function StatsAnswer({ result }: { result: StatsQueryRead }) {
   );
 }
 
-function MiniBars({ points }: { points: number[] }) {
-  if (points.length === 0) return null;
-  const min = Math.min(...points);
-  const max = Math.max(...points);
-  const range = Math.max(1, max - min);
-  const mean = points.reduce((s, v) => s + v, 0) / points.length;
-  const W = 400;
-  const H = 90;
-  const PAD_X = 20;
-  const BAR_Y_TOP = 14;
-  const BAR_AREA = 70;
-  const FILL = 0.85;
-  const FLOOR = 0.12;
-  const yFor = (v: number) => {
-    const fraction = ((v - min) / range) * FILL + FLOOR;
-    return BAR_Y_TOP + BAR_AREA - fraction * BAR_AREA;
-  };
-
-  return (
-    <div
-      className="sa-chart-svg-wrap"
-      style={{ width: "100%", maxWidth: 720, aspectRatio: `${W} / ${H}`, margin: "0 auto" }}
-    >
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      preserveAspectRatio="xMidYMid meet"
-      width="100%"
-      height="100%"
-      role="img"
-      aria-label="Trend chart"
-      style={{ display: "block" }}
-    >
-      <line
-        x1={0}
-        x2={W}
-        y1={yFor(mean)}
-        y2={yFor(mean)}
-        stroke="rgba(150,140,255,0.45)"
-        strokeWidth={1}
-        strokeDasharray="4 4"
-      />
-      {points.map((v, i) => {
-        const x = PAD_X + (i / Math.max(1, points.length - 1)) * (W - 2 * PAD_X);
-        const y = yFor(v);
-        const h = BAR_Y_TOP + BAR_AREA - y;
-        return (
-          <g key={i}>
-            <rect
-              x={x - 10}
-              y={y}
-              width={20}
-              height={h}
-              rx={2}
-              fill={v >= mean ? "rgba(120,210,200,0.78)" : "rgba(170,140,235,0.62)"}
-            />
-            <text
-              x={x}
-              y={BAR_Y_TOP - 4}
-              textAnchor="middle"
-              fill="rgba(210,220,240,0.85)"
-              fontSize="10"
-              fontFamily="var(--font-geist-sans), system-ui, sans-serif"
-            >
-              {Number.isInteger(v) ? v : v.toFixed(1)}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-    </div>
-  );
-}

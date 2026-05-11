@@ -1442,6 +1442,80 @@
 .trade-ticket .ticket-stat-value.neg { color: var(--color-cosmos-neg); }
 .trade-ticket .ticket-stat-value.accent { color: var(--color-cosmos-pos-accent); }
 
+/* ── Pick history strip (last 5 inside the trade ticket) ── */
+.pick-history-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--color-cosmos-border-panel);
+  border-radius: 10px;
+  background: var(--color-cosmos-surface-ticket-stat);
+  padding: 10px 12px;
+}
+.pick-history-strip-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-cosmos-text-muted);
+}
+.pick-history-strip-tally {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  color: var(--color-cosmos-text-bright);
+  font-variant-numeric: tabular-nums;
+}
+.pick-history-strip-pills {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.pick-history-strip-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--color-cosmos-border-soft);
+  font-variant-numeric: tabular-nums;
+}
+.pick-history-strip-pill.is-win {
+  background: rgba(120, 210, 200, 0.16);
+  border-color: rgba(120, 210, 200, 0.4);
+  color: var(--color-cosmos-pos);
+}
+.pick-history-strip-pill.is-loss {
+  background: rgba(170, 140, 235, 0.14);
+  border-color: rgba(170, 140, 235, 0.32);
+  color: var(--color-cosmos-text-bright);
+}
+.pick-history-strip-pill.is-placeholder {
+  min-height: 48px;
+  background: rgba(255, 255, 255, 0.04);
+  border-style: dashed;
+  border-color: var(--color-cosmos-border-soft);
+}
+.pick-history-strip-pill-letter {
+  font-size: 13px;
+  font-weight: 700;
+}
+.pick-history-strip-pill-score {
+  font-size: 11px;
+  color: var(--color-cosmos-text-muted);
+}
+.pick-history-strip-pill-opp {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--color-cosmos-text-dim, var(--color-cosmos-text-muted));
+}
+
 /* ── Slate status pill (warning banner inside trade desk) ── */
 .slate-status-pill {
   display: flex;

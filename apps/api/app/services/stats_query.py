@@ -214,6 +214,32 @@ class StatsQueryService:
     def __init__(self, espn_client: EspnPublicClient | None = None):
         self.espn_client = espn_client or EspnPublicClient()
 
+    def query_team_history(
+        self,
+        team_name: str,
+        sport_key: str = "NBA",
+        n: int = 5,
+    ) -> dict[str, Any]:
+        """Return the last ``n`` completed games for a team as a flat list of
+        results (date, opponent, location, scores, W/L).
+
+        Used by the trade-ticket pick-history strip for game-line picks. The
+        endpoint deliberately avoids the regex-parsed natural-language path
+        the player-prop queries go through — callers already have a clean
+        ``team_name`` string from the selection model and the parser would
+        only add fragility.
+        """
+        normalized_sport = sport_key.upper()
+        team = self.espn_client.search_team(team_name, sport_key=normalized_sport)
+        schedule = self.espn_client.fetch_team_schedule(normalized_sport, team["team_id"])
+        results = _build_team_results(schedule, self_team_id=team["team_id"])
+        return {
+            "entity_id": team["team_id"],
+            "team_name": team["display_name"],
+            "sport_key": normalized_sport,
+            "results": results[:n],
+        }
+
     def query(
         self,
         question: str,
@@ -590,6 +616,64 @@ def default_season_for_sport(sport_key: str, reference_date: date | None = None)
     if sport_key == "UFC":
         return today.year
     return today.year
+
+
+def _build_team_results(schedule_payload: dict[str, Any], *, self_team_id: str) -> list[dict[str, Any]]:
+    """Extract completed games from an ESPN team schedule, most recent first.
+
+    ESPN's ``/teams/{team_id}/schedule`` endpoint returns an ``events`` list
+    that mixes completed games (with scores + winner flags) and upcoming
+    games (no scores). We keep only the completed ones, sort by date
+    descending, and normalize each to the shape ``TeamGameResultRead``
+    expects on the schemas side.
+    """
+    out: list[dict[str, Any]] = []
+    for event in schedule_payload.get("events") or []:
+        competition = (event.get("competitions") or [{}])[0]
+        status_type = (competition.get("status") or event.get("status") or {}).get("type") or {}
+        is_completed = bool(status_type.get("completed")) or str(status_type.get("state") or "").lower() == "post"
+        if not is_completed:
+            continue
+
+        competitors = competition.get("competitors") or []
+        self_side = next(
+            (c for c in competitors if str(((c.get("team") or {}).get("id")) or "") == str(self_team_id)),
+            None,
+        )
+        other_side = next(
+            (c for c in competitors if str(((c.get("team") or {}).get("id")) or "") != str(self_team_id)),
+            None,
+        )
+        if self_side is None or other_side is None:
+            continue
+
+        try:
+            self_score = int(float((self_side.get("score") or {}).get("value") or self_side.get("score") or 0))
+            opp_score = int(float((other_side.get("score") or {}).get("value") or other_side.get("score") or 0))
+        except (TypeError, ValueError):
+            continue
+
+        opponent_team = other_side.get("team") or {}
+        winner_flag = self_side.get("winner")
+        if winner_flag is True:
+            result = "W"
+        elif winner_flag is False:
+            result = "L"
+        else:
+            result = "W" if self_score > opp_score else "L"
+
+        out.append({
+            "game_date": event.get("date"),
+            "opponent": opponent_team.get("displayName") or opponent_team.get("shortDisplayName") or "",
+            "opponent_abbreviation": opponent_team.get("abbreviation"),
+            "location": "home" if str(self_side.get("homeAway") or "").lower() == "home" else "away",
+            "team_score": self_score,
+            "opp_score": opp_score,
+            "result": result,
+        })
+
+    out.sort(key=lambda item: str(item.get("game_date") or ""), reverse=True)
+    return out
 
 
 def _normalize_question(question: str) -> str:

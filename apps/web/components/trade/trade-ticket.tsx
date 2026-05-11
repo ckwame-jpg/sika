@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TradeDialog } from "@/components/positions/trade-dialog";
+import { PickHistoryStrip } from "./pick-history-strip";
 import { cn, fmtEdge, fmtPercent, fmtPrice } from "@/lib/utils";
 
 export interface TradeSelection {
@@ -92,6 +93,8 @@ export function TradeTicket({
             <p className="ticket-stat-value accent">{fmtPercent(selection.confidence)}</p>
           </div>
         </div>
+
+        <PickHistoryStrip selection={selection} />
 
         <div className="grid gap-2">
           <Button variant="primary" size="sm" onClick={() => setTradeDestination("paper")}>

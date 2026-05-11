@@ -722,6 +722,23 @@ export interface StatsQueryRead {
   source: string;
 }
 
+export interface TeamGameResultRead {
+  game_date: string;
+  opponent: string;
+  opponent_abbreviation: string | null;
+  location: "home" | "away";
+  team_score: number;
+  opp_score: number;
+  result: "W" | "L";
+}
+
+export interface TeamHistoryRead {
+  entity_id: string;
+  team_name: string;
+  sport_key: string;
+  results: TeamGameResultRead[];
+}
+
 export interface PredictionSettlementResponse {
   processed: number;
   updated: number;
