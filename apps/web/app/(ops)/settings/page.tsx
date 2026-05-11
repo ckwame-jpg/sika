@@ -2,10 +2,15 @@
 
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import useSWR from "swr";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { PriceDisplayMode, formatMarketPrice, usePriceDisplay } from "@/lib/price-display";
+import { fetchModelReadinessSummary, keys, updateModelReadinessSettings } from "@/lib/api";
+import type { ModelReadinessSummaryRead } from "@/lib/types";
+
+const PICK_HISTORY_DEPTH_OPTIONS = [5, 10, 20] as const;
 
 const DISPLAY_MODES: Array<{
   value: PriceDisplayMode;
@@ -31,6 +36,22 @@ const DISPLAY_MODES: Array<{
 
 export default function SettingsPage() {
   const { mode, setMode } = usePriceDisplay();
+  const { data: settings, mutate: refreshSettings } = useSWR<ModelReadinessSummaryRead>(
+    keys.modelReadinessSummary,
+    fetchModelReadinessSummary,
+    { revalidateOnFocus: false, revalidateOnReconnect: false },
+  );
+  const currentDepth = settings?.pick_history_default_n ?? 5;
+
+  async function selectDepth(next: number) {
+    if (!settings) return;
+    await updateModelReadinessSettings({
+      ml_serving_mode: settings.ml_serving_mode,
+      enqueue_shadow_backfill: false,
+      pick_history_default_n: next,
+    });
+    await refreshSettings();
+  }
 
   return (
     <>
@@ -76,6 +97,43 @@ export default function SettingsPage() {
                   </button>
                 );
               })}
+            </div>
+          </section>
+
+          <section className="cosmos-panel" data-testid="pick-history-default-section">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">Pick History Depth</h2>
+                <p className="cosmos-panel-desc">
+                  Default number of past games shown in the trade-ticket pick-history strip.
+                  Per-pick toggles still override at runtime; this is the initial value when a
+                  new pick is selected.
+                </p>
+              </div>
+            </div>
+            <div className="cosmos-panel-body">
+              <div className="flex items-center gap-2">
+                {PICK_HISTORY_DEPTH_OPTIONS.map((option) => {
+                  const active = option === currentDepth;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => void selectDepth(option)}
+                      className={cn(
+                        "rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
+                        active
+                          ? "border-accent bg-accent/10 text-foreground"
+                          : "border-border bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+                      )}
+                      data-testid={`pick-history-default-${option}`}
+                      aria-pressed={active}
+                    >
+                      Last {option}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </section>
 

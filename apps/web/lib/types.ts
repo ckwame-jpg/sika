@@ -170,6 +170,10 @@ export interface TradeDeskGameLine {
   edge: number;
   confidence: number;
   kalshi_url: string | null;
+  /** Signed numeric line from the picked side's perspective. Negative for
+   *  favored/under, positive for dog/over. Null when there's no number to
+   *  chart (moneyline, first_five_winner). */
+  numeric_line: number | null;
 }
 
 export interface TradeDeskThreshold {
@@ -418,12 +422,16 @@ export interface ModelReadinessSummaryRead {
   min_shadow_coverage: number;
   min_promotion_shadow_samples: number;
   promotion_stability_days_required: number;
+  /** Operator-pinned initial value for the trade-ticket pick-history strip.
+   *  The strip's per-pick toggle still overrides this at runtime. */
+  pick_history_default_n: number;
   families: ModelFamilyReadinessRead[];
 }
 
 export interface ModelReadinessSettingsUpdate {
   ml_serving_mode: "heuristic" | "shadow" | "ml";
   enqueue_shadow_backfill?: boolean;
+  pick_history_default_n?: number;
 }
 
 export interface PaperPositionRead {

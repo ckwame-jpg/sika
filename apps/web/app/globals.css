@@ -1516,6 +1516,100 @@
   color: var(--color-cosmos-text-dim, var(--color-cosmos-text-muted));
 }
 
+/* Header controls (N toggle + filter chips) */
+.pick-history-strip-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.pick-history-strip-n-toggle,
+.pick-history-strip-filter-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--color-cosmos-border-soft);
+}
+.pick-history-strip-n-pill,
+.pick-history-strip-chip {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  color: var(--color-cosmos-text-muted);
+  cursor: pointer;
+  min-height: 22px;
+  min-width: 22px;
+  transition: background 120ms ease, color 120ms ease;
+}
+.pick-history-strip-n-pill:hover,
+.pick-history-strip-chip:hover {
+  color: var(--color-cosmos-text-bright);
+  background: rgba(255, 255, 255, 0.06);
+}
+.pick-history-strip-n-pill.is-active,
+.pick-history-strip-chip.is-active {
+  background: rgba(120, 210, 200, 0.18);
+  color: var(--color-cosmos-pos);
+}
+
+/* Subtle fade-in animation when data swaps (new N, new filter, new pick).
+   The component remounts the inner row by varying the key prop, so the
+   animation re-fires automatically on every refresh. */
+@keyframes pick-history-strip-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.pick-history-strip .sa-chart-svg-wrap,
+.pick-history-strip-pills-animated {
+  animation: pick-history-strip-fade-in 180ms ease-out;
+}
+
+/* Mobile bottom-sheet polish — tighter padding, smaller pill fonts so
+   "116-109" doesn't wrap, slightly shorter chart aspect. */
+@media (max-width: 640px) {
+  .pick-history-strip {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+  .pick-history-strip-h {
+    font-size: 9px;
+  }
+  .pick-history-strip-pill {
+    padding: 4px 2px;
+  }
+  .pick-history-strip-pill-letter {
+    font-size: 12px;
+  }
+  .pick-history-strip-pill-score {
+    font-size: 10px;
+  }
+  .pick-history-strip-pill-opp {
+    font-size: 8px;
+  }
+  .pick-history-strip-n-pill,
+  .pick-history-strip-chip {
+    font-size: 9px;
+    padding: 2px 6px;
+  }
+}
+
+/* Hairline dividers inside the trade ticket so the strip(s) don't visually
+   blend into the stats grid or the action buttons. */
+.trade-ticket .ticket-section-divider {
+  height: 1px;
+  background: var(--color-cosmos-border-soft);
+  margin: 4px 0;
+  opacity: 0.6;
+}
+
 /* ── Slate status pill (warning banner inside trade desk) ── */
 .slate-status-pill {
   display: flex;

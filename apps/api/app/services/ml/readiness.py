@@ -20,7 +20,7 @@ from app.services.ml.study_progress import (
     shadow_coverage_ready,
 )
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition, parlay_family_key, single_family_key
-from app.services.operator_settings import effective_ml_serving_mode
+from app.services.operator_settings import effective_ml_serving_mode, effective_pick_history_default_n
 
 # Sample size for diagnostic aggregations (buckets, rates, recent-row averages).
 # Headline counts come from SQL aggregation and are unaffected by this limit.
@@ -629,6 +629,7 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
         "min_shadow_coverage": MIN_SHADOW_COVERAGE,
         "min_promotion_shadow_samples": MIN_PROMOTION_SHADOW_SAMPLES,
         "promotion_stability_days_required": STABILITY_DAYS_REQUIRED,
+        "pick_history_default_n": effective_pick_history_default_n(db),
         "families": families,
     }
 

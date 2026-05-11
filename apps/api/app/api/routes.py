@@ -77,7 +77,7 @@ from app.services.kalshi_account import (
 )
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
 from app.services.ml.study_progress import retained_study_cutoff
-from app.services.operator_settings import set_ml_serving_mode
+from app.services.operator_settings import set_ml_serving_mode, set_pick_history_default_n
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
@@ -1159,6 +1159,8 @@ def update_model_readiness_settings(
     set_ml_serving_mode(db, payload.ml_serving_mode)
     if payload.ml_serving_mode in {"shadow", "ml"} and payload.enqueue_shadow_backfill:
         enqueue_shadow_capture_job(db, scope="backfill")
+    if payload.pick_history_default_n is not None:
+        set_pick_history_default_n(db, payload.pick_history_default_n)
     db.commit()
     return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
 
@@ -1589,7 +1591,13 @@ def query_team_history(
     service: StatsQueryService = Depends(get_stats_query_service),
 ) -> TeamHistoryRead:
     try:
-        result = service.query_team_history(payload.team_name, sport_key=payload.sport_key, n=payload.n)
+        result = service.query_team_history(
+            payload.team_name,
+            sport_key=payload.sport_key,
+            n=payload.n,
+            opponent=payload.opponent,
+            location=payload.location,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:

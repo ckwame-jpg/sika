@@ -7,6 +7,7 @@ from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Pa
 from app.schemas import TradeDeskThresholdRead
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.trade_desk import (
+    _signed_numeric_line,
     build_trade_desk_response,
     load_trade_desk_snapshot,
     persist_current_slate_snapshots,
@@ -44,6 +45,44 @@ def _snapshot_event_payload(
         ],
         "player_props": [],
     }
+
+
+def test_signed_numeric_line_spread_yes_returns_negative():
+    """Picking the favored side of a spread (yes) means the team needs to
+    win by more than `threshold`. The signed value is negative."""
+    raw = {"copilot_threshold": 3.5}
+    assert _signed_numeric_line("spread", raw, "yes") == -3.5
+
+
+def test_signed_numeric_line_spread_no_returns_positive():
+    """Picking the dog side (no) means the team can lose by up to threshold."""
+    raw = {"copilot_threshold": 3.5}
+    assert _signed_numeric_line("spread", raw, "no") == 3.5
+
+
+def test_signed_numeric_line_total_yes_returns_positive():
+    """Over picks compare event total to a positive threshold."""
+    raw = {"copilot_threshold": 220.5}
+    assert _signed_numeric_line("total", raw, "yes") == 220.5
+
+
+def test_signed_numeric_line_total_no_returns_negative():
+    """Under picks flip the sign so the frontend's bandTone callback can
+    treat 'lower is better' uniformly."""
+    raw = {"copilot_threshold": 220.5}
+    assert _signed_numeric_line("total", raw, "no") == -220.5
+
+
+def test_signed_numeric_line_moneyline_returns_none():
+    """Moneylines have no numeric threshold; the strip falls back to W/L pills."""
+    assert _signed_numeric_line("game_winner", {"copilot_threshold": 0.6}, "yes") is None
+    assert _signed_numeric_line("first_five_winner", {}, "yes") is None
+
+
+def test_signed_numeric_line_returns_none_when_threshold_missing_or_unparseable():
+    assert _signed_numeric_line("spread", {}, "yes") is None
+    assert _signed_numeric_line("spread", {"copilot_threshold": None}, "yes") is None
+    assert _signed_numeric_line("spread", {"copilot_threshold": "n/a"}, "yes") is None
 
 
 def test_thresholds_are_monotonic_utility():

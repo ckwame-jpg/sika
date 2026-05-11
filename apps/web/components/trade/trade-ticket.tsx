@@ -27,6 +27,10 @@ export interface TradeSelection {
   subjectTeam?: string | null;
   statKey?: string;
   threshold?: number | null;
+  /** Signed numeric line for spread/total game-line picks (pre-signed
+   *  on the backend from the picked side's perspective). Null for
+   *  moneyline + player_prop selections. */
+  numericLine?: number | null;
 }
 
 interface TradeTicketProps {
@@ -94,7 +98,11 @@ export function TradeTicket({
           </div>
         </div>
 
+        <div className="ticket-section-divider" aria-hidden />
+
         <PickHistoryStrip selection={selection} />
+
+        <div className="ticket-section-divider" aria-hidden />
 
         <div className="grid gap-2">
           <Button variant="primary" size="sm" onClick={() => setTradeDestination("paper")}>

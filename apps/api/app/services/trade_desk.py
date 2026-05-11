@@ -198,6 +198,36 @@ def kalshi_market_url(market: Market) -> str:
     return category_root
 
 
+def _signed_numeric_line(market_kind: str, raw_data: dict, selected_side: str) -> float | None:
+    """Return the threshold value for a game-line market, pre-signed from
+    the picked side's perspective.
+
+    Conventions chosen to match game_line_projected_label below — that
+    label flips ``-{threshold}`` vs ``+{threshold}`` based on
+    ``selected_side``. We mirror that flip here so the frontend can use
+    the value directly without re-reading selected_side.
+
+    - spread + yes (favored)   → ``-threshold`` (team must win by more)
+    - spread + no  (dog)        → ``+threshold`` (team can lose by less)
+    - total  + yes (over)       → ``+threshold``
+    - total  + no  (under)      → ``-threshold``
+    - moneyline / first_five_winner / unknown → None (no number to chart)
+    """
+    threshold = raw_data.get("copilot_threshold")
+    if threshold is None:
+        return None
+    try:
+        value = float(threshold)
+    except (TypeError, ValueError):
+        return None
+    side = (selected_side or "").lower()
+    if market_kind == "spread":
+        return -value if side == "yes" else value
+    if market_kind == "total":
+        return value if side == "yes" else -value
+    return None
+
+
 def game_line_projected_label(market: Market, recommendation: Recommendation) -> str | None:
     raw_data = market.raw_data or {}
     diagnostics = dict(recommendation.scoring_diagnostics or {})
@@ -581,13 +611,15 @@ def build_trade_desk_response(
             continue
         game_lines = bucket["game_lines"]
         assert isinstance(game_lines, list)
+        market_kind = str(raw_data.get("copilot_market_kind") or "")
+        numeric_line = _signed_numeric_line(market_kind, raw_data, recommendation.side)
         game_lines.append(
             TradeDeskGameLineRead(
                 ticker=market.ticker,
                 market_title=market.title,
                 display_label=game_line_display_label(market, recommendation),
                 sport_key=market.sport_key,
-                market_kind=str(raw_data.get("copilot_market_kind") or ""),
+                market_kind=market_kind,
                 selected_side=recommendation.side,
                 projected_side_label=game_line_projected_label(market, recommendation),
                 selected_side_probability=float(selected_probability),
@@ -595,6 +627,7 @@ def build_trade_desk_response(
                 edge=recommendation.edge,
                 confidence=recommendation.confidence,
                 kalshi_url=kalshi_market_url(market),
+                numeric_line=numeric_line,
             )
         )
 

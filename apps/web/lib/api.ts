@@ -249,20 +249,54 @@ export const queryStats = (body: {
   });
 
 /**
- * Convenience wrapper around the natural-language stats endpoint, used by the
- * trade-ticket pick-history strip. Phrasing matches the regex parser in
- * apps/api/app/services/stats_query.py:25 ("X's last N games").
+ * Convenience wrapper around the natural-language stats endpoint, used by
+ * the trade-ticket pick-history strip. Phrasing matches the regex parser in
+ * apps/api/app/services/stats_query.py:25 ("X's last N games" plus the
+ * "home" / "away" / "vs opponent" tokens that the parser strips into filter
+ * slots before pattern-matching).
  */
-export const fetchPlayerHistory = (subjectName: string, sportKey: string, n = 5) =>
+export interface PickHistoryOptions {
+  opponent?: string | null;
+  location?: "home" | "away" | null;
+}
+
+function buildPlayerHistoryQuestion(
+  subjectName: string,
+  n: number,
+  opts: PickHistoryOptions = {},
+): string {
+  const locationToken =
+    opts.location === "home" ? " home" : opts.location === "away" ? " away" : "";
+  const opponentToken = opts.opponent ? ` vs ${opts.opponent}` : "";
+  return `${subjectName}'s last ${n}${locationToken} games${opponentToken}`;
+}
+
+export const fetchPlayerHistory = (
+  subjectName: string,
+  sportKey: string,
+  n = 5,
+  opts: PickHistoryOptions = {},
+) =>
   queryStats({
-    question: `${subjectName}'s last ${n} games`,
+    question: buildPlayerHistoryQuestion(subjectName, n, opts),
     sport_key: sportKey.toUpperCase(),
   });
 
-export const fetchTeamHistory = (teamName: string, sportKey: string, n = 5) =>
+export const fetchTeamHistory = (
+  teamName: string,
+  sportKey: string,
+  n = 5,
+  opts: PickHistoryOptions = {},
+) =>
   request<TeamHistoryRead>("/research/teams/history", {
     method: "POST",
-    body: JSON.stringify({ team_name: teamName, sport_key: sportKey.toUpperCase(), n }),
+    body: JSON.stringify({
+      team_name: teamName,
+      sport_key: sportKey.toUpperCase(),
+      n,
+      opponent: opts.opponent ?? null,
+      location: opts.location ?? null,
+    }),
   });
 
 export const keys = {
@@ -301,8 +335,18 @@ export const keys = {
     `/parlays/predictions?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,
   parlayPredictionSummary: (sportScope = "all", legCount?: number) =>
     `/parlays/predictions/summary?sport_scope=${sportScope}&leg_count=${legCount ?? ""}`,
-  playerHistory: (subjectName: string, sportKey: string, n = 5) =>
-    `pick-history:player:${sportKey.toUpperCase()}:${subjectName}:${n}`,
-  teamHistory: (teamName: string, sportKey: string, n = 5) =>
-    `pick-history:team:${sportKey.toUpperCase()}:${teamName}:${n}`,
+  playerHistory: (
+    subjectName: string,
+    sportKey: string,
+    n = 5,
+    opts: PickHistoryOptions = {},
+  ) =>
+    `pick-history:player:${sportKey.toUpperCase()}:${subjectName}:${n}:${opts.location ?? ""}:${opts.opponent ?? ""}`,
+  teamHistory: (
+    teamName: string,
+    sportKey: string,
+    n = 5,
+    opts: PickHistoryOptions = {},
+  ) =>
+    `pick-history:team:${sportKey.toUpperCase()}:${teamName}:${n}:${opts.location ?? ""}:${opts.opponent ?? ""}`,
 } as const;

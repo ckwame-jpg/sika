@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from app.api.routes import get_stats_query_service
 from app.main import app
-from app.services.stats_query import StatsQueryService, _build_team_results
+from app.services.stats_query import StatsQueryService, _build_team_results, _filter_team_results
 
 
 TEAM_SCHEDULE_PAYLOAD = {
@@ -185,3 +185,78 @@ def test_team_history_endpoint_422_on_short_team_name(client):
         json={"team_name": "X", "sport_key": "NBA"},
     )
     assert response.status_code == 422
+
+
+def test_filter_team_results_by_opponent_substring():
+    results = [
+        {"opponent": "Detroit Pistons", "opponent_abbreviation": "DET", "location": "home"},
+        {"opponent": "Boston Celtics", "opponent_abbreviation": "BOS", "location": "away"},
+        {"opponent": "Detroit Pistons", "opponent_abbreviation": "DET", "location": "away"},
+    ]
+    filtered = _filter_team_results(results, opponent="pistons")
+    assert len(filtered) == 2
+    assert all("pistons" in row["opponent"].lower() for row in filtered)
+
+
+def test_filter_team_results_by_location():
+    results = [
+        {"opponent": "Detroit Pistons", "opponent_abbreviation": "DET", "location": "home"},
+        {"opponent": "Boston Celtics", "opponent_abbreviation": "BOS", "location": "away"},
+    ]
+    home_only = _filter_team_results(results, location="home")
+    assert [row["location"] for row in home_only] == ["home"]
+    away_only = _filter_team_results(results, location="away")
+    assert [row["location"] for row in away_only] == ["away"]
+
+
+def test_filter_team_results_no_filters_pass_through():
+    results = [{"opponent": "Anyone", "opponent_abbreviation": "ANY", "location": "home"}]
+    assert _filter_team_results(results) == results
+    assert _filter_team_results(results, opponent=None, location=None) == results
+
+
+def test_team_history_endpoint_passes_filters(client):
+    captured: dict = {}
+
+    fake = _FakeEspnClient()
+
+    class FakeService(StatsQueryService):
+        def __init__(self) -> None:
+            super().__init__(espn_client=fake)
+
+        def query_team_history(self, team_name, sport_key="NBA", n=5, *, opponent=None, location=None):
+            captured["team_name"] = team_name
+            captured["sport_key"] = sport_key
+            captured["n"] = n
+            captured["opponent"] = opponent
+            captured["location"] = location
+            return {
+                "entity_id": "5",
+                "team_name": team_name,
+                "sport_key": sport_key,
+                "results": [],
+            }
+
+    app.dependency_overrides[get_stats_query_service] = FakeService
+    try:
+        response = client.post(
+            "/research/teams/history",
+            json={
+                "team_name": "Cleveland Cavaliers",
+                "sport_key": "NBA",
+                "n": 5,
+                "opponent": "Pistons",
+                "location": "home",
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_stats_query_service, None)
+
+    assert response.status_code == 200
+    assert captured == {
+        "team_name": "Cleveland Cavaliers",
+        "sport_key": "NBA",
+        "n": 5,
+        "opponent": "Pistons",
+        "location": "home",
+    }

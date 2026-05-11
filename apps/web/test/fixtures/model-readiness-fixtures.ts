@@ -124,5 +124,6 @@ export const modelReadinessSummaryFixture: ModelReadinessSummaryRead = {
   min_shadow_coverage: 0.75,
   min_promotion_shadow_samples: 150,
   promotion_stability_days_required: 3,
+  pick_history_default_n: 5,
   families: [activeStudyFamilyFixture, heuristicLaneFamilyFixture],
 };

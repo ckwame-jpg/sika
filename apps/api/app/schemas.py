@@ -317,6 +317,12 @@ class TradeDeskGameLineRead(BaseModel):
     edge: float
     confidence: float
     kalshi_url: str | None = None
+    # Signed numeric line from the picked side's perspective. Negative when
+    # the pick is on the favored / under side, positive when on the dog /
+    # over side. Null for moneyline / first_five_winner where there is no
+    # number to draw against. Consumed by the pick-history strip on the
+    # frontend to render a threshold reference line.
+    numeric_line: float | None = None
 
 
 class TradeDeskThresholdRead(BaseModel):
@@ -627,12 +633,16 @@ class ModelReadinessSummaryRead(BaseModel):
     min_shadow_coverage: float = 0.75
     min_promotion_shadow_samples: int = 150
     promotion_stability_days_required: int = 3
+    # Operator-pinned default for the trade-ticket pick-history strip.
+    # Per-pick toggles override at runtime; this is the initial value.
+    pick_history_default_n: int = 5
     families: list[ModelFamilyReadinessRead] = Field(default_factory=list)
 
 
 class ModelReadinessSettingsUpdate(BaseModel):
     ml_serving_mode: Literal["heuristic", "shadow", "ml"]
     enqueue_shadow_backfill: bool = True
+    pick_history_default_n: int | None = Field(default=None, ge=1, le=20)
 
 
 class MarketHistoryPointRead(BaseModel):
@@ -1042,6 +1052,11 @@ class TeamHistoryRequest(BaseModel):
     team_name: str = Field(min_length=2)
     sport_key: str = "NBA"
     n: int = Field(default=5, ge=1, le=20)
+    # Optional filters narrow the schedule before clipping to N. Both apply
+    # independently — pass either or both. Unmatched results just shrink
+    # the returned list.
+    opponent: str | None = None
+    location: Literal["home", "away"] | None = None
 
 
 class TeamGameResultRead(BaseModel):

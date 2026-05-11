@@ -219,6 +219,9 @@ class StatsQueryService:
         team_name: str,
         sport_key: str = "NBA",
         n: int = 5,
+        *,
+        opponent: str | None = None,
+        location: str | None = None,
     ) -> dict[str, Any]:
         """Return the last ``n`` completed games for a team as a flat list of
         results (date, opponent, location, scores, W/L).
@@ -228,11 +231,20 @@ class StatsQueryService:
         the player-prop queries go through — callers already have a clean
         ``team_name`` string from the selection model and the parser would
         only add fragility.
+
+        Optional filters narrow the result set before clipping:
+          - ``opponent``: case-insensitive substring match on the
+            opponent's display name (e.g. ``"Pistons"`` matches both
+            ``"Detroit Pistons"`` and a hypothetical short form). Picks
+            from any sport this way.
+          - ``location``: ``"home"`` or ``"away"`` to keep only games
+            played at that location.
         """
         normalized_sport = sport_key.upper()
         team = self.espn_client.search_team(team_name, sport_key=normalized_sport)
         schedule = self.espn_client.fetch_team_schedule(normalized_sport, team["team_id"])
         results = _build_team_results(schedule, self_team_id=team["team_id"])
+        results = _filter_team_results(results, opponent=opponent, location=location)
         return {
             "entity_id": team["team_id"],
             "team_name": team["display_name"],
@@ -616,6 +628,34 @@ def default_season_for_sport(sport_key: str, reference_date: date | None = None)
     if sport_key == "UFC":
         return today.year
     return today.year
+
+
+def _filter_team_results(
+    results: list[dict[str, Any]],
+    *,
+    opponent: str | None = None,
+    location: str | None = None,
+) -> list[dict[str, Any]]:
+    """Narrow a list of team results by opponent name (substring) and/or
+    location. Returns ``results`` unchanged when both filters are None."""
+    if not opponent and not location:
+        return results
+    opponent_needle = (opponent or "").strip().lower()
+    location_value = (location or "").strip().lower() or None
+    out: list[dict[str, Any]] = []
+    for row in results:
+        if location_value is not None and str(row.get("location") or "").lower() != location_value:
+            continue
+        if opponent_needle:
+            opponent_haystack = " ".join(
+                str(part or "").lower()
+                for part in (row.get("opponent"), row.get("opponent_abbreviation"))
+                if part
+            )
+            if opponent_needle not in opponent_haystack:
+                continue
+        out.append(row)
+    return out
 
 
 def _build_team_results(schedule_payload: dict[str, Any], *, self_team_id: str) -> list[dict[str, Any]]:
