@@ -61,9 +61,11 @@ function PlayerPropStrip({ selection }: { selection: TradeSelection }) {
   return (
     <section className="pick-history-strip" data-testid="pick-history-strip">
       <header className="pick-history-strip-h">
-        <span>{statKey!.replace(/_/g, " ")} · last {recentValues.length}</span>
-        <span className="pick-history-strip-tally">
-          {clearedCount}/{recentValues.length} cleared {thresholdNumber}+
+        <span>
+          {statKey!.replace(/_/g, " ")} · last {recentValues.length} ·{" "}
+          <span className="pick-history-strip-tally">
+            {clearedCount}/{recentValues.length} cleared {thresholdNumber}+
+          </span>
         </span>
       </header>
       <MiniBars
@@ -96,8 +98,12 @@ function GameLineStrip({ selection }: { selection: TradeSelection }) {
   return (
     <section className="pick-history-strip" data-testid="pick-history-strip">
       <header className="pick-history-strip-h">
-        <span>{data.team_name} · last {recent.length}</span>
-        <span className="pick-history-strip-tally">{wins}-{recent.length - wins}</span>
+        <span>
+          {data.team_name} · last {recent.length} ·{" "}
+          <span className="pick-history-strip-tally">
+            {wins}-{recent.length - wins}
+          </span>
+        </span>
       </header>
       <ol className="pick-history-strip-pills" data-testid="pick-history-strip-pills">
         {recent.map((result, index) => (
