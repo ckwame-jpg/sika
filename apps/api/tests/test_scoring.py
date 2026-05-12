@@ -100,12 +100,21 @@ def test_score_event_aligns_yes_price_to_market_target(db_session):
     db_session.add_all([market, snapshot])
     db_session.commit()
 
-    recommendation = score_event(db_session, event, market, snapshot)
-
-    assert recommendation is not None
-    assert recommendation.side == "no"
-    assert recommendation.edge > 0
-    assert "Boston Celtics" in recommendation.rationale
+    # The scoring logic still inverts probability_yes when the market's YES
+    # side is the away team — that's the alignment this test pins. Under
+    # bug #49 the user-facing recommendation is suppressed (Kalshi only sells
+    # YES, so a NO pick isn't actionable), but the underlying signal records
+    # the inverted fair_yes_price and the diagnostics still mark the side.
+    scored = scoring_module._build_scored_recommendation(db_session, event, market, snapshot)
+    assert scored is not None
+    # Boston has lost 4 straight at Atlanta → away win probability is low →
+    # the inverted probability_yes (Boston) is below the YES ask, so the
+    # market's NO side has the edge. fair_yes_price should reflect that
+    # inversion (below 0.5).
+    assert scored.signal.fair_yes_price < 0.5
+    suppression = list((scored.signal.scoring_diagnostics or {}).get("suppression_reasons") or [])
+    assert "no_side_not_actionable_on_kalshi" in suppression
+    assert scored.recommendation is None, "Bug #49 suppresses NO-side picks at the watchlist surface."
 
 
 def test_score_event_persists_signal_even_when_no_recommendation_is_emitted(db_session):
@@ -343,9 +352,15 @@ def test_regenerate_watchlist_collapses_inverse_winner_duplicates(db_session):
         db_session.flush()
 
         recommendations = db_session.scalars(select(Recommendation).order_by(Recommendation.id.asc())).all()
+        # Bug #49: Under the old behavior both paired markets produced
+        # recommendations (UTA-yes and OKC-no, same "Utah Jazz" thesis) and
+        # the dedup collapsed them. With NO-side suppression at the scoring
+        # layer, only UTA-yes survives — no duplicate to collapse — and the
+        # result remains a single Utah Jazz recommendation.
         assert len(recommendations) == 1
-        assert summary.inverse_winner_duplicates_collapsed == 1
+        assert summary.inverse_winner_duplicates_collapsed == 0
         assert recommendations[0].scoring_diagnostics["selected_subject_name"] == "Utah Jazz"
+        assert recommendations[0].side == "yes"
     finally:
         settings.watchlist_min_selected_prob_heuristic_winner = original_floor
 
@@ -1021,13 +1036,14 @@ def test_no_side_winner_recommendation_is_suppressed_as_not_actionable(db_sessio
     snapshot = db_session.scalar(select(MarketSnapshot).where(MarketSnapshot.market_id == market.id))
     db_session.commit()
 
-    # Force the model to think the YES side is unlikely (P=0.20).
-    # With yes_ask=0.45 and no_ask=0.56:
-    #   yes_edge = 0.20 - 0.45 = -0.25
-    #   no_edge = 0.80 - 0.56 = +0.24
-    # → side selection picks "no".
+    # _setup_scorable_winner_market makes home=Atlanta, away=Boston, and
+    # the market YES side is Boston (away). _score_team_winner returns the
+    # home (=left) win probability, which the scoring code inverts when the
+    # market's YES side != left. So we mock 0.80 for left (Atlanta) →
+    # probability_yes for the Boston market = 0.20 → side selection picks
+    # NO (yes_edge=0.20-0.45=-0.25; no_edge=0.80-0.56=+0.24).
     def fake_score_team_winner(db, event, left, right):
-        return (0.20, 0.6, ["forced underdog"], {"family_key": "nba_singles"})
+        return (0.80, 0.6, ["forced home favorite"], {"family_key": "nba_singles"})
 
     monkeypatch.setattr(scoring_module, "_score_team_winner", fake_score_team_winner)
 
@@ -1049,9 +1065,10 @@ def test_yes_side_recommendation_is_not_suppressed_by_no_side_guard(db_session, 
     snapshot = db_session.scalar(select(MarketSnapshot).where(MarketSnapshot.market_id == market.id))
     db_session.commit()
 
-    # Strong YES signal — model thinks Boston wins comfortably.
+    # Mirror of the NO-side test: mock 0.30 for left (Atlanta) →
+    # probability_yes for Boston = 0.70 → side="yes" gets picked.
     def fake_score_team_winner(db, event, left, right):
-        return (0.70, 0.65, ["forced favorite"], {"family_key": "nba_singles"})
+        return (0.30, 0.65, ["forced home underdog"], {"family_key": "nba_singles"})
 
     monkeypatch.setattr(scoring_module, "_score_team_winner", fake_score_team_winner)
 
@@ -1085,14 +1102,18 @@ def test_score_watchlist_markets_batch_is_pure(db_session):
     assert after_pure_signals == initial_signals
     assert after_pure_predictions == initial_predictions
     assert len(captures) >= 1
-    # The scorable winner market should have produced a recommendation-scoped
-    # capture (and the corresponding summary increment).
-    assert any(capture.capture_scope == "recommendation" for capture in captures)
+    # Bug #49: _setup_scorable_winner_market builds a market whose YES side
+    # is Boston (the unfavored team in the seeded history), so scoring picks
+    # NO and the recommendation is suppressed as not actionable on Kalshi.
+    # Each capture's scope reflects what actually happened — recommendation,
+    # coverage, or None — and this purity test only cares that the function
+    # produced captures and recorded an outcome without writing to the
+    # session.
     assert summary.prediction_count == sum(
         1 for capture in captures if capture.capture_scope is not None
     )
     assert summary.scored_market_count >= 1
-    assert summary.outcome_reason_counts["recommended"] >= 1
+    assert summary.outcome_reason_counts.get("suppressed_no_side_not_actionable", 0) >= 1
 
 
 def test_persist_scored_watchlist_captures_writes_signals_and_predictions(db_session):

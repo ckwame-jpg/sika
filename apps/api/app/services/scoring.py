@@ -160,6 +160,8 @@ def _suppression_outcome_reason(scored: ScoredRecommendation, *, current_watchli
     suppression_reasons = {str(value) for value in list(diagnostics.get("suppression_reasons") or [])}
     if "critical_market_snapshot_missing" in suppression_reasons:
         return "missing_snapshot"
+    if "no_side_not_actionable_on_kalshi" in suppression_reasons:
+        return "suppressed_no_side_not_actionable"
     if "min_edge" in suppression_reasons or "yes_side_negative_edge" in suppression_reasons:
         return "suppressed_min_edge"
     if "min_confidence" in suppression_reasons:
@@ -2331,6 +2333,14 @@ def _build_scored_recommendation(
         suppression_reasons.append("min_confidence")
     if not snapshot:
         suppression_reasons.append("critical_market_snapshot_missing")
+    # Bug #49: Kalshi only sells YES contracts — a NO recommendation has no
+    # direct path to act on. For winner markets the paired-market YES is
+    # scored independently and covers the same signal, so suppressing here
+    # keeps the watchlist actionable without losing the underlying edge.
+    # For player props there's no clean YES counterpart; suppressing prevents
+    # surfacing a non-actionable pick.
+    if side == "no":
+        suppression_reasons.append("no_side_not_actionable_on_kalshi")
     signal_diagnostics = {
         **signal_diagnostics,
         "suppression_reasons": suppression_reasons,
