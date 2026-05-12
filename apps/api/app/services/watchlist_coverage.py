@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -251,58 +251,53 @@ def warm_current_watchlist_prop_context(
     return active_resolver.stats.as_dict()
 
 
-def latest_snapshot_by_market_id(db: Session, market_ids: list[int]) -> dict[int, MarketSnapshot]:
+def _latest_per_market_by_captured_at(
+    db: Session,
+    model: type,
+    market_ids: list[int],
+) -> dict[int, Any]:
+    """Return the latest row per ``market_id``, ordered by
+    ``captured_at DESC, id DESC``.
+
+    Bug #8: callers used to use ``func.max(model.id)``, which only
+    matches "latest captured" while inserts are strictly monotonic by
+    capture time. Real production paths violate that — the retry queue
+    inserts old rows after newer ones, backfill jobs insert historical
+    rows into a live table, and concurrent workers interleave commit
+    order. When the latest captured row has a lower id than a stale
+    one, ``max(id)`` returns the stale row. Ranking on ``captured_at``
+    with ``id`` as the deterministic tiebreaker fixes both cases.
+    """
     if not market_ids:
         return {}
-    max_id_per_market = (
+    ranked = (
         select(
-            MarketSnapshot.market_id,
-            func.max(MarketSnapshot.id).label("max_id"),
+            model,
+            func.row_number()
+            .over(
+                partition_by=model.market_id,
+                order_by=(model.captured_at.desc(), model.id.desc()),
+            )
+            .label("rn"),
         )
-        .where(MarketSnapshot.market_id.in_(market_ids))
-        .group_by(MarketSnapshot.market_id)
+        .where(model.market_id.in_(market_ids))
         .subquery()
     )
     rows = db.scalars(
-        select(MarketSnapshot)
-        .join(max_id_per_market, MarketSnapshot.id == max_id_per_market.c.max_id)
+        select(model)
+        .join(ranked, model.id == ranked.c.id)
+        .where(ranked.c.rn == 1)
     ).all()
     return {row.market_id: row for row in rows}
+
+
+def latest_snapshot_by_market_id(db: Session, market_ids: list[int]) -> dict[int, MarketSnapshot]:
+    return _latest_per_market_by_captured_at(db, MarketSnapshot, market_ids)
 
 
 def latest_recommendation_by_market_id(db: Session, market_ids: list[int]) -> dict[int, Recommendation]:
-    if not market_ids:
-        return {}
-    max_id_per_market = (
-        select(
-            Recommendation.market_id,
-            func.max(Recommendation.id).label("max_id"),
-        )
-        .where(Recommendation.market_id.in_(market_ids))
-        .group_by(Recommendation.market_id)
-        .subquery()
-    )
-    rows = db.scalars(
-        select(Recommendation)
-        .join(max_id_per_market, Recommendation.id == max_id_per_market.c.max_id)
-    ).all()
-    return {row.market_id: row for row in rows}
+    return _latest_per_market_by_captured_at(db, Recommendation, market_ids)
 
 
 def latest_prediction_by_market_id(db: Session, market_ids: list[int]) -> dict[int, Prediction]:
-    if not market_ids:
-        return {}
-    max_id_per_market = (
-        select(
-            Prediction.market_id,
-            func.max(Prediction.id).label("max_id"),
-        )
-        .where(Prediction.market_id.in_(market_ids))
-        .group_by(Prediction.market_id)
-        .subquery()
-    )
-    rows = db.scalars(
-        select(Prediction)
-        .join(max_id_per_market, Prediction.id == max_id_per_market.c.max_id)
-    ).all()
-    return {row.market_id: row for row in rows}
+    return _latest_per_market_by_captured_at(db, Prediction, market_ids)

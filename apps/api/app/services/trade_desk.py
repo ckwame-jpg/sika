@@ -248,10 +248,16 @@ def thresholds_are_monotonic(thresholds: list[TradeDeskThresholdRead]) -> bool:
 
 def _latest_trade_recommendations(db: Session, *, sport: str | None = None) -> list[Recommendation]:
     normalized_sport = sport.upper() if sport else None
-    max_id_per_market = (
+    # Bug #8: rank by captured_at to survive out-of-order inserts.
+    ranked = (
         select(
-            Recommendation.market_id,
-            func.max(Recommendation.id).label("max_id"),
+            Recommendation,
+            func.row_number()
+            .over(
+                partition_by=Recommendation.market_id,
+                order_by=(Recommendation.captured_at.desc(), Recommendation.id.desc()),
+            )
+            .label("rn"),
         )
         .join(Market, Recommendation.market_id == Market.id)
         .where(
@@ -259,12 +265,12 @@ def _latest_trade_recommendations(db: Session, *, sport: str | None = None) -> l
             Market.event_id.is_not(None),
             Market.sport_key.in_(tuple(CURRENT_WATCHLIST_SPORTS)),
         )
-        .group_by(Recommendation.market_id)
         .subquery()
     )
     stmt = (
         select(Recommendation)
-        .join(max_id_per_market, Recommendation.id == max_id_per_market.c.max_id)
+        .join(ranked, Recommendation.id == ranked.c.id)
+        .where(ranked.c.rn == 1)
         .options(
             joinedload(Recommendation.market)
             .joinedload(Market.event)
@@ -327,17 +333,22 @@ def _current_event_market_stats(
 
     market_ids = list(market_event_ids)
     if source_run_id is None:
-        max_id_per_market = (
+        # Bug #8: rank by captured_at to survive out-of-order inserts.
+        ranked = (
             select(
-                Prediction.market_id,
-                func.max(Prediction.id).label("max_id"),
+                Prediction,
+                func.row_number()
+                .over(
+                    partition_by=Prediction.market_id,
+                    order_by=(Prediction.captured_at.desc(), Prediction.id.desc()),
+                )
+                .label("rn"),
             )
             .where(Prediction.market_id.in_(tuple(market_ids)))
-            .group_by(Prediction.market_id)
             .subquery()
         )
         predictions = db.scalars(
-            select(Prediction).join(max_id_per_market, Prediction.id == max_id_per_market.c.max_id)
+            select(Prediction).join(ranked, Prediction.id == ranked.c.id).where(ranked.c.rn == 1)
         ).all()
     else:
         predictions = db.scalars(
