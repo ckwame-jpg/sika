@@ -50,8 +50,8 @@ ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME: dict[str, dict[str, str]] = {
         "TOR": "Toronto Raptors", "UTA": "Utah Jazz", "WAS": "Washington Wizards",
     },
     "MLB": {
-        "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves", "BAL": "Baltimore Orioles",
-        "BOS": "Boston Red Sox", "CHC": "Chicago Cubs", "CHW": "Chicago White Sox",
+        "ARI": "Arizona Diamondbacks", "AZ": "Arizona Diamondbacks", "ATL": "Atlanta Braves", "BAL": "Baltimore Orioles",
+        "BOS": "Boston Red Sox", "CHC": "Chicago Cubs", "CHW": "Chicago White Sox", "CWS": "Chicago White Sox",
         "CIN": "Cincinnati Reds", "CLE": "Cleveland Guardians", "COL": "Colorado Rockies",
         "DET": "Detroit Tigers", "HOU": "Houston Astros", "KC": "Kansas City Royals",
         "KCR": "Kansas City Royals", "LAA": "Los Angeles Angels", "LAD": "Los Angeles Dodgers",
@@ -68,17 +68,34 @@ ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME: dict[str, dict[str, str]] = {
 
 def _team_hint_matches_subtitle(team_hint: str, subtitle: str, sport_key: str) -> bool:
     """Return True when ``team_hint`` plausibly identifies the team whose
-    display name lives in ``subtitle``. Handles the abbreviation case
-    (``"NYK"`` vs. ``"New York Knicks"``) as well as substring matches in
-    either direction for hints already given as full / partial names."""
+    display name lives in ``subtitle``. Handles three cases:
+
+    1. Direct ticker abbreviation (``"NYK"``, ``"BOS"``, ``"AZ"``) — looked
+       up in ``ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME`` and matched against
+       the subtitle.
+    2. Kalshi prop-ticker codes like ``"AZN"``, ``"KCB"``, ``"SDM"`` — the
+       first two characters encode the team and the third is a per-player
+       discriminator. Sika's ``copilot_subject_team`` metadata is captured
+       straight from these tickers, so the 2-char prefix is what we have
+       to match on.
+    3. Substring fallback for hints already given as full / partial names
+       (``"Celtics"`` matches ``"Boston Celtics"``).
+    """
     if not team_hint or not subtitle:
         return False
     normalized_hint = team_hint.strip().upper()
     normalized_subtitle = subtitle.strip().lower()
     abbreviation_map = ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME.get(sport_key.upper(), {})
+    # 1. Direct abbreviation
     full_name = abbreviation_map.get(normalized_hint)
     if full_name and full_name.lower() in normalized_subtitle:
         return True
+    # 2. Two-character prefix (Kalshi prop-ticker codes)
+    if len(normalized_hint) >= 2:
+        prefix_name = abbreviation_map.get(normalized_hint[:2])
+        if prefix_name and prefix_name.lower() in normalized_subtitle:
+            return True
+    # 3. Substring fallback (handles already-full hints like "Celtics")
     lowered_hint = normalized_hint.lower()
     return lowered_hint in normalized_subtitle or normalized_subtitle in lowered_hint
 

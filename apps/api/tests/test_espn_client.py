@@ -271,6 +271,51 @@ def test_espn_client_search_player_picks_team_hint_when_multiple_candidates(monk
     assert abbr_pick["team_name"] == "Boston Celtics"
 
 
+def test_espn_client_search_player_handles_kalshi_prop_ticker_codes(monkeypatch):
+    """The MLB ``copilot_subject_team`` values aren't clean abbreviations
+    — they're prop-ticker codes like ``AZN``/``KCB``/``SDM`` where the
+    first two characters encode the team and the third is a per-player
+    discriminator. The matcher must resolve those via the 2-char prefix."""
+    def fake_get(url, params=None, timeout=None):
+        request = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "results": [
+                    {
+                        "type": "player",
+                        "contents": [
+                            {
+                                "uid": "s:1~l:10~a:444444",
+                                "displayName": "Nolan Arenado",
+                                "subtitle": "St. Louis Cardinals",
+                                "defaultLeagueSlug": "mlb",
+                                "link": {"web": "https://www.espn.com/mlb/player/_/id/444444/nolan-arenado"},
+                            },
+                            {
+                                "uid": "s:1~l:10~a:555555",
+                                "displayName": "Nolan Arenado",
+                                "subtitle": "Arizona Diamondbacks",
+                                "defaultLeagueSlug": "mlb",
+                                "link": {"web": "https://www.espn.com/mlb/player/_/id/555555/nolan-arenado"},
+                            },
+                        ],
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    client = EspnPublicClient()
+
+    # The Kalshi prop ticker for Arenado on Arizona is "AZN" — first 2
+    # chars "AZ" map to Arizona Diamondbacks.
+    pick = client.search_player("Nolan Arenado", sport_key="MLB", team_hint="AZN")
+    assert pick["athlete_id"] == "555555"
+    assert pick["team_name"] == "Arizona Diamondbacks"
+
+
 def test_espn_client_search_player_falls_back_when_team_hint_misses(monkeypatch, caplog):
     """When no candidate matches the team_hint, return the first
     candidate (existing behavior) and log a warning so ops can see the
