@@ -596,6 +596,19 @@ def load_park_factors(venue_id: str | int | None) -> dict[str, float]:
     return _materialize_park_factors(_load_park_factors_file().get(str(venue_id)))
 
 
+# Codex PR #30 P2: ESPN emits two-letter codes for some MLB teams while
+# park_factors.json (FanGraphs schema) uses three-letter codes. Without
+# this alias map six real ESPN abbreviations silently fall back to neutral.
+_ESPN_TO_PARK_FACTORS_TEAM_ALIAS: dict[str, str] = {
+    "SF": "SFG",   # San Francisco Giants
+    "SD": "SDP",   # San Diego Padres
+    "TB": "TBR",   # Tampa Bay Rays
+    "KC": "KCR",   # Kansas City Royals
+    "WSH": "WSN",  # Washington Nationals
+    "ATH": "OAK",  # Oakland Athletics (ESPN's 2025+ rebrand)
+}
+
+
 def load_park_factors_for_team(team_abbreviation: str | None) -> dict[str, float]:
     """Return the park-factor multipliers for the home team's stadium.
 
@@ -604,14 +617,17 @@ def load_park_factors_for_team(team_abbreviation: str | None) -> dict[str, float
     ``park_factors.json`` (keyed by FanGraphs' numeric venue ids 1-33).
     The reliable join — present on every regular-season ESPN event — is
     the home team's three-letter abbreviation, so we look up park
-    factors by team instead.
+    factors by team instead. Some ESPN abbreviations differ from the
+    FanGraphs codes (SF/SFG, SD/SDP, etc.) — see
+    ``_ESPN_TO_PARK_FACTORS_TEAM_ALIAS``.
     """
     if not team_abbreviation:
         return _NEUTRAL_PARK_FACTORS
     normalized = str(team_abbreviation).strip().upper()
     if not normalized:
         return _NEUTRAL_PARK_FACTORS
-    entry = _PARK_FACTORS_BY_TEAM.get(normalized)
+    resolved = _ESPN_TO_PARK_FACTORS_TEAM_ALIAS.get(normalized, normalized)
+    entry = _PARK_FACTORS_BY_TEAM.get(resolved)
     return _materialize_park_factors(entry)
 
 
