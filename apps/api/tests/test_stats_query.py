@@ -444,7 +444,7 @@ UFC_HISTORY_PAYLOAD = {
 
 
 class FakeEspnClient:
-    def search_player(self, query: str, sport_key: str = "NBA"):
+    def search_player(self, query: str, sport_key: str = "NBA", *, team_hint: str | None = None):
         player_map = {
             "NBA": {"athlete_id": "3934672", "display_name": "Jalen Brunson", "team_name": "New York Knicks"},
             "NFL": {"athlete_id": "3139477", "display_name": "Patrick Mahomes", "team_name": "Kansas City Chiefs"},

@@ -229,8 +229,23 @@ class PropStatsResolver:
             return timedelta(minutes=settings.nba_prop_gamelog_cache_minutes)
         return timedelta(minutes=settings.mlb_prop_gamelog_cache_minutes)
 
-    def _load_player_search(self, sport_key: str, query: str) -> tuple[dict[str, Any], str]:
-        normalized_query = self._normalize_query(query)
+    def _load_player_search(
+        self,
+        sport_key: str,
+        query: str,
+        *,
+        team_hint: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        # Bug #13: include team_hint in the cache key when provided so that
+        # same-name players on different teams (e.g. two "John Smith"s)
+        # don't poison each other's cache row. Falls back to the bare-query
+        # key when a team-hinted lookup misses, so pre-bug-#13 cache rows
+        # (written before this fix) still satisfy lookups for unambiguous
+        # names like "Jalen Brunson".
+        bare_query = self._normalize_query(query)
+        normalized_query = bare_query
+        if team_hint:
+            normalized_query = f"{bare_query}|{str(team_hint).strip().upper()}"
         now = self._now()
         row = self.db.scalar(
             select(EspnPlayerSearchCache).where(
@@ -238,6 +253,13 @@ class PropStatsResolver:
                 EspnPlayerSearchCache.query_normalized == normalized_query,
             )
         )
+        if row is None and normalized_query != bare_query:
+            row = self.db.scalar(
+                select(EspnPlayerSearchCache).where(
+                    EspnPlayerSearchCache.sport_key == sport_key,
+                    EspnPlayerSearchCache.query_normalized == bare_query,
+                )
+            )
         expires_at = self._coerce_utc(row.expires_at) if row else None
         if row and expires_at and expires_at > now:
             self.stats.player_search_cache_hits += 1
@@ -251,7 +273,7 @@ class PropStatsResolver:
 
         self.stats.player_search_cache_misses += 1
         try:
-            payload = self.espn_client.search_player(query, sport_key=sport_key)
+            payload = self.espn_client.search_player(query, sport_key=sport_key, team_hint=team_hint)
         except Exception:
             if row:
                 self.stats.player_search_cache_hits += 1
@@ -321,7 +343,7 @@ class PropStatsResolver:
         if cached:
             return cached
 
-        player, player_cache_status = self._load_player_search(sport_key, subject_name)
+        player, player_cache_status = self._load_player_search(sport_key, subject_name, team_hint=team_hint)
         season = default_season_for_sport(sport_key)
         gamelog_payload, gamelog_cache_status = self._load_player_gamelog(sport_key, player["athlete_id"], season)
         game_logs = _build_game_logs(sport_key, gamelog_payload)

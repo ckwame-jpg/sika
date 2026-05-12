@@ -49,7 +49,22 @@ class EspnPublicClient:
             return self._http_client.get(url, **kwargs)
         return httpx.get(url, **kwargs)
 
-    def search_player(self, query: str, sport_key: str = "NBA") -> dict[str, Any]:
+    def search_player(
+        self,
+        query: str,
+        sport_key: str = "NBA",
+        *,
+        team_hint: str | None = None,
+    ) -> dict[str, Any]:
+        """Return the best player match for the query.
+
+        Bug #13: when ``team_hint`` is provided and ESPN returns multiple
+        candidates (same name, different teams), prefer the candidate
+        whose ``subtitle`` (team display name) contains the hint
+        case-insensitively. Falls back to the first candidate and logs a
+        warning when no team match is found, so silent wrong-athlete
+        attribution is observable.
+        """
         normalized_sport = sport_key.upper()
         if normalized_sport not in ESPN_SEARCH_SLUGS:
             raise ValueError(f"ESPN player search is not configured for {sport_key}")
@@ -57,6 +72,7 @@ class EspnPublicClient:
         response = self._get(ESPN_SEARCH_URL, params={"query": query}, timeout=20)
         response.raise_for_status()
         payload = response.json()
+        candidates: list[dict[str, Any]] = []
         for result in payload.get("results") or []:
             if result.get("type") != "player":
                 continue
@@ -64,9 +80,11 @@ class EspnPublicClient:
                 if not self._matches_sport(player, normalized_sport):
                     continue
                 athlete_id = self._athlete_id_from_player_result(player)
-                if athlete_id:
-                    web_link = ((player.get("link") or {}).get("web")) or ""
-                    return {
+                if not athlete_id:
+                    continue
+                web_link = ((player.get("link") or {}).get("web")) or ""
+                candidates.append(
+                    {
                         "athlete_id": athlete_id,
                         "sport_key": normalized_sport,
                         "display_name": player.get("displayName") or query,
@@ -76,8 +94,27 @@ class EspnPublicClient:
                         "page_slug": self._player_slug_from_web_link(web_link),
                         "raw": player,
                     }
+                )
 
-        raise LookupError(f"No {normalized_sport} player found for query: {query}")
+        if not candidates:
+            raise LookupError(f"No {normalized_sport} player found for query: {query}")
+
+        if team_hint:
+            normalized_hint = str(team_hint).strip().lower()
+            if normalized_hint:
+                for candidate in candidates:
+                    subtitle = str(candidate.get("team_name") or "").strip().lower()
+                    if normalized_hint in subtitle or subtitle in normalized_hint:
+                        return candidate
+                logger.warning(
+                    "ESPN %s player search for %r did not find a team_hint=%r match across %d candidates; falling back to first",
+                    normalized_sport,
+                    query,
+                    team_hint,
+                    len(candidates),
+                )
+
+        return candidates[0]
 
     def fetch_player_gamelog(self, sport_key: str, athlete_id: str, season: int) -> dict[str, Any]:
         if sport_key.upper() not in ESPN_GAMELOG_URLS:
