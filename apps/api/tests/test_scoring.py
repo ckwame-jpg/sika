@@ -445,6 +445,10 @@ def test_enforce_prop_monotonicity_drops_recommendation_when_adjusted_edge_below
     assert "monotonicity_edge_below_min" in suppression_reasons
     # The actionable recommendation is gone — bug #9's core fix.
     assert higher_scored.recommendation is None
+    # Codex PR #33 P2: signal.edge must mirror the post-clamp edge so a
+    # coverage capture (taken when recommendation is None) persists the
+    # right number, not the stale pre-clamp edge.
+    assert higher_scored.signal.edge == round(0.55 - 0.65, 4)
 
 
 def test_enforce_prop_monotonicity_preserves_recommendation_when_adjusted_edge_still_clears_floor():
