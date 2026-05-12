@@ -615,7 +615,6 @@ def advance_settlement_job(db: Session, *, job: RefreshJob) -> tuple[Run, bool]:
     if phase == "single_predictions":
         batch_summary, next_cursor = settle_predictions_batch(
             db,
-            latest_only_per_key=True,
             limit=PREDICTION_SETTLEMENT_BATCH_SIZE,
             cursor=cursor,
         )

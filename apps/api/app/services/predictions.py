@@ -5,7 +5,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.clients.kalshi import KalshiPublicClient, parse_price_dollars
@@ -434,58 +434,20 @@ def _prediction_batch_cursor_filter(captured_at_field, id_field, cursor: dict[st
     )
 
 
-def _latest_prediction_partition(
-    *,
-    sport_keys: set[str] | None = None,
-):
-    partition = (
-        select(
-            Prediction.id.label("prediction_id"),
-            Prediction.captured_at.label("captured_at"),
-            func.row_number()
-            .over(
-                partition_by=(
-                    Prediction.ticker,
-                    func.coalesce(Prediction.capture_scope, "recommendation"),
-                    Prediction.side,
-                ),
-                order_by=(Prediction.captured_at.desc(), Prediction.id.desc()),
-            )
-            .label("row_number"),
-        )
-        .where(Prediction.settlement_status.in_(("pending", "unresolved")))
-    )
-    if sport_keys:
-        partition = partition.where(Prediction.sport_key.in_(tuple(sorted(sport_keys))))
-    return partition.subquery()
-
-
 def _load_prediction_settlement_batch(
     db: Session,
     *,
     sport_keys: set[str] | None = None,
-    latest_only_per_key: bool = False,
     limit: int = 250,
     cursor: dict[str, Any] | None = None,
 ) -> list[Prediction]:
-    if latest_only_per_key:
-        latest_partition = _latest_prediction_partition(sport_keys=sport_keys)
-        stmt = (
-            select(Prediction)
-            .join(latest_partition, Prediction.id == latest_partition.c.prediction_id)
-            .options(joinedload(Prediction.market))
-            .where(latest_partition.c.row_number == 1)
-        )
-        cursor_filter = _prediction_batch_cursor_filter(
-            latest_partition.c.captured_at,
-            latest_partition.c.prediction_id,
-            cursor,
-        )
-        if cursor_filter is not None:
-            stmt = stmt.where(cursor_filter)
-        stmt = stmt.order_by(latest_partition.c.captured_at.desc(), latest_partition.c.prediction_id.desc())
-        return db.scalars(stmt.limit(limit)).all()
-
+    # Bug #12: previously a ``latest_only_per_key`` toggle filtered to
+    # the most recent unresolved prediction per ``(ticker, scope,
+    # side)`` partition, leaving older stacked predictions stuck in
+    # ``pending`` forever. ``_settle_prediction_rows`` already caches
+    # the Kalshi ``get_market`` payload per ticker, so settling all
+    # stacked rows costs extra DB iteration but no extra upstream
+    # calls — and gives correct hit-rate, calibration, and PnL.
     stmt = (
         select(Prediction)
         .options(joinedload(Prediction.market))
@@ -595,14 +557,12 @@ def settle_predictions_batch(
     client: KalshiPublicClient | None = None,
     open_market_tickers: set[str] | None = None,
     sport_keys: set[str] | None = None,
-    latest_only_per_key: bool = False,
     limit: int = 250,
     cursor: dict[str, Any] | None = None,
 ) -> tuple[dict[str, int], dict[str, Any] | None]:
     unsettled = _load_prediction_settlement_batch(
         db,
         sport_keys=sport_keys,
-        latest_only_per_key=latest_only_per_key,
         limit=limit,
         cursor=cursor,
     )
@@ -632,7 +592,6 @@ def settle_predictions(
     client: KalshiPublicClient | None = None,
     open_market_tickers: set[str] | None = None,
     sport_keys: set[str] | None = None,
-    latest_only_per_key: bool = False,
 ) -> dict[str, int]:
     combined = _empty_settlement_summary()
     cursor: dict[str, Any] | None = None
@@ -642,7 +601,6 @@ def settle_predictions(
             client=client,
             open_market_tickers=open_market_tickers,
             sport_keys=sport_keys,
-            latest_only_per_key=latest_only_per_key,
             limit=250,
             cursor=cursor,
         )

@@ -639,7 +639,7 @@ def test_current_slate_refresh_skips_prediction_settlement_sweep(db_session):
     assert run.details["prediction_settlement_updated"] == 0
 
 
-def test_prop_refresh_cycle_runs_maintenance_settlement_on_latest_prediction_only(db_session):
+def test_prop_refresh_cycle_runs_maintenance_settlement_on_all_stacked_predictions(db_session):
     older = _create_prediction(
         db_session,
         ticker="KXNBA-MAINT-SETTLE-1",
@@ -706,8 +706,10 @@ def test_prop_refresh_cycle_runs_maintenance_settlement_on_latest_prediction_onl
     db_session.refresh(older)
     db_session.refresh(latest)
     assert run.status == "completed"
-    assert run.details["prediction_settlement_updated"] == 1
-    assert older.prediction_outcome == "pending"
+    # Bug #12: maintenance settlement must settle every unresolved row
+    # on the ticker, not just the latest per (ticker, scope, side).
+    assert run.details["prediction_settlement_updated"] == 2
+    assert older.prediction_outcome == "won"
     assert latest.prediction_outcome == "won"
 
 
@@ -1092,7 +1094,13 @@ def test_settle_predictions_updates_pending_rows_idempotently(db_session):
     assert second_pass["updated"] == 0
 
 
-def test_settle_predictions_can_limit_processing_to_latest_duplicate_per_scope_and_side(db_session):
+def test_settle_predictions_settles_every_stacked_prediction_per_ticker(db_session):
+    """Bug #12: settlement used to filter to the latest unresolved
+    prediction per ``(ticker, scope, side)`` partition, so older
+    stacked rows on the same ticker stayed ``pending`` forever and
+    distorted hit-rate / calibration / PnL. Fix: settle every
+    unresolved prediction; the Kalshi market payload is cached per
+    ticker so the cost is extra DB iteration only."""
     older = _create_prediction(
         db_session,
         ticker="KXNBA-DUPE-SETTLE-1",
@@ -1145,15 +1153,14 @@ def test_settle_predictions_can_limit_processing_to_latest_duplicate_per_scope_a
                 }
             }
         ),
-        latest_only_per_key=True,
     )
     db_session.commit()
 
     db_session.refresh(older)
     db_session.refresh(newer)
-    assert summary["processed"] == 1
-    assert summary["updated"] == 1
-    assert older.prediction_outcome == "pending"
+    assert summary["processed"] == 2
+    assert summary["updated"] == 2
+    assert older.prediction_outcome == "won"
     assert newer.prediction_outcome == "won"
 
 
