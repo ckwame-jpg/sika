@@ -126,7 +126,7 @@ function PlayerPropStrip({ selection, controls, n, location }: PlayerPropStripPr
 
   const recentValues = data.game_logs
     .slice(0, n)
-    .map((log) => log.metrics?.[statKey!])
+    .map((log) => resolveStatValue(log.metrics, statKey!))
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
 
   if (recentValues.length === 0) return null;
@@ -479,6 +479,39 @@ function StripSkeleton({ n, controls }: { n: HistoryN; controls: StripControlsPr
 
 // -----------------------------------------------------------------------------
 // Helpers
+
+/**
+ * Read a player-prop stat value from a game log's metrics dict.
+ *
+ * Kalshi MLB / NBA markets sometimes use composite stat keys (e.g.
+ * ``hits_runs_rbis``, ``points_rebounds_assists``) that the API's
+ * game-log builder doesn't emit directly — the canonical scoring layer at
+ * apps/api/app/services/scoring.py:1349-1373 instead derives them on
+ * demand by summing the atomic components. We mirror that rule on the
+ * client so the strip can chart any composite without a backend round
+ * trip: try the direct lookup first, then if the stat key contains "_"
+ * try splitting it into atomic components and summing.
+ *
+ * Returns null if no resolution is possible (e.g. a key like
+ * ``home_runs_rbis`` whose first split component "home" isn't atomic).
+ */
+export function resolveStatValue(
+  metrics: Record<string, number | null | undefined> | null | undefined,
+  statKey: string,
+): number | null {
+  if (!metrics) return null;
+  const direct = metrics[statKey];
+  if (typeof direct === "number" && Number.isFinite(direct)) return direct;
+  if (!statKey.includes("_")) return null;
+  const parts = statKey.split("_");
+  let total = 0;
+  for (const part of parts) {
+    const value = metrics[part];
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    total += value;
+  }
+  return total;
+}
 
 /**
  * Sign-correct cover/over outcome.

@@ -3,7 +3,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom/vitest";
 import { renderWithProviders } from "@/test/render";
-import { coverOutcome, PickHistoryStrip } from "./pick-history-strip";
+import { coverOutcome, PickHistoryStrip, resolveStatValue } from "./pick-history-strip";
 import type { TradeSelection } from "./trade-ticket";
 import type {
   ModelReadinessSummaryRead,
@@ -333,6 +333,37 @@ describe("PickHistoryStrip — N toggle + filters", () => {
 
     await waitFor(() => expect(mockFetchTeamHistory).toHaveBeenCalledTimes(2));
     expect(mockFetchTeamHistory.mock.calls[1][3]).toEqual({ location: "home", opponent: null });
+  });
+});
+
+describe("resolveStatValue — composite stat handling", () => {
+  it("returns the direct value when the stat key exists in the metrics dict", () => {
+    expect(resolveStatValue({ hits: 2, runs: 1, rbis: 3 }, "hits")).toBe(2);
+    // total_bases contains underscore but is an atomic key — direct hit wins.
+    expect(resolveStatValue({ total_bases: 4, hits: 2, runs: 1 }, "total_bases")).toBe(4);
+  });
+
+  it("sums atomic components when the composite key isn't emitted directly", () => {
+    expect(resolveStatValue({ hits: 2, runs: 1, rbis: 3 }, "hits_runs_rbis")).toBe(6);
+    expect(
+      resolveStatValue({ points: 28, rebounds: 4, assists: 7 }, "points_rebounds_assists"),
+    ).toBe(39);
+  });
+
+  it("returns null when any component of a composite is missing", () => {
+    expect(resolveStatValue({ hits: 2, runs: 1 }, "hits_runs_rbis")).toBeNull();
+    expect(resolveStatValue({ hits: 2 }, "home_runs_rbis")).toBeNull();
+  });
+
+  it("returns null on a missing atomic key and survives null metrics", () => {
+    expect(resolveStatValue({ hits: 2 }, "unknown")).toBeNull();
+    expect(resolveStatValue(null, "hits")).toBeNull();
+    expect(resolveStatValue(undefined, "hits")).toBeNull();
+  });
+
+  it("ignores keys whose value is null or non-finite", () => {
+    expect(resolveStatValue({ hits: null, runs: 1, rbis: 3 }, "hits_runs_rbis")).toBeNull();
+    expect(resolveStatValue({ hits: NaN, runs: 1, rbis: 3 }, "hits_runs_rbis")).toBeNull();
   });
 });
 
