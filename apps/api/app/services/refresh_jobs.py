@@ -8,7 +8,7 @@ from time import perf_counter
 from typing import Any
 
 import httpx
-from sqlalchemy import case, desc, select, update
+from sqlalchemy import case, desc, select, text, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -50,6 +50,13 @@ SHADOW_CAPTURE_WORKER_TIMEOUT_SECONDS = 180.0
 ADVANCED_STATS_AUDIT_WORKER_TIMEOUT_SECONDS = 120.0
 PREDICTION_SETTLEMENT_BATCH_SIZE = 100
 PARLAY_SETTLEMENT_BATCH_SIZE = 50
+# Bug #11: serialize concurrent ``_claim_next_job`` callers on Postgres so two
+# workers can't both pass the "is anything running?" check and claim distinct
+# queued rows in parallel (which would violate the singleton invariant — only
+# one refresh job runs at a time). Derived from
+# ``int.from_bytes(sha256(b"sika:refresh_job_claim").digest()[:8], "big",
+# signed=True)``; stable across processes and DB restarts.
+REFRESH_JOB_CLAIM_LOCK_KEY = -5064315184726640939
 logger = logging.getLogger(__name__)
 SETTLEMENT_SUMMARY_KEYS = ("processed", "updated", "won", "lost", "push", "cancelled", "pending", "unresolved", "errors")
 
@@ -439,6 +446,16 @@ def _job_priority_order():
 
 
 def _claim_next_job(db: Session) -> RefreshJob | None:
+    # Bug #11: take a transaction-scoped advisory lock on Postgres so two
+    # workers can't both pass the "is anything running?" check and claim
+    # distinct queued rows in parallel. ``with_for_update(skip_locked=True)``
+    # below only prevents double-claim of the *same* row — it doesn't
+    # enforce the singleton invariant across different queued rows. The
+    # lock is released automatically when the transaction commits or
+    # rolls back. No-op on SQLite (single-writer DB lock already serializes).
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": REFRESH_JOB_CLAIM_LOCK_KEY})
+
     running = db.scalar(
         select(RefreshJob)
         .where(RefreshJob.status == "running")

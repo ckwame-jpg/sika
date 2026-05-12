@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import unittest.mock
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 from types import SimpleNamespace
@@ -428,6 +429,98 @@ def test_reconcile_marks_queued_age_with_wedged_reason(db_session, monkeypatch):
     persisted = db_session.get(RefreshJob, job.id)
     assert persisted.status == "failed"
     assert persisted.error_message == refresh_jobs.QUEUE_PROCESSOR_WEDGED
+
+
+def test_claim_next_job_takes_advisory_lock_on_postgres():
+    """Bug #11: on Postgres, ``_claim_next_job`` must call
+    ``pg_advisory_xact_lock`` BEFORE the running-state check so two
+    concurrent processors can't both pass the check and claim distinct
+    queued rows in parallel. ``with_for_update(skip_locked=True)`` below
+    only protects against double-claim of the *same* row.
+
+    Unit-level: mocks the dialect so the test runs under SQLite. The
+    real concurrent-claim scenario on Postgres is covered by
+    ``test_singleton_claim_under_concurrent_processors``.
+    """
+    mock_db = unittest.mock.MagicMock()
+    mock_db.bind.dialect.name = "postgresql"
+    mock_db.scalar.return_value = None  # exit at running-check
+
+    refresh_jobs._claim_next_job(mock_db)
+
+    executed_sql = [str(call.args[0]) for call in mock_db.execute.call_args_list]
+    assert any("pg_advisory_xact_lock" in sql for sql in executed_sql), (
+        f"expected pg_advisory_xact_lock in executed SQL, got: {executed_sql}"
+    )
+
+
+def test_claim_next_job_skips_advisory_lock_on_sqlite():
+    """SQLite serializes writes at the database level, and
+    ``pg_advisory_xact_lock`` doesn't exist there. The dialect guard in
+    ``_claim_next_job`` must skip the lock for non-Postgres backends.
+    """
+    mock_db = unittest.mock.MagicMock()
+    mock_db.bind.dialect.name = "sqlite"
+    mock_db.scalar.return_value = None
+
+    refresh_jobs._claim_next_job(mock_db)
+
+    executed_sql = [str(call.args[0]) for call in mock_db.execute.call_args_list]
+    assert not any("pg_advisory" in sql for sql in executed_sql)
+
+
+def test_singleton_claim_under_concurrent_processors(db_session, monkeypatch):
+    """Bug #11: two concurrent processors that both see ``running == 0``
+    used to claim distinct queued rows in parallel, violating the
+    singleton invariant (one running job at a time).
+    ``with_for_update(skip_locked=True)`` only prevents double-claim of
+    the same row; the advisory lock in ``_claim_next_job`` is what
+    serializes the running-check + claim across rows.
+
+    Postgres-only: SQLite serializes writes at the DB level so the race
+    can't be reliably reproduced there.
+    """
+    pytest.importorskip("psycopg")
+    bind = db_session.get_bind()
+    if bind.dialect.name != "postgresql":
+        pytest.skip("advisory lock is postgres-only")
+
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    job_a = _queued_prop_job(db_session, reason="a")
+    job_b = _queued_prop_job(db_session, reason="b")
+    release = threading.Event()
+
+    def _advance(db, job):
+        release.wait(timeout=5)
+        return _completed_run(db), True
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    results: dict[str, refresh_jobs.RefreshJobSnapshot | None] = {}
+
+    def _runner(key: str) -> None:
+        results[key] = refresh_jobs.process_refresh_job_queue_once()
+
+    t1 = threading.Thread(target=_runner, args=("a",))
+    t2 = threading.Thread(target=_runner, args=("b",))
+    t1.start()
+    t2.start()
+    release.set()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    successful = [snapshot for snapshot in results.values() if snapshot is not None]
+    assert len(successful) == 1, (
+        f"singleton invariant violated: {len(successful)} processors claimed concurrently"
+    )
+    db_session.expire_all()
+    persisted_a = db_session.get(RefreshJob, job_a.id)
+    persisted_b = db_session.get(RefreshJob, job_b.id)
+    statuses = sorted([persisted_a.status, persisted_b.status])
+    assert statuses == ["completed", "queued"], (
+        f"expected one completed + one queued, got {statuses}"
+    )
 
 
 def test_claim_skips_locked_under_concurrent_processors(db_session, monkeypatch):
