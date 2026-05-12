@@ -489,9 +489,17 @@ def test_singleton_claim_under_concurrent_processors(db_session, monkeypatch):
     _fast_timeout_settings(monkeypatch)
     job_a = _queued_prop_job(db_session, reason="a")
     job_b = _queued_prop_job(db_session, reason="b")
+    worker_entered = threading.Event()
     release = threading.Event()
 
     def _advance(db, job):
+        # Block here so the first claimer's job stays ``running`` until
+        # we've verified the second processor bows out. Without this,
+        # the first claimer could complete, status="completed", and the
+        # second processor would legitimately claim the other queued
+        # row — a valid sequential interleaving that doesn't violate
+        # the singleton invariant we're testing (codex P2 on PR #38).
+        worker_entered.set()
         release.wait(timeout=5)
         return _completed_run(db), True
 
@@ -502,13 +510,26 @@ def test_singleton_claim_under_concurrent_processors(db_session, monkeypatch):
     def _runner(key: str) -> None:
         results[key] = refresh_jobs.process_refresh_job_queue_once()
 
-    t1 = threading.Thread(target=_runner, args=("a",))
-    t2 = threading.Thread(target=_runner, args=("b",))
+    t1 = threading.Thread(target=_runner, args=("first",))
     t1.start()
+    # Wait until the first claimer's worker has entered ``_advance``.
+    # By this point its main thread has committed ``status="running"``
+    # and released the advisory lock, so the second processor can
+    # proceed past the lock — and the singleton check is what must
+    # prevent it from claiming.
+    assert worker_entered.wait(timeout=3), "first worker must enter _advance"
+
+    t2 = threading.Thread(target=_runner, args=("second",))
     t2.start()
+    t2.join(timeout=5)
+
+    assert "second" in results, "second processor must complete"
+    assert results["second"] is None, (
+        "second processor must observe the first's claim and bow out"
+    )
+
     release.set()
-    t1.join(timeout=10)
-    t2.join(timeout=10)
+    t1.join(timeout=5)
 
     successful = [snapshot for snapshot in results.values() if snapshot is not None]
     assert len(successful) == 1, (
