@@ -53,7 +53,10 @@ def _write_manifest(tmp_path, *, artifact_path: str, feature_set_version: str = 
                         "feature_set_version": feature_set_version,
                         "artifact_path": artifact_path,
                         "mode": "ml",
-                        "metadata": {"behavior": "sklearn_predict_proba"},
+                        "metadata": {
+                            "behavior": "sklearn_predict_proba",
+                            "target_type": "yes_won",
+                        },
                     }
                 ],
             }
