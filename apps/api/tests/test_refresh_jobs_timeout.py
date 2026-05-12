@@ -246,6 +246,71 @@ def test_late_worker_requeue_does_not_resurrect(db_session, monkeypatch):
     assert persisted.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
 
 
+def test_non_current_slate_refresh_links_job_run_id_before_stage_commit(db_session, monkeypatch):
+    """Bug #10 P2 follow-up: non-current_slate refresh used to commit
+    stage work via ``run_refresh_cycle`` BEFORE ``_execute_claimed_job``
+    set ``job.run_id``. A worker timeout in that window fails the job
+    from a snapshot with ``run_id=None``, so the already-committed
+    ``runs`` row stays in ``running`` forever.
+
+    Fix: ``_execute_claimed_job`` passes ``job`` into
+    ``run_refresh_cycle``, which links ``job.run_id = run.id`` right
+    after creating the Run — so any subsequent stage commit also
+    persists the FK and the timeout path can find and fail the Run.
+    """
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+
+    job = RefreshJob(kind="refresh", scope="maintenance", reason="interval", status="queued")
+    db_session.add(job)
+    db_session.commit()
+    job_id = job.id
+
+    received_job = {"value": None}
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _run_refresh_cycle(db, *, sports=None, current_slate_only=False, job=None):
+        received_job["value"] = job
+        run = Run(kind="refresh", status="running")
+        db.add(run)
+        db.flush()
+        # The real ``run_refresh_cycle`` links ``job.run_id = run.id``
+        # immediately after the flush (see ingestion.py). Mirror that
+        # so the stage commit below persists the FK.
+        if job is not None:
+            job.run_id = run.id
+            db.flush()
+        # Simulate a successful stage commit — Run + job.run_id are now
+        # durable in the DB before we block until the parent times out.
+        db.commit()
+        entered.set()
+        release.wait(timeout=5)
+        return run
+
+    monkeypatch.setattr(refresh_jobs, "run_refresh_cycle", _run_refresh_cycle)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+
+    assert entered.wait(timeout=1)
+    assert received_job["value"] is not None, (
+        "non-current_slate refresh must pass ``job`` to run_refresh_cycle "
+        "so the Run-to-job FK is set before any stage commit"
+    )
+    assert received_job["value"].id == job_id
+    assert result is not None
+    assert result.status == "failed"
+    release.set()
+    db_session.expire_all()
+    persisted_job = db_session.get(RefreshJob, job_id)
+    assert persisted_job.status == "failed"
+    assert persisted_job.run_id is not None, (
+        "job.run_id must have been persisted by the early link + stage commit"
+    )
+    persisted_run = _wait_for_run_status(db_session, persisted_job.run_id, "failed")
+    assert persisted_run.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
+
+
 def test_sessions_are_not_shared_across_threads(db_session, monkeypatch):
     seen_sessions: list[tuple[int, int]] = []
     _install_threaded_session_factory(db_session, monkeypatch, seen_sessions=seen_sessions)

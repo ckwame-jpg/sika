@@ -1755,11 +1755,19 @@ def run_refresh_cycle(
     public_client: KalshiPublicClient | None = None,
     sports: Iterable[str] | None = None,
     current_slate_only: bool = False,
+    job: RefreshJob | None = None,
 ) -> Run:
     initial_sports = list(sports or (["NBA", "MLB"] if current_slate_only else get_settings().enabled_sports))
     run = Run(kind="refresh", status="running", details={"sports": initial_sports})
     db.add(run)
     db.flush()
+    if job is not None:
+        # Bug #10 P2: link job.run_id BEFORE any stage commit so the
+        # worker-timeout snapshot can find and fail the Run instead of
+        # leaving it orphaned in "running" when the parent times out
+        # mid-cycle.
+        job.run_id = run.id
+        db.flush()
     try:
         with httpx.Client(follow_redirects=True, timeout=20) as shared_http_client:
             kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)
