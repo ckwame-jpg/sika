@@ -234,6 +234,125 @@ def test_load_park_factors_returns_curated_for_known_venue():
     assert factors["_data_complete"] == 1.0
 
 
+def test_load_park_factors_for_team_returns_curated_for_known_abbreviation():
+    """Bug #4: ESPN's venue.id (e.g., 230 for CoolToday Park) doesn't match
+    park_factors.json's numeric keys (1-33, a FanGraphs schema). The
+    reliable join key is the home team's three-letter abbreviation, which
+    ESPN provides on every event. This helper makes that lookup explicit."""
+    factors = mlb_advanced.load_park_factors_for_team("COL")  # Colorado Rockies → Coors Field
+    assert factors["hr"] > 1.10
+    assert factors["_data_complete"] == 1.0
+
+
+def test_load_park_factors_for_team_returns_neutral_for_unknown_team():
+    factors = mlb_advanced.load_park_factors_for_team("ZZZ")
+    assert factors["hr"] == 1.0
+    assert factors["_data_complete"] == 0.0
+
+
+def test_load_park_factors_for_team_is_case_insensitive():
+    """ESPN abbreviations are uppercase but be defensive about casing."""
+    upper = mlb_advanced.load_park_factors_for_team("COL")
+    lower = mlb_advanced.load_park_factors_for_team("col")
+    assert upper == lower
+    assert upper["_data_complete"] == 1.0
+
+
+def test_load_park_factors_for_event_prefers_venue_name_over_team():
+    """Codex PR #30 round-2 P2: TBR has two entries in park_factors.json
+    (Tropicana Field, HR=0.92 — and Steinbrenner Field, HR=1.04, used
+    after the 2024 hurricane damage). The reverse-by-team index collapses
+    to whichever appears last, so team-only lookup would assign the wrong
+    venue to a Rays game at Tropicana. venue.fullName disambiguates."""
+    tropicana_event = {
+        "raw": {
+            "competitions": [
+                {"venue": {"fullName": "Tropicana Field", "id": "1"},
+                 "competitors": [{"homeAway": "home", "team": {"abbreviation": "TBR"}}]}
+            ]
+        }
+    }
+    factors = mlb_advanced.load_park_factors_for_event(tropicana_event, "TBR")
+    assert factors["_venue_name"] == "Tropicana Field"
+    assert factors["hr"] < 1.0  # Tropicana is pitcher-friendly
+
+    steinbrenner_event = {
+        "raw": {
+            "competitions": [
+                {"venue": {"fullName": "Steinbrenner Field", "id": "3289"},
+                 "competitors": [{"homeAway": "home", "team": {"abbreviation": "TBR"}}]}
+            ]
+        }
+    }
+    factors2 = mlb_advanced.load_park_factors_for_event(steinbrenner_event, "TBR")
+    assert factors2["_venue_name"] == "Steinbrenner Field"
+    assert factors2["hr"] > factors["hr"]  # Steinbrenner is hitter-friendlier
+
+
+def test_load_park_factors_for_event_falls_back_to_team_when_venue_name_unknown():
+    """ESPN can emit a venue name that's not in park_factors.json
+    (e.g. spring training facilities like CoolToday Park). When the
+    name doesn't match anything, the home team abbreviation is the
+    next-best lookup key."""
+    cooltoday_event = {
+        "raw": {
+            "competitions": [
+                {"venue": {"fullName": "CoolToday Park"},
+                 "competitors": [{"homeAway": "home", "team": {"abbreviation": "ATL"}}]}
+            ]
+        }
+    }
+    factors = mlb_advanced.load_park_factors_for_event(cooltoday_event, "ATL")
+    # Falls back to Truist Park via ATL team lookup
+    assert factors["_data_complete"] == 1.0
+    assert factors["_venue_name"] == "Truist Park"
+
+
+def test_load_park_factors_for_event_falls_back_to_legacy_venue_id():
+    """Pre-ESPN-refactor rows may lack the competitions structure but
+    still set raw_data['venue_id'] at the top level. The fallback
+    preserves that path for backwards compatibility."""
+    legacy_event = {"venue_id": "12"}  # Coors Field — bypass ESPN structure entirely
+    factors = mlb_advanced.load_park_factors_for_event(legacy_event, None)
+    assert factors["_data_complete"] == 1.0
+    assert factors["hr"] > 1.10
+
+
+def test_load_park_factors_for_event_returns_neutral_when_no_signal_available():
+    """No ESPN venue, no team, no legacy venue_id → neutral."""
+    factors = mlb_advanced.load_park_factors_for_event({}, None)
+    assert factors["_data_complete"] == 0.0
+    assert factors["hr"] == 1.0
+
+
+def test_load_park_factors_for_team_aliases_espn_abbreviations_to_park_factors_keys():
+    """Codex PR #30 P2: ESPN uses two-letter codes for some teams while
+    park_factors.json uses three-letter (FanGraphs) codes. Without an
+    alias, six real ESPN abbreviations silently fall back to neutral
+    factors — losing park signal on six home venues.
+
+    Confirmed via the user's DB: ESPN emits SF/SD/TB/KC/WSH/ATH; the
+    matching park_factors keys are SFG/SDP/TBR/KCR/WSN/OAK.
+    """
+    espn_to_pf = {
+        "SF": "SFG",   # San Francisco Giants
+        "SD": "SDP",   # San Diego Padres
+        "TB": "TBR",   # Tampa Bay Rays
+        "KC": "KCR",   # Kansas City Royals
+        "WSH": "WSN",  # Washington Nationals
+        "ATH": "OAK",  # Oakland Athletics (ESPN rebrand)
+    }
+    for espn, pf in espn_to_pf.items():
+        from_espn = mlb_advanced.load_park_factors_for_team(espn)
+        from_pf = mlb_advanced.load_park_factors_for_team(pf)
+        assert from_espn["_data_complete"] == 1.0, (
+            f"ESPN abbreviation {espn!r} should resolve to {pf!r} but returned neutral"
+        )
+        assert from_espn == from_pf, (
+            f"ESPN {espn!r} and park-factors {pf!r} should yield identical factors"
+        )
+
+
 def test_emit_mlb_batter_features_combines_sabermetrics_and_statcast():
     saber = {"season_avg": {"woba": 0.385, "iso": 0.230, "ops": 0.910, "obp": 0.380,
                              "slg": 0.530, "avg": 0.295, "wrc_plus": 145.0,

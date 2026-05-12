@@ -573,30 +573,139 @@ def _load_park_factors_file() -> dict[str, dict[str, Any]]:
     return _PARK_FACTORS_CACHE
 
 
+def _materialize_park_factors(entry: dict[str, Any] | None) -> dict[str, float]:
+    if not entry:
+        return _NEUTRAL_PARK_FACTORS
+    return {
+        "hr": _safe_float(entry.get("hr")) or 1.0,
+        "r": _safe_float(entry.get("r")) or 1.0,
+        "1b": _safe_float(entry.get("1b")) or 1.0,
+        "2b": _safe_float(entry.get("2b")) or 1.0,
+        "3b": _safe_float(entry.get("3b")) or 1.0,
+        "bb": _safe_float(entry.get("bb")) or 1.0,
+        "so": _safe_float(entry.get("so")) or 1.0,
+        "_data_complete": 1.0,
+        "_venue_name": entry.get("name") or "",
+    }
+
+
 def load_park_factors(venue_id: str | int | None) -> dict[str, float]:
     """Return the park-factor multipliers for an MLB venue, or league-neutral defaults."""
     if venue_id is None:
         return _NEUTRAL_PARK_FACTORS
-    factors = _load_park_factors_file().get(str(venue_id))
-    if not factors:
+    return _materialize_park_factors(_load_park_factors_file().get(str(venue_id)))
+
+
+# Codex PR #30 P2: ESPN emits two-letter codes for some MLB teams while
+# park_factors.json (FanGraphs schema) uses three-letter codes. Without
+# this alias map six real ESPN abbreviations silently fall back to neutral.
+_ESPN_TO_PARK_FACTORS_TEAM_ALIAS: dict[str, str] = {
+    "SF": "SFG",   # San Francisco Giants
+    "SD": "SDP",   # San Diego Padres
+    "TB": "TBR",   # Tampa Bay Rays
+    "KC": "KCR",   # Kansas City Royals
+    "WSH": "WSN",  # Washington Nationals
+    "ATH": "OAK",  # Oakland Athletics (ESPN's 2025+ rebrand)
+}
+
+
+def load_park_factors_for_team(team_abbreviation: str | None) -> dict[str, float]:
+    """Return the park-factor multipliers for the home team's stadium.
+
+    Bug #4: ESPN's ``venue.id`` is keyed by ESPN's own venue catalog
+    (e.g. ``230`` for CoolToday Park) and does not align with
+    ``park_factors.json`` (keyed by FanGraphs' numeric venue ids 1-33).
+    The reliable join — present on every regular-season ESPN event — is
+    the home team's three-letter abbreviation, so we look up park
+    factors by team instead. Some ESPN abbreviations differ from the
+    FanGraphs codes (SF/SFG, SD/SDP, etc.) — see
+    ``_ESPN_TO_PARK_FACTORS_TEAM_ALIAS``.
+    """
+    if not team_abbreviation:
         return _NEUTRAL_PARK_FACTORS
-    return {
-        "hr": _safe_float(factors.get("hr")) or 1.0,
-        "r": _safe_float(factors.get("r")) or 1.0,
-        "1b": _safe_float(factors.get("1b")) or 1.0,
-        "2b": _safe_float(factors.get("2b")) or 1.0,
-        "3b": _safe_float(factors.get("3b")) or 1.0,
-        "bb": _safe_float(factors.get("bb")) or 1.0,
-        "so": _safe_float(factors.get("so")) or 1.0,
-        "_data_complete": 1.0,
-        "_venue_name": factors.get("name") or "",
-    }
+    normalized = str(team_abbreviation).strip().upper()
+    if not normalized:
+        return _NEUTRAL_PARK_FACTORS
+    resolved = _ESPN_TO_PARK_FACTORS_TEAM_ALIAS.get(normalized, normalized)
+    entry = _PARK_FACTORS_BY_TEAM.get(resolved)
+    return _materialize_park_factors(entry)
 
 
 _NEUTRAL_PARK_FACTORS: dict[str, float] = {
     "hr": 1.0, "r": 1.0, "1b": 1.0, "2b": 1.0, "3b": 1.0, "bb": 1.0, "so": 1.0,
     "_data_complete": 0.0,
 }
+
+
+def _build_park_factors_by_team() -> dict[str, dict[str, Any]]:
+    """Reverse-index ``park_factors.json`` by team abbreviation. Cached at
+    import time — the source file is bundled and immutable at runtime.
+
+    NOTE: when a team has more than one entry (e.g. TBR's Tropicana Field
+    *and* Steinbrenner Field for the 2025 hurricane-displacement season),
+    later entries win. Callers should prefer the venue-name index when
+    ESPN provides a venue name to disambiguate.
+    """
+    by_team: dict[str, dict[str, Any]] = {}
+    for key, entry in _load_park_factors_file().items():
+        if key == "_metadata" or not isinstance(entry, dict):
+            continue
+        team = str(entry.get("team") or "").strip().upper()
+        if team:
+            by_team[team] = entry
+    return by_team
+
+
+def _build_park_factors_by_venue_name() -> dict[str, dict[str, Any]]:
+    """Reverse-index by venue display name (lowercased). Lets us pick the
+    right entry for teams with multiple park entries — ESPN's
+    ``venue.fullName`` is the discriminator."""
+    by_name: dict[str, dict[str, Any]] = {}
+    for key, entry in _load_park_factors_file().items():
+        if key == "_metadata" or not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip().lower()
+        if name:
+            by_name[name] = entry
+    return by_name
+
+
+_PARK_FACTORS_BY_TEAM: dict[str, dict[str, Any]] = _build_park_factors_by_team()
+_PARK_FACTORS_BY_NAME: dict[str, dict[str, Any]] = _build_park_factors_by_venue_name()
+
+
+def load_park_factors_for_event(
+    event_raw_data: dict[str, Any] | None,
+    home_team_abbreviation: str | None,
+) -> dict[str, float]:
+    """Resolve MLB park factors for a scored event.
+
+    Precedence:
+    1. ``venue.fullName`` from ESPN's competition payload — disambiguates
+       teams that have more than one park entry (TBR Tropicana vs.
+       Steinbrenner).
+    2. Home team abbreviation — covers normal ESPN rows where the venue
+       name doesn't appear in the bundled park factors file.
+    3. Legacy top-level ``venue_id`` — pre-dates the ESPN refactor; some
+       non-ESPN rows still set this.
+    4. Neutral defaults when nothing matches.
+    """
+    raw = event_raw_data or {}
+    competition = ((raw.get("raw") or {}).get("competitions") or [{}])[0]
+    venue_name = str(((competition.get("venue") or {}).get("fullName") or "")).strip().lower()
+    if venue_name:
+        entry = _PARK_FACTORS_BY_NAME.get(venue_name)
+        if entry:
+            return _materialize_park_factors(entry)
+
+    by_team = load_park_factors_for_team(home_team_abbreviation)
+    if by_team.get("_data_complete"):
+        return by_team
+
+    legacy_venue_id = raw.get("venue_id")
+    if legacy_venue_id is not None:
+        return load_park_factors(legacy_venue_id)
+    return _NEUTRAL_PARK_FACTORS
 
 
 # -----------------------------------------------------------------------------
