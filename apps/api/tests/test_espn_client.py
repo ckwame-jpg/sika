@@ -257,11 +257,18 @@ def test_espn_client_search_player_picks_team_hint_when_multiple_candidates(monk
     assert boston_pick["athlete_id"] == "222222"
     assert boston_pick["team_name"] == "Boston Celtics"
 
-    # The hint also accepts short forms / abbreviations — "BOS" should
-    # match a "Boston Celtics" subtitle if the abbreviation is present.
-    # (We use a substring-case-insensitive match so "Celtics" works too.)
+    # The hint also accepts short forms — "Celtics" matches "Boston Celtics"
+    # by substring.
     short_pick = client.search_player("John Smith", team_hint="Celtics")
     assert short_pick["athlete_id"] == "222222"
+
+    # Codex PR #35 P2: the 3-letter ticker abbreviation (which prop
+    # metadata actually sends) must resolve through the abbreviation
+    # table — "BOS" → "Boston Celtics" — without that, every real
+    # production hint silently fell through to the first candidate.
+    abbr_pick = client.search_player("John Smith", team_hint="BOS")
+    assert abbr_pick["athlete_id"] == "222222"
+    assert abbr_pick["team_name"] == "Boston Celtics"
 
 
 def test_espn_client_search_player_falls_back_when_team_hint_misses(monkeypatch, caplog):

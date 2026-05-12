@@ -27,6 +27,61 @@ ESPN_GAMELOG_URLS = {
     "MLB": "https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{athlete_id}/gamelog",
 }
 
+
+# Bug #13: prop metadata sends ``team_hint`` as a three-letter ticker
+# abbreviation (e.g. ``NYK``, ``BOS``) while ESPN's player search payload
+# only emits the team display name in ``subtitle`` (e.g. ``New York Knicks``,
+# ``Boston Celtics``). A naïve substring match fails on every abbreviation
+# hint we send in production. These mappings let us resolve the hint to its
+# full team name before matching. Spring training / international team
+# variants without entries here fall through to a substring check on the
+# raw hint, which still catches "Celtics" / "Knicks" forms.
+ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME: dict[str, dict[str, str]] = {
+    "NBA": {
+        "ATL": "Atlanta Hawks", "BOS": "Boston Celtics", "BKN": "Brooklyn Nets",
+        "CHA": "Charlotte Hornets", "CHI": "Chicago Bulls", "CLE": "Cleveland Cavaliers",
+        "DAL": "Dallas Mavericks", "DEN": "Denver Nuggets", "DET": "Detroit Pistons",
+        "GSW": "Golden State Warriors", "HOU": "Houston Rockets", "IND": "Indiana Pacers",
+        "LAC": "LA Clippers", "LAL": "Los Angeles Lakers", "MEM": "Memphis Grizzlies",
+        "MIA": "Miami Heat", "MIL": "Milwaukee Bucks", "MIN": "Minnesota Timberwolves",
+        "NOP": "New Orleans Pelicans", "NYK": "New York Knicks", "OKC": "Oklahoma City Thunder",
+        "ORL": "Orlando Magic", "PHI": "Philadelphia 76ers", "PHX": "Phoenix Suns",
+        "POR": "Portland Trail Blazers", "SAC": "Sacramento Kings", "SAS": "San Antonio Spurs",
+        "TOR": "Toronto Raptors", "UTA": "Utah Jazz", "WAS": "Washington Wizards",
+    },
+    "MLB": {
+        "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves", "BAL": "Baltimore Orioles",
+        "BOS": "Boston Red Sox", "CHC": "Chicago Cubs", "CHW": "Chicago White Sox",
+        "CIN": "Cincinnati Reds", "CLE": "Cleveland Guardians", "COL": "Colorado Rockies",
+        "DET": "Detroit Tigers", "HOU": "Houston Astros", "KC": "Kansas City Royals",
+        "KCR": "Kansas City Royals", "LAA": "Los Angeles Angels", "LAD": "Los Angeles Dodgers",
+        "MIA": "Miami Marlins", "MIL": "Milwaukee Brewers", "MIN": "Minnesota Twins",
+        "NYM": "New York Mets", "NYY": "New York Yankees", "OAK": "Oakland Athletics",
+        "ATH": "Oakland Athletics", "PHI": "Philadelphia Phillies", "PIT": "Pittsburgh Pirates",
+        "SD": "San Diego Padres", "SDP": "San Diego Padres", "SF": "San Francisco Giants",
+        "SFG": "San Francisco Giants", "SEA": "Seattle Mariners", "STL": "St. Louis Cardinals",
+        "TB": "Tampa Bay Rays", "TBR": "Tampa Bay Rays", "TEX": "Texas Rangers",
+        "TOR": "Toronto Blue Jays", "WSH": "Washington Nationals", "WSN": "Washington Nationals",
+    },
+}
+
+
+def _team_hint_matches_subtitle(team_hint: str, subtitle: str, sport_key: str) -> bool:
+    """Return True when ``team_hint`` plausibly identifies the team whose
+    display name lives in ``subtitle``. Handles the abbreviation case
+    (``"NYK"`` vs. ``"New York Knicks"``) as well as substring matches in
+    either direction for hints already given as full / partial names."""
+    if not team_hint or not subtitle:
+        return False
+    normalized_hint = team_hint.strip().upper()
+    normalized_subtitle = subtitle.strip().lower()
+    abbreviation_map = ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME.get(sport_key.upper(), {})
+    full_name = abbreviation_map.get(normalized_hint)
+    if full_name and full_name.lower() in normalized_subtitle:
+        return True
+    lowered_hint = normalized_hint.lower()
+    return lowered_hint in normalized_subtitle or normalized_subtitle in lowered_hint
+
 ESPN_LEAGUE_NAMES = {
     "NBA": "NBA",
     "NFL": "NFL",
@@ -100,19 +155,20 @@ class EspnPublicClient:
             raise LookupError(f"No {normalized_sport} player found for query: {query}")
 
         if team_hint:
-            normalized_hint = str(team_hint).strip().lower()
-            if normalized_hint:
-                for candidate in candidates:
-                    subtitle = str(candidate.get("team_name") or "").strip().lower()
-                    if normalized_hint in subtitle or subtitle in normalized_hint:
-                        return candidate
-                logger.warning(
-                    "ESPN %s player search for %r did not find a team_hint=%r match across %d candidates; falling back to first",
+            for candidate in candidates:
+                if _team_hint_matches_subtitle(
+                    str(team_hint),
+                    str(candidate.get("team_name") or ""),
                     normalized_sport,
-                    query,
-                    team_hint,
-                    len(candidates),
-                )
+                ):
+                    return candidate
+            logger.warning(
+                "ESPN %s player search for %r did not find a team_hint=%r match across %d candidates; falling back to first",
+                normalized_sport,
+                query,
+                team_hint,
+                len(candidates),
+            )
 
         return candidates[0]
 
