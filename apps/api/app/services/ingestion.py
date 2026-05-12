@@ -1755,11 +1755,34 @@ def run_refresh_cycle(
     public_client: KalshiPublicClient | None = None,
     sports: Iterable[str] | None = None,
     current_slate_only: bool = False,
+    job: RefreshJob | None = None,
 ) -> Run:
     initial_sports = list(sports or (["NBA", "MLB"] if current_slate_only else get_settings().enabled_sports))
     run = Run(kind="refresh", status="running", details={"sports": initial_sports})
     db.add(run)
     db.flush()
+    if job is not None:
+        # Bug #10 P2: link the Run to the job AND commit immediately,
+        # so the FK is durable BEFORE any stage work begins. Two
+        # requirements that this commit satisfies together:
+        #
+        # 1. The worker-timeout watchdog snapshots ``job.run_id`` from
+        #    a fresh session; the commit makes the link visible across
+        #    sessions, so the watchdog can find and fail the Run.
+        # 2. The commit releases the row-level write lock on
+        #    ``refresh_jobs`` that the ``job.run_id = run.id`` UPDATE
+        #    acquires. If we merely dirtied the attribute without
+        #    committing, any inner ``db.flush()`` (e.g. inside
+        #    ``seed_sports`` called by ``refresh_sports_data``) would
+        #    flush the UPDATE and hold the lock until the first stage
+        #    commit. A pre-commit hang would then block the watchdog's
+        #    ``_guarded_fail_job`` UPDATE on the same row (codex
+        #    round-2 P1 on PR #37).
+        #
+        # The caller has only just loaded ``job`` and added ``run``, so
+        # this is a clean, narrow commit.
+        job.run_id = run.id
+        db.commit()
     try:
         with httpx.Client(follow_redirects=True, timeout=20) as shared_http_client:
             kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)

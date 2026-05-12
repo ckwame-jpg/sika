@@ -778,6 +778,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                         db,
                         sports=None,
                         current_slate_only=False,
+                        job=job,
                     )
                     job.run_id = run.id
             elif job.kind == "prop_refresh":
