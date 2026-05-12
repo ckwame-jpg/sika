@@ -252,7 +252,13 @@ def _metrics_for_predictions(frame: pd.DataFrame, indices: np.ndarray, probabili
     selected = frame.loc[indices]
     target = selected["target"].to_numpy()
     clipped = np.clip(probabilities, 1e-6, 1 - 1e-6)
-    edge = clipped - selected["suggested_price"].fillna(0.5).astype(float).to_numpy()
+    # Bug #2 P3: probabilities are now P(YES) but ``suggested_price`` is the
+    # contract price for whichever side the recommendation took. Edge has to
+    # be ``selected_side_probability - suggested_price`` so NO-side bets are
+    # ranked against the right baseline.
+    side_yes = selected["side"].astype(str).str.lower().to_numpy() == "yes"
+    selected_side_probability = np.where(side_yes, clipped, 1.0 - clipped)
+    edge = selected_side_probability - selected["suggested_price"].fillna(0.5).astype(float).to_numpy()
     top_n = max(int(np.ceil(len(selected) * 0.10)), 1)
     top_idx = np.argsort(edge)[-top_n:]
     # Fallback when realized_pnl is missing: derive from prediction_outcome

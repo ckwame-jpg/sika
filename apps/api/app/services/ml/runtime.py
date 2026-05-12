@@ -182,6 +182,7 @@ def shadow_capture_blocker(
         artifact_path,
         artifact_family_key=str(lineage.model_metadata.get("artifact_family_key") or family_key),
         behavior=str(lineage.model_metadata.get("behavior") or "static_probability"),
+        target_type=lineage.model_metadata.get("target_type"),
         feature_set_version=lineage.feature_set_version,
     )
     if error is not None:
@@ -219,6 +220,9 @@ def _lineage_from_manifest_family(family: ModelManifestFamily | None, scope: str
     )
 
 
+_REQUIRED_SKLEARN_TARGET_TYPE = "yes_won"
+
+
 def _validate_artifact_payload(
     family_key: str,
     scope: str,
@@ -226,11 +230,27 @@ def _validate_artifact_payload(
     *,
     artifact_family_key: str | None = None,
     behavior: str | None = None,
+    target_type: str | None = None,
     feature_set_version: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not artifact_path:
         return None, "No artifact_path configured for this family."
     normalized_behavior = str(behavior or "static_probability").strip().lower()
+    # Bug #2: single-market sklearn artifacts must declare target_type=yes_won
+    # so legacy models trained against selected-side-won can't silently flip
+    # NO-side predictions. Parlay-scope sklearn artifacts predict a combined
+    # parlay outcome rather than a YES/NO side, so the yes_won requirement
+    # doesn't apply to them — see public-shadow.example.json for the parlay
+    # manifest shape this guard would otherwise reject wholesale.
+    if normalized_behavior == "sklearn_predict_proba" and scope == "single":
+        normalized_target_type = str(target_type or "").strip().lower()
+        if normalized_target_type != _REQUIRED_SKLEARN_TARGET_TYPE:
+            return None, (
+                f"Sklearn artifact requires metadata.target_type="
+                f"'{_REQUIRED_SKLEARN_TARGET_TYPE}' "
+                f"(got {target_type!r}). Retrain with the updated pipeline "
+                f"(see bug #2 in SIKA_PUNCH_LIST.md)."
+            )
     path = Path(artifact_path)
     if not path.exists():
         return None, f"Artifact missing at {artifact_path}."
@@ -419,6 +439,7 @@ def resolve_family_runtime(
         artifact_path,
         artifact_family_key=str(lineage.model_metadata.get("artifact_family_key") or family_key),
         behavior=str(lineage.model_metadata.get("behavior") or "static_probability"),
+        target_type=lineage.model_metadata.get("target_type"),
         feature_set_version=lineage.feature_set_version,
     )
     if error is not None or payload is None:
@@ -471,6 +492,7 @@ def _artifact_payload_for_decision(decision: FamilyRuntimeDecision, scope: str) 
         decision.artifact_path,
         artifact_family_key=str(metadata.get("artifact_family_key") or decision.family_key),
         behavior=str(metadata.get("behavior") or "static_probability"),
+        target_type=metadata.get("target_type"),
         feature_set_version=decision.lineage.feature_set_version,
     )
     if error is not None or payload is None:
