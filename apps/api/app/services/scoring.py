@@ -2473,10 +2473,15 @@ def _enforce_prop_monotonicity(
                 continue
 
             recommendation.edge = round(clamped_probability - recommendation.suggested_price, 4)
-            # Codex PR #33 P2: mirror the recomputed edge onto the signal
-            # so coverage captures persist the clamped value, not the stale
-            # pre-clamp edge that originally accompanied fair_yes_price.
+            # Codex PR #33 P2/P3: mirror the recomputed edge AND the clamped
+            # selected_side_probability onto the signal so coverage captures
+            # (which read signal fields when recommendation is None) persist
+            # the post-clamp values, not the stale pre-clamp pair.
             current_scored.signal.edge = recommendation.edge
+            signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
+            signal_diagnostics["selected_side_probability"] = clamped_probability
+            signal_diagnostics["monotonicity_adjusted"] = True
+            current_scored.signal.scoring_diagnostics = signal_diagnostics
             recommendation.scoring_diagnostics = {
                 **dict(recommendation.scoring_diagnostics or {}),
                 "selected_side_probability": clamped_probability,
