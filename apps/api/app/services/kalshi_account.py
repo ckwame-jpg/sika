@@ -1,4 +1,6 @@
 import re
+import threading
+import time
 from typing import Any
 
 import httpx
@@ -13,6 +15,28 @@ from app.schemas import (
     KalshiAccountMarketPositionRead,
     KalshiAccountRead,
 )
+
+
+# Bug #6: cache the ``build_kalshi_account_snapshot`` response so
+# /positions polling every ~15 s doesn't fan out to 3+ live Kalshi
+# calls per request. The endpoint is single-tenant (one API key per
+# process), so a single global cache key is sufficient. The lock
+# coalesces concurrent fetches — first caller fans out, the rest
+# observe the populated cache.
+_ACCOUNT_SNAPSHOT_TTL_SECONDS = 5.0
+_account_snapshot_cache: dict[str, Any] = {
+    "value": None,
+    "expires_at": 0.0,
+}
+_account_snapshot_lock = threading.Lock()
+
+
+def invalidate_kalshi_account_cache() -> None:
+    """Reset the cached account snapshot. Use in tests and ops paths
+    that mutate Kalshi-visible state."""
+    with _account_snapshot_lock:
+        _account_snapshot_cache["value"] = None
+        _account_snapshot_cache["expires_at"] = 0.0
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -172,6 +196,41 @@ def build_kalshi_account_snapshot(
     db: Session,
     *,
     client: KalshiAccountClient | None = None,
+) -> KalshiAccountRead:
+    # Bug #6: cache the production path (no explicit client) so the
+    # portfolio page's ~15 s polling doesn't fan out 3+ Kalshi calls
+    # per request. Tests that pass an explicit ``client`` bypass the
+    # cache so they can drive specific scenarios.
+    if client is None:
+        cached = _serve_cached_account_snapshot()
+        if cached is not None:
+            return cached
+        with _account_snapshot_lock:
+            # Re-check inside the lock — another thread may have
+            # populated the cache while we waited.
+            cached = _serve_cached_account_snapshot()
+            if cached is not None:
+                return cached
+            result = _build_kalshi_account_snapshot_uncached(db, client=None)
+            _account_snapshot_cache["value"] = result
+            _account_snapshot_cache["expires_at"] = time.monotonic() + _ACCOUNT_SNAPSHOT_TTL_SECONDS
+            return result
+    return _build_kalshi_account_snapshot_uncached(db, client=client)
+
+
+def _serve_cached_account_snapshot() -> KalshiAccountRead | None:
+    cached = _account_snapshot_cache["value"]
+    if cached is None:
+        return None
+    if time.monotonic() >= _account_snapshot_cache["expires_at"]:
+        return None
+    return cached
+
+
+def _build_kalshi_account_snapshot_uncached(
+    db: Session,
+    *,
+    client: KalshiAccountClient | None,
 ) -> KalshiAccountRead:
     kalshi_client = client or KalshiAccountClient()
     if not kalshi_client.is_configured():
