@@ -2432,6 +2432,8 @@ def _quality_tier_rank(value: str | None) -> int:
 
 def _enforce_prop_monotonicity(
     scored_recommendations: list[tuple[Market, ScoredRecommendation]],
+    *,
+    summary: WatchlistGenerationSummary | None = None,
 ) -> None:
     from collections import defaultdict
 
@@ -2502,6 +2504,19 @@ def _enforce_prop_monotonicity(
                 signal_diagnostics["suppression_reasons"] = suppression_reasons
                 current_scored.signal.scoring_diagnostics = signal_diagnostics
                 current_scored.recommendation = None
+                # Codex PR #33 round-3 P3: the market was counted as
+                # ``recommended`` upstream before monotonicity ran. Reclassify
+                # it so scorer-outcome metrics surface this suppression
+                # instead of overreporting recommendations.
+                if summary is not None:
+                    counts = summary.outcome_reason_counts
+                    if counts.get("recommended", 0) > 0:
+                        counts["recommended"] = counts["recommended"] - 1
+                        if counts["recommended"] == 0:
+                            counts.pop("recommended", None)
+                    counts["suppressed_monotonicity_edge_below_min"] = (
+                        counts.get("suppressed_monotonicity_edge_below_min", 0) + 1
+                    )
 
 
 def _dedupe_winner_recommendations(
@@ -3167,7 +3182,7 @@ def regenerate_watchlist(
         else:
             _record_scorer_outcome(summary, _scoring_none_reason(market))
 
-    _enforce_prop_monotonicity(pending_recommendations)
+    _enforce_prop_monotonicity(pending_recommendations, summary=summary)
     deduped_recommendations, collapsed_count, combo_suppressed = _dedupe_winner_recommendations(pending_recommendations)
     summary.inverse_winner_duplicates_collapsed = collapsed_count
     summary.combo_prop_candidates_suppressed += combo_suppressed
