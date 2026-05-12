@@ -194,11 +194,14 @@ def _correlation_adjusted_joint_probability(
     independent = prod(leg_probs)
     if len(leg_probs) <= 1:
         return float(independent)
-    max_leg = max(leg_probs)
+    # Codex PR #31 P1: P(A∩B) ≤ min(P(A), P(B)) — the joint can never
+    # exceed the weakest leg's probability. Anchoring the blend on
+    # min_leg keeps the result mathematically valid.
+    min_leg = min(leg_probs)
     total_pairs = len(leg_probs) * (len(leg_probs) - 1) // 2
     # Per-pair weights: same player on both legs (subject) is the strongest
     # positive-correlation signal, same team is moderate, shared opponent
-    # is mild. Hard cap below 1.0 so the joint never reaches max_leg fully
+    # is mild. Hard cap below 1.0 so the joint never reaches min_leg fully
     # (some idiosyncratic noise remains even on co-moving legs).
     weighted = (
         0.7 * pairs.get("shared_subject", 0)
@@ -206,7 +209,7 @@ def _correlation_adjusted_joint_probability(
         + 0.2 * pairs.get("shared_opponent", 0)
     ) / max(total_pairs, 1)
     correlation_factor = min(weighted, 0.85)
-    return float(independent + correlation_factor * (max_leg - independent))
+    return float(independent + correlation_factor * (min_leg - independent))
 
 
 def _parlay_diagnostics_for_combo(

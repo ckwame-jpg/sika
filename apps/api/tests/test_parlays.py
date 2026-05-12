@@ -335,7 +335,8 @@ def test_parlay_correlation_adjusts_combined_probability_upward(db_session):
 
     # Independent stays at the product (0.58 * 0.52 ≈ 0.3016).
     assert independent.combined_model_probability == pytest.approx(0.58 * 0.52, abs=0.005)
-    # Correlated is bumped upward — true joint is closer to max_leg (0.58).
+    # Correlated is bumped upward — true joint is between the product and
+    # the weakest leg's probability (the joint can never exceed any
+    # single leg, P(A∩B) ≤ min(P(A), P(B))).
     assert correlated.combined_model_probability > independent.combined_model_probability
-    # Conservative cap: never exceed the max-leg probability.
-    assert correlated.combined_model_probability <= max(0.58, 0.52) + 1e-6
+    assert correlated.combined_model_probability <= min(0.58, 0.52) + 1e-6
