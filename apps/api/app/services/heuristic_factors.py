@@ -78,7 +78,12 @@ _MLB_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
     "runs": ("lineup_factor", "park_factor_runs_mult"),
     "total_bases": ("quality_of_contact_factor", "starter_factor_advanced",
                      "park_factor_singles", "weather_factor"),
-    "strikeouts": ("k_rate_factor", "pitcher_dominance_factor"),
+    # Bug #3: pitcher_dominance_factor returns < 1.0 for dominant pitchers
+    # (correct for batter hits/HR/walks where their output drops). For batter
+    # strikeouts a dominant pitcher should AMPLIFY expected count — k_rate_factor
+    # (k9/8.5) already captures that, so omitting pitcher_dominance here is the
+    # cleanest fix. Keeping it on hits/home_runs/walks where it is correct.
+    "strikeouts": ("k_rate_factor",),
     "walks": ("pitcher_dominance_factor",),
     "doubles": ("park_factor_singles", "starter_factor_advanced"),
     "triples": ("park_factor_singles",),
