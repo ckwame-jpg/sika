@@ -381,9 +381,14 @@ def test_models_readiness_endpoint_reports_ready_for_review(client, db_session, 
     assert "does not enable live ML serving" in payload["why_not_ready"]
 
 
-def test_models_readiness_endpoint_explains_missing_shadow_manifest_entry(client, db_session, monkeypatch):
+def test_models_readiness_endpoint_explains_missing_shadow_manifest_entry(client, db_session, monkeypatch, tmp_path):
+    # Bundled manifest now covers all four active families (after the bug #2
+    # retrain on 2026-05-12), so this test needs an explicit empty manifest
+    # to exercise the "no entry" branch.
+    empty_manifest = tmp_path / "empty-manifest.json"
+    empty_manifest.write_text('{"version": "empty", "serving_mode": "shadow", "families": []}', encoding="utf-8")
     monkeypatch.setenv("ML_SERVING_MODE", "shadow")
-    monkeypatch.delenv("ML_MANIFEST_PATH", raising=False)
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(empty_manifest))
     monkeypatch.delenv("ML_FAMILY_MODES_JSON", raising=False)
     get_settings.cache_clear()
     _seed_nba_single_predictions(db_session, total=40, settled=40)

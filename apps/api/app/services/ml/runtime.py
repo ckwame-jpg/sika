@@ -236,10 +236,13 @@ def _validate_artifact_payload(
     if not artifact_path:
         return None, "No artifact_path configured for this family."
     normalized_behavior = str(behavior or "static_probability").strip().lower()
-    # Bug #2: sklearn artifacts must declare target_type=yes_won so legacy
-    # models trained against selected-side-won can't silently flip NO-side
-    # predictions. Check before file IO so the error is unambiguous.
-    if normalized_behavior == "sklearn_predict_proba":
+    # Bug #2: single-market sklearn artifacts must declare target_type=yes_won
+    # so legacy models trained against selected-side-won can't silently flip
+    # NO-side predictions. Parlay-scope sklearn artifacts predict a combined
+    # parlay outcome rather than a YES/NO side, so the yes_won requirement
+    # doesn't apply to them — see public-shadow.example.json for the parlay
+    # manifest shape this guard would otherwise reject wholesale.
+    if normalized_behavior == "sklearn_predict_proba" and scope == "single":
         normalized_target_type = str(target_type or "").strip().lower()
         if normalized_target_type != _REQUIRED_SKLEARN_TARGET_TYPE:
             return None, (

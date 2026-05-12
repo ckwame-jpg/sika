@@ -86,3 +86,22 @@ def test_sklearn_target_type_check_runs_before_file_io(tmp_path):
     assert "target_type" in error.lower()
     # Must NOT mention the missing artifact path — that check was skipped.
     assert "Artifact missing" not in error
+
+
+def test_parlay_sklearn_artifact_does_not_require_yes_won_target_type(tmp_path):
+    """Parlay scope sklearn artifacts predict combined parlay outcomes, not
+    YES/NO side probabilities. The yes_won target_type requirement only
+    applies to single-market scope. Without this exemption the existing
+    parlay manifests (see apps/ml/manifests/public-shadow.example.json) get
+    rejected wholesale."""
+    payload, error = _validate_artifact_payload(
+        "nba_2_leg",
+        "parlay",
+        str(tmp_path / "missing_parlay_artifact"),
+        behavior="sklearn_predict_proba",
+        target_type=None,
+    )
+    # target_type check skipped — the artifact-missing error takes over.
+    assert error is not None
+    assert "target_type" not in error.lower()
+    assert "Artifact missing" in error
