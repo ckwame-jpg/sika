@@ -138,6 +138,69 @@ def test_pitcher_dominance_factor_inverts_csw_pct():
     assert factors["pitcher_dominance_factor"] == pytest.approx(round(0.30 / 0.34, 4))
 
 
+def test_pitcher_dominance_factor_is_not_applied_to_strikeouts():
+    """Bug #3: pitcher_dominance_factor returns < 1.0 for dominant pitchers
+    (correct for hits/HR/walks where batter output drops), but a dominant
+    pitcher should RAISE expected batter strikeouts. k_rate_factor already
+    captures that upward signal — gating pitcher_dominance_factor onto
+    'strikeouts' was double-wrong (a suppressor cancelling part of the
+    amplifier)."""
+    features = {
+        "opposing_starter_csw_pct": 0.35,  # very dominant pitcher
+        "opposing_starter_k_per_9": 11.0,  # strikeouts should be amplified
+    }
+    factors = compute_advanced_factors("MLB", "strikeouts", features)
+    assert "pitcher_dominance_factor" not in factors
+    # k_rate_factor still emits (and is clamped at the high end).
+    assert factors["k_rate_factor"] >= 1.0
+
+
+def test_strikeouts_against_dominant_pitcher_yields_net_amplifier():
+    """End-to-end check: with a dominant pitcher, the *net* multiplier
+    applied to expected strikeouts must be >= 1.0. Before the fix the
+    pitcher_dominance suppressor cut the amplifier in half."""
+    features = {
+        "opposing_starter_csw_pct": 0.35,
+        "opposing_starter_k_per_9": 11.0,
+    }
+    factors = compute_advanced_factors("MLB", "strikeouts", features)
+    net = apply_factors(1.0, factors)
+    assert net >= 1.0, f"expected amplifier ≥ 1.0 for dominant pitcher, got {net}"
+
+
+def test_strikeouts_amplify_when_only_statcast_csw_is_available():
+    """Codex PR #27 P2: when the pitcher Statcast cache is warm but the
+    sabermetric cache hasn't been ingested yet, features include
+    opposing_starter_csw_pct without opposing_starter_k_per_9. The
+    strikeouts factor must still amplify rather than collapsing to a
+    neutral 1.0×."""
+    features = {"opposing_starter_csw_pct": 0.35}  # no k_per_9
+    factors = compute_advanced_factors("MLB", "strikeouts", features)
+    net = apply_factors(1.0, factors)
+    assert net > 1.0, f"expected amplifier > 1.0 from CSW alone, got {net}"
+
+
+def test_strikeouts_amplify_when_only_statcast_whiff_is_available():
+    """Same as above but the cache only has whiff_pct, not CSW."""
+    features = {"opposing_starter_whiff_pct": 0.30}  # no k_per_9, no csw
+    factors = compute_advanced_factors("MLB", "strikeouts", features)
+    net = apply_factors(1.0, factors)
+    assert net > 1.0, f"expected amplifier > 1.0 from whiff alone, got {net}"
+
+
+def test_strikeouts_dominance_fallback_does_not_double_amplify_with_k9():
+    """When K/9 is present the dominance fallback must return 1.0 so we
+    don't double-amplify off correlated signals."""
+    features = {
+        "opposing_starter_csw_pct": 0.35,
+        "opposing_starter_k_per_9": 11.0,
+    }
+    factors = compute_advanced_factors("MLB", "strikeouts", features)
+    # Only k_rate_factor should be reported; the fallback returned 1.0 and
+    # was filtered out as a no-op.
+    assert "strikeout_dominance_factor" not in factors
+
+
 def test_park_factor_hr_passes_through_park_multiplier():
     features = {"park_factor_hr": 1.13}
     factors = compute_advanced_factors("MLB", "home_runs", features)

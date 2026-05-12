@@ -78,7 +78,13 @@ _MLB_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
     "runs": ("lineup_factor", "park_factor_runs_mult"),
     "total_bases": ("quality_of_contact_factor", "starter_factor_advanced",
                      "park_factor_singles", "weather_factor"),
-    "strikeouts": ("k_rate_factor", "pitcher_dominance_factor"),
+    # Bug #3: pitcher_dominance_factor returns < 1.0 for dominant pitchers
+    # (correct for batter hits/HR/walks where their output drops). For batter
+    # strikeouts a dominant pitcher should AMPLIFY expected count.
+    # k_rate_factor (k9/8.5) covers the common case; strikeout_dominance_factor
+    # is the partial-cache fallback that fires when K/9 is missing but CSW
+    # or whiff is available (codex PR #27 P2 — caches can be out of sync).
+    "strikeouts": ("k_rate_factor", "strikeout_dominance_factor"),
     "walks": ("pitcher_dominance_factor",),
     "doubles": ("park_factor_singles", "starter_factor_advanced"),
     "triples": ("park_factor_singles",),
@@ -201,6 +207,28 @@ def _mlb_pitcher_dominance_factor(features: dict[str, Any]) -> float:
     return 1.0
 
 
+def _mlb_strikeout_dominance_factor(features: dict[str, Any]) -> float:
+    """Strikeouts-only amplifier — mirror of ``_mlb_pitcher_dominance_factor``.
+
+    Bug #3 + codex PR #27 P2 fallback: a dominant pitcher should AMPLIFY
+    expected batter strikeouts. When ``opposing_starter_k_per_9`` is
+    present the ``k_rate_factor`` covers that signal, so this returns 1.0
+    to avoid double-amplification. When K/9 is missing (Statcast cache
+    is warm but sabermetrics aren't), fall back to CSW or whiff as the
+    amplifier source so the strikeouts gate isn't left neutral.
+    """
+    k9 = features.get("opposing_starter_k_per_9")
+    if isinstance(k9, (int, float)) and k9 > 0:
+        return 1.0
+    csw = features.get("opposing_starter_csw_pct")
+    if isinstance(csw, (int, float)) and csw > 0:
+        return _clamp(float(csw) / 0.30)
+    whiff = features.get("opposing_starter_whiff_pct")
+    if isinstance(whiff, (int, float)) and whiff > 0:
+        return _clamp(float(whiff) / 0.25)
+    return 1.0
+
+
 def _mlb_park_factor_hr_mult(features: dict[str, Any]) -> float:
     return _clamp(float(features.get("park_factor_hr") or 1.0))
 
@@ -257,6 +285,7 @@ _MLB_FACTOR_FNS = {
     "starter_factor_advanced": _mlb_starter_factor_advanced,
     "k_rate_factor": _mlb_k_rate_factor,
     "pitcher_dominance_factor": _mlb_pitcher_dominance_factor,
+    "strikeout_dominance_factor": _mlb_strikeout_dominance_factor,
     "park_factor_hr_mult": _mlb_park_factor_hr_mult,
     "park_factor_runs_mult": _mlb_park_factor_runs_mult,
     "park_factor_singles": _mlb_park_factor_singles,
