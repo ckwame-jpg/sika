@@ -1762,12 +1762,20 @@ def run_refresh_cycle(
     db.add(run)
     db.flush()
     if job is not None:
-        # Bug #10 P2: link job.run_id BEFORE any stage commit so the
-        # worker-timeout snapshot can find and fail the Run instead of
-        # leaving it orphaned in "running" when the parent times out
-        # mid-cycle.
+        # Bug #10 P2: set the Run-to-job FK in-memory so the *next*
+        # stage commit (the first ``db.commit()`` inside this function)
+        # auto-flushes it alongside the stage work. A worker timeout
+        # that lands after that commit can then find the Run via
+        # ``job.run_id`` and fail it instead of orphaning it in
+        # ``running``.
+        #
+        # We deliberately do NOT call ``db.flush()`` here: an explicit
+        # flush would issue ``UPDATE refresh_jobs SET run_id = ?`` now,
+        # acquiring a row-level write lock on the job until the next
+        # commit. If a pre-commit stage hangs, the watchdog's
+        # ``_guarded_fail_job`` UPDATE on the same row would block
+        # behind the stuck worker (codex round-2 P1 on PR #37).
         job.run_id = run.id
-        db.flush()
     try:
         with httpx.Client(follow_redirects=True, timeout=20) as shared_http_client:
             kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)
