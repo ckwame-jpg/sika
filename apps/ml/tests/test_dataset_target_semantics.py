@@ -110,3 +110,17 @@ def test_side_value_is_case_insensitive():
         [_record(side="NO", outcome="lost", market_id=1)]
     )
     assert frame["target"].tolist() == [1]
+
+
+def test_rows_with_unexpected_side_are_dropped():
+    """Side outside {yes,no} would otherwise silently get target=0 (XNOR
+    against False) — drop those rows so the contract is fail-loud."""
+    records = [
+        _record(side="yes", outcome="won", market_id=1),
+        _record(side="", outcome="won", market_id=2),
+        _record(side="maybe", outcome="lost", market_id=3),
+        _record(side="no", outcome="lost", market_id=4),
+    ]
+    frame = settled_predictions_from_records(records)
+    assert frame["market_id"].tolist() == [1, 4]
+    assert frame["target"].tolist() == [1, 1]

@@ -257,8 +257,10 @@ def _metrics_for_predictions(frame: pd.DataFrame, indices: np.ndarray, probabili
     top_idx = np.argsort(edge)[-top_n:]
     # Fallback when realized_pnl is missing: derive from prediction_outcome
     # (the trade-level result) rather than target (now YES-won, not trade-won).
+    # fillna(0.0) on the map covers push/cancelled or any non-binary outcome
+    # so unknown values don't propagate NaN into top_decile_roi.
     pnl = selected["realized_pnl"].fillna(
-        selected["prediction_outcome"].map({"won": 1.0, "lost": -1.0})
+        selected["prediction_outcome"].map({"won": 1.0, "lost": -1.0}).fillna(0.0)
     ).astype(float).to_numpy()
     buckets = pd.cut(clipped, bins=[0.0, 0.4, 0.5, 0.6, 1.0], include_lowest=True)
     calibration = (

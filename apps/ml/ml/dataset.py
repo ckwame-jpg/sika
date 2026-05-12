@@ -57,6 +57,10 @@ def _prepare_frame(rows: pd.DataFrame, *, drop_pushes: bool, dedupe_markets: boo
     if drop_pushes:
         frame = frame[frame["prediction_outcome"].isin({"won", "lost"})]
     frame = frame[frame["sport_key"].astype(str).str.upper().isin({"NBA", "MLB"})]
+    # Target derivation below relies on side being "yes" or "no" — drop anything
+    # else (null, empty, unknown values) before computing, so we never silently
+    # mislabel a row whose side was missing.
+    frame = frame[frame["side"].astype(str).str.lower().isin({"yes", "no"})]
     if "capture_scope" in frame.columns:
         frame = frame[(frame["capture_scope"].isna()) | (frame["capture_scope"] != "coverage")]
     frame["captured_at"] = pd.to_datetime(frame["captured_at"], utc=True)
