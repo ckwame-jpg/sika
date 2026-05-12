@@ -2479,10 +2479,20 @@ def _enforce_prop_monotonicity(
                 "monotonicity_adjusted": True,
             }
 
+            # Bug #9: when the clamp drops edge below the watchlist floor,
+            # the user shouldn't see this pick — it would have been filtered
+            # out had the lowered probability been the original. Record the
+            # suppression reason on the signal (so ops can explain it) and
+            # clear the recommendation so downstream surfaces drop it.
             if recommendation.edge < settings.watchlist_min_edge:
                 signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
                 signal_diagnostics["monotonicity_edge_below_min"] = True
+                suppression_reasons = list(signal_diagnostics.get("suppression_reasons") or [])
+                if "monotonicity_edge_below_min" not in suppression_reasons:
+                    suppression_reasons.append("monotonicity_edge_below_min")
+                signal_diagnostics["suppression_reasons"] = suppression_reasons
                 current_scored.signal.scoring_diagnostics = signal_diagnostics
+                current_scored.recommendation = None
 
 
 def _dedupe_winner_recommendations(
@@ -2884,7 +2894,17 @@ def _apply_prediction_monotonicity(predictions: list[Prediction]) -> None:
             diagnostics["selected_side_probability"] = clamped_probability
             diagnostics["monotonicity_adjusted"] = True
             if current.edge < settings.watchlist_min_edge:
+                # Bug #9: the clamp dropped edge below the watchlist floor —
+                # mark the prediction suppressed so finalize_staged_watchlist
+                # excludes it from the dedup pass (and the operator never
+                # sees it on the watchlist). capture_scope == "suppressed"
+                # is the same filter the downstream pipeline already uses.
                 diagnostics["monotonicity_edge_below_min"] = True
+                suppression_reasons = list(diagnostics.get("suppression_reasons") or [])
+                if "monotonicity_edge_below_min" not in suppression_reasons:
+                    suppression_reasons.append("monotonicity_edge_below_min")
+                diagnostics["suppression_reasons"] = suppression_reasons
+                current.capture_scope = "suppressed"
             current.scoring_diagnostics = diagnostics
 
 
