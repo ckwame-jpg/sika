@@ -2432,6 +2432,8 @@ def _quality_tier_rank(value: str | None) -> int:
 
 def _enforce_prop_monotonicity(
     scored_recommendations: list[tuple[Market, ScoredRecommendation]],
+    *,
+    summary: WatchlistGenerationSummary | None = None,
 ) -> None:
     from collections import defaultdict
 
@@ -2473,16 +2475,48 @@ def _enforce_prop_monotonicity(
                 continue
 
             recommendation.edge = round(clamped_probability - recommendation.suggested_price, 4)
+            # Codex PR #33 P2/P3: mirror the recomputed edge AND the clamped
+            # selected_side_probability onto the signal so coverage captures
+            # (which read signal fields when recommendation is None) persist
+            # the post-clamp values, not the stale pre-clamp pair.
+            current_scored.signal.edge = recommendation.edge
+            signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
+            signal_diagnostics["selected_side_probability"] = clamped_probability
+            signal_diagnostics["monotonicity_adjusted"] = True
+            current_scored.signal.scoring_diagnostics = signal_diagnostics
             recommendation.scoring_diagnostics = {
                 **dict(recommendation.scoring_diagnostics or {}),
                 "selected_side_probability": clamped_probability,
                 "monotonicity_adjusted": True,
             }
 
+            # Bug #9: when the clamp drops edge below the watchlist floor,
+            # the user shouldn't see this pick — it would have been filtered
+            # out had the lowered probability been the original. Record the
+            # suppression reason on the signal (so ops can explain it) and
+            # clear the recommendation so downstream surfaces drop it.
             if recommendation.edge < settings.watchlist_min_edge:
                 signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
                 signal_diagnostics["monotonicity_edge_below_min"] = True
+                suppression_reasons = list(signal_diagnostics.get("suppression_reasons") or [])
+                if "monotonicity_edge_below_min" not in suppression_reasons:
+                    suppression_reasons.append("monotonicity_edge_below_min")
+                signal_diagnostics["suppression_reasons"] = suppression_reasons
                 current_scored.signal.scoring_diagnostics = signal_diagnostics
+                current_scored.recommendation = None
+                # Codex PR #33 round-3 P3: the market was counted as
+                # ``recommended`` upstream before monotonicity ran. Reclassify
+                # it so scorer-outcome metrics surface this suppression
+                # instead of overreporting recommendations.
+                if summary is not None:
+                    counts = summary.outcome_reason_counts
+                    if counts.get("recommended", 0) > 0:
+                        counts["recommended"] = counts["recommended"] - 1
+                        if counts["recommended"] == 0:
+                            counts.pop("recommended", None)
+                    counts["suppressed_monotonicity_edge_below_min"] = (
+                        counts.get("suppressed_monotonicity_edge_below_min", 0) + 1
+                    )
 
 
 def _dedupe_winner_recommendations(
@@ -2850,7 +2884,11 @@ def stage_current_slate_watchlist_batch(
     return scoring_summary, next_index, complete
 
 
-def _apply_prediction_monotonicity(predictions: list[Prediction]) -> None:
+def _apply_prediction_monotonicity(
+    predictions: list[Prediction],
+    *,
+    summary: WatchlistGenerationSummary | None = None,
+) -> None:
     from collections import defaultdict
 
     settings = get_settings()
@@ -2884,7 +2922,30 @@ def _apply_prediction_monotonicity(predictions: list[Prediction]) -> None:
             diagnostics["selected_side_probability"] = clamped_probability
             diagnostics["monotonicity_adjusted"] = True
             if current.edge < settings.watchlist_min_edge:
+                # Bug #9: the clamp dropped edge below the watchlist floor —
+                # mark the prediction suppressed so finalize_staged_watchlist
+                # excludes it from the dedup pass (and the operator never
+                # sees it on the watchlist). capture_scope == "suppressed"
+                # is the same filter the downstream pipeline already uses.
                 diagnostics["monotonicity_edge_below_min"] = True
+                suppression_reasons = list(diagnostics.get("suppression_reasons") or [])
+                if "monotonicity_edge_below_min" not in suppression_reasons:
+                    suppression_reasons.append("monotonicity_edge_below_min")
+                diagnostics["suppression_reasons"] = suppression_reasons
+                current.capture_scope = "suppressed"
+                # Codex PR #33 round-4 P2: the staged path counted this
+                # prediction as ``recommended`` during batch scoring; keep
+                # the run summary aligned with the predictions finalize
+                # actually emits.
+                if summary is not None:
+                    counts = summary.outcome_reason_counts
+                    if counts.get("recommended", 0) > 0:
+                        counts["recommended"] = counts["recommended"] - 1
+                        if counts["recommended"] == 0:
+                            counts.pop("recommended", None)
+                    counts["suppressed_monotonicity_edge_below_min"] = (
+                        counts.get("suppressed_monotonicity_edge_below_min", 0) + 1
+                    )
             current.scoring_diagnostics = diagnostics
 
 
@@ -2940,7 +3001,7 @@ def finalize_staged_watchlist(
     ).all()
 
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope != "coverage"]
-    _apply_prediction_monotonicity(candidate_predictions)
+    _apply_prediction_monotonicity(candidate_predictions, summary=summary)
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope not in {"coverage", "suppressed"}]
     winners, collapsed_count, combo_suppressed = _dedupe_prediction_recommendations(candidate_predictions)
     summary.inverse_winner_duplicates_collapsed = collapsed_count
@@ -3009,6 +3070,7 @@ def finalize_current_slate_watchlist(
     *,
     run_id: int,
     candidate_market_ids: set[int],
+    staged_summary: WatchlistGenerationSummary | None = None,
 ) -> WatchlistGenerationSummary:
     summary = WatchlistGenerationSummary()
     predictions = db.scalars(
@@ -3024,7 +3086,13 @@ def finalize_current_slate_watchlist(
     ).all()
 
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope != "coverage"]
-    _apply_prediction_monotonicity(candidate_predictions)
+    # Bug #9 follow-up (codex PR #33 round-5 P2): in the staged path the
+    # original ``recommended`` counts live in ``staged_summary``, not the
+    # fresh summary this function builds. Apply the metric adjustment to
+    # ``staged_summary`` so the merge in ingestion.py doesn't double-count
+    # a market as both recommended *and* suppressed.
+    monotonicity_metric_target = staged_summary if staged_summary is not None else summary
+    _apply_prediction_monotonicity(candidate_predictions, summary=monotonicity_metric_target)
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope not in {"coverage", "suppressed"}]
     winners, collapsed_count, combo_suppressed = _dedupe_prediction_recommendations(candidate_predictions)
     summary.inverse_winner_duplicates_collapsed = collapsed_count
@@ -3138,7 +3206,7 @@ def regenerate_watchlist(
         else:
             _record_scorer_outcome(summary, _scoring_none_reason(market))
 
-    _enforce_prop_monotonicity(pending_recommendations)
+    _enforce_prop_monotonicity(pending_recommendations, summary=summary)
     deduped_recommendations, collapsed_count, combo_suppressed = _dedupe_winner_recommendations(pending_recommendations)
     summary.inverse_winner_duplicates_collapsed = collapsed_count
     summary.combo_prop_candidates_suppressed += combo_suppressed

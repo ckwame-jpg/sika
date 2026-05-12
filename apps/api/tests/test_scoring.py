@@ -365,6 +365,167 @@ def test_regenerate_watchlist_collapses_inverse_winner_duplicates(db_session):
         settings.watchlist_min_selected_prob_heuristic_winner = original_floor
 
 
+def test_enforce_prop_monotonicity_drops_recommendation_when_adjusted_edge_below_floor():
+    """Bug #9: when the monotonicity clamp lowers a prop's fair_yes_price
+    enough that the recomputed edge falls below ``watchlist_min_edge``,
+    the recommendation must be dropped — not left active with only a
+    diagnostic flag. The user shouldn't see a pick that the system would
+    have filtered out if the lowered probability had been the original."""
+    lower_market = Market(
+        ticker="KXNBAREB-LOWER-DROP",
+        sport_key="NBA",
+        event_id=11,
+        title="LeBron James: 6+ rebounds?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_stat_key": "rebounds",
+            "copilot_threshold": 6.0,
+            "copilot_direction": "over",
+            "copilot_subject_name": "LeBron James",
+            "copilot_subject_team": "LAL",
+        },
+    )
+    higher_market = Market(
+        ticker="KXNBAREB-HIGHER-DROP",
+        sport_key="NBA",
+        event_id=11,
+        title="LeBron James: 9+ rebounds?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_stat_key": "rebounds",
+            "copilot_threshold": 9.0,
+            "copilot_direction": "over",
+            "copilot_subject_name": "LeBron James",
+            "copilot_subject_team": "LAL",
+        },
+    )
+
+    # Lower rung: fair 0.55 (slight YES favorite). Higher rung: clamping to
+    # 0.55 against a suggested_price of 0.65 yields edge = -0.10, well below
+    # the 0.03 min-edge floor → must be dropped.
+    lower_scored = ScoredRecommendation(
+        recommendation=Recommendation(
+            event_id=11, market_id=11, side="yes", action="buy", status="active",
+            suggested_price=0.50, edge=0.05, confidence=0.65,
+            invalidation="test", rationale="Lower rung sits above market.",
+            scoring_diagnostics={"selected_side_probability": 0.55},
+        ),
+        signal=SignalSnapshot(
+            event_id=11, market_id=11, confidence=0.65,
+            fair_yes_price=0.55, fair_no_price=0.45, edge=0.05,
+            reasons=[], features={}, scoring_diagnostics={},
+        ),
+        metadata=lower_market.raw_data or {},
+    )
+    higher_scored = ScoredRecommendation(
+        recommendation=Recommendation(
+            event_id=11, market_id=12, side="yes", action="buy", status="active",
+            suggested_price=0.65, edge=0.07, confidence=0.62,
+            invalidation="test", rationale="Higher rung over-rated.",
+            scoring_diagnostics={"selected_side_probability": 0.72},
+        ),
+        signal=SignalSnapshot(
+            event_id=11, market_id=12, confidence=0.62,
+            fair_yes_price=0.72, fair_no_price=0.28, edge=0.07,
+            reasons=[], features={}, scoring_diagnostics={},
+        ),
+        metadata=higher_market.raw_data or {},
+    )
+
+    _enforce_prop_monotonicity([(lower_market, lower_scored), (higher_market, higher_scored)])
+
+    # Signal still records the clamp + the below-floor diagnostic so ops
+    # surfaces can explain why the pick disappeared.
+    assert higher_scored.signal.fair_yes_price == 0.55
+    assert higher_scored.signal.scoring_diagnostics["monotonicity_adjusted"] is True
+    assert higher_scored.signal.scoring_diagnostics["monotonicity_edge_below_min"] is True
+    suppression_reasons = list(higher_scored.signal.scoring_diagnostics.get("suppression_reasons") or [])
+    assert "monotonicity_edge_below_min" in suppression_reasons
+    # The actionable recommendation is gone — bug #9's core fix.
+    assert higher_scored.recommendation is None
+    # Codex PR #33 P2/P3: signal.edge AND signal_diagnostics must mirror
+    # the post-clamp values so a coverage capture (taken when
+    # recommendation is None) persists consistent numbers — fair_yes_price,
+    # edge, and selected_side_probability all clamped together.
+    assert higher_scored.signal.edge == round(0.55 - 0.65, 4)
+    assert higher_scored.signal.scoring_diagnostics["selected_side_probability"] == 0.55
+
+
+def test_enforce_prop_monotonicity_preserves_recommendation_when_adjusted_edge_still_clears_floor():
+    """Companion to the drop test: when the clamp leaves edge >= min_edge,
+    the recommendation stays. Only the probability and edge are updated."""
+    lower_market = Market(
+        ticker="KXNBAREB-LOWER-KEEP",
+        sport_key="NBA",
+        event_id=12,
+        title="Player X: 5+ rebounds?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_stat_key": "rebounds",
+            "copilot_threshold": 5.0,
+            "copilot_subject_name": "Player X",
+            "copilot_subject_team": "BOS",
+        },
+    )
+    higher_market = Market(
+        ticker="KXNBAREB-HIGHER-KEEP",
+        sport_key="NBA",
+        event_id=12,
+        title="Player X: 7+ rebounds?",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_stat_key": "rebounds",
+            "copilot_threshold": 7.0,
+            "copilot_subject_name": "Player X",
+            "copilot_subject_team": "BOS",
+        },
+    )
+    # Lower rung fair 0.70; higher rung suggested_price 0.55. After clamp
+    # to 0.70, edge = 0.15, well above min_edge floor.
+    lower_scored = ScoredRecommendation(
+        recommendation=Recommendation(
+            event_id=12, market_id=21, side="yes", action="buy", status="active",
+            suggested_price=0.50, edge=0.20, confidence=0.70,
+            invalidation="test", rationale="t",
+            scoring_diagnostics={"selected_side_probability": 0.70},
+        ),
+        signal=SignalSnapshot(
+            event_id=12, market_id=21, confidence=0.70,
+            fair_yes_price=0.70, fair_no_price=0.30, edge=0.20,
+            reasons=[], features={}, scoring_diagnostics={},
+        ),
+        metadata=lower_market.raw_data or {},
+    )
+    higher_scored = ScoredRecommendation(
+        recommendation=Recommendation(
+            event_id=12, market_id=22, side="yes", action="buy", status="active",
+            suggested_price=0.55, edge=0.30, confidence=0.68,
+            invalidation="test", rationale="t",
+            scoring_diagnostics={"selected_side_probability": 0.85},
+        ),
+        signal=SignalSnapshot(
+            event_id=12, market_id=22, confidence=0.68,
+            fair_yes_price=0.85, fair_no_price=0.15, edge=0.30,
+            reasons=[], features={}, scoring_diagnostics={},
+        ),
+        metadata=higher_market.raw_data or {},
+    )
+
+    _enforce_prop_monotonicity([(lower_market, lower_scored), (higher_market, higher_scored)])
+
+    assert higher_scored.signal.fair_yes_price == 0.70
+    assert higher_scored.signal.scoring_diagnostics["monotonicity_adjusted"] is True
+    # Edge above floor — recommendation kept, no suppression reason added.
+    assert higher_scored.recommendation is not None
+    assert higher_scored.recommendation.edge == round(0.70 - 0.55, 4)
+    suppression_reasons = list(higher_scored.signal.scoring_diagnostics.get("suppression_reasons") or [])
+    assert "monotonicity_edge_below_min" not in suppression_reasons
+
+
 def test_enforce_prop_monotonicity_preserves_recommendation_with_diagnostic_flag():
     lower_market = Market(
         ticker="KXNBAREB-LOWER",
@@ -461,12 +622,16 @@ def test_enforce_prop_monotonicity_preserves_recommendation_with_diagnostic_flag
 
     _enforce_prop_monotonicity(scored_recommendations)
 
+    # Signal still records the clamp.
     assert higher_scored.signal.fair_yes_price == 0.737
     assert higher_scored.signal.fair_no_price == 0.263
-    assert higher_scored.recommendation is not None
-    assert higher_scored.recommendation.edge == round(0.737 - 0.80, 4)
     assert higher_scored.signal.scoring_diagnostics["monotonicity_adjusted"] is True
     assert higher_scored.signal.scoring_diagnostics.get("monotonicity_edge_below_min") is True
+    # Bug #9: edge after clamp (0.737 - 0.80 = -0.063) is below the
+    # watchlist_min_edge floor — recommendation is dropped, not preserved.
+    suppression_reasons = list(higher_scored.signal.scoring_diagnostics.get("suppression_reasons") or [])
+    assert "monotonicity_edge_below_min" in suppression_reasons
+    assert higher_scored.recommendation is None
 
 
 def _mlb_raw_event(home_name, away_name, home_abbr, away_abbr, home_lines, away_lines, home_era, away_era):

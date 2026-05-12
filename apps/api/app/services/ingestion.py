@@ -1373,6 +1373,7 @@ def advance_current_slate_refresh_job(
                 db,
                 run_id=run.id,
                 candidate_market_ids=set(candidate_market_ids),
+                staged_summary=staged_watchlist_summary,
             )
             batch_summary.heuristic_longshots_suppressed += staged_watchlist_summary.heuristic_longshots_suppressed
             batch_summary.critical_context_suppressed += staged_watchlist_summary.critical_context_suppressed
