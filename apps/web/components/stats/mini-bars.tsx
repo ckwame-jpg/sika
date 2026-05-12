@@ -104,10 +104,11 @@ export function MiniBars({
               />
               <text
                 x={x}
-                y={BAR_Y_TOP - 4}
+                y={BAR_Y_TOP - 3}
                 textAnchor="middle"
-                fill="rgba(210,220,240,0.85)"
-                fontSize="10"
+                fill="rgba(240,243,252,0.98)"
+                fontSize="13"
+                fontWeight="600"
                 fontFamily="var(--font-geist-sans), system-ui, sans-serif"
               >
                 {Number.isInteger(value) ? value : value.toFixed(1)}
