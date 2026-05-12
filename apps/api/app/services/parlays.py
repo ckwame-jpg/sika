@@ -148,13 +148,13 @@ def _candidate_opponent_key(candidate: ParlayCandidateInput) -> str | None:
     return None
 
 
-def _parlay_diagnostics_for_combo(
-    combo: tuple[ParlayCandidateInput, ...],
-    *,
-    leg_count: int,
-    sport_scope: str,
-) -> tuple[float, dict[str, Any]]:
-    confidences = [float(candidate.recommendation.confidence) for candidate in combo]
+def _count_correlation_pairs(combo: tuple[ParlayCandidateInput, ...]) -> dict[str, int]:
+    """Pair counts that signal positive correlation between parlay legs.
+
+    Used both by ``_parlay_diagnostics_for_combo`` (drives the confidence
+    penalty) and by ``_correlation_adjusted_joint_probability`` (drives
+    bug #5's joint probability lift).
+    """
     teams = [_candidate_team_key(candidate) for candidate in combo]
     subjects = [_candidate_subject_key(candidate) for candidate in combo]
     opponents = [_candidate_opponent_key(candidate) for candidate in combo]
@@ -169,6 +169,72 @@ def _parlay_diagnostics_for_combo(
                 shared_subject_pairs += 1
             if opponents[left] and opponents[left] == opponents[right]:
                 shared_opponent_pairs += 1
+    return {
+        "same_team": same_team_pairs,
+        "shared_subject": shared_subject_pairs,
+        "shared_opponent": shared_opponent_pairs,
+    }
+
+
+def _correlation_adjusted_joint_probability(
+    combo: tuple[ParlayCandidateInput, ...],
+    pairs: dict[str, int],
+) -> float:
+    """Joint probability of all legs hitting, corrected for correlation.
+
+    Bug #5: the strict product of leg probabilities assumes independence.
+    For the parlays sika constructs — same player, same team, shared
+    opponent — that assumption is wrong in a specific direction: those
+    legs are POSITIVELY correlated, and probability theory guarantees
+    that for positive correlation ``P(A∩B) >= P(A) * P(B)``. The strict
+    product UNDERSTATES the joint, so genuine same-game-parlay edges
+    get filtered out before the user sees them.
+
+    (Aside: the punch list framing said independence "overstates" the
+    joint. That's only true for *negatively* correlated legs — mutually
+    exclusive outcomes like "Lakers win + Thunder win". Sika's combo
+    construction filters those out, so in practice every correlated
+    parlay we see is positive correlation and needs to move UP.)
+
+    Formula: blend between the strict product (lower bound, independence)
+    and the minimum leg probability (upper bound, since ``P(A∩B) <=
+    min(P(A), P(B))`` regardless of correlation direction). Correlation
+    factor scales with the number of shared-subject/team/opponent pairs.
+    For independent legs the factor is zero and this returns the product.
+    """
+    leg_probs = [_selected_model_probability(candidate) for candidate in combo]
+    independent = prod(leg_probs)
+    if len(leg_probs) <= 1:
+        return float(independent)
+    # Codex PR #31 P1: P(A∩B) ≤ min(P(A), P(B)) — the joint can never
+    # exceed the weakest leg's probability. Anchoring the blend on
+    # min_leg keeps the result mathematically valid.
+    min_leg = min(leg_probs)
+    total_pairs = len(leg_probs) * (len(leg_probs) - 1) // 2
+    # Per-pair weights: same player on both legs (subject) is the strongest
+    # positive-correlation signal, same team is moderate, shared opponent
+    # is mild. Hard cap below 1.0 so the joint never reaches min_leg fully
+    # (some idiosyncratic noise remains even on co-moving legs).
+    weighted = (
+        0.7 * pairs.get("shared_subject", 0)
+        + 0.3 * pairs.get("same_team", 0)
+        + 0.2 * pairs.get("shared_opponent", 0)
+    ) / max(total_pairs, 1)
+    correlation_factor = min(weighted, 0.85)
+    return float(independent + correlation_factor * (min_leg - independent))
+
+
+def _parlay_diagnostics_for_combo(
+    combo: tuple[ParlayCandidateInput, ...],
+    *,
+    leg_count: int,
+    sport_scope: str,
+) -> tuple[float, dict[str, Any]]:
+    confidences = [float(candidate.recommendation.confidence) for candidate in combo]
+    pair_counts = _count_correlation_pairs(combo)
+    same_team_pairs = pair_counts["same_team"]
+    shared_subject_pairs = pair_counts["shared_subject"]
+    shared_opponent_pairs = pair_counts["shared_opponent"]
 
     same_sport_penalty = 0.01 if sport_scope != "MIXED" and leg_count <= 3 else 0.0
     same_team_penalty = round(same_team_pairs * 0.04, 4)
@@ -225,7 +291,12 @@ def _build_generated_parlays(db: Session, candidates: list[ParlayCandidateInput]
                 continue
 
             combined_market_price = round(prod(candidate.recommendation.suggested_price for candidate in combo), 4)
-            combined_model_probability = round(prod(_selected_model_probability(candidate) for candidate in combo), 4)
+            # Bug #5: lift the joint probability toward max_leg when legs
+            # share subject/team/opponent. Independent legs are unchanged.
+            pair_counts = _count_correlation_pairs(combo)
+            combined_model_probability = round(
+                _correlation_adjusted_joint_probability(combo, pair_counts), 4
+            )
             participating_sports = sorted({(candidate.market.sport_key or candidate.event.sport_key or "UNKNOWN").upper() for candidate in combo})
             sport_scope = _sport_scope(participating_sports)
             confidence, diagnostics = _parlay_diagnostics_for_combo(

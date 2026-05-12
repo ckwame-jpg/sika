@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import pytest
 from sqlalchemy import select
 
 from app.models import Event, Market, ParlayPrediction, Prediction, Recommendation, SignalSnapshot
@@ -285,4 +286,57 @@ def test_parlay_dependence_penalties_reduce_confidence_and_selection_score(db_se
     dependent = db_session.scalars(select(ParlayPrediction).where(ParlayPrediction.run_id == 32)).one()
 
     assert dependent.confidence < independent.confidence
-    assert dependent.selection_score < independent.selection_score
+    # Selection score is no longer monotonically lower for dependent parlays:
+    # bug #5 corrects ``combined_model_probability`` upward for positively
+    # correlated legs, which can lift edge enough to outweigh the confidence
+    # penalty. The user-visible contract is still that confidence reflects
+    # dependence — what the selection score does is a tuning decision.
+
+
+def test_parlay_correlation_adjusts_combined_probability_upward(db_session):
+    """Bug #5: when parlay legs are correlated (same subject), the
+    true joint probability is HIGHER than the independent product —
+    multiplying as if independent UNDERSTATES the joint and silently
+    drops parlays whose edge becomes positive only once correlation is
+    properly accounted for. Adjustment is conservative (won't exceed the
+    max leg probability) and a no-op for truly independent legs."""
+    indep_a = _make_candidate(
+        db_session, sport_key="NBA", ticker="INDEP-CORR-A", side="yes",
+        suggested_price=0.42, fair_yes_price=0.58, fair_no_price=0.42,
+        edge=0.16, confidence=0.74,
+        metadata={"copilot_subject_team": "BOS", "copilot_subject_name": "Player A"},
+    )
+    indep_b = _make_candidate(
+        db_session, sport_key="MLB", ticker="INDEP-CORR-B", side="yes",
+        suggested_price=0.36, fair_yes_price=0.52, fair_no_price=0.48,
+        edge=0.16, confidence=0.74,
+        metadata={"copilot_subject_team": "NYY", "copilot_subject_name": "Player B"},
+    )
+    # Two LeBron props — strongly positively correlated.
+    same_subject_a = _make_candidate(
+        db_session, sport_key="NBA", ticker="LBJ-PTS", side="yes",
+        suggested_price=0.42, fair_yes_price=0.58, fair_no_price=0.42,
+        edge=0.16, confidence=0.74,
+        metadata={"copilot_subject_team": "LAL", "copilot_subject_name": "LeBron James"},
+    )
+    same_subject_b = _make_candidate(
+        db_session, sport_key="NBA", ticker="LBJ-REB", side="yes",
+        suggested_price=0.36, fair_yes_price=0.52, fair_no_price=0.48,
+        edge=0.16, confidence=0.74,
+        metadata={"copilot_subject_team": "LAL", "copilot_subject_name": "LeBron James"},
+    )
+
+    capture_parlay_artifacts(db_session, run_id=51, candidates=[indep_a, indep_b])
+    capture_parlay_artifacts(db_session, run_id=52, candidates=[same_subject_a, same_subject_b])
+    db_session.commit()
+
+    independent = db_session.scalars(select(ParlayPrediction).where(ParlayPrediction.run_id == 51)).one()
+    correlated = db_session.scalars(select(ParlayPrediction).where(ParlayPrediction.run_id == 52)).one()
+
+    # Independent stays at the product (0.58 * 0.52 ≈ 0.3016).
+    assert independent.combined_model_probability == pytest.approx(0.58 * 0.52, abs=0.005)
+    # Correlated is bumped upward — true joint is between the product and
+    # the weakest leg's probability (the joint can never exceed any
+    # single leg, P(A∩B) ≤ min(P(A), P(B))).
+    assert correlated.combined_model_probability > independent.combined_model_probability
+    assert correlated.combined_model_probability <= min(0.58, 0.52) + 1e-6
