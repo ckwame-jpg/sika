@@ -639,7 +639,13 @@ _NEUTRAL_PARK_FACTORS: dict[str, float] = {
 
 def _build_park_factors_by_team() -> dict[str, dict[str, Any]]:
     """Reverse-index ``park_factors.json`` by team abbreviation. Cached at
-    import time — the source file is bundled and immutable at runtime."""
+    import time — the source file is bundled and immutable at runtime.
+
+    NOTE: when a team has more than one entry (e.g. TBR's Tropicana Field
+    *and* Steinbrenner Field for the 2025 hurricane-displacement season),
+    later entries win. Callers should prefer the venue-name index when
+    ESPN provides a venue name to disambiguate.
+    """
     by_team: dict[str, dict[str, Any]] = {}
     for key, entry in _load_park_factors_file().items():
         if key == "_metadata" or not isinstance(entry, dict):
@@ -650,7 +656,56 @@ def _build_park_factors_by_team() -> dict[str, dict[str, Any]]:
     return by_team
 
 
+def _build_park_factors_by_venue_name() -> dict[str, dict[str, Any]]:
+    """Reverse-index by venue display name (lowercased). Lets us pick the
+    right entry for teams with multiple park entries — ESPN's
+    ``venue.fullName`` is the discriminator."""
+    by_name: dict[str, dict[str, Any]] = {}
+    for key, entry in _load_park_factors_file().items():
+        if key == "_metadata" or not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip().lower()
+        if name:
+            by_name[name] = entry
+    return by_name
+
+
 _PARK_FACTORS_BY_TEAM: dict[str, dict[str, Any]] = _build_park_factors_by_team()
+_PARK_FACTORS_BY_NAME: dict[str, dict[str, Any]] = _build_park_factors_by_venue_name()
+
+
+def load_park_factors_for_event(
+    event_raw_data: dict[str, Any] | None,
+    home_team_abbreviation: str | None,
+) -> dict[str, float]:
+    """Resolve MLB park factors for a scored event.
+
+    Precedence:
+    1. ``venue.fullName`` from ESPN's competition payload — disambiguates
+       teams that have more than one park entry (TBR Tropicana vs.
+       Steinbrenner).
+    2. Home team abbreviation — covers normal ESPN rows where the venue
+       name doesn't appear in the bundled park factors file.
+    3. Legacy top-level ``venue_id`` — pre-dates the ESPN refactor; some
+       non-ESPN rows still set this.
+    4. Neutral defaults when nothing matches.
+    """
+    raw = event_raw_data or {}
+    competition = ((raw.get("raw") or {}).get("competitions") or [{}])[0]
+    venue_name = str(((competition.get("venue") or {}).get("fullName") or "")).strip().lower()
+    if venue_name:
+        entry = _PARK_FACTORS_BY_NAME.get(venue_name)
+        if entry:
+            return _materialize_park_factors(entry)
+
+    by_team = load_park_factors_for_team(home_team_abbreviation)
+    if by_team.get("_data_complete"):
+        return by_team
+
+    legacy_venue_id = raw.get("venue_id")
+    if legacy_venue_id is not None:
+        return load_park_factors(legacy_venue_id)
+    return _NEUTRAL_PARK_FACTORS
 
 
 # -----------------------------------------------------------------------------

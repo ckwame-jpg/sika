@@ -1635,7 +1635,7 @@ def _score_player_prop(
             load_lineup_for_event,
             load_mlb_pitcher_advanced,
             load_mlb_statcast_pitcher,
-            load_park_factors_for_team,
+            load_park_factors_for_event,
             load_weather,
             resolve_mlb_stats_player_id,
         )
@@ -1645,13 +1645,13 @@ def _score_player_prop(
             statcast = resolved.advanced_payload.get("batter_statcast")
             features.update(emit_mlb_batter_features(sabermetrics, statcast))
 
-        # Bug #4: park factors are keyed by the home team's three-letter
-        # abbreviation, not ESPN's venue id (the two id namespaces don't
-        # overlap). _competitor_for_role pulls the home competitor from
-        # ESPN's competition payload; team.abbreviation is what we need.
+        # Bug #4: park factors are not keyed by ESPN's venue id; the
+        # helper prefers venue-name match (disambiguates TBR Tropicana
+        # vs. Steinbrenner), then home team abbreviation, then legacy
+        # top-level venue_id for any non-ESPN rows.
         home_competitor = _competitor_for_role(event, "home")
         home_team_abbr = (home_competitor.get("team") or {}).get("abbreviation")
-        park = load_park_factors_for_team(home_team_abbr)
+        park = load_park_factors_for_event(event.raw_data, home_team_abbr)
         features.update(emit_park_features(park))
 
         venue_indoor_flag = bool(features.get("venue_indoor"))
