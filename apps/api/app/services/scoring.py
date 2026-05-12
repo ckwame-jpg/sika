@@ -1635,7 +1635,7 @@ def _score_player_prop(
             load_lineup_for_event,
             load_mlb_pitcher_advanced,
             load_mlb_statcast_pitcher,
-            load_park_factors,
+            load_park_factors_for_team,
             load_weather,
             resolve_mlb_stats_player_id,
         )
@@ -1645,17 +1645,31 @@ def _score_player_prop(
             statcast = resolved.advanced_payload.get("batter_statcast")
             features.update(emit_mlb_batter_features(sabermetrics, statcast))
 
-        venue_id = (event.raw_data or {}).get("venue_id") if isinstance(event.raw_data, dict) else None
-        park = load_park_factors(venue_id)
+        # Bug #4: park factors are keyed by the home team's three-letter
+        # abbreviation, not ESPN's venue id (the two id namespaces don't
+        # overlap). _competitor_for_role pulls the home competitor from
+        # ESPN's competition payload; team.abbreviation is what we need.
+        home_competitor = _competitor_for_role(event, "home")
+        home_team_abbr = (home_competitor.get("team") or {}).get("abbreviation")
+        park = load_park_factors_for_team(home_team_abbr)
         features.update(emit_park_features(park))
 
         venue_indoor_flag = bool(features.get("venue_indoor"))
+        # Bug #4: game_time_utc enables the weather cache lookup to filter
+        # by expiration. lat/lon are not provided by ESPN's venue payload
+        # so weather still requires a separately-warmed cache (smarter #15
+        # — weather_refresh job); allow_network stays False to keep the
+        # synchronous scoring path off the network.
+        starts_at = event.starts_at
+        if starts_at is not None and starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=timezone.utc)
+        game_time_utc = starts_at.astimezone(timezone.utc) if starts_at else None
         weather_result = load_weather(
             db,
             event_id=str(event.id),
             lat=None,
             lon=None,
-            game_time_utc=None,
+            game_time_utc=game_time_utc,
             is_dome=venue_indoor_flag,
             allow_network=False,
         )

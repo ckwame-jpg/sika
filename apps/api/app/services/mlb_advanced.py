@@ -573,30 +573,68 @@ def _load_park_factors_file() -> dict[str, dict[str, Any]]:
     return _PARK_FACTORS_CACHE
 
 
+def _materialize_park_factors(entry: dict[str, Any] | None) -> dict[str, float]:
+    if not entry:
+        return _NEUTRAL_PARK_FACTORS
+    return {
+        "hr": _safe_float(entry.get("hr")) or 1.0,
+        "r": _safe_float(entry.get("r")) or 1.0,
+        "1b": _safe_float(entry.get("1b")) or 1.0,
+        "2b": _safe_float(entry.get("2b")) or 1.0,
+        "3b": _safe_float(entry.get("3b")) or 1.0,
+        "bb": _safe_float(entry.get("bb")) or 1.0,
+        "so": _safe_float(entry.get("so")) or 1.0,
+        "_data_complete": 1.0,
+        "_venue_name": entry.get("name") or "",
+    }
+
+
 def load_park_factors(venue_id: str | int | None) -> dict[str, float]:
     """Return the park-factor multipliers for an MLB venue, or league-neutral defaults."""
     if venue_id is None:
         return _NEUTRAL_PARK_FACTORS
-    factors = _load_park_factors_file().get(str(venue_id))
-    if not factors:
+    return _materialize_park_factors(_load_park_factors_file().get(str(venue_id)))
+
+
+def load_park_factors_for_team(team_abbreviation: str | None) -> dict[str, float]:
+    """Return the park-factor multipliers for the home team's stadium.
+
+    Bug #4: ESPN's ``venue.id`` is keyed by ESPN's own venue catalog
+    (e.g. ``230`` for CoolToday Park) and does not align with
+    ``park_factors.json`` (keyed by FanGraphs' numeric venue ids 1-33).
+    The reliable join — present on every regular-season ESPN event — is
+    the home team's three-letter abbreviation, so we look up park
+    factors by team instead.
+    """
+    if not team_abbreviation:
         return _NEUTRAL_PARK_FACTORS
-    return {
-        "hr": _safe_float(factors.get("hr")) or 1.0,
-        "r": _safe_float(factors.get("r")) or 1.0,
-        "1b": _safe_float(factors.get("1b")) or 1.0,
-        "2b": _safe_float(factors.get("2b")) or 1.0,
-        "3b": _safe_float(factors.get("3b")) or 1.0,
-        "bb": _safe_float(factors.get("bb")) or 1.0,
-        "so": _safe_float(factors.get("so")) or 1.0,
-        "_data_complete": 1.0,
-        "_venue_name": factors.get("name") or "",
-    }
+    normalized = str(team_abbreviation).strip().upper()
+    if not normalized:
+        return _NEUTRAL_PARK_FACTORS
+    entry = _PARK_FACTORS_BY_TEAM.get(normalized)
+    return _materialize_park_factors(entry)
 
 
 _NEUTRAL_PARK_FACTORS: dict[str, float] = {
     "hr": 1.0, "r": 1.0, "1b": 1.0, "2b": 1.0, "3b": 1.0, "bb": 1.0, "so": 1.0,
     "_data_complete": 0.0,
 }
+
+
+def _build_park_factors_by_team() -> dict[str, dict[str, Any]]:
+    """Reverse-index ``park_factors.json`` by team abbreviation. Cached at
+    import time — the source file is bundled and immutable at runtime."""
+    by_team: dict[str, dict[str, Any]] = {}
+    for key, entry in _load_park_factors_file().items():
+        if key == "_metadata" or not isinstance(entry, dict):
+            continue
+        team = str(entry.get("team") or "").strip().upper()
+        if team:
+            by_team[team] = entry
+    return by_team
+
+
+_PARK_FACTORS_BY_TEAM: dict[str, dict[str, Any]] = _build_park_factors_by_team()
 
 
 # -----------------------------------------------------------------------------

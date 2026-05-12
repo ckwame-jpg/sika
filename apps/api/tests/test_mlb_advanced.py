@@ -234,6 +234,30 @@ def test_load_park_factors_returns_curated_for_known_venue():
     assert factors["_data_complete"] == 1.0
 
 
+def test_load_park_factors_for_team_returns_curated_for_known_abbreviation():
+    """Bug #4: ESPN's venue.id (e.g., 230 for CoolToday Park) doesn't match
+    park_factors.json's numeric keys (1-33, a FanGraphs schema). The
+    reliable join key is the home team's three-letter abbreviation, which
+    ESPN provides on every event. This helper makes that lookup explicit."""
+    factors = mlb_advanced.load_park_factors_for_team("COL")  # Colorado Rockies → Coors Field
+    assert factors["hr"] > 1.10
+    assert factors["_data_complete"] == 1.0
+
+
+def test_load_park_factors_for_team_returns_neutral_for_unknown_team():
+    factors = mlb_advanced.load_park_factors_for_team("ZZZ")
+    assert factors["hr"] == 1.0
+    assert factors["_data_complete"] == 0.0
+
+
+def test_load_park_factors_for_team_is_case_insensitive():
+    """ESPN abbreviations are uppercase but be defensive about casing."""
+    upper = mlb_advanced.load_park_factors_for_team("COL")
+    lower = mlb_advanced.load_park_factors_for_team("col")
+    assert upper == lower
+    assert upper["_data_complete"] == 1.0
+
+
 def test_emit_mlb_batter_features_combines_sabermetrics_and_statcast():
     saber = {"season_avg": {"woba": 0.385, "iso": 0.230, "ops": 0.910, "obp": 0.380,
                              "slg": 0.530, "avg": 0.295, "wrc_plus": 145.0,
