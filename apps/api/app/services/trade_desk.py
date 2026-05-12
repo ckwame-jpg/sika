@@ -632,9 +632,17 @@ def build_trade_desk_response(
                 thresholds.sort(key=lambda item: item.threshold)
                 for idx in range(1, len(thresholds)):
                     if thresholds[idx].probability_yes > thresholds[idx - 1].probability_yes:
-                        thresholds[idx].probability_yes = thresholds[idx - 1].probability_yes
+                        clamped = thresholds[idx - 1].probability_yes
+                        thresholds[idx].probability_yes = clamped
                         if thresholds[idx].selected_side_probability is not None:
-                            thresholds[idx].selected_side_probability = thresholds[idx - 1].probability_yes
+                            thresholds[idx].selected_side_probability = clamped
+                        # Bug #7: edge was originally computed against the
+                        # pre-clamp probability — leaving it stale shows the
+                        # operator a more attractive trade than the model
+                        # actually believes in, and biases best_index toward
+                        # the clamped row. Recompute against entry_price.
+                        if thresholds[idx].entry_price is not None:
+                            thresholds[idx].edge = round(clamped - thresholds[idx].entry_price, 4)
                 best_index = max(range(len(thresholds)), key=lambda index: thresholds[index].edge)
                 thresholds[best_index].is_best = True
                 best_edge = max(best_edge, thresholds[best_index].edge)
