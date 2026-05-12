@@ -78,6 +78,9 @@ def test_training_smoke_writes_artifact_and_manifest(tmp_path):
     family = manifest["families"][0]
     assert family["serves_family_key"] == "mlb_props"
     assert family["metadata"]["behavior"] == "sklearn_predict_proba"
+    # Bug #2: manifest must record target_type so future runtime checks can
+    # tell whether predict_proba[:,1] is P(YES) or the legacy P(selected-won).
+    assert family["metadata"]["target_type"] == "yes_won"
 
     spec = FeatureSpec.from_dict(json.loads((result.artifact_dir / "feature_spec.json").read_text(encoding="utf-8")))
     model = joblib.load(result.artifact_dir / "model.joblib")
