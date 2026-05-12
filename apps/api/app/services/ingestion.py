@@ -1762,20 +1762,27 @@ def run_refresh_cycle(
     db.add(run)
     db.flush()
     if job is not None:
-        # Bug #10 P2: set the Run-to-job FK in-memory so the *next*
-        # stage commit (the first ``db.commit()`` inside this function)
-        # auto-flushes it alongside the stage work. A worker timeout
-        # that lands after that commit can then find the Run via
-        # ``job.run_id`` and fail it instead of orphaning it in
-        # ``running``.
+        # Bug #10 P2: link the Run to the job AND commit immediately,
+        # so the FK is durable BEFORE any stage work begins. Two
+        # requirements that this commit satisfies together:
         #
-        # We deliberately do NOT call ``db.flush()`` here: an explicit
-        # flush would issue ``UPDATE refresh_jobs SET run_id = ?`` now,
-        # acquiring a row-level write lock on the job until the next
-        # commit. If a pre-commit stage hangs, the watchdog's
-        # ``_guarded_fail_job`` UPDATE on the same row would block
-        # behind the stuck worker (codex round-2 P1 on PR #37).
+        # 1. The worker-timeout watchdog snapshots ``job.run_id`` from
+        #    a fresh session; the commit makes the link visible across
+        #    sessions, so the watchdog can find and fail the Run.
+        # 2. The commit releases the row-level write lock on
+        #    ``refresh_jobs`` that the ``job.run_id = run.id`` UPDATE
+        #    acquires. If we merely dirtied the attribute without
+        #    committing, any inner ``db.flush()`` (e.g. inside
+        #    ``seed_sports`` called by ``refresh_sports_data``) would
+        #    flush the UPDATE and hold the lock until the first stage
+        #    commit. A pre-commit hang would then block the watchdog's
+        #    ``_guarded_fail_job`` UPDATE on the same row (codex
+        #    round-2 P1 on PR #37).
+        #
+        # The caller has only just loaded ``job`` and added ``run``, so
+        # this is a clean, narrow commit.
         job.run_id = run.id
+        db.commit()
     try:
         with httpx.Client(follow_redirects=True, timeout=20) as shared_http_client:
             kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)
