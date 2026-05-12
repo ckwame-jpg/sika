@@ -8,7 +8,7 @@ from time import perf_counter
 from typing import Any
 
 import httpx
-from sqlalchemy import case, desc, select, text, update
+from sqlalchemy import case, desc, event, select, text, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -699,16 +699,51 @@ def advance_settlement_job(db: Session, *, job: RefreshJob) -> tuple[Run, bool]:
     return run, completed
 
 
+class WorkerCancelledError(BaseException):
+    """Raised by ``_cancel_check`` when the worker thread's cancel event is
+    set. Inherits from ``BaseException`` so ``except Exception`` blocks
+    inside ``_execute_claimed_job`` don't swallow it — cancellation must
+    propagate cleanly to the worker thread boundary.
+
+    Bug #10: when ``process_refresh_job_queue_once`` times out on a
+    worker, the main thread sets the cancel event. The next
+    ``Session.commit()`` anywhere in the worker's call stack hits the
+    ``before_commit`` hook below, raises this error, SQLAlchemy rolls
+    back the transaction, and no stale state lands in the database.
+    """
+
+
+# Thread-local state — the cancel event for the current worker thread.
+# ``before_commit`` checks this and only fires for threads that opted in.
+_thread_state = threading.local()
+
+
+@event.listens_for(Session, "before_commit", propagate=True)
+def _cancel_check_before_commit(session: Session) -> None:
+    cancel_event = getattr(_thread_state, "cancel_event", None)
+    if cancel_event is not None and cancel_event.is_set():
+        raise WorkerCancelledError(
+            "Refresh worker cancelled after main-thread timeout; commit suppressed."
+        )
+
+
 def _execute_job_in_thread(
     job_id: int,
     done_event: threading.Event,
     result_holder: dict[str, RefreshJobSnapshot | BaseException | None],
+    cancel_event: threading.Event,
 ) -> None:
+    _thread_state.cancel_event = cancel_event
     try:
         result_holder["snapshot"] = _execute_claimed_job(job_id)
+    except WorkerCancelledError:
+        # Graceful cancellation — the main thread already failed the job
+        # and won't read the snapshot. Don't pollute result_holder.
+        pass
     except BaseException as exc:  # pragma: no cover - defensive thread boundary
         result_holder["exception"] = exc
     finally:
+        _thread_state.cancel_event = None
         done_event.set()
 
 
@@ -725,13 +760,14 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
         db.commit()
 
     done_event = threading.Event()
+    cancel_event = threading.Event()
     result_holder: dict[str, RefreshJobSnapshot | BaseException | None] = {
         "snapshot": None,
         "exception": None,
     }
     worker = threading.Thread(
         target=_execute_job_in_thread,
-        args=(job_id, done_event, result_holder),
+        args=(job_id, done_event, result_holder, cancel_event),
         daemon=True,
         name=f"refresh-worker-{job_id}",
     )
@@ -742,6 +778,11 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
             raise exception
         snapshot = result_holder.get("snapshot")
         return snapshot if isinstance(snapshot, RefreshJobSnapshot) else None
+
+    # Bug #10: timeout fired. Signal the worker to abort the next commit
+    # via the before_commit hook — any in-flight work it tries to persist
+    # after this point rolls back instead of silently leaking through.
+    cancel_event.set()
 
     with SessionLocal() as db:
         timed_out = _guarded_fail_job(db, job_id, WORKER_TIMEOUT_ERROR)

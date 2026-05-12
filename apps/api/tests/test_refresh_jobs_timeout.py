@@ -154,6 +154,70 @@ def test_frozen_worker_does_not_block_next_tick(db_session, monkeypatch):
     release_first.set()
 
 
+def test_worker_commits_after_timeout_are_suppressed(db_session, monkeypatch):
+    """Bug #10: when the main thread times out, any in-flight db.commit()
+    inside the worker thread must roll back rather than silently
+    persisting stale state. A before-commit hook scoped to the worker
+    thread enforces this; an attempt to commit after the cancel flag is
+    set raises WorkerCancelledError instead of writing through."""
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    job = _queued_prop_job(db_session)
+
+    timeout_observed = threading.Event()
+    commit_attempted = threading.Event()
+    commit_succeeded = threading.Event()
+
+    def _advance(db, job):
+        # Block until the main thread has fired its timeout. By the time
+        # we wake up, cancel_event should be set on this thread.
+        timeout_observed.wait(timeout=2)
+        try:
+            stray_run = Run(kind="prop_refresh", status="completed")
+            db.add(stray_run)
+            db.commit()
+            commit_succeeded.set()
+        except refresh_jobs.WorkerCancelledError:
+            pass
+        finally:
+            commit_attempted.set()
+        return _completed_run(db), True
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+
+    assert result is not None
+    assert result.status == "failed"
+    timeout_observed.set()
+    assert commit_attempted.wait(timeout=2)
+    assert not commit_succeeded.is_set(), (
+        "Worker commit attempted after main thread timed out — band-aid must intercept"
+    )
+
+
+def test_main_thread_commits_are_not_affected_by_worker_cancel(db_session, monkeypatch):
+    """The before-commit hook must be scoped to the worker thread only.
+    Main-thread commits (and concurrent tests' commits) must not be
+    intercepted by a stray cancel event from a finished worker."""
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    job = _queued_prop_job(db_session)
+
+    def _advance(db, job):
+        return _completed_run(db), True
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    refresh_jobs.process_refresh_job_queue_once()
+
+    # After the worker has finished, the main thread must be able to
+    # commit freely — the cancel hook must have cleaned up its
+    # thread-local state.
+    db_session.add(Run(kind="probe", status="running"))
+    db_session.commit()  # would raise WorkerCancelledError if the hook leaked
+
+
 def test_late_worker_completion_does_not_resurrect(db_session, monkeypatch):
     _install_threaded_session_factory(db_session, monkeypatch)
     _fast_timeout_settings(monkeypatch)
@@ -197,6 +261,12 @@ def test_late_worker_completion_does_not_resurrect(db_session, monkeypatch):
     assert result is not None
     assert result.status == "failed"
     release.set()
+    # The guarded helpers (belt) still run inside the worker — _guarded_complete_job
+    # returns False because the job status is no longer "running", and _fail_run
+    # tries to mark the Run failed. Then db.commit() hits the bug-#10 cancellation
+    # hook and rolls back everything the worker did this session, including the
+    # Run that ``_advance`` created via ``_completed_run``. End state from the
+    # user's perspective is unchanged: no resurrection.
     assert complete_attempted.wait(timeout=1)
     assert run_fail_attempted.wait(timeout=1)
     assert complete_result["value"] is False
@@ -204,9 +274,9 @@ def test_late_worker_completion_does_not_resurrect(db_session, monkeypatch):
     persisted = db_session.get(RefreshJob, job.id)
     assert persisted.status == "failed"
     assert persisted.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
-    persisted_run = db_session.query(Run).order_by(Run.id.desc()).first()
-    persisted_run = _wait_for_run_status(db_session, persisted_run.id, "failed")
-    assert persisted_run.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
+    # The Run the worker tried to create never lands in the DB — the cancellation
+    # hook rolled back the worker's transaction before commit.
+    assert db_session.query(Run).count() == 0
 
 
 def test_late_worker_requeue_does_not_resurrect(db_session, monkeypatch):
