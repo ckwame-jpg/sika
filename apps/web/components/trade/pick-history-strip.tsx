@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import {
   fetchModelReadinessSummary,
@@ -31,7 +31,7 @@ import type { TradeSelection } from "./trade-ticket";
  * Local state:
  *   - per-pick depth (5 | 10 | 20), initialised from the operator-wide
  *     default in /ops/models/readiness then overridable by the toggle.
- *   - opponent / location filter selection.
+ *   - location filter (all/home/away).
  *
  * SWR cache keys include the depth + filter values so each combination
  * caches independently and toggling back to a previously-viewed setting
@@ -68,18 +68,12 @@ export function PickHistoryStrip({ selection }: PickHistoryStripProps) {
   const n: HistoryN = override ?? operatorDefault;
 
   const [location, setLocation] = useState<"home" | "away" | null>(null);
-  const opponent = useMemo(() => inferOpponentName(selection), [selection]);
-  const [opponentEnabled, setOpponentEnabled] = useState(false);
-  const effectiveOpponent = opponentEnabled ? opponent : null;
 
   const controls: StripControlsProps = {
     n,
     onN: setOverride,
     location,
     onLocation: setLocation,
-    opponent,
-    opponentEnabled,
-    onOpponentToggle: () => setOpponentEnabled((value) => !value),
   };
 
   if (selection.kind === "player_prop") {
@@ -89,7 +83,6 @@ export function PickHistoryStrip({ selection }: PickHistoryStripProps) {
         controls={controls}
         n={n}
         location={location}
-        opponent={effectiveOpponent}
       />
     );
   }
@@ -99,7 +92,6 @@ export function PickHistoryStrip({ selection }: PickHistoryStripProps) {
       controls={controls}
       n={n}
       location={location}
-      opponent={effectiveOpponent}
     />
   );
 }
@@ -112,16 +104,15 @@ interface PlayerPropStripProps {
   controls: StripControlsProps;
   n: HistoryN;
   location: "home" | "away" | null;
-  opponent: string | null;
 }
 
-function PlayerPropStrip({ selection, controls, n, location, opponent }: PlayerPropStripProps) {
+function PlayerPropStrip({ selection, controls, n, location }: PlayerPropStripProps) {
   const subjectName = selection.subjectName;
   const statKey = selection.statKey;
   const threshold = selection.threshold;
   const ready = Boolean(subjectName && statKey && threshold != null);
 
-  const opts: PickHistoryOptions = { location, opponent };
+  const opts: PickHistoryOptions = { location, opponent: null };
 
   const { data, error, isLoading } = useSWR<StatsQueryRead>(
     ready ? keys.playerHistory(subjectName!, selection.sportKey, n, opts) : null,
@@ -159,7 +150,7 @@ function PlayerPropStrip({ selection, controls, n, location, opponent }: PlayerP
         }
       />
       <MiniBars
-        key={`player-${n}-${location ?? ""}-${opponent ?? ""}-${recentValues.length}`}
+        key={`player-${n}-${location ?? ""}-${recentValues.length}`}
         points={recentValues}
         threshold={thresholdNumber}
         bandTone={bandTone}
@@ -177,14 +168,13 @@ interface GameLineStripProps {
   controls: StripControlsProps;
   n: HistoryN;
   location: "home" | "away" | null;
-  opponent: string | null;
 }
 
-function GameLineStrip({ selection, controls, n, location, opponent }: GameLineStripProps) {
+function GameLineStrip({ selection, controls, n, location }: GameLineStripProps) {
   const teamName = inferTeamName(selection);
   if (teamName === null) return null;
 
-  const opts: PickHistoryOptions = { location, opponent };
+  const opts: PickHistoryOptions = { location, opponent: null };
 
   const { data, error, isLoading } = useSWR<TeamHistoryRead>(
     keys.teamHistory(teamName, selection.sportKey, n, opts),
@@ -210,7 +200,6 @@ function GameLineStrip({ selection, controls, n, location, opponent }: GameLineS
         controls={controls}
         n={n}
         location={location}
-        opponent={opponent}
       />
     );
   }
@@ -224,7 +213,6 @@ function GameLineStrip({ selection, controls, n, location, opponent }: GameLineS
         controls={controls}
         n={n}
         location={location}
-        opponent={opponent}
       />
     );
   }
@@ -237,7 +225,6 @@ function GameLineStrip({ selection, controls, n, location, opponent }: GameLineS
       controls={controls}
       n={n}
       location={location}
-      opponent={opponent}
     />
   );
 }
@@ -253,7 +240,6 @@ interface ChartVariantProps {
   controls: StripControlsProps;
   n: HistoryN;
   location: "home" | "away" | null;
-  opponent: string | null;
 }
 
 function SpreadChart({
@@ -264,7 +250,6 @@ function SpreadChart({
   controls,
   n,
   location,
-  opponent,
 }: ChartVariantProps) {
   const margins = recent.map((row) => row.team_score - row.opp_score);
   // numericLine is pre-signed from the picked side's perspective. Cover
@@ -289,7 +274,7 @@ function SpreadChart({
         }
       />
       <MiniBars
-        key={`spread-${n}-${location ?? ""}-${opponent ?? ""}-${margins.length}`}
+        key={`spread-${n}-${location ?? ""}-${margins.length}`}
         points={margins}
         threshold={coverThreshold}
         bandTone={(_, index) => outcomes[index]}
@@ -307,7 +292,6 @@ function TotalChart({
   controls,
   n,
   location,
-  opponent,
 }: ChartVariantProps) {
   const totals = recent.map((row) => row.team_score + row.opp_score);
   const absoluteLine = Math.abs(numericLine);
@@ -331,7 +315,7 @@ function TotalChart({
         }
       />
       <MiniBars
-        key={`total-${n}-${location ?? ""}-${opponent ?? ""}-${totals.length}`}
+        key={`total-${n}-${location ?? ""}-${totals.length}`}
         points={totals}
         threshold={absoluteLine}
         bandTone={(_, index) => outcomes[index]}
@@ -347,10 +331,9 @@ interface MoneylinePillsProps {
   controls: StripControlsProps;
   n: HistoryN;
   location: "home" | "away" | null;
-  opponent: string | null;
 }
 
-function MoneylinePills({ team, recent, controls, n, location, opponent }: MoneylinePillsProps) {
+function MoneylinePills({ team, recent, controls, n, location }: MoneylinePillsProps) {
   const wins = recent.filter((result) => result.result === "W").length;
   return (
     <section className="pick-history-strip" data-testid="pick-history-strip">
@@ -366,7 +349,7 @@ function MoneylinePills({ team, recent, controls, n, location, opponent }: Money
         }
       />
       <ol
-        key={`pills-${n}-${location ?? ""}-${opponent ?? ""}-${recent.length}`}
+        key={`pills-${n}-${location ?? ""}-${recent.length}`}
         className="pick-history-strip-pills pick-history-strip-pills-animated"
         data-testid="pick-history-strip-pills"
       >
@@ -401,9 +384,6 @@ interface StripControlsProps {
   onN: (n: HistoryN) => void;
   location: "home" | "away" | null;
   onLocation: (location: "home" | "away" | null) => void;
-  opponent: string | null;
-  opponentEnabled: boolean;
-  onOpponentToggle: () => void;
 }
 
 function StripHeader({
@@ -433,12 +413,9 @@ function StripHeader({
         </div>
         <div className="pick-history-strip-filter-chips" role="group" aria-label="History filters">
           <FilterChip
-            active={controls.location === null && !controls.opponentEnabled}
+            active={controls.location === null}
             label="all"
-            onClick={() => {
-              controls.onLocation(null);
-              if (controls.opponentEnabled) controls.onOpponentToggle();
-            }}
+            onClick={() => controls.onLocation(null)}
             testId="pick-history-strip-filter-all"
           />
           <FilterChip
@@ -453,14 +430,6 @@ function StripHeader({
             onClick={() => controls.onLocation(controls.location === "away" ? null : "away")}
             testId="pick-history-strip-filter-away"
           />
-          {controls.opponent ? (
-            <FilterChip
-              active={controls.opponentEnabled}
-              label={`vs ${controls.opponent}`}
-              onClick={controls.onOpponentToggle}
-              testId="pick-history-strip-filter-opponent"
-            />
-          ) : null}
         </div>
       </div>
     </header>
@@ -566,29 +535,4 @@ function inferTeamName(selection: TradeSelection): string | null {
     if (stripped.length >= 2) return stripped;
   }
   return null;
-}
-
-/**
- * Parse the opposing team's short name from the selection's eventName
- * ("Detroit Pistons at Cleveland Cavaliers"). Returns null if we can't
- * find a sensible opponent (used to decide whether to render the vs chip).
- */
-function inferOpponentName(selection: TradeSelection): string | null {
-  const eventName = (selection.eventName || "").trim();
-  if (!eventName) return null;
-  const teamName = inferTeamName(selection) ?? selection.subjectTeam ?? "";
-  const separator = " at ";
-  const idx = eventName.toLowerCase().indexOf(separator);
-  if (idx === -1) return null;
-  const away = eventName.slice(0, idx).trim();
-  const home = eventName.slice(idx + separator.length).trim();
-  const teamLower = teamName.toLowerCase();
-  if (teamLower && teamLower === home.toLowerCase()) return away || null;
-  if (teamLower && teamLower === away.toLowerCase()) return home || null;
-  // Fuzzy match: use whichever side doesn't contain the picked team name.
-  if (teamLower && home.toLowerCase().includes(teamLower)) return away || null;
-  if (teamLower && away.toLowerCase().includes(teamLower)) return home || null;
-  // For player props we don't know the team — fall back to the home side
-  // as a useful default opponent chip.
-  return home || away || null;
 }
