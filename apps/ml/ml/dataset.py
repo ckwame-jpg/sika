@@ -57,6 +57,10 @@ def _prepare_frame(rows: pd.DataFrame, *, drop_pushes: bool, dedupe_markets: boo
     if drop_pushes:
         frame = frame[frame["prediction_outcome"].isin({"won", "lost"})]
     frame = frame[frame["sport_key"].astype(str).str.upper().isin({"NBA", "MLB"})]
+    # Target derivation below relies on side being "yes" or "no" — drop anything
+    # else (null, empty, unknown values) before computing, so we never silently
+    # mislabel a row whose side was missing.
+    frame = frame[frame["side"].astype(str).str.lower().isin({"yes", "no"})]
     if "capture_scope" in frame.columns:
         frame = frame[(frame["capture_scope"].isna()) | (frame["capture_scope"] != "coverage")]
     frame["captured_at"] = pd.to_datetime(frame["captured_at"], utc=True)
@@ -84,7 +88,12 @@ def _prepare_frame(rows: pd.DataFrame, *, drop_pushes: bool, dedupe_markets: boo
         normalized_features.append(features)
     frame["features"] = normalized_features
     frame["family_key"] = [features["family_key"] for features in normalized_features]
-    frame["target"] = frame["prediction_outcome"].map({"won": 1, "lost": 0}).astype(int)
+    # target = 1 iff YES wins. Without this, NO-side rows would be labeled by
+    # whether the user's pick won, but serving reads predict_proba[:,1] as
+    # P(YES) — see bug #2 in SIKA_PUNCH_LIST.md.
+    side_yes = frame["side"].astype(str).str.lower() == "yes"
+    outcome_won = frame["prediction_outcome"] == "won"
+    frame["target"] = (side_yes == outcome_won).astype(int)
     frame["player_group"] = frame["subject_name"].fillna(frame["ticker"]).astype(str)
     frame["event_group"] = frame["event_id"].fillna(frame["event_name"]).fillna(frame["ticker"]).astype(str)
     return frame.reset_index(drop=True)

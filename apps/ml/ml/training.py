@@ -255,7 +255,13 @@ def _metrics_for_predictions(frame: pd.DataFrame, indices: np.ndarray, probabili
     edge = clipped - selected["suggested_price"].fillna(0.5).astype(float).to_numpy()
     top_n = max(int(np.ceil(len(selected) * 0.10)), 1)
     top_idx = np.argsort(edge)[-top_n:]
-    pnl = selected["realized_pnl"].fillna(selected["target"].map({1: 1.0, 0: -1.0})).astype(float).to_numpy()
+    # Fallback when realized_pnl is missing: derive from prediction_outcome
+    # (the trade-level result) rather than target (now YES-won, not trade-won).
+    # fillna(0.0) on the map covers push/cancelled or any non-binary outcome
+    # so unknown values don't propagate NaN into top_decile_roi.
+    pnl = selected["realized_pnl"].fillna(
+        selected["prediction_outcome"].map({"won": 1.0, "lost": -1.0}).fillna(0.0)
+    ).astype(float).to_numpy()
     buckets = pd.cut(clipped, bins=[0.0, 0.4, 0.5, 0.6, 1.0], include_lowest=True)
     calibration = (
         pd.DataFrame({"bucket": buckets.astype(str), "target": target, "probability": clipped})
@@ -578,7 +584,16 @@ def train_and_package(
                         feature_set_version=feature_set_version,
                         artifact_path=str(relative_artifact),
                         mode=serving_mode,
-                        metadata={"behavior": "sklearn_predict_proba", "feature_mode": "residual_calibration"},
+                        metadata={
+                            "behavior": "sklearn_predict_proba",
+                            "feature_mode": "residual_calibration",
+                            # target_type pins what predict_proba[:,1] represents.
+                            # "yes_won" means the model emits P(YES wins); serving
+                            # paths in ml/runtime.py and ml/shadow.py rely on this.
+                            # Manifests missing this field were trained against the
+                            # selected-side-won target (bug #2) and should be retrained.
+                            "target_type": "yes_won",
+                        },
                     )
                     for serves_key in resolved_serve_keys
                 ],
