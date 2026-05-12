@@ -1010,6 +1010,60 @@ def _setup_scorable_winner_market(db_session, *, key: str) -> Market:
     return market
 
 
+def test_no_side_winner_recommendation_is_suppressed_as_not_actionable(db_session, monkeypatch):
+    """Bug #49: Kalshi only offers YES contracts, so a 'NO on Boston'
+    recommendation isn't directly tradeable. The paired-market YES
+    recommendation (on the opposite team) covers the same signal via its
+    own independent scoring pass, so suppressing the NO side here keeps
+    the watchlist actionable without losing the signal."""
+    market = _setup_scorable_winner_market(db_session, key="no-side-suppressed")
+    market.raw_data = {**(market.raw_data or {}), "copilot_market_family": "winner"}
+    snapshot = db_session.scalar(select(MarketSnapshot).where(MarketSnapshot.market_id == market.id))
+    db_session.commit()
+
+    # Force the model to think the YES side is unlikely (P=0.20).
+    # With yes_ask=0.45 and no_ask=0.56:
+    #   yes_edge = 0.20 - 0.45 = -0.25
+    #   no_edge = 0.80 - 0.56 = +0.24
+    # → side selection picks "no".
+    def fake_score_team_winner(db, event, left, right):
+        return (0.20, 0.6, ["forced underdog"], {"family_key": "nba_singles"})
+
+    monkeypatch.setattr(scoring_module, "_score_team_winner", fake_score_team_winner)
+
+    scored = scoring_module._build_scored_recommendation(db_session, market.event, market, snapshot)
+
+    assert scored is not None
+    assert scored.recommendation is None, "NO-side picks must not produce an actionable recommendation."
+    suppression_reasons = list(
+        (scored.signal.scoring_diagnostics or {}).get("suppression_reasons") or []
+    )
+    assert "no_side_not_actionable_on_kalshi" in suppression_reasons
+
+
+def test_yes_side_recommendation_is_not_suppressed_by_no_side_guard(db_session, monkeypatch):
+    """Regression guard for bug #49: YES-side picks must still flow through
+    to recommendations. We only suppress when side='no'."""
+    market = _setup_scorable_winner_market(db_session, key="yes-side-unaffected")
+    market.raw_data = {**(market.raw_data or {}), "copilot_market_family": "winner"}
+    snapshot = db_session.scalar(select(MarketSnapshot).where(MarketSnapshot.market_id == market.id))
+    db_session.commit()
+
+    # Strong YES signal — model thinks Boston wins comfortably.
+    def fake_score_team_winner(db, event, left, right):
+        return (0.70, 0.65, ["forced favorite"], {"family_key": "nba_singles"})
+
+    monkeypatch.setattr(scoring_module, "_score_team_winner", fake_score_team_winner)
+
+    scored = scoring_module._build_scored_recommendation(db_session, market.event, market, snapshot)
+
+    assert scored is not None
+    suppression_reasons = list(
+        (scored.signal.scoring_diagnostics or {}).get("suppression_reasons") or []
+    )
+    assert "no_side_not_actionable_on_kalshi" not in suppression_reasons
+
+
 def test_score_watchlist_markets_batch_is_pure(db_session):
     # Slice 6: ``_score_watchlist_markets_batch`` must not write to the
     # session. Constructing a real scorable market and calling the function
