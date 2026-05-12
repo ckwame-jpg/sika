@@ -2244,6 +2244,13 @@ def _build_scored_recommendation(
         suggested_price = no_entry if no_entry is not None else fair_no_price
         invalidation = f"Pull if NO entry moves above {min(fair_no_price + 0.04, 0.99):.4f}"
 
+    # Bug #2 P2: in ML mode, ml_result.confidence == ml_result.probability == P(YES).
+    # Convert to the selected-side probability so watchlist_min_confidence and
+    # _quality_tier don't unfairly suppress strong NO recommendations. Mirrors
+    # how shadow capture already handles this in shadow.py:131.
+    if served_mode == "ml":
+        confidence = round(_selected_side_probability(probability_yes, side), 4)
+
     if market_family == "player_prop" and metadata.get("copilot_requires_lineup"):
         invalidation = f"{invalidation}. Cancel if the player is not confirmed active / in the starting lineup."
 
