@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy import select
 
 from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Participant, Prediction, Recommendation, Run
@@ -163,6 +164,21 @@ def test_build_trade_desk_clamps_rather_than_drops_non_monotonic_stat_group(db_s
     # Verify monotonicity holds after clamping
     for i in range(1, len(probs)):
         assert probs[i] <= probs[i - 1]
+
+    # Bug #7: after the probability clamp, edge must be recomputed
+    # against entry_price — otherwise the displayed edge still reflects
+    # the pre-clamp probability and the operator sees a more attractive
+    # trade than the model actually believes in.
+    # Threshold 25+: pre-clamp prob 0.85, edge -0.05, suggested_price 0.90.
+    # After clamp prob = 0.80, so edge must be 0.80 - 0.90 = -0.10.
+    assert stat_group.thresholds[0].edge == pytest.approx(0.10)  # threshold 20+, unchanged
+    assert stat_group.thresholds[1].edge == pytest.approx(round(0.80 - 0.90, 4))  # clamped
+    assert stat_group.thresholds[2].edge == pytest.approx(0.08)  # threshold 30+, unchanged
+    # best_index should now reflect the clamped values too — threshold 20+
+    # has the highest edge (0.10) after the recompute.
+    best = next(t for t in stat_group.thresholds if t.is_best)
+    assert best.threshold == 20.0
+    assert prop.best_edge == pytest.approx(0.10)
 
 
 def test_build_trade_desk_includes_coverage_only_current_events(db_session):
