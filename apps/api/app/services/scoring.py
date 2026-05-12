@@ -2884,7 +2884,11 @@ def stage_current_slate_watchlist_batch(
     return scoring_summary, next_index, complete
 
 
-def _apply_prediction_monotonicity(predictions: list[Prediction]) -> None:
+def _apply_prediction_monotonicity(
+    predictions: list[Prediction],
+    *,
+    summary: WatchlistGenerationSummary | None = None,
+) -> None:
     from collections import defaultdict
 
     settings = get_settings()
@@ -2929,6 +2933,19 @@ def _apply_prediction_monotonicity(predictions: list[Prediction]) -> None:
                     suppression_reasons.append("monotonicity_edge_below_min")
                 diagnostics["suppression_reasons"] = suppression_reasons
                 current.capture_scope = "suppressed"
+                # Codex PR #33 round-4 P2: the staged path counted this
+                # prediction as ``recommended`` during batch scoring; keep
+                # the run summary aligned with the predictions finalize
+                # actually emits.
+                if summary is not None:
+                    counts = summary.outcome_reason_counts
+                    if counts.get("recommended", 0) > 0:
+                        counts["recommended"] = counts["recommended"] - 1
+                        if counts["recommended"] == 0:
+                            counts.pop("recommended", None)
+                    counts["suppressed_monotonicity_edge_below_min"] = (
+                        counts.get("suppressed_monotonicity_edge_below_min", 0) + 1
+                    )
             current.scoring_diagnostics = diagnostics
 
 
@@ -2984,7 +3001,7 @@ def finalize_staged_watchlist(
     ).all()
 
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope != "coverage"]
-    _apply_prediction_monotonicity(candidate_predictions)
+    _apply_prediction_monotonicity(candidate_predictions, summary=summary)
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope not in {"coverage", "suppressed"}]
     winners, collapsed_count, combo_suppressed = _dedupe_prediction_recommendations(candidate_predictions)
     summary.inverse_winner_duplicates_collapsed = collapsed_count
@@ -3068,7 +3085,7 @@ def finalize_current_slate_watchlist(
     ).all()
 
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope != "coverage"]
-    _apply_prediction_monotonicity(candidate_predictions)
+    _apply_prediction_monotonicity(candidate_predictions, summary=summary)
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope not in {"coverage", "suppressed"}]
     winners, collapsed_count, combo_suppressed = _dedupe_prediction_recommendations(candidate_predictions)
     summary.inverse_winner_duplicates_collapsed = collapsed_count
