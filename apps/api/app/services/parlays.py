@@ -182,13 +182,25 @@ def _correlation_adjusted_joint_probability(
 ) -> float:
     """Joint probability of all legs hitting, corrected for correlation.
 
-    Bug #5: the strict product of leg probabilities assumes independence,
-    which understates positively correlated joints (e.g. "LeBron over
-    points" + "LeBron over rebounds" — when LeBron plays well, both hit).
-    For independent legs the correlation factor is zero and this returns
-    the product. As correlation strength rises the result blends toward
-    the max-leg probability — never exceeding it, so the joint stays
-    bounded by the strongest single leg.
+    Bug #5: the strict product of leg probabilities assumes independence.
+    For the parlays sika constructs — same player, same team, shared
+    opponent — that assumption is wrong in a specific direction: those
+    legs are POSITIVELY correlated, and probability theory guarantees
+    that for positive correlation ``P(A∩B) >= P(A) * P(B)``. The strict
+    product UNDERSTATES the joint, so genuine same-game-parlay edges
+    get filtered out before the user sees them.
+
+    (Aside: the punch list framing said independence "overstates" the
+    joint. That's only true for *negatively* correlated legs — mutually
+    exclusive outcomes like "Lakers win + Thunder win". Sika's combo
+    construction filters those out, so in practice every correlated
+    parlay we see is positive correlation and needs to move UP.)
+
+    Formula: blend between the strict product (lower bound, independence)
+    and the minimum leg probability (upper bound, since ``P(A∩B) <=
+    min(P(A), P(B))`` regardless of correlation direction). Correlation
+    factor scales with the number of shared-subject/team/opponent pairs.
+    For independent legs the factor is zero and this returns the product.
     """
     leg_probs = [_selected_model_probability(candidate) for candidate in combo]
     independent = prod(leg_probs)
