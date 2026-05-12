@@ -363,7 +363,7 @@ class CountingEspnPropClient:
         self.search_calls: list[tuple[str, str]] = []
         self.gamelog_calls: list[tuple[str, str, int]] = []
 
-    def search_player(self, query: str, sport_key: str = "NBA"):
+    def search_player(self, query: str, sport_key: str = "NBA", *, team_hint: str | None = None):
         self.search_calls.append((query, sport_key))
         return {
             "athlete_id": "3934672",
@@ -942,7 +942,7 @@ def test_warm_current_watchlist_prop_context_only_warms_current_slate(db_session
             self.search_calls: list[tuple[str, str]] = []
             self.gamelog_calls: list[tuple[str, str, int]] = []
 
-        def search_player(self, query: str, sport_key: str = "NBA"):
+        def search_player(self, query: str, sport_key: str = "NBA", *, team_hint: str | None = None):
             self.search_calls.append((query, sport_key))
             return {
                 "athlete_id": "athlete-current" if query == "Jalen Brunson" else "athlete-future",
@@ -988,7 +988,7 @@ def test_prop_stats_resolver_uses_persistent_cache_without_network(db_session):
     db_session.commit()
 
     class FailingEspnClient:
-        def search_player(self, query: str, sport_key: str = "NBA"):
+        def search_player(self, query: str, sport_key: str = "NBA", *, team_hint: str | None = None):
             raise AssertionError("search_player should not be called")
 
         def fetch_player_gamelog(self, sport_key: str, athlete_id: str, season: int):

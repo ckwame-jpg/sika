@@ -229,44 +229,82 @@ class PropStatsResolver:
             return timedelta(minutes=settings.nba_prop_gamelog_cache_minutes)
         return timedelta(minutes=settings.mlb_prop_gamelog_cache_minutes)
 
-    def _load_player_search(self, sport_key: str, query: str) -> tuple[dict[str, Any], str]:
-        normalized_query = self._normalize_query(query)
+    def _load_player_search(
+        self,
+        sport_key: str,
+        query: str,
+        *,
+        team_hint: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        # Bug #13: include team_hint in the cache key when provided so that
+        # same-name players on different teams (e.g. two "John Smith"s)
+        # don't poison each other's cache row.
+        #
+        # Codex PR #35 P2: never reuse the bare-query row as a fallback
+        # write target — that just rotates the poisoning to whichever
+        # caller landed last. A legacy bare row IS allowed as a read-only
+        # cache HIT, but only if its cached team_name matches the hint;
+        # fresh network fetches always land on the hinted key.
+        from app.clients.espn import _team_hint_matches_subtitle as _team_hint_matches
+
+        bare_query = self._normalize_query(query)
+        if team_hint:
+            normalized_query = f"{bare_query}|{str(team_hint).strip().upper()}"
+        else:
+            normalized_query = bare_query
         now = self._now()
-        row = self.db.scalar(
+        hinted_row = self.db.scalar(
             select(EspnPlayerSearchCache).where(
                 EspnPlayerSearchCache.sport_key == sport_key,
                 EspnPlayerSearchCache.query_normalized == normalized_query,
             )
         )
-        expires_at = self._coerce_utc(row.expires_at) if row else None
-        if row and expires_at and expires_at > now:
+        read_row = hinted_row
+        if read_row is None and team_hint:
+            # Look for a legacy bare-query row and treat it as a read-only
+            # hit when its payload matches the team hint. Never write
+            # through to it on miss/refresh.
+            bare_row = self.db.scalar(
+                select(EspnPlayerSearchCache).where(
+                    EspnPlayerSearchCache.sport_key == sport_key,
+                    EspnPlayerSearchCache.query_normalized == bare_query,
+                )
+            )
+            bare_team = str((bare_row.payload or {}).get("team_name") or "") if bare_row else ""
+            if bare_row is not None and _team_hint_matches(str(team_hint), bare_team, sport_key):
+                read_row = bare_row
+        expires_at = self._coerce_utc(read_row.expires_at) if read_row else None
+        if read_row and expires_at and expires_at > now:
             self.stats.player_search_cache_hits += 1
-            return dict(row.payload or {}), "hit"
-        if row and not self.allow_network:
+            return dict(read_row.payload or {}), "hit"
+        if read_row and not self.allow_network:
             self.stats.player_search_cache_hits += 1
-            return dict(row.payload or {}), "hit"
+            return dict(read_row.payload or {}), "hit"
         if not self.allow_network:
             self.stats.player_search_cache_misses += 1
             raise LookupError(f"No cached ESPN player search found for {sport_key}:{query}")
 
         self.stats.player_search_cache_misses += 1
         try:
-            payload = self.espn_client.search_player(query, sport_key=sport_key)
+            payload = self.espn_client.search_player(query, sport_key=sport_key, team_hint=team_hint)
         except Exception:
-            if row:
+            if read_row:
                 self.stats.player_search_cache_hits += 1
-                return dict(row.payload or {}), "hit"
+                return dict(read_row.payload or {}), "hit"
             raise
 
-        if row is None:
-            row = EspnPlayerSearchCache(
+        # Always write to the hinted key (or bare key when no hint was
+        # provided). Don't mutate the legacy bare row even if we adopted
+        # it for reading earlier.
+        if hinted_row is None:
+            hinted_row = EspnPlayerSearchCache(
                 sport_key=sport_key,
                 query_normalized=normalized_query,
             )
-            self.db.add(row)
-        row.payload = dict(payload)
-        row.cached_at = now
-        row.expires_at = now + self._search_ttl()
+            self.db.add(hinted_row)
+        hinted_row.payload = dict(payload)
+        hinted_row.cached_at = now
+        hinted_row.expires_at = now + self._search_ttl()
         self.db.flush()
         return payload, "miss"
 
@@ -321,7 +359,7 @@ class PropStatsResolver:
         if cached:
             return cached
 
-        player, player_cache_status = self._load_player_search(sport_key, subject_name)
+        player, player_cache_status = self._load_player_search(sport_key, subject_name, team_hint=team_hint)
         season = default_season_for_sport(sport_key)
         gamelog_payload, gamelog_cache_status = self._load_player_gamelog(sport_key, player["athlete_id"], season)
         game_logs = _build_game_logs(sport_key, gamelog_payload)

@@ -209,6 +209,150 @@ def test_espn_client_searches_nba_players(monkeypatch):
     assert player["team_name"] == "New York Knicks"
 
 
+def test_espn_client_search_player_picks_team_hint_when_multiple_candidates(monkeypatch):
+    """Bug #13: with two same-name candidates on different teams, the
+    team_hint must disambiguate — otherwise the first result wins by
+    accident and downstream features get attached to the wrong athlete."""
+    def fake_get(url, params=None, timeout=None):
+        request = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "results": [
+                    {
+                        "type": "player",
+                        "contents": [
+                            {
+                                "uid": "s:40~l:46~a:111111",
+                                "displayName": "John Smith",
+                                "subtitle": "Los Angeles Lakers",
+                                "defaultLeagueSlug": "nba",
+                                "link": {"web": "https://www.espn.com/nba/player/_/id/111111/john-smith"},
+                            },
+                            {
+                                "uid": "s:40~l:46~a:222222",
+                                "displayName": "John Smith",
+                                "subtitle": "Boston Celtics",
+                                "defaultLeagueSlug": "nba",
+                                "link": {"web": "https://www.espn.com/nba/player/_/id/222222/john-smith"},
+                            },
+                        ],
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    client = EspnPublicClient()
+
+    # Without team_hint, the existing first-result behavior is preserved.
+    default_pick = client.search_player("John Smith")
+    assert default_pick["athlete_id"] == "111111"
+    assert default_pick["team_name"] == "Los Angeles Lakers"
+
+    # With a team_hint that matches the second candidate's subtitle,
+    # the Celtics' John Smith is returned instead.
+    boston_pick = client.search_player("John Smith", team_hint="Boston Celtics")
+    assert boston_pick["athlete_id"] == "222222"
+    assert boston_pick["team_name"] == "Boston Celtics"
+
+    # The hint also accepts short forms — "Celtics" matches "Boston Celtics"
+    # by substring.
+    short_pick = client.search_player("John Smith", team_hint="Celtics")
+    assert short_pick["athlete_id"] == "222222"
+
+    # Codex PR #35 P2: the 3-letter ticker abbreviation (which prop
+    # metadata actually sends) must resolve through the abbreviation
+    # table — "BOS" → "Boston Celtics" — without that, every real
+    # production hint silently fell through to the first candidate.
+    abbr_pick = client.search_player("John Smith", team_hint="BOS")
+    assert abbr_pick["athlete_id"] == "222222"
+    assert abbr_pick["team_name"] == "Boston Celtics"
+
+
+def test_espn_client_search_player_handles_kalshi_prop_ticker_codes(monkeypatch):
+    """The MLB ``copilot_subject_team`` values aren't clean abbreviations
+    — they're prop-ticker codes like ``AZN``/``KCB``/``SDM`` where the
+    first two characters encode the team and the third is a per-player
+    discriminator. The matcher must resolve those via the 2-char prefix."""
+    def fake_get(url, params=None, timeout=None):
+        request = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "results": [
+                    {
+                        "type": "player",
+                        "contents": [
+                            {
+                                "uid": "s:1~l:10~a:444444",
+                                "displayName": "Nolan Arenado",
+                                "subtitle": "St. Louis Cardinals",
+                                "defaultLeagueSlug": "mlb",
+                                "link": {"web": "https://www.espn.com/mlb/player/_/id/444444/nolan-arenado"},
+                            },
+                            {
+                                "uid": "s:1~l:10~a:555555",
+                                "displayName": "Nolan Arenado",
+                                "subtitle": "Arizona Diamondbacks",
+                                "defaultLeagueSlug": "mlb",
+                                "link": {"web": "https://www.espn.com/mlb/player/_/id/555555/nolan-arenado"},
+                            },
+                        ],
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    client = EspnPublicClient()
+
+    # The Kalshi prop ticker for Arenado on Arizona is "AZN" — first 2
+    # chars "AZ" map to Arizona Diamondbacks.
+    pick = client.search_player("Nolan Arenado", sport_key="MLB", team_hint="AZN")
+    assert pick["athlete_id"] == "555555"
+    assert pick["team_name"] == "Arizona Diamondbacks"
+
+
+def test_espn_client_search_player_falls_back_when_team_hint_misses(monkeypatch, caplog):
+    """When no candidate matches the team_hint, return the first
+    candidate (existing behavior) and log a warning so ops can see the
+    mismatch."""
+    def fake_get(url, params=None, timeout=None):
+        request = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "results": [
+                    {
+                        "type": "player",
+                        "contents": [
+                            {
+                                "uid": "s:40~l:46~a:333333",
+                                "displayName": "Jane Doe",
+                                "subtitle": "Phoenix Suns",
+                                "defaultLeagueSlug": "nba",
+                                "link": {"web": "https://www.espn.com/nba/player/_/id/333333/jane-doe"},
+                            },
+                        ],
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    client = EspnPublicClient()
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        result = client.search_player("Jane Doe", team_hint="Boston Celtics")
+    assert result["athlete_id"] == "333333"  # fall back to first
+    assert any("team_hint" in record.message for record in caplog.records)
+
+
 def test_espn_client_fetches_nba_gamelog(monkeypatch):
     def fake_get(url, params=None, timeout=None):
         request = httpx.Request("GET", url)
