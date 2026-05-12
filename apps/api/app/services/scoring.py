@@ -3070,6 +3070,7 @@ def finalize_current_slate_watchlist(
     *,
     run_id: int,
     candidate_market_ids: set[int],
+    staged_summary: WatchlistGenerationSummary | None = None,
 ) -> WatchlistGenerationSummary:
     summary = WatchlistGenerationSummary()
     predictions = db.scalars(
@@ -3085,7 +3086,13 @@ def finalize_current_slate_watchlist(
     ).all()
 
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope != "coverage"]
-    _apply_prediction_monotonicity(candidate_predictions, summary=summary)
+    # Bug #9 follow-up (codex PR #33 round-5 P2): in the staged path the
+    # original ``recommended`` counts live in ``staged_summary``, not the
+    # fresh summary this function builds. Apply the metric adjustment to
+    # ``staged_summary`` so the merge in ingestion.py doesn't double-count
+    # a market as both recommended *and* suppressed.
+    monotonicity_metric_target = staged_summary if staged_summary is not None else summary
+    _apply_prediction_monotonicity(candidate_predictions, summary=monotonicity_metric_target)
     candidate_predictions = [prediction for prediction in predictions if prediction.capture_scope not in {"coverage", "suppressed"}]
     winners, collapsed_count, combo_suppressed = _dedupe_prediction_recommendations(candidate_predictions)
     summary.inverse_winner_duplicates_collapsed = collapsed_count
