@@ -170,6 +170,14 @@ export interface TradeDeskGameLine {
   edge: number;
   confidence: number;
   kalshi_url: string | null;
+  /** Signed numeric line from the picked side's perspective. Negative for
+   *  favored/under, positive for dog/over. Null when there's no number to
+   *  chart (moneyline, first_five_winner). */
+  numeric_line: number | null;
+  /** Effective over/under direction for total markets (folds in
+   *  ``copilot_direction`` so Under-market YES picks resolve to
+   *  ``under``). Null for non-total markets. */
+  total_direction: "over" | "under" | null;
 }
 
 export interface TradeDeskThreshold {
@@ -418,12 +426,19 @@ export interface ModelReadinessSummaryRead {
   min_shadow_coverage: number;
   min_promotion_shadow_samples: number;
   promotion_stability_days_required: number;
+  /** Operator-pinned initial value for the trade-ticket pick-history strip.
+   *  The strip's per-pick toggle still overrides this at runtime. */
+  pick_history_default_n: number;
   families: ModelFamilyReadinessRead[];
 }
 
 export interface ModelReadinessSettingsUpdate {
-  ml_serving_mode: "heuristic" | "shadow" | "ml";
+  ml_serving_mode?: "heuristic" | "shadow" | "ml";
   enqueue_shadow_backfill?: boolean;
+  // Codex round-6 P2 on PR #24: restricted to the same options the
+  // strip's HISTORY_OPTIONS renders, so a non-canonical write can't
+  // round-trip back as a silent fallback to 5.
+  pick_history_default_n?: 5 | 10 | 20;
 }
 
 export interface PaperPositionRead {
@@ -720,6 +735,23 @@ export interface StatsQueryRead {
   explanation: string;
   coverage_note?: string | null;
   source: string;
+}
+
+export interface TeamGameResultRead {
+  game_date: string;
+  opponent: string;
+  opponent_abbreviation: string | null;
+  location: "home" | "away";
+  team_score: number;
+  opp_score: number;
+  result: "W" | "L";
+}
+
+export interface TeamHistoryRead {
+  entity_id: string;
+  team_name: string;
+  sport_key: string;
+  results: TeamGameResultRead[];
 }
 
 export interface PredictionSettlementResponse {

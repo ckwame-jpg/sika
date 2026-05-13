@@ -198,6 +198,78 @@ def kalshi_market_url(market: Market) -> str:
     return category_root
 
 
+def _signed_numeric_line(market_kind: str, raw_data: dict, selected_side: str) -> float | None:
+    """Return the threshold value for a game-line market, pre-signed from
+    the picked side's perspective.
+
+    The frontend's ``SpreadChart`` / ``TotalChart`` divide ``-numericLine``
+    to get the cover-line drawn on the chart; ``coverOutcome`` then
+    colors each bar.
+
+    - spread (either side)      → ``-threshold`` (binary event line —
+        same value both YES and NO contracts settle on; the frontend
+        keys on ``selected_side`` to flip the cover comparison)
+    - total + EFFECTIVE over    → ``+threshold``
+    - total + EFFECTIVE under   → ``-threshold``
+    - moneyline / first_five_winner / unknown → None (no number to chart)
+
+    Codex round-1 P2 on PR #24: the total branch previously used
+    ``side == "yes"`` directly, which assumed the market itself was an
+    Over line. For Under markets, YES IS THE UNDER — so the sign was
+    inverted. We now consult ``copilot_direction`` to compute the
+    effective picked direction.
+
+    Codex round-3 P2 on PR #24: the spread branch previously flipped
+    the sign on NO picks (``+threshold``) so that ``coverThreshold =
+    -numericLine = -threshold`` and ``margin > -threshold`` meant
+    "cover". That treats the NO contract like a sportsbook
+    ``team +threshold`` spread, but the Kalshi market settles on the
+    binary event ``team wins by ≥ threshold``: NO wins when
+    ``margin < threshold``. The two are different events (e.g. a
+    blowout win is a YES cover, NOT a NO cover). Return the YES-side
+    sign for both contracts; the frontend inverts the comparison for
+    NO so it draws the same reference line and just flips the
+    coloring.
+    """
+    threshold = raw_data.get("copilot_threshold")
+    if threshold is None:
+        return None
+    try:
+        value = float(threshold)
+    except (TypeError, ValueError):
+        return None
+    side = (selected_side or "").lower()
+    if market_kind == "spread":
+        return -value
+    if market_kind == "total":
+        direction = str(raw_data.get("copilot_direction") or "over").lower()
+        picked_is_over = (direction == "over" and side == "yes") or (
+            direction == "under" and side == "no"
+        )
+        return value if picked_is_over else -value
+    return None
+
+
+def _effective_total_direction(
+    market_kind: str, raw_data: dict, selected_side: str
+) -> str | None:
+    """For total markets, return the EFFECTIVE direction the pick
+    represents (``"over"`` or ``"under"``) after folding in
+    ``copilot_direction`` + ``selected_side``. Surfaced to the frontend
+    via ``TradeDeskGameLineRead.total_direction`` so the pick-history
+    strip can color outcomes correctly without re-deriving the flip.
+    Returns ``None`` for non-total markets."""
+    if market_kind != "total":
+        return None
+    direction = str(raw_data.get("copilot_direction") or "over").lower()
+    side = (selected_side or "").lower()
+    if (direction == "over" and side == "yes") or (
+        direction == "under" and side == "no"
+    ):
+        return "over"
+    return "under"
+
+
 def game_line_projected_label(market: Market, recommendation: Recommendation) -> str | None:
     raw_data = market.raw_data or {}
     diagnostics = dict(recommendation.scoring_diagnostics or {})
@@ -581,13 +653,16 @@ def build_trade_desk_response(
             continue
         game_lines = bucket["game_lines"]
         assert isinstance(game_lines, list)
+        market_kind = str(raw_data.get("copilot_market_kind") or "")
+        numeric_line = _signed_numeric_line(market_kind, raw_data, recommendation.side)
+        total_direction = _effective_total_direction(market_kind, raw_data, recommendation.side)
         game_lines.append(
             TradeDeskGameLineRead(
                 ticker=market.ticker,
                 market_title=market.title,
                 display_label=game_line_display_label(market, recommendation),
                 sport_key=market.sport_key,
-                market_kind=str(raw_data.get("copilot_market_kind") or ""),
+                market_kind=market_kind,
                 selected_side=recommendation.side,
                 projected_side_label=game_line_projected_label(market, recommendation),
                 selected_side_probability=float(selected_probability),
@@ -595,6 +670,8 @@ def build_trade_desk_response(
                 edge=recommendation.edge,
                 confidence=recommendation.confidence,
                 kalshi_url=kalshi_market_url(market),
+                numeric_line=numeric_line,
+                total_direction=total_direction,
             )
         )
 

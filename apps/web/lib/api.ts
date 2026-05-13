@@ -24,6 +24,7 @@ import type {
   RunDetailRead,
   RunRead,
   StatsQueryRead,
+  TeamHistoryRead,
   TradeDeskResponse,
 } from "./types";
 
@@ -241,10 +242,72 @@ export const queryStats = (body: {
   question: string;
   sport_key: string;
   season?: number;
+  /** Codex round-2 P2 on PR #24: passthrough to the ESPN player
+   *  search disambiguator (bug #13). Same-name players resolve to
+   *  the right athlete instead of the first ESPN result. */
+  team_hint?: string | null;
 }) =>
   request<StatsQueryRead>("/research/stats/query", {
     method: "POST",
     body: JSON.stringify(body),
+  });
+
+/**
+ * Convenience wrapper around the natural-language stats endpoint, used by
+ * the trade-ticket pick-history strip. Phrasing matches the regex parser in
+ * apps/api/app/services/stats_query.py:25 ("X's last N games" plus the
+ * "home" / "away" / "vs opponent" tokens that the parser strips into filter
+ * slots before pattern-matching).
+ */
+export interface PickHistoryOptions {
+  opponent?: string | null;
+  location?: "home" | "away" | null;
+  /** Codex round-2 P2 on PR #24: forwarded to ``StatsQueryRequest.team_hint``
+   *  so same-name player props (e.g. two "John Smith"s on different
+   *  teams) resolve to the picked athlete instead of the first ESPN
+   *  result. ``PickHistoryStrip`` sets this from
+   *  ``selection.subjectTeam``. */
+  teamHint?: string | null;
+}
+
+function buildPlayerHistoryQuestion(
+  subjectName: string,
+  n: number,
+  opts: PickHistoryOptions = {},
+): string {
+  const locationToken =
+    opts.location === "home" ? " home" : opts.location === "away" ? " away" : "";
+  const opponentToken = opts.opponent ? ` vs ${opts.opponent}` : "";
+  return `${subjectName}'s last ${n}${locationToken} games${opponentToken}`;
+}
+
+export const fetchPlayerHistory = (
+  subjectName: string,
+  sportKey: string,
+  n = 5,
+  opts: PickHistoryOptions = {},
+) =>
+  queryStats({
+    question: buildPlayerHistoryQuestion(subjectName, n, opts),
+    sport_key: sportKey.toUpperCase(),
+    team_hint: opts.teamHint ?? null,
+  });
+
+export const fetchTeamHistory = (
+  teamName: string,
+  sportKey: string,
+  n = 5,
+  opts: PickHistoryOptions = {},
+) =>
+  request<TeamHistoryRead>("/research/teams/history", {
+    method: "POST",
+    body: JSON.stringify({
+      team_name: teamName,
+      sport_key: sportKey.toUpperCase(),
+      n,
+      opponent: opts.opponent ?? null,
+      location: opts.location ?? null,
+    }),
   });
 
 export const keys = {
@@ -283,4 +346,20 @@ export const keys = {
     `/parlays/predictions?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,
   parlayPredictionSummary: (sportScope = "all", legCount?: number) =>
     `/parlays/predictions/summary?sport_scope=${sportScope}&leg_count=${legCount ?? ""}`,
+  playerHistory: (
+    subjectName: string,
+    sportKey: string,
+    n = 5,
+    opts: PickHistoryOptions = {},
+  ) =>
+    // Codex round-2 P2 on PR #24: include teamHint so two same-name
+    // picks (different teams) get distinct SWR cache entries.
+    `pick-history:player:${sportKey.toUpperCase()}:${subjectName}:${n}:${opts.location ?? ""}:${opts.opponent ?? ""}:${opts.teamHint ?? ""}`,
+  teamHistory: (
+    teamName: string,
+    sportKey: string,
+    n = 5,
+    opts: PickHistoryOptions = {},
+  ) =>
+    `pick-history:team:${sportKey.toUpperCase()}:${teamName}:${n}:${opts.location ?? ""}:${opts.opponent ?? ""}`,
 } as const;

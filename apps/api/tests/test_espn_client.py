@@ -353,6 +353,63 @@ def test_espn_client_search_player_falls_back_when_team_hint_misses(monkeypatch,
     assert any("team_hint" in record.message for record in caplog.records)
 
 
+
+def test_espn_client_searches_nba_teams(monkeypatch):
+    def fake_get(url, params=None, timeout=None):
+        request = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "results": [
+                    {
+                        "type": "team",
+                        "contents": [
+                            {
+                                "uid": "s:40~l:46~t:5",
+                                "displayName": "Cleveland Cavaliers",
+                                "abbreviation": "CLE",
+                                "defaultLeagueSlug": "nba",
+                                "image": {"default": "https://example.com/cle.png"},
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    client = EspnPublicClient()
+    team = client.search_team("Cleveland Cavaliers")
+
+    assert team["team_id"] == "5"
+    assert team["display_name"] == "Cleveland Cavaliers"
+    assert team["abbreviation"] == "CLE"
+    assert team["sport_key"] == "NBA"
+
+
+def test_espn_client_search_team_raises_when_no_team_match(monkeypatch):
+    def fake_get(url, params=None, timeout=None):
+        request = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={"results": [{"type": "player", "contents": []}]},
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    client = EspnPublicClient()
+    try:
+        client.search_team("Nonexistent Squad")
+    except LookupError as exc:
+        assert "Nonexistent Squad" in str(exc)
+    else:  # pragma: no cover - the assertion path above is the success case
+        raise AssertionError("Expected LookupError for missing team")
+
+
+
 def test_espn_client_fetches_nba_gamelog(monkeypatch):
     def fake_get(url, params=None, timeout=None):
         request = httpx.Request("GET", url)

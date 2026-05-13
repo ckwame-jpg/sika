@@ -317,6 +317,17 @@ class TradeDeskGameLineRead(BaseModel):
     edge: float
     confidence: float
     kalshi_url: str | None = None
+    # Signed numeric line from the picked side's perspective. Negative when
+    # the pick is on the favored / under side, positive when on the dog /
+    # over side. Null for moneyline / first_five_winner where there is no
+    # number to draw against. Consumed by the pick-history strip on the
+    # frontend to render a threshold reference line.
+    numeric_line: float | None = None
+    # Codex round-1 P2 on PR #24: the effective over/under direction the
+    # pick represents — folds ``copilot_direction`` + ``selected_side``
+    # so the frontend doesn't have to re-derive it. ``"over"`` /
+    # ``"under"`` for total markets, ``None`` for everything else.
+    total_direction: Literal["over", "under"] | None = None
 
 
 class TradeDeskThresholdRead(BaseModel):
@@ -627,12 +638,26 @@ class ModelReadinessSummaryRead(BaseModel):
     min_shadow_coverage: float = 0.75
     min_promotion_shadow_samples: int = 150
     promotion_stability_days_required: int = 3
+    # Operator-pinned default for the trade-ticket pick-history strip.
+    # Per-pick toggles override at runtime; this is the initial value.
+    pick_history_default_n: int = 5
     families: list[ModelFamilyReadinessRead] = Field(default_factory=list)
 
 
 class ModelReadinessSettingsUpdate(BaseModel):
-    ml_serving_mode: Literal["heuristic", "shadow", "ml"]
+    # Codex round-4 P2 on PR #24: ``ml_serving_mode`` is optional so
+    # callers can do partial updates (e.g. change ONLY
+    # ``pick_history_default_n`` from the settings page without
+    # writing back a possibly-stale serving mode from SWR cache).
+    # The route skips ``set_ml_serving_mode`` when this is None.
+    ml_serving_mode: Literal["heuristic", "shadow", "ml"] | None = None
     enqueue_shadow_backfill: bool = True
+    # Codex round-6 P2 on PR #24: pinned to the exact UI options
+    # (the trade-ticket strip's ``HISTORY_OPTIONS``). Accepting an
+    # in-range-but-non-canonical value (6, 15, …) would have the
+    # readiness summary echo it back while the strip silently
+    # coerced it to 5.
+    pick_history_default_n: Literal[5, 10, 20] | None = None
 
 
 class MarketHistoryPointRead(BaseModel):
@@ -985,6 +1010,12 @@ class StatsQueryRequest(BaseModel):
     question: str = Field(min_length=3)
     sport_key: str = "NBA"
     season: int | None = None
+    # Codex round-2 P2 on PR #24: same-name player disambiguation.
+    # Forwarded to ``EspnPublicClient.search_player`` so duplicate
+    # names (two "John Smith"s on different teams) resolve to the
+    # right athlete instead of the first ESPN result. The pick-
+    # history strip sets this from ``selection.subjectTeam``.
+    team_hint: str | None = None
 
 
 class StatsSummaryRead(BaseModel):
@@ -1036,3 +1067,31 @@ class StatsQueryRead(BaseModel):
     explanation: str
     coverage_note: str | None = None
     source: str
+
+
+class TeamHistoryRequest(BaseModel):
+    team_name: str = Field(min_length=2)
+    sport_key: str = "NBA"
+    n: int = Field(default=5, ge=1, le=20)
+    # Optional filters narrow the schedule before clipping to N. Both apply
+    # independently — pass either or both. Unmatched results just shrink
+    # the returned list.
+    opponent: str | None = None
+    location: Literal["home", "away"] | None = None
+
+
+class TeamGameResultRead(BaseModel):
+    game_date: UTCDateTime
+    opponent: str
+    opponent_abbreviation: str | None = None
+    location: str  # "home" | "away"
+    team_score: int
+    opp_score: int
+    result: str    # "W" | "L"
+
+
+class TeamHistoryRead(BaseModel):
+    entity_id: str
+    team_name: str
+    sport_key: str
+    results: list[TeamGameResultRead]

@@ -2061,18 +2061,38 @@
             "type": "boolean"
           },
           "ml_serving_mode": {
-            "enum": [
-              "heuristic",
-              "shadow",
-              "ml"
+            "anyOf": [
+              {
+                "enum": [
+                  "heuristic",
+                  "shadow",
+                  "ml"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Ml Serving Mode",
-            "type": "string"
+            "title": "Ml Serving Mode"
+          },
+          "pick_history_default_n": {
+            "anyOf": [
+              {
+                "enum": [
+                  5,
+                  10,
+                  20
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pick History Default N"
           }
         },
-        "required": [
-          "ml_serving_mode"
-        ],
         "title": "ModelReadinessSettingsUpdate",
         "type": "object"
       },
@@ -2118,6 +2138,11 @@
             ],
             "title": "Ml Serving Mode",
             "type": "string"
+          },
+          "pick_history_default_n": {
+            "default": 5,
+            "title": "Pick History Default N",
+            "type": "integer"
           },
           "promotion_stability_days_required": {
             "default": 3,
@@ -5065,6 +5090,17 @@
             "default": "NBA",
             "title": "Sport Key",
             "type": "string"
+          },
+          "team_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Hint"
           }
         },
         "required": [
@@ -5157,6 +5193,138 @@
           "metrics"
         ],
         "title": "StatsSummaryRead",
+        "type": "object"
+      },
+      "TeamGameResultRead": {
+        "properties": {
+          "game_date": {
+            "title": "Game Date",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "opp_score": {
+            "title": "Opp Score",
+            "type": "integer"
+          },
+          "opponent": {
+            "title": "Opponent",
+            "type": "string"
+          },
+          "opponent_abbreviation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opponent Abbreviation"
+          },
+          "result": {
+            "title": "Result",
+            "type": "string"
+          },
+          "team_score": {
+            "title": "Team Score",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "game_date",
+          "opponent",
+          "location",
+          "team_score",
+          "opp_score",
+          "result"
+        ],
+        "title": "TeamGameResultRead",
+        "type": "object"
+      },
+      "TeamHistoryRead": {
+        "properties": {
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/TeamGameResultRead"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "sport_key": {
+            "title": "Sport Key",
+            "type": "string"
+          },
+          "team_name": {
+            "title": "Team Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "team_name",
+          "sport_key",
+          "results"
+        ],
+        "title": "TeamHistoryRead",
+        "type": "object"
+      },
+      "TeamHistoryRequest": {
+        "properties": {
+          "location": {
+            "anyOf": [
+              {
+                "enum": [
+                  "home",
+                  "away"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "n": {
+            "default": 5,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          },
+          "opponent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opponent"
+          },
+          "sport_key": {
+            "default": "NBA",
+            "title": "Sport Key",
+            "type": "string"
+          },
+          "team_name": {
+            "minLength": 2,
+            "title": "Team Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_name"
+        ],
+        "title": "TeamHistoryRequest",
         "type": "object"
       },
       "TradeDeskArchivedSlateRead": {
@@ -5348,6 +5516,17 @@
             "title": "Market Title",
             "type": "string"
           },
+          "numeric_line": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Numeric Line"
+          },
           "projected_side_label": {
             "anyOf": [
               {
@@ -5388,6 +5567,21 @@
           "ticker": {
             "title": "Ticker",
             "type": "string"
+          },
+          "total_direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "over",
+                  "under"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Direction"
           }
         },
         "required": [
@@ -7629,6 +7823,47 @@
           }
         },
         "summary": "Query Stats",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/research/teams/history": {
+      "post": {
+        "operationId": "query_team_history_research_teams_history_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamHistoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamHistoryRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Team History",
         "tags": [
           "research"
         ]

@@ -38,6 +38,74 @@ test("trade uses mocked market data and never requests positions", async ({ page
       });
       return;
     }
+    // Codex round-9 P2 on PR #24: the pick-history strip mounts inside
+    // the trade ticket and fires three new endpoints. None of them
+    // gate test behavior here — they just need realistic empty
+    // payloads so the strip lands in its empty-state and doesn't
+    // surface a 500 banner.
+    if (url.pathname === "/api/ops/models/readiness") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ml_serving_mode: "heuristic",
+          fallback_active: false,
+          fallback_reason: null,
+          family_keys_armed_for_auto_promote: [],
+          promotion_stability_days_required: 3,
+          pick_history_default_n: 5,
+          families: [],
+        }),
+      });
+      return;
+    }
+    if (url.pathname === "/api/research/teams/history") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          entity_id: null,
+          team_name: "Toronto Raptors",
+          sport_key: "NBA",
+          results: [],
+        }),
+      });
+      return;
+    }
+    if (url.pathname === "/api/research/stats/query") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          question: "",
+          sport_key: "NBA",
+          entity_name: "Davion Mitchell",
+          entity_id: null,
+          team_name: "Toronto Raptors",
+          query_type: "last_n_games",
+          season: 2026,
+          games_requested: 5,
+          games_analyzed: 0,
+          split: null,
+          opponent: null,
+          metric_labels: {},
+          summary: {
+            games: 0,
+            wins: null,
+            losses: null,
+            draws: null,
+            metrics: {},
+            stat_line: null,
+            percentiles: {},
+            metric_categories: {},
+          },
+          game_logs: [],
+          explanation: "",
+          source: "espn_public",
+        }),
+      });
+      return;
+    }
     unexpectedApiRequests.push(`${url.pathname}${url.search}`);
     await route.fulfill({
       status: 500,

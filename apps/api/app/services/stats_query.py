@@ -214,6 +214,44 @@ class StatsQueryService:
     def __init__(self, espn_client: EspnPublicClient | None = None):
         self.espn_client = espn_client or EspnPublicClient()
 
+    def query_team_history(
+        self,
+        team_name: str,
+        sport_key: str = "NBA",
+        n: int = 5,
+        *,
+        opponent: str | None = None,
+        location: str | None = None,
+    ) -> dict[str, Any]:
+        """Return the last ``n`` completed games for a team as a flat list of
+        results (date, opponent, location, scores, W/L).
+
+        Used by the trade-ticket pick-history strip for game-line picks. The
+        endpoint deliberately avoids the regex-parsed natural-language path
+        the player-prop queries go through — callers already have a clean
+        ``team_name`` string from the selection model and the parser would
+        only add fragility.
+
+        Optional filters narrow the result set before clipping:
+          - ``opponent``: case-insensitive substring match on the
+            opponent's display name (e.g. ``"Pistons"`` matches both
+            ``"Detroit Pistons"`` and a hypothetical short form). Picks
+            from any sport this way.
+          - ``location``: ``"home"`` or ``"away"`` to keep only games
+            played at that location.
+        """
+        normalized_sport = sport_key.upper()
+        team = self.espn_client.search_team(team_name, sport_key=normalized_sport)
+        schedule = self.espn_client.fetch_team_schedule(normalized_sport, team["team_id"])
+        results = _build_team_results(schedule, self_team_id=team["team_id"])
+        results = _filter_team_results(results, opponent=opponent, location=location)
+        return {
+            "entity_id": team["team_id"],
+            "team_name": team["display_name"],
+            "sport_key": normalized_sport,
+            "results": results[:n],
+        }
+
     def query(
         self,
         question: str,
@@ -221,9 +259,21 @@ class StatsQueryService:
         season: int | None = None,
         *,
         db: Session | None = None,
+        team_hint: str | None = None,
     ) -> dict[str, Any]:
         parsed = parse_stats_question(question, sport_key=sport_key, season=season)
-        player = self.espn_client.search_player(parsed.player_name, sport_key=parsed.sport_key)
+        # Codex round-2 P2 on PR #24: same-name player disambiguation.
+        # ``team_hint`` (forwarded from ``selection.subjectTeam`` in
+        # the pick-history strip) is what bug #13's
+        # ``search_player`` upgrade was built for. Without this
+        # plumbing, prop picks for duplicate-name players (the
+        # canonical "two John Smiths" case) silently chart the
+        # wrong athlete's game logs.
+        player = self.espn_client.search_player(
+            parsed.player_name,
+            sport_key=parsed.sport_key,
+            team_hint=team_hint,
+        )
         if parsed.sport_key == "SOCCER":
             return self._query_soccer(question, parsed, player)
         if parsed.sport_key == "TENNIS":
@@ -590,6 +640,115 @@ def default_season_for_sport(sport_key: str, reference_date: date | None = None)
     if sport_key == "UFC":
         return today.year
     return today.year
+
+
+def _filter_team_results(
+    results: list[dict[str, Any]],
+    *,
+    opponent: str | None = None,
+    location: str | None = None,
+) -> list[dict[str, Any]]:
+    """Narrow a list of team results by opponent name (substring) and/or
+    location. Returns ``results`` unchanged when both filters are None."""
+    if not opponent and not location:
+        return results
+    opponent_needle = (opponent or "").strip().lower()
+    location_value = (location or "").strip().lower() or None
+    out: list[dict[str, Any]] = []
+    for row in results:
+        if location_value is not None and str(row.get("location") or "").lower() != location_value:
+            continue
+        if opponent_needle:
+            opponent_haystack = " ".join(
+                str(part or "").lower()
+                for part in (row.get("opponent"), row.get("opponent_abbreviation"))
+                if part
+            )
+            if opponent_needle not in opponent_haystack:
+                continue
+        out.append(row)
+    return out
+
+
+def _build_team_results(schedule_payload: dict[str, Any], *, self_team_id: str) -> list[dict[str, Any]]:
+    """Extract completed games from an ESPN team schedule, most recent first.
+
+    ESPN's ``/teams/{team_id}/schedule`` endpoint returns an ``events`` list
+    that mixes completed games (with scores + winner flags) and upcoming
+    games (no scores). We keep only the completed ones, sort by date
+    descending, and normalize each to the shape ``TeamGameResultRead``
+    expects on the schemas side.
+    """
+    out: list[dict[str, Any]] = []
+    for event in schedule_payload.get("events") or []:
+        competition = (event.get("competitions") or [{}])[0]
+        status_type = (competition.get("status") or event.get("status") or {}).get("type") or {}
+        # Codex round-3 P2 on PR #24: cancelled / postponed games also
+        # have ``state == "post"`` but ship without scores. The previous
+        # ``state == "post"`` fallback let them through, and the missing
+        # scores fell back to ``0`` further down, so cancellations
+        # surfaced in the strip as 0-0 losses. Require ESPN's explicit
+        # ``completed`` flag (or the ``STATUS_FINAL`` terminal name as
+        # an allow-listed fallback for payloads that omit it).
+        status_name = str(status_type.get("name") or "").upper()
+        is_completed = bool(status_type.get("completed")) or status_name == "STATUS_FINAL"
+        if not is_completed:
+            continue
+
+        competitors = competition.get("competitors") or []
+        self_side = next(
+            (c for c in competitors if str(((c.get("team") or {}).get("id")) or "") == str(self_team_id)),
+            None,
+        )
+        other_side = next(
+            (c for c in competitors if str(((c.get("team") or {}).get("id")) or "") != str(self_team_id)),
+            None,
+        )
+        if self_side is None or other_side is None:
+            continue
+
+        # PR #24 codex round-1 P2: ESPN's site/v2 shape returns
+        # ``"score": "112"`` (scalar) on completed-game payloads,
+        # not the dict form ``{"value": 112}``. ``.get("value")`` on
+        # the scalar raises ``AttributeError`` and 500'd this whole
+        # endpoint. ``_competitor_score`` accepts either shape.
+        def _competitor_score(side: dict) -> int | None:
+            raw = side.get("score")
+            if isinstance(raw, dict):
+                raw = raw.get("value")
+            if raw in (None, ""):
+                return 0
+            try:
+                return int(float(raw))
+            except (TypeError, ValueError):
+                return None
+
+        self_score = _competitor_score(self_side)
+        opp_score = _competitor_score(other_side)
+        if self_score is None or opp_score is None:
+            continue
+
+        opponent_team = other_side.get("team") or {}
+        winner_flag = self_side.get("winner")
+        if winner_flag is True:
+            result = "W"
+        elif winner_flag is False:
+            result = "L"
+        else:
+            result = "W" if self_score > opp_score else "L"
+
+        out.append({
+            "game_date": event.get("date"),
+            "opponent": opponent_team.get("displayName") or opponent_team.get("shortDisplayName") or "",
+            "opponent_abbreviation": opponent_team.get("abbreviation"),
+            "location": "home" if str(self_side.get("homeAway") or "").lower() == "home" else "away",
+            "team_score": self_score,
+            "opp_score": opp_score,
+            "result": result,
+        })
+
+    out.sort(key=lambda item: str(item.get("game_date") or ""), reverse=True)
+    return out
 
 
 def _normalize_question(question: str) -> str:

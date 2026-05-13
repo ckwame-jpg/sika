@@ -524,6 +524,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/research/teams/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Query Team History */
+        post: operations["query_team_history_research_teams_history_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sports": {
         parameters: {
             query?: never;
@@ -1205,11 +1222,10 @@ export interface components {
              * @default true
              */
             enqueue_shadow_backfill: boolean;
-            /**
-             * Ml Serving Mode
-             * @enum {string}
-             */
-            ml_serving_mode: "heuristic" | "shadow" | "ml";
+            /** Ml Serving Mode */
+            ml_serving_mode?: ("heuristic" | "shadow" | "ml") | null;
+            /** Pick History Default N */
+            pick_history_default_n?: (5 | 10 | 20) | null;
         };
         /** ModelReadinessSummaryRead */
         ModelReadinessSummaryRead: {
@@ -1243,6 +1259,11 @@ export interface components {
              * @enum {string}
              */
             ml_serving_mode: "heuristic" | "shadow" | "ml";
+            /**
+             * Pick History Default N
+             * @default 5
+             */
+            pick_history_default_n: number;
             /**
              * Promotion Stability Days Required
              * @default 3
@@ -2275,6 +2296,8 @@ export interface components {
              * @default NBA
              */
             sport_key: string;
+            /** Team Hint */
+            team_hint?: string | null;
         };
         /** StatsSummaryRead */
         StatsSummaryRead: {
@@ -2300,6 +2323,53 @@ export interface components {
             stat_line?: string | null;
             /** Wins */
             wins?: number | null;
+        };
+        /** TeamGameResultRead */
+        TeamGameResultRead: {
+            /** Game Date */
+            game_date: string;
+            /** Location */
+            location: string;
+            /** Opp Score */
+            opp_score: number;
+            /** Opponent */
+            opponent: string;
+            /** Opponent Abbreviation */
+            opponent_abbreviation?: string | null;
+            /** Result */
+            result: string;
+            /** Team Score */
+            team_score: number;
+        };
+        /** TeamHistoryRead */
+        TeamHistoryRead: {
+            /** Entity Id */
+            entity_id: string;
+            /** Results */
+            results: components["schemas"]["TeamGameResultRead"][];
+            /** Sport Key */
+            sport_key: string;
+            /** Team Name */
+            team_name: string;
+        };
+        /** TeamHistoryRequest */
+        TeamHistoryRequest: {
+            /** Location */
+            location?: ("home" | "away") | null;
+            /**
+             * N
+             * @default 5
+             */
+            n: number;
+            /** Opponent */
+            opponent?: string | null;
+            /**
+             * Sport Key
+             * @default NBA
+             */
+            sport_key: string;
+            /** Team Name */
+            team_name: string;
         };
         /** TradeDeskArchivedSlateRead */
         TradeDeskArchivedSlateRead: {
@@ -2391,6 +2461,8 @@ export interface components {
             market_kind: string;
             /** Market Title */
             market_title: string;
+            /** Numeric Line */
+            numeric_line?: number | null;
             /** Projected Side Label */
             projected_side_label?: string | null;
             /** Selected Side */
@@ -2401,6 +2473,8 @@ export interface components {
             sport_key?: string | null;
             /** Ticker */
             ticker: string;
+            /** Total Direction */
+            total_direction?: ("over" | "under") | null;
         };
         /** TradeDeskPlayerPropRead */
         TradeDeskPlayerPropRead: {
@@ -3536,6 +3610,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatsQueryRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_team_history_research_teams_history_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamHistoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamHistoryRead"];
                 };
             };
             /** @description Validation Error */

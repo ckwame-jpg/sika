@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TradeDialog } from "@/components/positions/trade-dialog";
+import { PickHistoryStrip } from "./pick-history-strip";
 import { cn, fmtEdge, fmtPercent, fmtPrice } from "@/lib/utils";
 
 export interface TradeSelection {
@@ -26,6 +27,15 @@ export interface TradeSelection {
   subjectTeam?: string | null;
   statKey?: string;
   threshold?: number | null;
+  /** Signed numeric line for spread/total game-line picks (pre-signed
+   *  on the backend from the picked side's perspective). Null for
+   *  moneyline + player_prop selections. */
+  numericLine?: number | null;
+  /** Effective over/under direction the pick represents — folds in
+   *  the market's ``copilot_direction`` so the strip can color outcomes
+   *  correctly for Under-direction total markets (codex round-1 P2 on
+   *  PR #24). Null for non-total markets. */
+  totalDirection?: "over" | "under" | null;
 }
 
 interface TradeTicketProps {
@@ -92,6 +102,12 @@ export function TradeTicket({
             <p className="ticket-stat-value accent">{fmtPercent(selection.confidence)}</p>
           </div>
         </div>
+
+        <div className="ticket-section-divider" aria-hidden />
+
+        <PickHistoryStrip selection={selection} />
+
+        <div className="ticket-section-divider" aria-hidden />
 
         <div className="grid gap-2">
           <Button variant="primary" size="sm" onClick={() => setTradeDestination("paper")}>
