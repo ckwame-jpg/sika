@@ -4921,6 +4921,13 @@
             ],
             "title": "Losses"
           },
+          "metric_categories": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Metric Categories",
+            "type": "object"
+          },
           "metrics": {
             "additionalProperties": {
               "anyOf": [
@@ -4933,6 +4940,13 @@
               ]
             },
             "title": "Metrics",
+            "type": "object"
+          },
+          "percentiles": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Percentiles",
             "type": "object"
           },
           "stat_line": {
@@ -6314,6 +6328,28 @@
         "summary": "Get Market History"
       }
     },
+    "/ops/jobs/market-discovery": {
+      "post": {
+        "description": "Queue a Kalshi standalone-market discovery job on demand.\n\nUseful when you need to ingest newly-listed game-winner markets ahead\nof the next scheduled cron tick (e.g. just before a slate of games).",
+        "operationId": "queue_market_discovery_job_ops_jobs_market_discovery_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRefreshResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Queue Market Discovery Job",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/ops/jobs/refresh": {
       "post": {
         "operationId": "refresh_jobs_ops_jobs_refresh_post",
@@ -6930,6 +6966,18 @@
     "/positions": {
       "get": {
         "operationId": "get_positions_positions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Force",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -6940,6 +6988,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Positions"

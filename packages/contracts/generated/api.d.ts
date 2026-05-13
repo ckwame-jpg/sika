@@ -123,6 +123,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/jobs/market-discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue Market Discovery Job
+         * @description Queue a Kalshi standalone-market discovery job on demand.
+         *
+         *     Useful when you need to ingest newly-listed game-winner markets ahead
+         *     of the next scheduled cron tick (e.g. just before a slate of games).
+         */
+        post: operations["queue_market_discovery_job_ops_jobs_market_discovery_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/jobs/refresh": {
         parameters: {
             query?: never;
@@ -2178,9 +2201,17 @@ export interface components {
             games: number;
             /** Losses */
             losses?: number | null;
+            /** Metric Categories */
+            metric_categories?: {
+                [key: string]: string;
+            };
             /** Metrics */
             metrics: {
                 [key: string]: number | null;
+            };
+            /** Percentiles */
+            percentiles?: {
+                [key: string]: number;
             };
             /** Stat Line */
             stat_line?: string | null;
@@ -2767,6 +2798,26 @@ export interface operations {
             };
         };
     };
+    queue_market_discovery_job_ops_jobs_market_discovery_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRefreshResponse"];
+                };
+            };
+        };
+    };
     refresh_jobs_ops_jobs_refresh_post: {
         parameters: {
             query?: never;
@@ -3174,7 +3225,9 @@ export interface operations {
     };
     get_positions_positions_get: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3188,6 +3241,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PositionsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

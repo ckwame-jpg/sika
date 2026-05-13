@@ -261,10 +261,17 @@ def build_kalshi_account_snapshot(
     if client is not None:
         return _build_kalshi_account_snapshot_uncached(db, client=client)
 
-    now = time.monotonic()
-    cached = _account_snapshot_cache["value"]
-    fresh_until = _account_snapshot_cache["fresh_until"]
-    stale_until = _account_snapshot_cache["stale_until"]
+    # Codex round-7 P2: read the cache state and generation token
+    # atomically under the lock. Without the lock, an invalidate
+    # racing this read could be visible to the generation check but
+    # not to the cache-state check (or vice versa), letting a
+    # background refresh slip past discard.
+    with _account_snapshot_lock:
+        now = time.monotonic()
+        cached = _account_snapshot_cache["value"]
+        fresh_until = _account_snapshot_cache["fresh_until"]
+        stale_until = _account_snapshot_cache["stale_until"]
+        observed_generation = _account_snapshot_cache["generation"]
 
     if cached is not None and now < fresh_until:
         # Fresh: return cached, no refresh.
@@ -273,9 +280,10 @@ def build_kalshi_account_snapshot(
     if cached is not None and now < stale_until:
         # Stale-but-usable: serve cached immediately and fire a
         # single background refresh so the next poll lands fresh
-        # data. Subsequent polls inside the stale window keep
-        # landing the cached value out-of-band of the upstream call.
-        _maybe_start_background_refresh()
+        # data. Pass ``observed_generation`` so the worker can
+        # discard its result if the cache is invalidated (or another
+        # commit lands) before its Kalshi fetch finishes.
+        _maybe_start_background_refresh(observed_generation)
         return cached
 
     # No cache (or beyond STALE_SECONDS): block on a synchronous
@@ -297,7 +305,9 @@ def _commit_refresh_result(
     previous: KalshiAccountRead | None,
 ) -> KalshiAccountRead:
     """Store the new snapshot in the cache with the appropriate TTL,
-    and return what should be served to the caller.
+    and return what should be served to the caller. Bumps the
+    generation token on every write so any in-flight background
+    refresh checking against an older generation discards its result.
 
     Codex round-4 + round-5 P2: ``_build_..._uncached`` catches Kalshi
     exceptions and returns ``status="error"`` rather than raising.
@@ -317,6 +327,7 @@ def _commit_refresh_result(
             _account_snapshot_cache["fresh_until"] = (
                 time.monotonic() + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
             )
+            _account_snapshot_cache["generation"] += 1
             logger.warning(
                 "kalshi_account_refresh_error_preserved_cache",
                 extra={"error_message": snapshot.error_message},
@@ -328,6 +339,7 @@ def _commit_refresh_result(
         _account_snapshot_cache["value"] = snapshot
         _account_snapshot_cache["fresh_until"] = now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
         _account_snapshot_cache["stale_until"] = now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+        _account_snapshot_cache["generation"] += 1
         return snapshot
     _store_account_snapshot(snapshot)
     return snapshot
@@ -338,9 +350,14 @@ def _store_account_snapshot(snapshot: KalshiAccountRead) -> None:
     _account_snapshot_cache["value"] = snapshot
     _account_snapshot_cache["fresh_until"] = now + _ACCOUNT_SNAPSHOT_FRESH_SECONDS
     _account_snapshot_cache["stale_until"] = now + _ACCOUNT_SNAPSHOT_STALE_SECONDS
+    # Codex round-7 P2: bump the generation on every commit so a
+    # background refresh whose Kalshi fetch started before this write
+    # will see a generation mismatch and discard its result instead
+    # of overwriting a fresher cache.
+    _account_snapshot_cache["generation"] += 1
 
 
-def _maybe_start_background_refresh() -> None:
+def _maybe_start_background_refresh(observed_generation: int) -> None:
     """Fire a daemon thread to refresh the cache in place. At most
     one refresh runs at a time — concurrent stale-hits race on
     ``_background_refresh_slot.acquire(blocking=False)`` and only
@@ -349,8 +366,16 @@ def _maybe_start_background_refresh() -> None:
     if not _background_refresh_slot.acquire(blocking=False):
         return
     try:
+        # Codex round-7 P2: pass the caller's observed generation in,
+        # rather than re-reading it inside the worker. If we read it
+        # in the worker, an invalidate that fires between the caller
+        # observing the cache state and the worker starting would
+        # already have bumped the generation — so the worker's
+        # captured value would match the post-invalidate state and
+        # the commit guard would not fire.
         thread = threading.Thread(
             target=_run_background_refresh,
+            args=(observed_generation,),
             daemon=True,
             name="kalshi-account-refresh",
         )
@@ -362,19 +387,17 @@ def _maybe_start_background_refresh() -> None:
         raise
 
 
-def _run_background_refresh() -> None:
+def _run_background_refresh(start_generation: int) -> None:
     try:
-        start_generation = _account_snapshot_cache["generation"]
         with SessionLocal() as db:
             snapshot = _build_kalshi_account_snapshot_uncached(db, client=None)
         with _account_snapshot_lock:
             if start_generation != _account_snapshot_cache["generation"]:
-                # Codex round-6 P2: cache was invalidated (or a force-
-                # refresh ran) while we were fetching. Our snapshot is
-                # pre-invalidation and may be stale relative to the
-                # invalidation event — discard it rather than
-                # overwriting whatever the invalidator (or the sync
-                # path that followed it) wrote.
+                # Cache was invalidated or a force-refresh / sync
+                # commit landed while we were fetching. Our snapshot
+                # is pre-event and may be stale relative to whatever
+                # bumped the generation — discard rather than
+                # overwriting the current cache value.
                 logger.info("kalshi_account_background_refresh_discarded_after_invalidation")
                 return
             _commit_refresh_result(snapshot, previous=_account_snapshot_cache["value"])
