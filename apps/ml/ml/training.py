@@ -615,14 +615,16 @@ def train_and_package(
         "feature_mode": "residual_calibration",
         "metrics": evaluations,
         "hyperparameters": {"candidates": list(_candidate_estimators(len(dataset)).keys())},
-        # PR 3d — observability for the v2 training pipeline. Note:
+        # PR 3d / bug #16 — observability for the v2 training pipeline.
         # ``feature_medians`` contains medians for EVERY feature key, not
-        # just advanced ones (it mirrors ``feature_spec.default_values``).
-        # ``evaluation_imputation_caveat`` records that median defaults are
-        # computed on the full dataset before train/test splits in
-        # ``_evaluate_candidates``, so candidate brier is mildly optimistic
-        # for keys missing on test rows. Magnitude is ~1/N per row; the
-        # promotion gate's ``<`` strictness gives some headroom.
+        # just advanced ones (it mirrors ``feature_spec.default_values``,
+        # which is computed from the full dataset for the final refit /
+        # serving model — there's no holdout in the served artifact).
+        # ``evaluation_imputation_caveat`` previously warned that the
+        # held-out Brier was mildly optimistic because of full-dataset
+        # medians; bug #16 fixed that by recomputing medians inside each
+        # train fold (see ``_fold_feature_spec``), so the caveat now
+        # records the fix rather than the leak.
         "advanced_completeness_counts": completeness_counts,
         "advanced_only_threshold": advanced_only_threshold,
         "advanced_only_active": advanced_only_active,
@@ -630,8 +632,9 @@ def train_and_package(
         "use_median_imputation": bool(use_median_imputation),
         "feature_medians": dict(feature_spec.default_values) if use_median_imputation else {},
         "evaluation_imputation_caveat": (
-            "median defaults computed on full dataset; held-out brier "
-            "for rows with missing keys is mildly optimistic"
+            "candidate brier reflects train-fold medians only (bug #16); "
+            "feature_medians above are the full-dataset prior used by the "
+            "final refit / serving model"
             if use_median_imputation else None
         ),
         "promotion": promotion_decision,
