@@ -27,17 +27,14 @@ interface TradeKpis {
   topQuartileEdge: number | null;
 }
 
-const SPORT_TINTS: Record<string, string> = {
-  nba: "var(--sport-nba)",
-  nfl: "var(--sport-nfl)",
-  mlb: "var(--sport-mlb)",
-  soccer: "var(--sport-soccer)",
-  tennis: "var(--sport-tennis)",
-  ufc: "var(--sport-ufc)",
-};
+import { sportTint as sharedSportTint } from "@/lib/sport-tints";
 
+// Bug #30 — keep the trade-desk-specific fallback color while sharing
+// the SPORT_TINTS map. The hsl literal is the historical visual default
+// for unmapped sports in this surface; passing it explicitly preserves
+// the prior look without re-duplicating the lookup table.
 function sportTint(sport: string): string {
-  return SPORT_TINTS[sport.toLowerCase()] ?? "hsl(262 60% 70% / 0.6)";
+  return sharedSportTint(sport, "hsl(262 60% 70% / 0.6)");
 }
 
 function sectionOrder(marketKind: string) {
