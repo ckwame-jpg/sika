@@ -114,11 +114,11 @@ PREDICTION_SUMMARY_ROW_LIMIT = 5_000
 # has migrated to ``/ops/*`` and ``/research/*``.
 #
 # ``/health`` is intentionally NOT registered under ``/ops/*``. It is the
-# operator liveness endpoint — consumed by Render health checks
-# (``render.yaml:healthCheckPath: /health``) and operator surfaces only.
-# Product surfaces must not poll it; they read ``/product/freshness`` and
-# the per-payload ``freshness_status`` field instead. ``/health`` stays at
-# its top-level URL forever because the infra contract pins it.
+# operator liveness endpoint — consumed by deploy-platform health checks
+# and operator surfaces only. Product surfaces must not poll it; they
+# read ``/product/freshness`` and the per-payload ``freshness_status``
+# field instead. ``/health`` stays at its top-level URL forever because
+# the infra contract pins it.
 ops_router = APIRouter(prefix="/ops", tags=["ops"])
 research_router = APIRouter(prefix="/research", tags=["research"])
 

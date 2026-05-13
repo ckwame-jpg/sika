@@ -120,12 +120,12 @@ The external API host used by Vercel must:
 - keep the scheduler running on a persistent worker
 - use persistent storage for the database and any local runtime assumptions
 
-The current Render production topology should be two Docker services plus Postgres:
+For a self-hosted deploy, run two Docker processes plus Postgres:
 
-- a `web` service with `APP_ROLE=web` and `SCHEDULER_ENABLED=false`
-- a `worker` service with `APP_ROLE=worker` and `SCHEDULER_ENABLED=true`
+- a `web` process with `APP_ROLE=web` and `SCHEDULER_ENABLED=false`
+- a `worker` process with `APP_ROLE=worker` and `SCHEDULER_ENABLED=true`
 
-That keeps refresh scheduling and queue processing off the API web process, which reduces user-facing outages when background refreshes are heavy. Keep `render.yaml` aligned with the actual Render dashboard resources if you use Blueprint sync.
+That keeps refresh scheduling and queue processing off the API web process, which reduces user-facing outages when background refreshes are heavy.
 
 Use Vercel preview deployments for branch work. Promote to production only after the external API URL is stable and healthy.
 

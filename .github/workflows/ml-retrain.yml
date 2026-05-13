@@ -3,14 +3,11 @@
 # + a writable artifact path it silently no-op'd. Moved here so the training
 # step is independent of the API process.
 #
-# DELIVERY CAVEAT (codex round-1 P1 on PR #51): the checked-in ``render.yaml``
-# uses ``rootDir: apps/api`` and the Dockerfile only ``COPY . .``, so a Render
-# deploy will NOT see ``apps/ml/manifests/current.json``. This workflow is
-# correct for the local workflow (the operator runs the API on their laptop,
-# pulls the merged PR, restarts — and ``_default_manifest_path`` finds the
-# file). If/when this repo deploys to Render, add a Dockerfile step that
-# copies the manifest into the API image, OR set the ``ML_MANIFEST_PATH``
-# env var to a mounted location the deploy populates out-of-band.
+# Deployment model: sika runs locally (operator's laptop). The API reads
+# ``apps/ml/manifests/current.json`` via ``_default_manifest_path`` after a
+# restart, so the workflow's PR-merge → local-pull → API-restart loop is
+# the full delivery path. (Render config was retired 2026-04 — ``render.yaml``
+# is gone from this repo.)
 #
 # How the result lands back in the repo:
 # - The job trains under ``apps/ml/``, producing
