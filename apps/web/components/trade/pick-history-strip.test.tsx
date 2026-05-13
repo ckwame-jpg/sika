@@ -290,6 +290,33 @@ describe("PickHistoryStrip — game line variants", () => {
     expect(mockFetchTeamHistory).not.toHaveBeenCalled();
   });
 
+  it("renders an empty-state with controls when team history returns no rows (codex round-7 P2)", async () => {
+    // The home/away filter buttons live INSIDE the strip. Returning
+    // ``null`` on empty results would strand the operator with a
+    // filter applied and no way to undo it short of re-picking the
+    // market. The fix renders ``StripEmptyState`` so the
+    // ``StripHeader`` (filter controls) stays mounted.
+    mockFetchTeamHistory.mockResolvedValue(teamHistoryFixture([]));
+    renderWithProviders(<PickHistoryStrip selection={makeGameLineSelection()} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pick-history-strip-empty")).toBeInTheDocument(),
+    );
+    // Filter buttons are still on screen so the operator can clear them.
+    expect(screen.getByTestId("pick-history-strip-filter-home")).toBeInTheDocument();
+    expect(screen.getByTestId("pick-history-strip-filter-away")).toBeInTheDocument();
+  });
+
+  it("renders an empty-state when player history returns no usable rows (codex round-7 P2)", async () => {
+    mockFetchPlayerHistory.mockResolvedValue(playerHistoryFixture([]));
+    renderWithProviders(<PickHistoryStrip selection={makePlayerSelection()} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pick-history-strip-empty")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("pick-history-strip-filter-home")).toBeInTheDocument();
+  });
+
   it("hides itself for first_five_winner picks without firing a fetch (codex P2)", async () => {
     // The /research/teams/history endpoint only returns final-game
     // results. Charting full-game W/L next to a first-five pick is

@@ -148,14 +148,40 @@ function PlayerPropStrip({ selection, controls, n, location }: PlayerPropStripPr
 
   if (!ready) return null;
   if (isLoading) return <StripSkeleton n={n} controls={controls} />;
-  if (error || !data) return null;
+  // Codex round-7 P2 on PR #24: keep the controls visible on
+  // empty / error results so the operator can clear filters.
+  if (error || !data) {
+    return (
+      <StripEmptyState
+        controls={controls}
+        n={n}
+        message={
+          location
+            ? `No ${location}-only games yet — try clearing the filter.`
+            : "Couldn't load history."
+        }
+      />
+    );
+  }
 
   const recentValues = data.game_logs
     .slice(0, n)
     .map((log) => resolveStatValue(log.metrics, statKey!))
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
 
-  if (recentValues.length === 0) return null;
+  if (recentValues.length === 0) {
+    return (
+      <StripEmptyState
+        controls={controls}
+        n={n}
+        message={
+          location
+            ? `No ${location}-only games in the last ${n}.`
+            : `No game logs with ${statKey?.replace(/_/g, " ")} in the last ${n}.`
+        }
+      />
+    );
+  }
 
   const thresholdNumber = Number(threshold);
   const clearedCount = recentValues.filter((value) => value >= thresholdNumber).length;
@@ -224,7 +250,22 @@ function GameLineStrip({ selection, controls, n, location }: GameLineStripProps)
   if (teamName === null) return null;
   if (kind === "first_five_winner") return null;
   if (isLoading) return <StripSkeleton n={n} controls={controls} />;
-  if (error || !data || data.results.length === 0) return null;
+  // Codex round-7 P2 on PR #24: an empty filter result must keep
+  // the StripHeader (controls) visible so the operator can clear
+  // their home/away filter without re-picking the market.
+  if (error || !data || data.results.length === 0) {
+    return (
+      <StripEmptyState
+        controls={controls}
+        n={n}
+        message={
+          location
+            ? `No ${location}-only games in ${teamName}'s last ${n}.`
+            : `No team-history rows yet for ${teamName}.`
+        }
+      />
+    );
+  }
 
   const recent = data.results.slice(0, n);
   const numericLine = selection.numericLine ?? null;
@@ -539,6 +580,34 @@ function StripSkeleton({ n, controls }: { n: HistoryN; controls: StripControlsPr
           <div key={index} className="pick-history-strip-pill is-placeholder" />
         ))}
       </div>
+    </section>
+  );
+}
+
+/**
+ * Codex round-7 P2 on PR #24: when an operator picks a home/away
+ * filter that returns zero rows, returning ``null`` unmounted the
+ * controls — leaving the operator with no way to clear the filter
+ * short of swapping the selection. Render an empty state that
+ * keeps the StripHeader (and therefore the filter controls)
+ * visible so they can click their way back to "all".
+ */
+function StripEmptyState({
+  controls,
+  n,
+  message,
+}: {
+  controls: StripControlsProps;
+  n: HistoryN;
+  message: string;
+}) {
+  return (
+    <section
+      className="pick-history-strip is-empty"
+      data-testid="pick-history-strip-empty"
+    >
+      <StripHeader controls={controls} leadLine={<span>last {n}</span>} />
+      <p className="pick-history-strip-empty-message">{message}</p>
     </section>
   );
 }
