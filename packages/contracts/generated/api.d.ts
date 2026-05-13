@@ -600,8 +600,9 @@ export interface components {
             /**
              * Action
              * @default buy
+             * @enum {string}
              */
-            action: string;
+            action: "buy" | "sell";
             /**
              * Approved
              * @default false
@@ -611,15 +612,19 @@ export interface components {
             limit_price: number;
             /** Quantity */
             quantity: number;
-            /** Side */
-            side: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "yes" | "no";
             /** Ticker */
             ticker: string;
             /**
              * Time In Force
              * @default good_till_canceled
+             * @enum {string}
              */
-            time_in_force: string;
+            time_in_force: "good_till_canceled" | "immediate_or_cancel" | "fill_or_kill";
         };
         /** DemoOrderRead */
         DemoOrderRead: {
@@ -1185,14 +1190,20 @@ export interface components {
             notes?: string | null;
             /** Quantity */
             quantity: number;
-            /** Side */
-            side: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "yes" | "no";
             /** Ticker */
             ticker: string;
         };
         /** PaperPositionExit */
         PaperPositionExit: {
-            /** Exit Price */
+            /**
+             * Exit Price
+             * @description Same-side closing price (YES position → YES exit; NO position → NO exit). PnL = (exit_price - entry_price) * quantity and will be wrong if the opposite-side price is supplied.
+             */
             exit_price: number;
         };
         /** PaperPositionRead */

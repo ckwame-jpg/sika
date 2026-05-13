@@ -5,6 +5,10 @@
         "properties": {
           "action": {
             "default": "buy",
+            "enum": [
+              "buy",
+              "sell"
+            ],
             "title": "Action",
             "type": "string"
           },
@@ -25,6 +29,10 @@
             "type": "integer"
           },
           "side": {
+            "enum": [
+              "yes",
+              "no"
+            ],
             "title": "Side",
             "type": "string"
           },
@@ -34,6 +42,11 @@
           },
           "time_in_force": {
             "default": "good_till_canceled",
+            "enum": [
+              "good_till_canceled",
+              "immediate_or_cancel",
+              "fill_or_kill"
+            ],
             "title": "Time In Force",
             "type": "string"
           }
@@ -1986,6 +1999,10 @@
             "type": "integer"
           },
           "side": {
+            "enum": [
+              "yes",
+              "no"
+            ],
             "title": "Side",
             "type": "string"
           },
@@ -2006,6 +2023,7 @@
       "PaperPositionExit": {
         "properties": {
           "exit_price": {
+            "description": "Same-side closing price (YES position \u2192 YES exit; NO position \u2192 NO exit). PnL = (exit_price - entry_price) * quantity and will be wrong if the opposite-side price is supplied.",
             "exclusiveMinimum": 0.0,
             "maximum": 1.0,
             "title": "Exit Price",
