@@ -26,12 +26,19 @@ def test_workflow_file_exists():
 
 
 def test_workflow_runs_on_sunday_cron_and_manual_dispatch():
-    """The old in-API job ran Sunday 03:00 UTC. Keep that cadence so
-    operators don't have to relearn the schedule, and add
-    ``workflow_dispatch`` so the same workflow can be triggered ad-hoc."""
+    """The old in-API job ran in ``BackgroundScheduler(timezone=America/Chicago)``
+    at ``hour=3`` — Sunday 03:00 Central. GitHub Actions cron is UTC,
+    so the equivalent is ``0 9 * * 0`` (CST winter) / Sunday 04:00 CDT
+    (summer). Don't change this to a UTC time that lands Saturday
+    Central or you'll retrain on incomplete weekend settlements.
+
+    Also assert ``workflow_dispatch`` so the same workflow can be
+    triggered ad-hoc."""
     text = _workflow_text()
-    assert 'cron: "0 3 * * 0"' in text or "cron: '0 3 * * 0'" in text, (
-        "Expected a Sunday 03:00 UTC cron entry (``0 3 * * 0``)."
+    assert 'cron: "0 9 * * 0"' in text or "cron: '0 9 * * 0'" in text, (
+        "Expected a Sunday 09:00 UTC cron entry (``0 9 * * 0``) — "
+        "preserves the old Sunday 03:00 Central cadence after weekend "
+        "settlement rows land."
     )
     assert "workflow_dispatch" in text, (
         "Operators need to be able to retrigger retraining manually "

@@ -34,9 +34,16 @@ name: ML Weekly Retrain
 
 on:
   schedule:
-    # Sunday 03:00 UTC — same cadence the old in-API job used. Picked to land
-    # before any Monday-morning workflow that reads the new manifest.
-    - cron: "0 3 * * 0"
+    # Codex round-2 P2 on PR #51: the old APScheduler config used
+    # ``BackgroundScheduler(timezone=America/Chicago)`` and
+    # ``CronTrigger(hour=3)`` — Sunday 03:00 Central. GitHub Actions
+    # cron is UTC-only, so the literal ``0 3 * * 0`` here would have
+    # fired Saturday 21:00/22:00 Central, missing Saturday-night
+    # settlement rows. ``0 9 * * 0`` is Sunday 09:00 UTC = Sunday
+    # 03:00 CST (winter) / 04:00 CDT (summer); preserves the old
+    # cadence within DST tolerance and stays AFTER weekend
+    # settlement.
+    - cron: "0 9 * * 0"
   workflow_dispatch: {}
 
 permissions:
