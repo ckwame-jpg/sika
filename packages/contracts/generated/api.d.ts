@@ -123,6 +123,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/jobs/market-discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue Market Discovery Job
+         * @description Queue a Kalshi standalone-market discovery job on demand.
+         *
+         *     Useful when you need to ingest newly-listed game-winner markets ahead
+         *     of the next scheduled cron tick (e.g. just before a slate of games).
+         */
+        post: operations["queue_market_discovery_job_ops_jobs_market_discovery_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/jobs/refresh": {
         parameters: {
             query?: never;
@@ -577,8 +600,9 @@ export interface components {
             /**
              * Action
              * @default buy
+             * @enum {string}
              */
-            action: string;
+            action: "buy" | "sell";
             /**
              * Approved
              * @default false
@@ -588,15 +612,19 @@ export interface components {
             limit_price: number;
             /** Quantity */
             quantity: number;
-            /** Side */
-            side: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "yes" | "no";
             /** Ticker */
             ticker: string;
             /**
              * Time In Force
              * @default good_till_canceled
+             * @enum {string}
              */
-            time_in_force: string;
+            time_in_force: "good_till_canceled" | "immediate_or_cancel" | "fill_or_kill";
         };
         /** DemoOrderRead */
         DemoOrderRead: {
@@ -1162,14 +1190,20 @@ export interface components {
             notes?: string | null;
             /** Quantity */
             quantity: number;
-            /** Side */
-            side: string;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "yes" | "no";
             /** Ticker */
             ticker: string;
         };
         /** PaperPositionExit */
         PaperPositionExit: {
-            /** Exit Price */
+            /**
+             * Exit Price
+             * @description Same-side closing price (YES position → YES exit; NO position → NO exit). PnL = (exit_price - entry_price) * quantity and will be wrong if the opposite-side price is supplied.
+             */
             exit_price: number;
         };
         /** PaperPositionRead */
@@ -2178,9 +2212,17 @@ export interface components {
             games: number;
             /** Losses */
             losses?: number | null;
+            /** Metric Categories */
+            metric_categories?: {
+                [key: string]: string;
+            };
             /** Metrics */
             metrics: {
                 [key: string]: number | null;
+            };
+            /** Percentiles */
+            percentiles?: {
+                [key: string]: number;
             };
             /** Stat Line */
             stat_line?: string | null;
@@ -2763,6 +2805,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    queue_market_discovery_job_ops_jobs_market_discovery_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRefreshResponse"];
                 };
             };
         };

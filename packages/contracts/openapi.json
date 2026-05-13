@@ -5,6 +5,10 @@
         "properties": {
           "action": {
             "default": "buy",
+            "enum": [
+              "buy",
+              "sell"
+            ],
             "title": "Action",
             "type": "string"
           },
@@ -25,6 +29,10 @@
             "type": "integer"
           },
           "side": {
+            "enum": [
+              "yes",
+              "no"
+            ],
             "title": "Side",
             "type": "string"
           },
@@ -34,6 +42,11 @@
           },
           "time_in_force": {
             "default": "good_till_canceled",
+            "enum": [
+              "good_till_canceled",
+              "immediate_or_cancel",
+              "fill_or_kill"
+            ],
             "title": "Time In Force",
             "type": "string"
           }
@@ -1986,6 +1999,10 @@
             "type": "integer"
           },
           "side": {
+            "enum": [
+              "yes",
+              "no"
+            ],
             "title": "Side",
             "type": "string"
           },
@@ -2006,6 +2023,7 @@
       "PaperPositionExit": {
         "properties": {
           "exit_price": {
+            "description": "Same-side closing price (YES position \u2192 YES exit; NO position \u2192 NO exit). PnL = (exit_price - entry_price) * quantity and will be wrong if the opposite-side price is supplied.",
             "exclusiveMinimum": 0.0,
             "maximum": 1.0,
             "title": "Exit Price",
@@ -4921,6 +4939,13 @@
             ],
             "title": "Losses"
           },
+          "metric_categories": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Metric Categories",
+            "type": "object"
+          },
           "metrics": {
             "additionalProperties": {
               "anyOf": [
@@ -4933,6 +4958,13 @@
               ]
             },
             "title": "Metrics",
+            "type": "object"
+          },
+          "percentiles": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Percentiles",
             "type": "object"
           },
           "stat_line": {
@@ -6312,6 +6344,28 @@
           }
         },
         "summary": "Get Market History"
+      }
+    },
+    "/ops/jobs/market-discovery": {
+      "post": {
+        "description": "Queue a Kalshi standalone-market discovery job on demand.\n\nUseful when you need to ingest newly-listed game-winner markets ahead\nof the next scheduled cron tick (e.g. just before a slate of games).",
+        "operationId": "queue_market_discovery_job_ops_jobs_market_discovery_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRefreshResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Queue Market Discovery Job",
+        "tags": [
+          "ops"
+        ]
       }
     },
     "/ops/jobs/refresh": {

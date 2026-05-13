@@ -621,14 +621,31 @@ class MarketHistoryRead(BaseModel):
 
 class PaperPositionCreate(BaseModel):
     ticker: str
-    side: str
+    # Bug #15: previously ``str`` — schema accepted any value and the
+    # service layer lowercased it without validating. Kalshi only has
+    # YES/NO contracts; enforce that at the boundary.
+    side: Literal["yes", "no"]
     quantity: int = Field(ge=1)
     entry_price: float = Field(gt=0, le=1)
     notes: str | None = None
 
 
 class PaperPositionExit(BaseModel):
-    exit_price: float = Field(gt=0, le=1)
+    # Bug #15: ``exit_price`` is the SAME-side closing price as the
+    # position's entry — e.g. a YES position at 0.40 closes at the
+    # current YES price, NOT the NO price. PnL is computed as
+    # ``(exit_price - entry_price) * quantity`` and silently inverts
+    # if the caller passes the opposite-side price. Document the
+    # contract; UI consumers must label the field accordingly.
+    exit_price: float = Field(
+        gt=0,
+        le=1,
+        description=(
+            "Same-side closing price (YES position → YES exit; NO position → "
+            "NO exit). PnL = (exit_price - entry_price) * quantity and will "
+            "be wrong if the opposite-side price is supplied."
+        ),
+    )
 
 
 class PaperPositionRead(BaseModel):
@@ -649,12 +666,17 @@ class PaperPositionRead(BaseModel):
 
 class DemoOrderCreate(BaseModel):
     ticker: str
-    side: str
-    action: str = "buy"
+    # Bug #15: lock the trade-action vocabulary at the boundary. Was
+    # ``str``; service layer lowercased without validating, so any
+    # typo (or unexpected enum from a future client) silently shipped
+    # to Kalshi as the bad value and produced a confusing error
+    # downstream.
+    side: Literal["yes", "no"]
+    action: Literal["buy", "sell"] = "buy"
     quantity: int = Field(ge=1)
     limit_price: float = Field(gt=0, lt=1)
     approved: bool = False
-    time_in_force: str = "good_till_canceled"
+    time_in_force: Literal["good_till_canceled", "immediate_or_cancel", "fill_or_kill"] = "good_till_canceled"
 
 
 class DemoOrderRead(BaseModel):
