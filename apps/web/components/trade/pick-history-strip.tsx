@@ -130,7 +130,15 @@ function PlayerPropStrip({ selection, controls, n, location }: PlayerPropStripPr
   const threshold = selection.threshold;
   const ready = Boolean(subjectName && statKey && threshold != null);
 
-  const opts: PickHistoryOptions = { location, opponent: null };
+  // Codex round-2 P2 on PR #24: forward ``selection.subjectTeam`` as
+  // the ESPN team_hint so same-name players resolve to the picked
+  // athlete (bug #13 enabled it on the backend, but the strip wasn't
+  // passing it through).
+  const opts: PickHistoryOptions = {
+    location,
+    opponent: null,
+    teamHint: selection.subjectTeam ?? null,
+  };
 
   const { data, error, isLoading } = useSWR<StatsQueryRead>(
     ready ? keys.playerHistory(subjectName!, selection.sportKey, n, opts) : null,
@@ -625,7 +633,17 @@ function inferTeamName(selection: TradeSelection): string | null {
       .replace(/[·:-]+$/, "")
       .trim();
 
-  if (selection.marketKind === "winner" || selection.marketKind === "spread") {
+  // Codex round-2 P2 on PR #24: real trade-desk rows use ``game_winner``
+  // and ``first_five_winner`` (and ``moneyline`` in older payloads), not
+  // ``winner``. Match all three so the projected-side resolution doesn't
+  // silently fall through to the matchup-title parser for normal picks.
+  const winnerLikeKinds = new Set([
+    "winner",
+    "game_winner",
+    "first_five_winner",
+    "moneyline",
+  ]);
+  if (winnerLikeKinds.has(selection.marketKind) || selection.marketKind === "spread") {
     const projected = selection.projectedSideLabel?.trim();
     if (projected) {
       const cleaned = stripKindSuffix(projected);

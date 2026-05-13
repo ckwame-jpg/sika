@@ -242,6 +242,10 @@ export const queryStats = (body: {
   question: string;
   sport_key: string;
   season?: number;
+  /** Codex round-2 P2 on PR #24: passthrough to the ESPN player
+   *  search disambiguator (bug #13). Same-name players resolve to
+   *  the right athlete instead of the first ESPN result. */
+  team_hint?: string | null;
 }) =>
   request<StatsQueryRead>("/research/stats/query", {
     method: "POST",
@@ -258,6 +262,12 @@ export const queryStats = (body: {
 export interface PickHistoryOptions {
   opponent?: string | null;
   location?: "home" | "away" | null;
+  /** Codex round-2 P2 on PR #24: forwarded to ``StatsQueryRequest.team_hint``
+   *  so same-name player props (e.g. two "John Smith"s on different
+   *  teams) resolve to the picked athlete instead of the first ESPN
+   *  result. ``PickHistoryStrip`` sets this from
+   *  ``selection.subjectTeam``. */
+  teamHint?: string | null;
 }
 
 function buildPlayerHistoryQuestion(
@@ -280,6 +290,7 @@ export const fetchPlayerHistory = (
   queryStats({
     question: buildPlayerHistoryQuestion(subjectName, n, opts),
     sport_key: sportKey.toUpperCase(),
+    team_hint: opts.teamHint ?? null,
   });
 
 export const fetchTeamHistory = (
@@ -341,7 +352,9 @@ export const keys = {
     n = 5,
     opts: PickHistoryOptions = {},
   ) =>
-    `pick-history:player:${sportKey.toUpperCase()}:${subjectName}:${n}:${opts.location ?? ""}:${opts.opponent ?? ""}`,
+    // Codex round-2 P2 on PR #24: include teamHint so two same-name
+    // picks (different teams) get distinct SWR cache entries.
+    `pick-history:player:${sportKey.toUpperCase()}:${subjectName}:${n}:${opts.location ?? ""}:${opts.opponent ?? ""}:${opts.teamHint ?? ""}`,
   teamHistory: (
     teamName: string,
     sportKey: string,

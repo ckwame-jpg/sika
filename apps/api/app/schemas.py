@@ -1000,6 +1000,12 @@ class StatsQueryRequest(BaseModel):
     question: str = Field(min_length=3)
     sport_key: str = "NBA"
     season: int | None = None
+    # Codex round-2 P2 on PR #24: same-name player disambiguation.
+    # Forwarded to ``EspnPublicClient.search_player`` so duplicate
+    # names (two "John Smith"s on different teams) resolve to the
+    # right athlete instead of the first ESPN result. The pick-
+    # history strip sets this from ``selection.subjectTeam``.
+    team_hint: str | None = None
 
 
 class StatsSummaryRead(BaseModel):

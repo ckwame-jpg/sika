@@ -2299,6 +2299,8 @@ export interface components {
              * @default NBA
              */
             sport_key: string;
+            /** Team Hint */
+            team_hint?: string | null;
         };
         /** StatsSummaryRead */
         StatsSummaryRead: {

@@ -170,6 +170,10 @@ describe("PickHistoryStrip — player prop", () => {
     expect(mockFetchPlayerHistory).toHaveBeenCalledWith("Donovan Mitchell", "NBA", 5, {
       location: null,
       opponent: null,
+      // Codex round-2 P2 on PR #24: subjectTeam ("CLE") flows
+      // through as ``teamHint`` so duplicate-name players resolve
+      // to the picked athlete.
+      teamHint: "CLE",
     });
   });
 
@@ -302,7 +306,7 @@ describe("PickHistoryStrip — N toggle + filters", () => {
       "Donovan Mitchell",
       "NBA",
       10,
-      { location: null, opponent: null },
+      { location: null, opponent: null, teamHint: "CLE" },
     ]);
   });
 
@@ -414,13 +418,12 @@ describe("PickHistoryStrip — Under-direction total markets", () => {
     // Numeric line on the wire is pre-signed: ``-220``. The chart
     // should color totals BELOW 220 as hits.
     mockFetchTeamHistory.mockResolvedValue({
-      team_id: "5",
+      entity_id: "5",
       team_name: "Cleveland Cavaliers",
       sport_key: "NBA",
       results: [
         // total 208 (under → cover)
         {
-          game_id: "g1",
           game_date: "2026-05-09T19:00:00Z",
           opponent: "Detroit Pistons",
           opponent_abbreviation: "DET",
@@ -431,7 +434,6 @@ describe("PickHistoryStrip — Under-direction total markets", () => {
         },
         // total 235 (over → miss)
         {
-          game_id: "g2",
           game_date: "2026-05-07T23:00:00Z",
           opponent: "Boston Celtics",
           opponent_abbreviation: "BOS",
@@ -472,7 +474,6 @@ describe("PickHistoryStrip — Under-direction total markets", () => {
     // the N/filter pills become clickable.
     const stubResults = [
       {
-        game_id: "g1",
         game_date: "2026-05-09T19:00:00Z",
         opponent: "Detroit Pistons",
         opponent_abbreviation: "DET",
@@ -483,7 +484,7 @@ describe("PickHistoryStrip — Under-direction total markets", () => {
       },
     ];
     mockFetchTeamHistory.mockResolvedValue({
-      team_id: "5",
+      entity_id: "5",
       team_name: "Cleveland Cavaliers",
       sport_key: "NBA",
       results: stubResults,

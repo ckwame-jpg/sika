@@ -259,9 +259,21 @@ class StatsQueryService:
         season: int | None = None,
         *,
         db: Session | None = None,
+        team_hint: str | None = None,
     ) -> dict[str, Any]:
         parsed = parse_stats_question(question, sport_key=sport_key, season=season)
-        player = self.espn_client.search_player(parsed.player_name, sport_key=parsed.sport_key)
+        # Codex round-2 P2 on PR #24: same-name player disambiguation.
+        # ``team_hint`` (forwarded from ``selection.subjectTeam`` in
+        # the pick-history strip) is what bug #13's
+        # ``search_player`` upgrade was built for. Without this
+        # plumbing, prop picks for duplicate-name players (the
+        # canonical "two John Smiths" case) silently chart the
+        # wrong athlete's game logs.
+        player = self.espn_client.search_player(
+            parsed.player_name,
+            sport_key=parsed.sport_key,
+            team_hint=team_hint,
+        )
         if parsed.sport_key == "SOCCER":
             return self._query_soccer(question, parsed, player)
         if parsed.sport_key == "TENNIS":

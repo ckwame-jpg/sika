@@ -1577,7 +1577,13 @@ def query_stats(
     db: Session = Depends(get_db),
 ) -> StatsQueryRead:
     try:
-        result = service.query(payload.question, sport_key=payload.sport_key, season=payload.season, db=db)
+        result = service.query(
+            payload.question,
+            sport_key=payload.sport_key,
+            season=payload.season,
+            db=db,
+            team_hint=payload.team_hint,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:

@@ -5083,6 +5083,17 @@
             "default": "NBA",
             "title": "Sport Key",
             "type": "string"
+          },
+          "team_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Hint"
           }
         },
         "required": [
