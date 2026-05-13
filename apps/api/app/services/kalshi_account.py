@@ -48,7 +48,15 @@ _account_snapshot_cache: dict[str, Any] = {
     "stale_until": 0.0,
 }
 _account_snapshot_lock = threading.Lock()
-_background_refresh_in_progress = threading.Event()
+# Codex round-3 P2 on PR #40: ``Event.is_set()`` + ``Event.set()`` is
+# not an atomic test-and-set — two concurrent stale-hits can both pass
+# the check and spawn a refresh, defeating the coalescing.
+# ``Lock.acquire(blocking=False)`` IS atomic: exactly one caller wins
+# the slot, the rest get False and bow out. The background thread
+# releases the lock in its ``finally`` so subsequent stale windows can
+# fire fresh refreshes. (Python's ``Lock`` permits release from a
+# thread other than the acquirer.)
+_background_refresh_slot = threading.Lock()
 
 
 def invalidate_kalshi_account_cache() -> None:
@@ -264,21 +272,24 @@ def _store_account_snapshot(snapshot: KalshiAccountRead) -> None:
 
 def _maybe_start_background_refresh() -> None:
     """Fire a daemon thread to refresh the cache in place. At most
-    one refresh runs at a time — a second stale-hit observes the
-    in-progress flag and skips firing another."""
-    if _background_refresh_in_progress.is_set():
+    one refresh runs at a time — concurrent stale-hits race on
+    ``_background_refresh_slot.acquire(blocking=False)`` and only
+    one wins. The losers return immediately; the winner spawns the
+    worker, which releases the slot in ``finally``."""
+    if not _background_refresh_slot.acquire(blocking=False):
         return
-    # ``Event.set`` is atomic; race between two stale-hits resolves
-    # by letting both call ``set`` but only one actually launches a
-    # thread because we double-check the flag inside the worker.
-    if not _background_refresh_in_progress.is_set():
-        _background_refresh_in_progress.set()
+    try:
         thread = threading.Thread(
             target=_run_background_refresh,
             daemon=True,
             name="kalshi-account-refresh",
         )
         thread.start()
+    except BaseException:
+        # If the thread couldn't start, release the slot so a future
+        # stale-hit can retry.
+        _background_refresh_slot.release()
+        raise
 
 
 def _run_background_refresh() -> None:
@@ -290,7 +301,7 @@ def _run_background_refresh() -> None:
     except Exception:  # noqa: BLE001 — background refresh must not crash the app
         logger.exception("kalshi_account_background_refresh_failed")
     finally:
-        _background_refresh_in_progress.clear()
+        _background_refresh_slot.release()
 
 
 def _build_kalshi_account_snapshot_uncached(

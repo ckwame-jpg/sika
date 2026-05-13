@@ -287,14 +287,80 @@ def test_kalshi_account_snapshot_serves_stale_while_revalidating(db_session, mon
 
     assert second == first, "stale-hit must return the cached value, not block on a fetch"
     # The background refresh fires; wait for it to finish then verify
-    # it incremented the counter exactly once.
-    deadline = time.monotonic() + 2
-    while kalshi_account_module._background_refresh_in_progress.is_set():
-        if time.monotonic() > deadline:
-            raise AssertionError("background refresh did not complete")
-        time.sleep(0.01)
+    # it incremented the counter exactly once. The slot lock is the
+    # atomic gate — acquiring it (blocking) means the worker has
+    # already released it in its ``finally``.
+    acquired = kalshi_account_module._background_refresh_slot.acquire(timeout=2)
+    assert acquired, "background refresh did not complete in time"
+    kalshi_account_module._background_refresh_slot.release()
     assert counting_client.balance_calls == 2, (
         "stale-hit must fire exactly one background refresh, not multiple"
+    )
+
+
+def test_kalshi_account_snapshot_stale_refresh_fires_only_once_under_concurrency(db_session, monkeypatch):
+    """Bug #6, codex round-3 P2 on PR #40: two concurrent stale-hits
+    must NOT both spawn a background refresh — the test-and-set on the
+    refresh slot is atomic via ``Lock.acquire(blocking=False)``, so
+    exactly one caller wins the slot."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    class _SessionContext:
+        def __enter__(self):
+            return db_session
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(kalshi_account_module, "SessionLocal", lambda: _SessionContext())
+
+    # Block the background fetch so we can verify exactly one worker
+    # is launched even when many threads race the stale-hit branch.
+    inside_fetch = threading.Event()
+    release_fetch = threading.Event()
+    original_get_balance = counting_client.get_balance
+
+    def _slow_get_balance():
+        inside_fetch.set()
+        release_fetch.wait(timeout=2)
+        return original_get_balance()
+
+    counting_client.get_balance = _slow_get_balance
+
+    # Seed the cache so subsequent calls hit the stale branch.
+    build_kalshi_account_snapshot(db_session)
+    counting_client.balance_calls = 0  # reset after seeding
+    inside_fetch.clear()
+
+    # Advance time into the stale window.
+    fake_now = {"value": time.monotonic() + 10.0}
+    monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
+
+    # Fire many concurrent stale-hits.
+    threads = [
+        threading.Thread(target=build_kalshi_account_snapshot, args=(db_session,))
+        for _ in range(8)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    # Wait for the (single) background worker to enter ``get_balance``,
+    # then release it.
+    assert inside_fetch.wait(timeout=2), "background refresh did not start"
+    release_fetch.set()
+
+    acquired = kalshi_account_module._background_refresh_slot.acquire(timeout=2)
+    assert acquired, "background refresh did not release the slot"
+    kalshi_account_module._background_refresh_slot.release()
+
+    assert counting_client.balance_calls == 1, (
+        f"expected exactly one background refresh under 8 concurrent stale-hits, "
+        f"got {counting_client.balance_calls}"
     )
 
 
