@@ -164,21 +164,34 @@ class KalshiPublicClient:
         status: str = "open",
         limit: int = 1000,
         mve_filter: str = "exclude",
-        max_pages: int = 5,
+        max_pages: int = 50,
         cursor: str | None = None,
+        wall_clock_budget_seconds: float | None = None,
     ):
-        """Iterate Kalshi market pages, ``limit`` markets per page (≤1000),
-        up to ``max_pages`` pages. Total cap is ``limit * max_pages``.
+        """Iterate Kalshi market pages, ``limit`` markets per page (≤1000).
 
-        Previously ``limit`` was treated as a global cap which made
-        ``max_pages > 1`` meaningless — the caller would only ever see one
-        page worth of markets. Now ``limit`` is per-page (clamped to
-        Kalshi's 1000 max) and ``max_pages`` controls depth, so a caller
-        asking for ``limit=1000, max_pages=50`` gets up to 50K markets.
+        Pagination stops at the FIRST of: cursor naturally exhausted
+        (``next_cursor`` is empty), ``max_pages`` reached, or
+        ``wall_clock_budget_seconds`` exceeded.
+
+        Bug #18: the default cap used to be ``max_pages=5`` for a 5K
+        total — Kalshi lists tens of thousands of open markets (music,
+        weather, polls, …) and the NBA/MLB game-winner tickers we
+        actually care about get buried past 5K in Kalshi's default
+        ordering. Raise the default to 50 pages (≤50K markets) and
+        let callers tighten with ``wall_clock_budget_seconds`` instead
+        of guessing a page count, so refresh jobs stay within their
+        worker timeout while draining the cursor when traffic is calm.
         """
         per_page = max(1, min(int(limit), 1000))
         next_cursor = cursor
+        started = time.monotonic()
         for _ in range(max_pages):
+            if (
+                wall_clock_budget_seconds is not None
+                and time.monotonic() - started > wall_clock_budget_seconds
+            ):
+                break
             page_markets, next_cursor = self.list_markets_page(
                 status=status,
                 limit=per_page,
@@ -196,15 +209,18 @@ class KalshiPublicClient:
         status: str = "open",
         limit: int = 1000,
         mve_filter: str = "exclude",
-        max_pages: int = 5,
+        max_pages: int = 50,
+        wall_clock_budget_seconds: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Return up to ``limit * max_pages`` markets across paginated calls.
+        """Return paginated Kalshi markets, stopping at the FIRST of:
+        cursor exhausted, ``limit * max_pages`` rows, or
+        ``wall_clock_budget_seconds`` elapsed.
 
-        ``limit`` is the per-page cap (Kalshi's max is 1000); ``max_pages``
-        is the total depth. Defaults of ``(1000, 5)`` give up to 5,000
-        markets — enough to surface NBA/MLB game-winner tickers that get
-        buried behind tens of thousands of music-streaming and prop
-        tickers in Kalshi's default ordering.
+        Bug #18: ``max_pages`` default raised from 5 → 50 so a typical
+        refresh actually drains the cursor instead of stopping at 5K.
+        Callers that need a tighter cap (e.g. a refresh tick with a
+        strict worker timeout) should pass ``wall_clock_budget_seconds``
+        rather than guessing a page count.
         """
         markets: list[dict[str, Any]] = []
         for page_markets, _cursor in self.iter_market_pages(
@@ -212,6 +228,7 @@ class KalshiPublicClient:
             limit=limit,
             mve_filter=mve_filter,
             max_pages=max_pages,
+            wall_clock_budget_seconds=wall_clock_budget_seconds,
         ):
             markets.extend(page_markets)
         return markets
