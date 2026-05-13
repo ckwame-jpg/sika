@@ -60,6 +60,13 @@ PROP_REFRESH_MAX_TRANSIENT_ATTEMPTS = 5
 PROP_REFRESH_BACKOFF_BASE_SECONDS = 2.0
 PROP_REFRESH_BACKOFF_CAP_SECONDS = 600.0
 PROP_REFRESH_DEAD_LETTER_ERROR = "prop_refresh_dead_letter_after_transient_errors"
+# Codex round-3 P2 on PR #47 (bug #22): once a prop_refresh has
+# dead-lettered, don't let the next scheduler tick replace it with
+# a fresh job. The upstream outage is presumably still happening
+# and the new job would walk the same back-off ladder and dead-
+# letter again — just spam in the log. Cool the queue for this
+# window so the next attempt has a chance of seeing recovery.
+PROP_REFRESH_DEAD_LETTER_COOLDOWN_SECONDS = 300.0
 # Bug #11: serialize concurrent ``_claim_next_job`` callers on Postgres so two
 # workers can't both pass the "is anything running?" check and claim distinct
 # queued rows in parallel (which would violate the singleton invariant — only
@@ -372,6 +379,11 @@ def enqueue_refresh_job(
         if existing is not None:
             return existing, False
 
+    if kind == "prop_refresh":
+        cooldown = _prop_refresh_dead_letter_cooldown(db)
+        if cooldown is not None:
+            return cooldown, False
+
     job = RefreshJob(
         kind=kind,
         scope=scope,
@@ -381,6 +393,37 @@ def enqueue_refresh_job(
     db.add(job)
     db.flush()
     return job, True
+
+
+def _prop_refresh_dead_letter_cooldown(
+    db: Session, *, now: datetime | None = None
+) -> RefreshJob | None:
+    """Codex round-3 P2 on PR #47 (bug #22): if the most-recent
+    prop_refresh failure carries the dead-letter marker AND finished
+    within the cooldown window, refuse to enqueue a fresh
+    prop_refresh — return that failed row so the caller treats
+    ``created=False``. After the cooldown elapses, the next call
+    falls through to a normal enqueue. Returns ``None`` if no recent
+    dead-letter exists or the cooldown has elapsed."""
+    reference_now = now or datetime.now(timezone.utc)
+    cooldown_cutoff = reference_now - timedelta(
+        seconds=PROP_REFRESH_DEAD_LETTER_COOLDOWN_SECONDS
+    )
+    candidate = db.scalar(
+        select(RefreshJob)
+        .where(
+            RefreshJob.kind == "prop_refresh",
+            RefreshJob.status == "failed",
+            RefreshJob.finished_at >= cooldown_cutoff,
+        )
+        .order_by(RefreshJob.finished_at.desc().nullslast(), RefreshJob.id.desc())
+        .limit(1)
+    )
+    if candidate is None:
+        return None
+    if PROP_REFRESH_DEAD_LETTER_ERROR not in (candidate.error_message or ""):
+        return None
+    return candidate
 
 
 def enqueue_shadow_capture_job(

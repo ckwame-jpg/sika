@@ -7,6 +7,7 @@ from time import monotonic
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import RefreshJob, Run
@@ -967,6 +968,119 @@ def test_prop_refresh_backoff_is_exponential_and_capped():
     assert refresh_jobs._prop_refresh_backoff_seconds(5) == 32.0
     # Way past the cap — clamped to PROP_REFRESH_BACKOFF_CAP_SECONDS.
     assert refresh_jobs._prop_refresh_backoff_seconds(50) == refresh_jobs.PROP_REFRESH_BACKOFF_CAP_SECONDS
+
+
+def test_enqueue_prop_refresh_skips_during_dead_letter_cooldown(db_session, monkeypatch):
+    """Codex round-3 P2 on PR #47 (bug #22): a dead-lettered prop_refresh
+    cools off cross-job enqueueing for ``PROP_REFRESH_DEAD_LETTER_COOLDOWN_SECONDS``.
+    Otherwise the next scheduler tick would just create a fresh job
+    with a reset counter and walk through the same dead-letter
+    sequence, producing one new log line per tick during a
+    persistent outage."""
+    now = datetime.now(timezone.utc)
+    dead_letter = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="cooldown-test",
+        status="failed",
+        queued_at=now - timedelta(seconds=60),
+        finished_at=now - timedelta(seconds=30),  # within the cooldown window
+        error_message=(
+            f"{refresh_jobs.PROP_REFRESH_DEAD_LETTER_ERROR}: persistent upstream timeout"
+        ),
+        details={"transient_attempts": refresh_jobs.PROP_REFRESH_MAX_TRANSIENT_ATTEMPTS},
+    )
+    db_session.add(dead_letter)
+    db_session.commit()
+    dead_letter_id = dead_letter.id
+
+    # Attempt to enqueue a new prop_refresh — must be suppressed.
+    job, created = refresh_jobs.enqueue_refresh_job(
+        db_session,
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+    )
+    db_session.commit()
+
+    assert created is False, (
+        "while a recent dead-letter is in the cooldown window, "
+        "no new prop_refresh should be enqueued"
+    )
+    assert job.id == dead_letter_id, (
+        "the cooldown helper returns the failed row so the scheduler "
+        "treats the call as a no-op"
+    )
+    # Schema invariant: no new queued prop_refresh was created.
+    queued_count = db_session.scalar(
+        select(func.count(RefreshJob.id)).where(
+            RefreshJob.kind == "prop_refresh",
+            RefreshJob.status == "queued",
+        )
+    )
+    assert queued_count == 0
+
+
+def test_enqueue_prop_refresh_resumes_after_cooldown_elapses(db_session, monkeypatch):
+    """Codex round-3 P2 on PR #47 (bug #22): once the cooldown
+    window expires, the next enqueue must fall through to a fresh
+    queued job. The cooldown is meant to suppress spam, not strand
+    prop_refresh forever."""
+    now = datetime.now(timezone.utc)
+    stale_dead_letter = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="stale-cooldown",
+        status="failed",
+        queued_at=now - timedelta(hours=2),
+        finished_at=now - timedelta(seconds=refresh_jobs.PROP_REFRESH_DEAD_LETTER_COOLDOWN_SECONDS + 60),
+        error_message=(
+            f"{refresh_jobs.PROP_REFRESH_DEAD_LETTER_ERROR}: long-past timeout"
+        ),
+    )
+    db_session.add(stale_dead_letter)
+    db_session.commit()
+
+    job, created = refresh_jobs.enqueue_refresh_job(
+        db_session,
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+    )
+    db_session.commit()
+
+    assert created is True
+    assert job.status == "queued"
+    assert job.id != stale_dead_letter.id
+
+
+def test_enqueue_prop_refresh_not_blocked_by_non_dead_letter_failure(db_session):
+    """A failed prop_refresh that ISN'T the dead-letter signal
+    (e.g. a one-off worker timeout) must NOT suppress fresh
+    enqueues — only the explicit ``PROP_REFRESH_DEAD_LETTER_ERROR``
+    marker triggers cooldown."""
+    now = datetime.now(timezone.utc)
+    plain_failure = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="plain-failure",
+        status="failed",
+        queued_at=now - timedelta(seconds=60),
+        finished_at=now - timedelta(seconds=10),
+        error_message=refresh_jobs.WORKER_TIMEOUT_ERROR,
+    )
+    db_session.add(plain_failure)
+    db_session.commit()
+
+    job, created = refresh_jobs.enqueue_refresh_job(
+        db_session,
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+    )
+    db_session.commit()
+    assert created is True
+    assert job.status == "queued"
 
 
 def test_prop_refresh_successful_batch_resets_transient_attempts(db_session, monkeypatch):
