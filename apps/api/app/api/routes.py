@@ -1087,6 +1087,15 @@ def get_watchlist(
     limit: int = Query(25, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> list[RecommendationRead]:
+    # Bug #34 — the post-fetch Python filter (event + market_family +
+    # market status checks beyond what we can cheaply push to SQL) can
+    # drop enough rows to underfill ``limit``. Over-fetch by a factor
+    # and stop once we have ``limit`` qualifying matches; cap the
+    # over-fetch so a pathological dataset doesn't drag the endpoint
+    # under sync timeouts.
+    OVER_FETCH_FACTOR = 8
+    HARD_CAP = 2_000
+    over_fetch_limit = min(max(limit * OVER_FETCH_FACTOR, limit), HARD_CAP)
     stmt = (
         select(Recommendation)
         .options(joinedload(Recommendation.market), joinedload(Recommendation.event))
@@ -1095,18 +1104,22 @@ def get_watchlist(
             Recommendation.edge.desc(),
             Recommendation.confidence.desc(),
         )
-        .limit(limit)
+        .limit(over_fetch_limit)
     )
     if sport:
         stmt = stmt.join(Market, Recommendation.market_id == Market.id).where(Market.sport_key == sport.upper())
     recommendations = db.scalars(stmt).all()
-    return [
-        _serialize_recommendation(item, item.market)
-        for item in recommendations
-        if item.market is None
-        or (item.market.sport_key or "").upper() not in CURRENT_WATCHLIST_SPORTS
-        or is_current_watchlist_market(item.market)
-    ]
+    matched: list[RecommendationRead] = []
+    for item in recommendations:
+        if (
+            item.market is None
+            or (item.market.sport_key or "").upper() not in CURRENT_WATCHLIST_SPORTS
+            or is_current_watchlist_market(item.market)
+        ):
+            matched.append(_serialize_recommendation(item, item.market))
+            if len(matched) >= limit:
+                break
+    return matched
 
 
 @router.get("/watchlist/coverage", response_model=list[WatchlistCoverageRowRead])

@@ -198,6 +198,115 @@ def test_watchlist_and_positions_endpoints(client, db_session):
     assert positions.json()["kalshi_account"]["status"] == "not_configured"
 
 
+def test_watchlist_endpoint_returns_full_limit_after_python_post_filter(client, db_session):
+    """Bug #34: ``/watchlist`` filters in Python AFTER the SQL ``LIMIT``,
+    so if the top-N by selection_score includes rows that fail
+    ``is_current_watchlist_market`` (wrong family, closed market, etc.)
+    the response was less than ``limit``. The over-fetch + early-break
+    contract restores full ``limit`` results even when some rows are
+    dropped by the post-filter.
+
+    Setup: seed 8 watchlist-eligible NBA player_prop rows AND 3
+    non-eligible rows (closed status — fails the filter). Order by
+    selection_score so the closed ones rank ABOVE half the eligible
+    ones. Request ``limit=5`` and assert we still get 5 eligible rows.
+    """
+    now = datetime.now(timezone.utc)
+    event = Event(
+        external_id="evt-bug34",
+        sport_key="NBA",
+        name="Bug-34 fixture",
+        status="in_progress",
+        starts_at=now - timedelta(hours=1),
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    # 3 markets that will FAIL the post-filter: status="closed" so
+    # ``is_current_watchlist_market`` returns False. Assign the
+    # HIGHEST selection_score so SQL would surface them first.
+    for index in range(3):
+        bad_market = Market(
+            ticker=f"NBA-CLOSED-{index}",
+            sport_key="NBA",
+            event_id=event.id,
+            title=f"Closed prop {index}",
+            status="closed",  # fails OPEN_MARKET_STATUSES
+            raw_data={
+                "copilot_market_family": "player_prop",
+                "copilot_market_kind": "player_prop",
+                "copilot_subject_name": f"Closed {index}",
+                "copilot_subject_team": "NYK",
+            },
+        )
+        db_session.add(bad_market)
+        db_session.flush()
+        db_session.add(
+            Recommendation(
+                event_id=event.id,
+                market_id=bad_market.id,
+                side="yes",
+                action="buy",
+                status="active",
+                suggested_price=0.5,
+                edge=0.5,  # highest, surfaces first
+                confidence=0.9,
+                selection_score=0.99 - index * 0.001,
+                invalidation="n/a",
+                rationale="bug-34 fixture",
+            )
+        )
+
+    # 8 eligible NBA player_prop markets with descending selection_scores
+    # below the closed ones'.
+    for index in range(8):
+        market = Market(
+            ticker=f"NBA-OPEN-{index}",
+            sport_key="NBA",
+            event_id=event.id,
+            title=f"Open prop {index}",
+            status="open",
+            raw_data={
+                "copilot_market_family": "player_prop",
+                "copilot_market_kind": "player_prop",
+                "copilot_subject_name": f"Open {index}",
+                "copilot_subject_team": "BOS",
+            },
+        )
+        db_session.add(market)
+        db_session.flush()
+        db_session.add(
+            Recommendation(
+                event_id=event.id,
+                market_id=market.id,
+                side="yes",
+                action="buy",
+                status="active",
+                suggested_price=0.5,
+                edge=0.1,
+                confidence=0.6,
+                selection_score=0.5 - index * 0.001,
+                invalidation="n/a",
+                rationale="bug-34 fixture",
+            )
+        )
+    db_session.commit()
+
+    response = client.get("/watchlist", params={"limit": 5})
+    assert response.status_code == 200
+    rows = response.json()
+    # Pre-fix: SQL LIMIT=5 surfaces the 3 closed + top 2 open = 5 raw,
+    # post-filter drops 3 closed, returns 2 rows.
+    # Post-fix: over-fetch surfaces enough rows that the filter returns
+    # 5 eligible.
+    assert len(rows) == 5, (
+        f"Expected 5 eligible rows after over-fetch + post-filter; "
+        f"got {len(rows)}. Tickers returned: {[r['ticker'] for r in rows]}"
+    )
+    # All returned should be open status; none should be NBA-CLOSED-*.
+    assert all(row["ticker"].startswith("NBA-OPEN-") for row in rows)
+
+
 def test_watchlist_diagnostics_endpoint_reports_no_refresh_runs(client, monkeypatch):
     monkeypatch.setattr(
         routes,
