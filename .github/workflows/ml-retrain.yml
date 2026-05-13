@@ -3,6 +3,15 @@
 # + a writable artifact path it silently no-op'd. Moved here so the training
 # step is independent of the API process.
 #
+# DELIVERY CAVEAT (codex round-1 P1 on PR #51): the checked-in ``render.yaml``
+# uses ``rootDir: apps/api`` and the Dockerfile only ``COPY . .``, so a Render
+# deploy will NOT see ``apps/ml/manifests/current.json``. This workflow is
+# correct for the local workflow (the operator runs the API on their laptop,
+# pulls the merged PR, restarts — and ``_default_manifest_path`` finds the
+# file). If/when this repo deploys to Render, add a Dockerfile step that
+# copies the manifest into the API image, OR set the ``ML_MANIFEST_PATH``
+# env var to a mounted location the deploy populates out-of-band.
+#
 # How the result lands back in the repo:
 # - The job trains under ``apps/ml/``, producing
 #   ``apps/ml/manifests/current.json`` + a versioned directory under
@@ -74,9 +83,17 @@ jobs:
             echo "skipped=true" >>"$GITHUB_OUTPUT"
             exit 0
           fi
+          # Codex round-1 P2 on PR #51: ``ml.cli train`` defaults
+          # ``--model-version`` to today's UTC date. Two ``workflow_dispatch``
+          # runs on the same day would emit identical manifests and the
+          # ``create-pull-request`` step below would have nothing to commit.
+          # Stamp a per-run version so manual reruns always produce a
+          # reviewable diff.
+          MODEL_VERSION="$(date -u +%Y-%m-%dT%H%M%SZ)"
           python -m ml.cli train \
             --artifact-root artifacts \
             --manifest-out manifests/current.json \
+            --model-version "${MODEL_VERSION}" \
             --database-url "${DATABASE_URL}"
           echo "skipped=false" >>"$GITHUB_OUTPUT"
 

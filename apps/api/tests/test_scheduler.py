@@ -922,6 +922,12 @@ def test_scheduler_does_not_register_weekly_model_retrain_job(monkeypatch):
             advanced_stats_enabled=False,
         ),
     )
+    # Codex round-1 P3 on PR #51: ``start_scheduler`` calls
+    # ``schedule_event_refreshes`` at the end, which opens
+    # ``SessionLocal`` and queries the live ``events`` table. Stub it so
+    # this unit test stays off the DB — we only care about which
+    # ``add_job`` ids land.
+    monkeypatch.setattr(scheduler, "schedule_event_refreshes", lambda: None)
 
     scheduler.start_scheduler()
 
