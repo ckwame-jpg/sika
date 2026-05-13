@@ -202,13 +202,13 @@ def _signed_numeric_line(market_kind: str, raw_data: dict, selected_side: str) -
     """Return the threshold value for a game-line market, pre-signed from
     the picked side's perspective.
 
-    Conventions chosen to match game_line_projected_label below — that
-    label flips ``-{threshold}`` vs ``+{threshold}`` based on
-    ``selected_side``. We mirror that flip here so the frontend can use
-    the value directly without re-reading selected_side.
+    The frontend's ``SpreadChart`` / ``TotalChart`` divide ``-numericLine``
+    to get the cover-line drawn on the chart; ``coverOutcome`` then
+    colors each bar.
 
-    - spread + yes (favored)   → ``-threshold`` (team must win by more)
-    - spread + no  (dog)        → ``+threshold`` (team can lose by less)
+    - spread (either side)      → ``-threshold`` (binary event line —
+        same value both YES and NO contracts settle on; the frontend
+        keys on ``selected_side`` to flip the cover comparison)
     - total + EFFECTIVE over    → ``+threshold``
     - total + EFFECTIVE under   → ``-threshold``
     - moneyline / first_five_winner / unknown → None (no number to chart)
@@ -218,6 +218,18 @@ def _signed_numeric_line(market_kind: str, raw_data: dict, selected_side: str) -
     Over line. For Under markets, YES IS THE UNDER — so the sign was
     inverted. We now consult ``copilot_direction`` to compute the
     effective picked direction.
+
+    Codex round-3 P2 on PR #24: the spread branch previously flipped
+    the sign on NO picks (``+threshold``) so that ``coverThreshold =
+    -numericLine = -threshold`` and ``margin > -threshold`` meant
+    "cover". That treats the NO contract like a sportsbook
+    ``team +threshold`` spread, but the Kalshi market settles on the
+    binary event ``team wins by ≥ threshold``: NO wins when
+    ``margin < threshold``. The two are different events (e.g. a
+    blowout win is a YES cover, NOT a NO cover). Return the YES-side
+    sign for both contracts; the frontend inverts the comparison for
+    NO so it draws the same reference line and just flips the
+    coloring.
     """
     threshold = raw_data.get("copilot_threshold")
     if threshold is None:
@@ -228,7 +240,7 @@ def _signed_numeric_line(market_kind: str, raw_data: dict, selected_side: str) -
         return None
     side = (selected_side or "").lower()
     if market_kind == "spread":
-        return -value if side == "yes" else value
+        return -value
     if market_kind == "total":
         direction = str(raw_data.get("copilot_direction") or "over").lower()
         picked_is_over = (direction == "over" and side == "yes") or (

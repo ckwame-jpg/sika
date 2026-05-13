@@ -54,10 +54,14 @@ def test_signed_numeric_line_spread_yes_returns_negative():
     assert _signed_numeric_line("spread", raw, "yes") == -3.5
 
 
-def test_signed_numeric_line_spread_no_returns_positive():
-    """Picking the dog side (no) means the team can lose by up to threshold."""
+def test_signed_numeric_line_spread_no_returns_yes_sign():
+    """Codex round-3 P2 on PR #24: spread is a binary event contract
+    (``P(margin > threshold)``); NO is just the complement of YES on
+    the SAME line, not a separate ``team +threshold`` sportsbook bet.
+    Return the YES-side sign so the chart draws a single reference
+    line; the frontend inverts the cover comparison for NO."""
     raw = {"copilot_threshold": 3.5}
-    assert _signed_numeric_line("spread", raw, "no") == 3.5
+    assert _signed_numeric_line("spread", raw, "no") == -3.5
 
 
 def test_signed_numeric_line_total_yes_returns_positive():

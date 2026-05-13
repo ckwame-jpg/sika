@@ -316,3 +316,92 @@ def test_build_team_results_handles_scalar_score_strings():
     assert row["team_score"] == 116
     assert row["opp_score"] == 109
     assert row["result"] == "W"
+
+
+# -----------------------------------------------------------------------------
+# Codex round-3 P2 on PR #24 — cancelled/postponed events excluded
+# -----------------------------------------------------------------------------
+
+
+def test_build_team_results_excludes_cancelled_and_postponed_events():
+    """Cancellations/postponements ship with ``state == "post"`` and
+    no scores. The previous ``state == "post"`` fallback let them
+    through and they surfaced in the strip as 0-0 losses."""
+    payload = {
+        "team": {"id": "5", "displayName": "Cleveland Cavaliers"},
+        "events": [
+            {
+                "id": "cancelled-game",
+                "date": "2026-05-09T19:00:00Z",
+                "competitions": [
+                    {
+                        "status": {
+                            "type": {
+                                "completed": False,
+                                "state": "post",
+                                "name": "STATUS_CANCELED",
+                            }
+                        },
+                        "competitors": [
+                            {"homeAway": "home", "team": {"id": "5"}},
+                            {"homeAway": "away", "team": {"id": "8"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "postponed-game",
+                "date": "2026-05-08T19:00:00Z",
+                "competitions": [
+                    {
+                        "status": {
+                            "type": {
+                                "completed": False,
+                                "state": "post",
+                                "name": "STATUS_POSTPONED",
+                            }
+                        },
+                        "competitors": [
+                            {"homeAway": "home", "team": {"id": "5"}},
+                            {"homeAway": "away", "team": {"id": "8"}},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "real-final",
+                "date": "2026-05-07T19:00:00Z",
+                "competitions": [
+                    {
+                        "status": {
+                            "type": {
+                                "completed": False,
+                                "state": "post",
+                                "name": "STATUS_FINAL",
+                            }
+                        },
+                        "competitors": [
+                            {
+                                "homeAway": "home",
+                                "team": {"id": "5", "displayName": "Cleveland Cavaliers"},
+                                "score": 112,
+                                "winner": True,
+                            },
+                            {
+                                "homeAway": "away",
+                                "team": {"id": "8", "displayName": "Detroit Pistons"},
+                                "score": 100,
+                                "winner": False,
+                            },
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    results = _build_team_results(payload, self_team_id="5")
+
+    assert len(results) == 1, "Only the STATUS_FINAL game should survive."
+    assert results[0]["team_score"] == 112
+    assert results[0]["opp_score"] == 100

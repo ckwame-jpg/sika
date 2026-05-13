@@ -198,16 +198,21 @@ interface GameLineStripProps {
 
 function GameLineStrip({ selection, controls, n, location }: GameLineStripProps) {
   const teamName = inferTeamName(selection);
-  if (teamName === null) return null;
-
   const opts: PickHistoryOptions = { location, opponent: null };
 
+  // Codex round-3 P1 on PR #24: keep useSWR unconditional to satisfy
+  // rules-of-hooks — the previous early return changed hook order
+  // when a prior selection had resolved a team and a subsequent one
+  // didn't, which made ``next build`` fail. A ``null`` SWR key
+  // short-circuits the fetch, so passing ``null`` when there's no
+  // team to chart is equivalent to the old early return.
   const { data, error, isLoading } = useSWR<TeamHistoryRead>(
-    keys.teamHistory(teamName, selection.sportKey, n, opts),
-    () => fetchTeamHistory(teamName, selection.sportKey, n, opts),
+    teamName !== null ? keys.teamHistory(teamName, selection.sportKey, n, opts) : null,
+    teamName !== null ? () => fetchTeamHistory(teamName, selection.sportKey, n, opts) : null,
     { revalidateOnFocus: false, revalidateOnReconnect: false },
   );
 
+  if (teamName === null) return null;
   if (isLoading) return <StripSkeleton n={n} controls={controls} />;
   if (error || !data || data.results.length === 0) return null;
 
@@ -561,20 +566,18 @@ export function resolveStatValue(
  * Sign-correct cover/over outcome.
  *
  * Spread:
- *   ``coverThreshold`` is pre-signed from the picked side's
- *   perspective by the backend (see ``_signed_numeric_line`` in
- *   ``trade_desk.py``): for YES on "Team -4.5" the threshold lands
- *   at +4.5 and the cover condition is ``margin > +4.5``; for NO on
- *   the same market the threshold lands at -4.5 and the cover
- *   condition is ``margin > -4.5``. So both sides answer ``cover
- *   ↔ margin > threshold`` once the sign work has been done upstream.
+ *   ``threshold`` is the binary contract line — the same value the
+ *   model integrates over in ``scoring.py`` (``P(margin > threshold)``).
+ *   YES contract holders win when ``margin > threshold``; NO contract
+ *   holders win when ``margin < threshold``. Exact equality is a push.
  *
- *   Codex round-1 P2 on PR #24: the prior NO branch did
- *   ``margin < threshold`` which inverted the call. With
- *   ``coverThreshold = -numericLine = -4.5`` for a NO pick on
- *   ``Team wins by over 4.5``, narrow wins (margin 0–4) and any
- *   loss should cover (margin > -4.5) — but the code colored those
- *   as misses.
+ *   Codex round-3 P2 on PR #24: the prior implementation treated the
+ *   NO contract as a sportsbook ``team +threshold`` spread bet
+ *   (``margin > -threshold``) — that's a DIFFERENT event from the
+ *   binary "team wins by ≥ threshold" the contract actually settles
+ *   on. For "Cavs win by 3.5+" NO, the bet wins on margin -5 (Cavs
+ *   lost by 5) and loses on margin +5 (Cavs blowout), but the old
+ *   code marked those as miss/cover respectively.
  *
  * Total:
  *   ``threshold`` is the absolute total line. ``side === "yes"``
@@ -595,8 +598,7 @@ export function coverOutcome(
   const normalizedSide = side.toLowerCase();
   if (value === threshold) return "mid";
   if (market === "spread") {
-    // Both YES and NO answer ``cover ↔ margin > threshold`` because
-    // ``threshold`` is already pre-signed for the side upstream.
+    if (normalizedSide === "no") return value < threshold ? "high" : "low";
     return value > threshold ? "high" : "low";
   }
   // total

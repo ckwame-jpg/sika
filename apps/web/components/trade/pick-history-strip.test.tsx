@@ -378,17 +378,18 @@ describe("coverOutcome — sign-correct cover/over coloring", () => {
     expect(coverOutcome(3.5, 3.5, "spread", "yes")).toBe("mid");
   });
 
-  it("spread + no covers when margin clears the pre-signed threshold (codex P2)", () => {
-    // Bug fix: ``threshold`` is already pre-signed from the picked
-    // side's perspective by the backend, so both YES and NO answer
-    // ``cover ↔ margin > threshold``. For a NO pick on "Team wins
-    // by over 3.5" (numericLine=+3.5, coverThreshold=-3.5):
-    //   margin -5  → lost by 5 → fail (-5 < -3.5)         → "low"
-    //   margin  0  → tie       → cover (0 > -3.5)         → "high"
-    //   margin -3.5 → push     → "mid"
-    expect(coverOutcome(-5, -3.5, "spread", "no")).toBe("low");
-    expect(coverOutcome(0, -3.5, "spread", "no")).toBe("high");
-    expect(coverOutcome(-3.5, -3.5, "spread", "no")).toBe("mid");
+  it("spread + no inverts the cover check for the binary contract (codex round-3 P2)", () => {
+    // The Kalshi spread contract is binary: ``P(margin > threshold)``.
+    // NO holders win when margin < threshold (the inverse). For a NO
+    // pick on "Cavs win by 3.5+" (numericLine=-3.5, coverThreshold=+3.5):
+    //   margin +5  → Cavs blowout → YES wins, NO loses     → "low"
+    //   margin -5  → Cavs lose by 5 → NO wins              → "high"
+    //   margin +2  → Cavs win by 2 → NO wins               → "high"
+    //   margin 3.5 → push                                  → "mid"
+    expect(coverOutcome(5, 3.5, "spread", "no")).toBe("low");
+    expect(coverOutcome(-5, 3.5, "spread", "no")).toBe("high");
+    expect(coverOutcome(2, 3.5, "spread", "no")).toBe("high");
+    expect(coverOutcome(3.5, 3.5, "spread", "no")).toBe("mid");
   });
 
   it("total + yes treats high totals as covers; total + no inverts", () => {

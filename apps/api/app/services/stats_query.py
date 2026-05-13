@@ -683,7 +683,15 @@ def _build_team_results(schedule_payload: dict[str, Any], *, self_team_id: str) 
     for event in schedule_payload.get("events") or []:
         competition = (event.get("competitions") or [{}])[0]
         status_type = (competition.get("status") or event.get("status") or {}).get("type") or {}
-        is_completed = bool(status_type.get("completed")) or str(status_type.get("state") or "").lower() == "post"
+        # Codex round-3 P2 on PR #24: cancelled / postponed games also
+        # have ``state == "post"`` but ship without scores. The previous
+        # ``state == "post"`` fallback let them through, and the missing
+        # scores fell back to ``0`` further down, so cancellations
+        # surfaced in the strip as 0-0 losses. Require ESPN's explicit
+        # ``completed`` flag (or the ``STATUS_FINAL`` terminal name as
+        # an allow-listed fallback for payloads that omit it).
+        status_name = str(status_type.get("name") or "").upper()
+        is_completed = bool(status_type.get("completed")) or status_name == "STATUS_FINAL"
         if not is_completed:
             continue
 
