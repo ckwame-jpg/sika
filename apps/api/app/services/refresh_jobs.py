@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import Any
 
@@ -50,6 +50,16 @@ SHADOW_CAPTURE_WORKER_TIMEOUT_SECONDS = 180.0
 ADVANCED_STATS_AUDIT_WORKER_TIMEOUT_SECONDS = 120.0
 PREDICTION_SETTLEMENT_BATCH_SIZE = 100
 PARLAY_SETTLEMENT_BATCH_SIZE = 50
+# Bug #22: cap the transient-error requeue loop so one persistent
+# upstream outage can't churn the queue forever and drown log signal.
+# Counter lives in ``job.details["transient_attempts"]``.
+PROP_REFRESH_MAX_TRANSIENT_ATTEMPTS = 5
+# Exponential backoff: 2s → 4s → 8s → 16s → 32s, capped at 10 min.
+# The claim filter (``queued_at <= now``) actually enforces the wait —
+# we just bump ``queued_at`` into the future on requeue.
+PROP_REFRESH_BACKOFF_BASE_SECONDS = 2.0
+PROP_REFRESH_BACKOFF_CAP_SECONDS = 600.0
+PROP_REFRESH_DEAD_LETTER_ERROR = "prop_refresh_dead_letter_after_transient_errors"
 # Bug #11: serialize concurrent ``_claim_next_job`` callers on Postgres so two
 # workers can't both pass the "is anything running?" check and claim distinct
 # queued rows in parallel (which would violate the singleton invariant — only
@@ -465,9 +475,17 @@ def _claim_next_job(db: Session) -> RefreshJob | None:
     if running is not None:
         return None
 
+    # Bug #22: honor the back-off window stamped onto ``queued_at`` by
+    # a transient-error requeue. A future ``queued_at`` means "not
+    # eligible yet" — the same row will be picked up on a later tick
+    # once the back-off has elapsed.
+    now = datetime.now(timezone.utc)
     queued = db.scalar(
         select(RefreshJob)
-        .where(RefreshJob.status == "queued")
+        .where(
+            RefreshJob.status == "queued",
+            RefreshJob.queued_at <= now,
+        )
         .order_by(_job_priority_order(), RefreshJob.queued_at.asc(), RefreshJob.id.asc())
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -502,6 +520,38 @@ def _guarded_requeue_job(db: Session, job_id: int) -> bool:
         {
             "status": "queued",
             "queued_at": now,
+            "started_at": None,
+            "finished_at": None,
+            "error_message": None,
+        },
+    )
+
+
+def _prop_refresh_backoff_seconds(transient_attempts: int) -> float:
+    """Bug #22: exponential back-off after a transient HTTP error.
+    Caller has just incremented ``transient_attempts``, so attempt N
+    delays by ``2^N`` seconds (2, 4, 8, 16, 32, …), capped at the
+    ``PROP_REFRESH_BACKOFF_CAP_SECONDS`` ceiling so a long upstream
+    outage doesn't strand the job forever."""
+    exponent = max(transient_attempts, 0)
+    raw = PROP_REFRESH_BACKOFF_BASE_SECONDS * (2 ** max(exponent - 1, 0))
+    return min(raw, PROP_REFRESH_BACKOFF_CAP_SECONDS)
+
+
+def _guarded_requeue_with_backoff(
+    db: Session, job_id: int, *, backoff_seconds: float
+) -> bool:
+    """Bug #22: like ``_guarded_requeue_job`` but pushes ``queued_at``
+    into the future by ``backoff_seconds`` so the claim loop skips
+    the row until the back-off elapses. Paired with the
+    ``queued_at <= now`` filter in ``_claim_next_job``."""
+    not_before = datetime.now(timezone.utc) + timedelta(seconds=max(backoff_seconds, 0.0))
+    return _guarded_update_running_job(
+        db,
+        job_id,
+        {
+            "status": "queued",
+            "queued_at": not_before,
             "started_at": None,
             "finished_at": None,
             "error_message": None,
@@ -1243,11 +1293,49 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
             return _refresh_job_snapshot(db, job.id)
         except Exception as exc:
             if job.kind == "prop_refresh" and isinstance(exc, httpx.HTTPError):
+                # Bug #22: bound the transient-error requeue loop.
+                # Previously every ``httpx.HTTPError`` requeued the job
+                # immediately, so one persistent upstream outage churned
+                # the queue forever and drowned out the rest of the
+                # log signal. Cap the attempts and back off the requeue
+                # window; dead-letter after the cap.
                 details = dict(job.details or {})
+                attempts = int(details.get("transient_attempts") or 0) + 1
+                details["transient_attempts"] = attempts
                 details["last_transient_error"] = str(exc).strip() or exc.__class__.__name__
                 job.details = details
+
+                if attempts >= PROP_REFRESH_MAX_TRANSIENT_ATTEMPTS:
+                    error_message = (
+                        f"{PROP_REFRESH_DEAD_LETTER_ERROR}: {details['last_transient_error']}"
+                    )
+                    if job.run_id is not None:
+                        _fail_run(db, job.run_id, error_message)
+                    db.flush()
+                    failed = _guarded_fail_job(db, job.id, error_message)
+                    if not failed:
+                        logger.warning(
+                            "refresh_job_late_failure_ignored", extra={"job_id": job.id}
+                        )
+                    else:
+                        logger.warning(
+                            "prop_refresh_dead_letter",
+                            extra={
+                                "job_id": job.id,
+                                "attempts": attempts,
+                                "last_error": details["last_transient_error"],
+                            },
+                        )
+                    db.commit()
+                    return _refresh_job_snapshot(db, job.id)
+
+                backoff_seconds = _prop_refresh_backoff_seconds(attempts)
+                details["last_transient_backoff_seconds"] = backoff_seconds
+                job.details = details
                 db.flush()
-                requeued = _guarded_requeue_job(db, job.id)
+                requeued = _guarded_requeue_with_backoff(
+                    db, job.id, backoff_seconds=backoff_seconds
+                )
                 if not requeued:
                     logger.warning("refresh_job_late_requeue_ignored", extra={"job_id": job.id})
                 db.commit()
