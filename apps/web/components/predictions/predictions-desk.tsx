@@ -387,10 +387,20 @@ export function PredictionsDesk() {
     setSettling(true);
     try {
       await triggerPredictionSettlement();
+      // Bug #45 — settlement updates row state that other surfaces
+      // read transitively: trade desk shows recommendation status,
+      // positions shows realized PnL, /events shows event/result
+      // status. Invalidate every prediction-derived surface so the
+      // operator sees consistent state immediately, not on the next
+      // background poll.
       await Promise.all([
         mutate((key) => typeof key === "string" && key.startsWith("/predictions")),
         mutate((key) => typeof key === "string" && key.startsWith("/predictions/summary")),
-        mutate((key) => typeof key === "string" && key.startsWith("/parlays/predictions")),
+        mutate((key) => typeof key === "string" && key.startsWith("/parlays")),
+        mutate((key) => typeof key === "string" && key.startsWith("/trade-desk")),
+        mutate((key) => typeof key === "string" && key.startsWith("/positions")),
+        mutate((key) => typeof key === "string" && key.startsWith("/events")),
+        mutate((key) => typeof key === "string" && key.startsWith("/watchlist")),
       ]);
     } catch {
       /* ignore */
