@@ -209,9 +209,15 @@ def _signed_numeric_line(market_kind: str, raw_data: dict, selected_side: str) -
 
     - spread + yes (favored)   → ``-threshold`` (team must win by more)
     - spread + no  (dog)        → ``+threshold`` (team can lose by less)
-    - total  + yes (over)       → ``+threshold``
-    - total  + no  (under)      → ``-threshold``
+    - total + EFFECTIVE over    → ``+threshold``
+    - total + EFFECTIVE under   → ``-threshold``
     - moneyline / first_five_winner / unknown → None (no number to chart)
+
+    Codex round-1 P2 on PR #24: the total branch previously used
+    ``side == "yes"`` directly, which assumed the market itself was an
+    Over line. For Under markets, YES IS THE UNDER — so the sign was
+    inverted. We now consult ``copilot_direction`` to compute the
+    effective picked direction.
     """
     threshold = raw_data.get("copilot_threshold")
     if threshold is None:
@@ -224,8 +230,32 @@ def _signed_numeric_line(market_kind: str, raw_data: dict, selected_side: str) -
     if market_kind == "spread":
         return -value if side == "yes" else value
     if market_kind == "total":
-        return value if side == "yes" else -value
+        direction = str(raw_data.get("copilot_direction") or "over").lower()
+        picked_is_over = (direction == "over" and side == "yes") or (
+            direction == "under" and side == "no"
+        )
+        return value if picked_is_over else -value
     return None
+
+
+def _effective_total_direction(
+    market_kind: str, raw_data: dict, selected_side: str
+) -> str | None:
+    """For total markets, return the EFFECTIVE direction the pick
+    represents (``"over"`` or ``"under"``) after folding in
+    ``copilot_direction`` + ``selected_side``. Surfaced to the frontend
+    via ``TradeDeskGameLineRead.total_direction`` so the pick-history
+    strip can color outcomes correctly without re-deriving the flip.
+    Returns ``None`` for non-total markets."""
+    if market_kind != "total":
+        return None
+    direction = str(raw_data.get("copilot_direction") or "over").lower()
+    side = (selected_side or "").lower()
+    if (direction == "over" and side == "yes") or (
+        direction == "under" and side == "no"
+    ):
+        return "over"
+    return "under"
 
 
 def game_line_projected_label(market: Market, recommendation: Recommendation) -> str | None:
@@ -613,6 +643,7 @@ def build_trade_desk_response(
         assert isinstance(game_lines, list)
         market_kind = str(raw_data.get("copilot_market_kind") or "")
         numeric_line = _signed_numeric_line(market_kind, raw_data, recommendation.side)
+        total_direction = _effective_total_direction(market_kind, raw_data, recommendation.side)
         game_lines.append(
             TradeDeskGameLineRead(
                 ticker=market.ticker,
@@ -628,6 +659,7 @@ def build_trade_desk_response(
                 confidence=recommendation.confidence,
                 kalshi_url=kalshi_market_url(market),
                 numeric_line=numeric_line,
+                total_direction=total_direction,
             )
         )
 

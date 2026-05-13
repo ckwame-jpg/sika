@@ -374,9 +374,16 @@ describe("coverOutcome — sign-correct cover/over coloring", () => {
     expect(coverOutcome(3.5, 3.5, "spread", "yes")).toBe("mid");
   });
 
-  it("spread + no flips the comparison", () => {
-    expect(coverOutcome(-5, -3.5, "spread", "no")).toBe("high");
-    expect(coverOutcome(0, -3.5, "spread", "no")).toBe("low");
+  it("spread + no covers when margin clears the pre-signed threshold (codex P2)", () => {
+    // Bug fix: ``threshold`` is already pre-signed from the picked
+    // side's perspective by the backend, so both YES and NO answer
+    // ``cover ↔ margin > threshold``. For a NO pick on "Team wins
+    // by over 3.5" (numericLine=+3.5, coverThreshold=-3.5):
+    //   margin -5  → lost by 5 → fail (-5 < -3.5)         → "low"
+    //   margin  0  → tie       → cover (0 > -3.5)         → "high"
+    //   margin -3.5 → push     → "mid"
+    expect(coverOutcome(-5, -3.5, "spread", "no")).toBe("low");
+    expect(coverOutcome(0, -3.5, "spread", "no")).toBe("high");
     expect(coverOutcome(-3.5, -3.5, "spread", "no")).toBe("mid");
   });
 
@@ -386,5 +393,142 @@ describe("coverOutcome — sign-correct cover/over coloring", () => {
     expect(coverOutcome(210, 220.5, "total", "no")).toBe("high");
     expect(coverOutcome(225, 220.5, "total", "no")).toBe("low");
     expect(coverOutcome(220.5, 220.5, "total", "yes")).toBe("mid");
+  });
+});
+
+
+// -----------------------------------------------------------------------------
+// Codex round-1 P2 on PR #24 — total direction respects Under markets
+// -----------------------------------------------------------------------------
+
+describe("PickHistoryStrip — Under-direction total markets", () => {
+  beforeEach(() => {
+    mockFetchPlayerHistory.mockReset();
+    mockFetchTeamHistory.mockReset();
+    mockFetchSummary.mockReset();
+    mockFetchSummary.mockResolvedValue(summaryFixture(5));
+  });
+
+  it("colors history as under when the market itself is an Under line and YES is picked", async () => {
+    // Under-220 market, YES pick → effective direction = "under".
+    // Numeric line on the wire is pre-signed: ``-220``. The chart
+    // should color totals BELOW 220 as hits.
+    mockFetchTeamHistory.mockResolvedValue({
+      team_id: "5",
+      team_name: "Cleveland Cavaliers",
+      sport_key: "NBA",
+      results: [
+        // total 208 (under → cover)
+        {
+          game_id: "g1",
+          game_date: "2026-05-09T19:00:00Z",
+          opponent: "Detroit Pistons",
+          opponent_abbreviation: "DET",
+          location: "home",
+          team_score: 105,
+          opp_score: 103,
+          result: "W",
+        },
+        // total 235 (over → miss)
+        {
+          game_id: "g2",
+          game_date: "2026-05-07T23:00:00Z",
+          opponent: "Boston Celtics",
+          opponent_abbreviation: "BOS",
+          location: "away",
+          team_score: 120,
+          opp_score: 115,
+          result: "L",
+        },
+      ],
+    } satisfies TeamHistoryRead);
+
+    const selection = makeGameLineSelection({
+      ticker: "KXNBA-UNDER-CLE",
+      marketKind: "total",
+      marketTitle: "Cleveland Cavaliers Under 220",
+      displayLabel: "Under 220",
+      projectedSideLabel: "Under 220",
+      selectedSide: "yes",
+      numericLine: -220,
+      totalDirection: "under",
+    });
+    renderWithProviders(<PickHistoryStrip selection={selection} />);
+
+    await screen.findByTestId("pick-history-strip");
+    // Header tally line includes "1/2 under" (one of two games went
+    // under). Pre-fix this would have read "over" because the chart
+    // derived direction purely from ``side === "yes"``.
+    await waitFor(() => {
+      expect(screen.getByTestId("pick-history-strip")).toHaveTextContent(/1\/2 under/i);
+    });
+  });
+
+  it("resets per-pick depth override when a new selection lands (codex P3)", async () => {
+    // Stub the strip with one selection, click depth=10, then swap
+    // to a second selection. The local override should NOT carry
+    // over — operator default (5) should apply to the new pick.
+    // A single completed result so the strip actually renders and
+    // the N/filter pills become clickable.
+    const stubResults = [
+      {
+        game_id: "g1",
+        game_date: "2026-05-09T19:00:00Z",
+        opponent: "Detroit Pistons",
+        opponent_abbreviation: "DET",
+        location: "home" as const,
+        team_score: 112,
+        opp_score: 108,
+        result: "W" as const,
+      },
+    ];
+    mockFetchTeamHistory.mockResolvedValue({
+      team_id: "5",
+      team_name: "Cleveland Cavaliers",
+      sport_key: "NBA",
+      results: stubResults,
+    } satisfies TeamHistoryRead);
+
+    const firstSelection = makeGameLineSelection({
+      ticker: "KX-FIRST",
+      marketKind: "moneyline",
+      displayLabel: "Cavaliers ML",
+      marketTitle: "Cleveland Cavaliers Winner?",
+      projectedSideLabel: "Cleveland Cavaliers",
+    });
+    const { rerender } = renderWithProviders(<PickHistoryStrip selection={firstSelection} />);
+
+    await waitFor(() => {
+      expect(mockFetchTeamHistory).toHaveBeenCalled();
+    });
+    // First fetch lands with n=5 (operator default).
+    expect(mockFetchTeamHistory.mock.calls[0][2]).toBe(5);
+
+    // User bumps depth to 10 on the first pick.
+    const user = userEvent.setup();
+    const tenButton = await screen.findByRole("button", { name: /10/ });
+    await user.click(tenButton);
+    await waitFor(() => {
+      const lastCall = mockFetchTeamHistory.mock.calls.at(-1);
+      expect(lastCall?.[2]).toBe(10);
+    });
+
+    // Swap to a different pick.
+    mockFetchTeamHistory.mockClear();
+    const secondSelection = makeGameLineSelection({
+      ticker: "KX-SECOND",
+      marketKind: "moneyline",
+      displayLabel: "Pistons ML",
+      marketTitle: "Detroit Pistons Winner?",
+      projectedSideLabel: "Detroit Pistons",
+    });
+    rerender(<PickHistoryStrip selection={secondSelection} />);
+
+    await waitFor(() => {
+      expect(mockFetchTeamHistory).toHaveBeenCalled();
+    });
+    // New pick should fetch with operator default n=5, NOT the
+    // n=10 the user picked on the previous selection.
+    expect(mockFetchTeamHistory.mock.calls[0][2]).toBe(5);
   });
 });

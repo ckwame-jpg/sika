@@ -687,10 +687,25 @@ def _build_team_results(schedule_payload: dict[str, Any], *, self_team_id: str) 
         if self_side is None or other_side is None:
             continue
 
-        try:
-            self_score = int(float((self_side.get("score") or {}).get("value") or self_side.get("score") or 0))
-            opp_score = int(float((other_side.get("score") or {}).get("value") or other_side.get("score") or 0))
-        except (TypeError, ValueError):
+        # PR #24 codex round-1 P2: ESPN's site/v2 shape returns
+        # ``"score": "112"`` (scalar) on completed-game payloads,
+        # not the dict form ``{"value": 112}``. ``.get("value")`` on
+        # the scalar raises ``AttributeError`` and 500'd this whole
+        # endpoint. ``_competitor_score`` accepts either shape.
+        def _competitor_score(side: dict) -> int | None:
+            raw = side.get("score")
+            if isinstance(raw, dict):
+                raw = raw.get("value")
+            if raw in (None, ""):
+                return 0
+            try:
+                return int(float(raw))
+            except (TypeError, ValueError):
+                return None
+
+        self_score = _competitor_score(self_side)
+        opp_score = _competitor_score(other_side)
+        if self_score is None or opp_score is None:
             continue
 
         opponent_team = other_side.get("team") or {}

@@ -260,3 +260,59 @@ def test_team_history_endpoint_passes_filters(client):
         "opponent": "Pistons",
         "location": "home",
     }
+
+
+# -----------------------------------------------------------------------------
+# Codex round-1 P2 on PR #24 — accept scalar scores in team schedules
+# -----------------------------------------------------------------------------
+
+
+def test_build_team_results_handles_scalar_score_strings():
+    """ESPN's ``site/v2`` shape sometimes returns ``"score": "112"`` (a
+    scalar string) instead of the dict form ``{"value": 112}`` — most
+    notably on completed-game payloads. The previous extractor called
+    ``.get("value")`` on the scalar and raised ``AttributeError`` so
+    ``/research/teams/history`` 500'd."""
+    scalar_payload = {
+        "team": {"id": "5", "displayName": "Cleveland Cavaliers"},
+        "events": [
+            {
+                "id": "401-scalar",
+                "date": "2026-05-09T19:00:00Z",
+                "competitions": [
+                    {
+                        "status": {"type": {"completed": True, "state": "post"}},
+                        "competitors": [
+                            {
+                                "homeAway": "home",
+                                "team": {
+                                    "id": "5",
+                                    "displayName": "Cleveland Cavaliers",
+                                },
+                                "score": "116",  # scalar string
+                                "winner": True,
+                            },
+                            {
+                                "homeAway": "away",
+                                "team": {
+                                    "id": "8",
+                                    "displayName": "Detroit Pistons",
+                                    "abbreviation": "DET",
+                                },
+                                "score": 109,  # scalar int
+                                "winner": False,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    results = _build_team_results(scalar_payload, self_team_id="5")
+
+    assert len(results) == 1
+    row = results[0]
+    assert row["team_score"] == 116
+    assert row["opp_score"] == 109
+    assert row["result"] == "W"

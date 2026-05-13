@@ -2474,6 +2474,8 @@ export interface components {
             sport_key?: string | null;
             /** Ticker */
             ticker: string;
+            /** Total Direction */
+            total_direction?: ("over" | "under") | null;
         };
         /** TradeDeskPlayerPropRead */
         TradeDeskPlayerPropRead: {

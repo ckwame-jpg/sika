@@ -268,6 +268,7 @@ function buildGameLineSelection(event: TradeDeskEvent, line: TradeDeskGameLine):
     confidence: line.confidence,
     kalshiUrl: line.kalshi_url,
     numericLine: line.numeric_line,
+    totalDirection: line.total_direction,
   };
 }
 

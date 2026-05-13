@@ -5549,6 +5549,21 @@
           "ticker": {
             "title": "Ticker",
             "type": "string"
+          },
+          "total_direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "over",
+                  "under"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Direction"
           }
         },
         "required": [

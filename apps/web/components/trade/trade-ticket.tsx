@@ -31,6 +31,11 @@ export interface TradeSelection {
    *  on the backend from the picked side's perspective). Null for
    *  moneyline + player_prop selections. */
   numericLine?: number | null;
+  /** Effective over/under direction the pick represents — folds in
+   *  the market's ``copilot_direction`` so the strip can color outcomes
+   *  correctly for Under-direction total markets (codex round-1 P2 on
+   *  PR #24). Null for non-total markets. */
+  totalDirection?: "over" | "under" | null;
 }
 
 interface TradeTicketProps {

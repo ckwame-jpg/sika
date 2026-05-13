@@ -65,14 +65,32 @@ export function PickHistoryStrip({ selection }: PickHistoryStripProps) {
   );
   const operatorDefault = clampToHistoryOption(settings?.pick_history_default_n ?? 5);
   const [override, setOverride] = useState<HistoryN | null>(null);
-  const n: HistoryN = override ?? operatorDefault;
-
   const [location, setLocation] = useState<"home" | "away" | null>(null);
+
+  // Codex round-1 P3 on PR #24: per-pick overrides shouldn't leak
+  // across selections. When the operator opens a new ticket, fall
+  // back to the operator default (clear ``override``) and reset the
+  // home/away filter so the strip behaves as if it's a fresh pick.
+  // Use the "store info from previous renders" pattern instead of
+  // ``useEffect`` so the reset is synchronous — otherwise the first
+  // SWR call after a selection change still uses the stale override
+  // and we waste a network request on the wrong depth.
+  const [lastSeenTicker, setLastSeenTicker] = useState(selection.ticker);
+  if (lastSeenTicker !== selection.ticker) {
+    setLastSeenTicker(selection.ticker);
+    setOverride(null);
+    setLocation(null);
+  }
+  const effectiveOverride: HistoryN | null =
+    lastSeenTicker === selection.ticker ? override : null;
+  const effectiveLocation: "home" | "away" | null =
+    lastSeenTicker === selection.ticker ? location : null;
+  const n: HistoryN = effectiveOverride ?? operatorDefault;
 
   const controls: StripControlsProps = {
     n,
     onN: setOverride,
-    location,
+    location: effectiveLocation,
     onLocation: setLocation,
   };
 
@@ -82,7 +100,7 @@ export function PickHistoryStrip({ selection }: PickHistoryStripProps) {
         selection={selection}
         controls={controls}
         n={n}
-        location={location}
+        location={effectiveLocation}
       />
     );
   }
@@ -91,7 +109,7 @@ export function PickHistoryStrip({ selection }: PickHistoryStripProps) {
       selection={selection}
       controls={controls}
       n={n}
-      location={location}
+      location={effectiveLocation}
     />
   );
 }
@@ -210,6 +228,11 @@ function GameLineStrip({ selection, controls, n, location }: GameLineStripProps)
         recent={recent}
         numericLine={numericLine}
         side={side}
+        // Codex round-1 P2 on PR #24: pass the effective over/under
+        // direction (folds copilot_direction × selected_side on the
+        // backend) so Under-market YES picks color as ``under`` and
+        // not ``over``.
+        totalDirection={selection.totalDirection ?? (side === "yes" ? "over" : "under")}
         controls={controls}
         n={n}
         location={location}
@@ -284,22 +307,35 @@ function SpreadChart({
   );
 }
 
+interface TotalChartProps extends ChartVariantProps {
+  /** Effective direction the pick represents — folds the market's
+   *  ``copilot_direction`` so Under-market YES picks color as
+   *  ``under`` and not ``over``. */
+  totalDirection: "over" | "under";
+}
+
 function TotalChart({
   team,
   recent,
   numericLine,
   side,
+  totalDirection,
   controls,
   n,
   location,
-}: ChartVariantProps) {
+}: TotalChartProps) {
   const totals = recent.map((row) => row.team_score + row.opp_score);
   const absoluteLine = Math.abs(numericLine);
+  // ``coverOutcome``'s total branch keys on ``side`` semantics (yes
+  // → cover-when-higher, no → cover-when-lower). For Under-direction
+  // markets, the picked side's meaning is flipped — feed a synthetic
+  // side that matches the effective direction so the coloring
+  // matches what the operator sees in the ticket header.
+  const effectiveSide = totalDirection === "over" ? "yes" : "no";
   const outcomes = totals.map((total) =>
-    coverOutcome(total, absoluteLine, "total", side),
+    coverOutcome(total, absoluteLine, "total", effectiveSide),
   );
-  const overCount = outcomes.filter((tone) => tone === "high").length;
-  const direction = side === "yes" ? "over" : "under";
+  const hitCount = outcomes.filter((tone) => tone === "high").length;
 
   return (
     <section className="pick-history-strip" data-testid="pick-history-strip">
@@ -309,7 +345,7 @@ function TotalChart({
           <span>
             total · last {totals.length} ·{" "}
             <span className="pick-history-strip-tally">
-              {overCount}/{totals.length} {direction}
+              {hitCount}/{totals.length} {totalDirection}
             </span>
           </span>
         }
@@ -517,15 +553,30 @@ export function resolveStatValue(
  * Sign-correct cover/over outcome.
  *
  * Spread:
- *   side === "yes" → cover when `margin > coverThreshold`. Push at equality.
- *   side === "no"  → cover when `margin < coverThreshold`. Push at equality.
+ *   ``coverThreshold`` is pre-signed from the picked side's
+ *   perspective by the backend (see ``_signed_numeric_line`` in
+ *   ``trade_desk.py``): for YES on "Team -4.5" the threshold lands
+ *   at +4.5 and the cover condition is ``margin > +4.5``; for NO on
+ *   the same market the threshold lands at -4.5 and the cover
+ *   condition is ``margin > -4.5``. So both sides answer ``cover
+ *   ↔ margin > threshold`` once the sign work has been done upstream.
+ *
+ *   Codex round-1 P2 on PR #24: the prior NO branch did
+ *   ``margin < threshold`` which inverted the call. With
+ *   ``coverThreshold = -numericLine = -4.5`` for a NO pick on
+ *   ``Team wins by over 4.5``, narrow wins (margin 0–4) and any
+ *   loss should cover (margin > -4.5) — but the code colored those
+ *   as misses.
  *
  * Total:
- *   side === "yes" (over)  → "high" when value > threshold; push at equality.
- *   side === "no"  (under) → "high" when value < threshold; push at equality.
+ *   ``threshold`` is the absolute total line. ``side === "yes"``
+ *   means cover on a higher total, ``"no"`` means cover on a lower
+ *   total — UNLESS the market itself is an Under line, in which
+ *   case the YES/NO semantics flip (handled at the call site by
+ *   flipping ``side`` before invoking this helper).
  *
- * Returns "mid" on exact pushes so the strip visually distinguishes them
- * from outright wins/losses.
+ * Returns "mid" on exact pushes so the strip visually distinguishes
+ * pushes from wins/losses.
  */
 export function coverOutcome(
   value: number,
@@ -536,8 +587,9 @@ export function coverOutcome(
   const normalizedSide = side.toLowerCase();
   if (value === threshold) return "mid";
   if (market === "spread") {
-    if (normalizedSide === "yes") return value > threshold ? "high" : "low";
-    return value < threshold ? "high" : "low";
+    // Both YES and NO answer ``cover ↔ margin > threshold`` because
+    // ``threshold`` is already pre-signed for the side upstream.
+    return value > threshold ? "high" : "low";
   }
   // total
   if (normalizedSide === "yes") return value > threshold ? "high" : "low";
@@ -546,10 +598,60 @@ export function coverOutcome(
 
 /**
  * Parse the picked team's name from a game-line selection.
- * Strategy: prefer marketTitle (full team name + market kind suffix); fall
- * back to displayLabel (short form like "Cavaliers ML").
+ *
+ * Codex round-1 P2 on PR #24: real game-line ``marketTitle`` values
+ * are matchup-style (``Miami Heat at Toronto Raptors Winner?``,
+ * ``... Spread?``). The old strategy of slicing the title before the
+ * market-kind keyword returned BOTH teams (everything before
+ * "Winner") — the lookup then resolved to whichever team ESPN
+ * happened to return first, not the side actually picked.
+ *
+ * Correct strategy:
+ * - Winner / spread markets: pick the team from
+ *   ``projectedSideLabel`` or ``displayLabel`` first — both encode
+ *   only the chosen side.
+ * - Totals: there is no single team to look up (the total is the
+ *   matchup's sum); fall back to the event's home team via
+ *   ``eventName`` parsing so the chart still has SOMETHING to
+ *   render. Callers that want strict team correctness should hide
+ *   the strip for totals.
+ * - ``marketTitle`` is used only as a last-resort fallback for
+ *   non-matchup titles.
  */
 function inferTeamName(selection: TradeSelection): string | null {
+  const stripKindSuffix = (value: string): string =>
+    value
+      .replace(/\s+(ML|moneyline|spread|total|over|under|[+-]?\d.*)$/i, "")
+      .replace(/[·:-]+$/, "")
+      .trim();
+
+  if (selection.marketKind === "winner" || selection.marketKind === "spread") {
+    const projected = selection.projectedSideLabel?.trim();
+    if (projected) {
+      const cleaned = stripKindSuffix(projected);
+      if (cleaned.length >= 2) return cleaned;
+    }
+    const label = selection.displayLabel?.trim();
+    if (label) {
+      const cleaned = stripKindSuffix(label);
+      if (cleaned.length >= 2) return cleaned;
+    }
+  }
+
+  // Totals (and any other game-line market that isn't keyed on one
+  // team's perspective): use the home team parsed out of the event
+  // name. ``eventName`` is ``"Away at Home"`` for NBA/MLB scoreboard
+  // payloads; take the second half.
+  if (selection.marketKind === "total") {
+    const eventName = selection.eventName?.trim();
+    if (eventName) {
+      const atSplit = eventName.split(/\s+at\s+/i);
+      const homeTeam = (atSplit.length === 2 ? atSplit[1] : eventName).trim();
+      if (homeTeam.length >= 2) return stripKindSuffix(homeTeam);
+    }
+  }
+
+  // Fallback: best-effort marketTitle slice for anything else.
   const title = selection.marketTitle?.trim();
   if (title) {
     const kindKeywords = ["moneyline", "spread", "total", "over", "under", "puck line", "run line"];
@@ -561,11 +663,6 @@ function inferTeamName(selection: TradeSelection): string | null {
     }
     const candidate = title.slice(0, cutIndex).trim().replace(/[·:-]+$/, "").trim();
     if (candidate.length >= 2) return candidate;
-  }
-  const label = selection.displayLabel?.trim();
-  if (label) {
-    const stripped = label.replace(/\s+(ML|moneyline|spread|total|over|under|[+-]?\d.*)$/i, "").trim();
-    if (stripped.length >= 2) return stripped;
   }
   return null;
 }

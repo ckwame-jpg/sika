@@ -323,6 +323,11 @@ class TradeDeskGameLineRead(BaseModel):
     # number to draw against. Consumed by the pick-history strip on the
     # frontend to render a threshold reference line.
     numeric_line: float | None = None
+    # Codex round-1 P2 on PR #24: the effective over/under direction the
+    # pick represents — folds ``copilot_direction`` + ``selected_side``
+    # so the frontend doesn't have to re-derive it. ``"over"`` /
+    # ``"under"`` for total markets, ``None`` for everything else.
+    total_direction: Literal["over", "under"] | None = None
 
 
 class TradeDeskThresholdRead(BaseModel):

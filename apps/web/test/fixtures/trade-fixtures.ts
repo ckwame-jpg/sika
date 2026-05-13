@@ -107,6 +107,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
           confidence: 0.74,
           kalshi_url: "https://kalshi.com/markets/raptors-win",
           numeric_line: null,
+      total_direction: null,
         },
         {
           ticker: "KXNBASPREAD-RAPTORS-3_5",
@@ -122,6 +123,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
           confidence: 0.69,
           kalshi_url: "https://kalshi.com/markets/raptors-spread",
           numeric_line: -3.5,
+      total_direction: null,
         },
         {
           ticker: "KXNBATOTAL-219_5",
@@ -137,6 +139,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
           confidence: 0.65,
           kalshi_url: "https://kalshi.com/markets/raptors-total",
           numeric_line: 219.5,
+      total_direction: null,
         },
       ],
       player_props: [davionMitchellProp],

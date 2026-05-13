@@ -174,6 +174,10 @@ export interface TradeDeskGameLine {
    *  favored/under, positive for dog/over. Null when there's no number to
    *  chart (moneyline, first_five_winner). */
   numeric_line: number | null;
+  /** Effective over/under direction for total markets (folds in
+   *  ``copilot_direction`` so Under-market YES picks resolve to
+   *  ``under``). Null for non-total markets. */
+  total_direction: "over" | "under" | null;
 }
 
 export interface TradeDeskThreshold {
