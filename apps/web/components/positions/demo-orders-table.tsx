@@ -24,8 +24,13 @@ function statusPillClass(status: string): string {
   if (status === "filled") return "won";
   if (status === "cancelled") return "cancelled";
   if (status === "rejected") return "lost";
+  if (status === "submission_failed") return "lost";
   if (status === "pending") return "pending";
   if (status === "resting") return "pending";
+  // Bug #31 — submit + cancel both transit through an intermediate
+  // state while the outbox drain processes the Kalshi side effect.
+  if (status === "submitting") return "pending";
+  if (status === "cancelling") return "pending";
   return "";
 }
 
