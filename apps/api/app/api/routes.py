@@ -1464,7 +1464,7 @@ def refresh_job_detail(job_id: int, db: Session = Depends(get_db)) -> RefreshJob
 
 @ops_router.post("/jobs/settle-predictions", response_model=PredictionSettlementResponse)
 def settle_prediction_job(db: Session = Depends(get_db)) -> PredictionSettlementResponse:
-    single_summary = settle_predictions(db, latest_only_per_key=True)
+    single_summary = settle_predictions(db)
     parlay_summary = settle_parlay_predictions(db)
     db.commit()
     return PredictionSettlementResponse(**_merge_settlement_summaries(single_summary, parlay_summary))

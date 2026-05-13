@@ -130,7 +130,11 @@ def test_health_endpoint_uses_sanitized_refresh_error_message(client, monkeypatc
     assert payload["active_settlement_job"]["scope"] == "predictions"
 
 
-def test_manual_settle_predictions_endpoint_uses_latest_only_single_predictions(client, monkeypatch):
+def test_manual_settle_predictions_endpoint_settles_all_unresolved(client, monkeypatch):
+    """Bug #12: the manual ``/ops/jobs/settle-predictions`` endpoint
+    must settle every unresolved prediction (single + parlay), not
+    just the latest per ticker — older stacked predictions would
+    otherwise stay ``pending`` forever."""
     calls = {}
 
     def _settle_predictions(db, **kwargs):
@@ -147,7 +151,9 @@ def test_manual_settle_predictions_endpoint_uses_latest_only_single_predictions(
     response = client.post("/ops/jobs/settle-predictions")
 
     assert response.status_code == 200
-    assert calls["single_kwargs"]["latest_only_per_key"] is True
+    assert "latest_only_per_key" not in calls["single_kwargs"], (
+        "endpoint must not ship a latest-only flag — bug #12 was caused by that filter"
+    )
     assert calls["parlay_called"] is True
     payload = response.json()
     assert payload["processed"] == 4
@@ -417,9 +423,11 @@ def test_process_refresh_job_queue_once_requeues_and_completes_settlement_batche
     single_cursors: list[dict | None] = []
     parlay_cursors: list[dict | None] = []
 
-    def _settle_predictions_batch(db, *, latest_only_per_key, limit, cursor=None, **kwargs):
+    def _settle_predictions_batch(db, *, limit, cursor=None, **kwargs):
         single_cursors.append(cursor)
-        assert latest_only_per_key is True
+        assert "latest_only_per_key" not in kwargs, (
+            "settlement job must not pass latest_only_per_key — bug #12"
+        )
         assert limit == refresh_jobs.PREDICTION_SETTLEMENT_BATCH_SIZE
         if cursor is None:
             return {"processed": 100, "updated": 8, "won": 5, "lost": 3}, {

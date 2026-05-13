@@ -1640,7 +1640,6 @@ def advance_prop_refresh_job(
             batch_summary, next_cursor = settle_predictions_batch(
                 db,
                 client=kalshi_client,
-                latest_only_per_key=True,
                 limit=PREDICTION_SETTLEMENT_BATCH_SIZE,
                 cursor=cursor_payload,
             )
@@ -1957,7 +1956,6 @@ def run_prop_refresh_cycle(
                 db,
                 client=kalshi_client,
                 open_market_tickers=set(kalshi_summary.get("open_market_tickers") or set()),
-                latest_only_per_key=True,
             )
             parlay_settlement_summary = settle_parlay_predictions(db)
             stage_details["maintenance_settlement_seconds"] = round(perf_counter() - stage_started, 3)
