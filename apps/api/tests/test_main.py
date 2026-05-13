@@ -56,7 +56,13 @@ def test_lifespan_starts_without_blocking_on_startup_refresh(monkeypatch):
     ]
 
 
-def test_lifespan_swallows_startup_refresh_queue_errors(monkeypatch):
+def test_lifespan_logs_and_continues_when_startup_refresh_queue_errors(monkeypatch, caplog):
+    """Bug #47 — startup-refresh enqueue must not block boot, but the
+    pre-fix code silently swallowed the exception. The fix logs the
+    traceback so operators can see what went wrong while the rest of
+    startup proceeds."""
+    import logging
+
     calls: list[str] = []
     original_scheduler_enabled = app_main.settings.scheduler_enabled
 
@@ -76,10 +82,13 @@ def test_lifespan_swallows_startup_refresh_queue_errors(monkeypatch):
     app_main.settings.scheduler_enabled = True
 
     try:
-        asyncio.run(_run_lifespan())
+        with caplog.at_level(logging.ERROR, logger=app_main.logger.name):
+            asyncio.run(_run_lifespan())
     finally:
         app_main.settings.scheduler_enabled = original_scheduler_enabled
 
+    # Boot still completes — no "queue" entry because the function
+    # raised, but stop_scheduler ran on yield exit.
     assert calls == [
         "init_db",
         "seed_sports",
@@ -89,6 +98,13 @@ def test_lifespan_swallows_startup_refresh_queue_errors(monkeypatch):
         "start_scheduler",
         "stop_scheduler",
     ]
+    # Bug #47 — the exception is logged, not swallowed silently. The
+    # log record includes the original exception via ``logger.exception``.
+    assert any(
+        "Startup refresh enqueue failed" in record.getMessage()
+        and record.exc_info is not None
+        for record in caplog.records
+    ), "Expected an ERROR log capturing the startup-refresh enqueue failure"
 
 
 def test_lifespan_skips_scheduler_start_when_disabled(monkeypatch):

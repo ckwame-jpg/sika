@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -16,6 +17,8 @@ from app.services.scheduler import (
     sync_refresh_runtime_state_from_db,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -31,7 +34,12 @@ async def lifespan(_: FastAPI):
         try:
             queue_startup_refresh_if_stale()
         except Exception:
-            pass
+            # Bug #47 — startup refresh enqueue must not block API
+            # boot (the API serves cached snapshots fine without a
+            # fresh refresh), but silently swallowing the exception
+            # hid DB / scheduler failures from operators. Log with
+            # full traceback; the rest of startup proceeds.
+            logger.exception("Startup refresh enqueue failed; API will boot without a fresh refresh.")
     yield
     stop_scheduler()
 
