@@ -843,6 +843,55 @@ def test_walk_forward_evaluation_emits_per_family_block(tmp_path):
             assert candidate["worst_fold_brier"] == max(candidate["fold_briers"]), name
 
 
+def test_walk_forward_folds_per_family_biweekly_when_global_weekly():
+    """Codex round 2: global cleared the weekly gate but each family's
+    rows are sparse on a weekly grid → the per-family eligibility
+    fold-builder must independently widen to 14 days. Without this, the
+    documented biweekly fall-back is short-circuited by the global gate
+    and the family is misreported as ``insufficient_history``.
+    """
+    base = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+    # Two families × 14 rows/week each × 18 weeks. Global = 28 rows/week
+    # (passes weekly). Each family = 14 rows/week (fails weekly), but
+    # 28 rows/biweekly (passes).
+    captured_at: list[datetime] = []
+    family_assignment: list[str] = []
+    targets: list[int] = []
+    for week in range(18):
+        # 28 rows per week, alternating families row-by-row, 6h spacing.
+        for row in range(28):
+            captured_at.append(base + timedelta(days=week * 7, hours=row * 6))
+            family_assignment.append("mlb_props" if row % 2 == 0 else "nba_props")
+            targets.append(row % 2)
+    target_array = np.asarray(targets, dtype=int)
+
+    # Global builder picks weekly (28 rows/week ≥ 25).
+    global_folds, global_meta = _walk_forward_folds(
+        captured_at, target_values=target_array
+    )
+    assert global_meta["insufficient_history"] is False
+    assert global_meta["week_size_days"] == 7, (
+        f"global eval should pick weekly, got {global_meta['week_size_days']}"
+    )
+
+    # Each family-restricted builder must independently widen to biweekly.
+    family_array = np.asarray(family_assignment)
+    for family_key in ("mlb_props", "nba_props"):
+        family_mask = family_array == family_key
+        folds, meta = _walk_forward_folds(
+            captured_at,
+            target_values=target_array,
+            eligibility_mask=family_mask,
+        )
+        assert meta["insufficient_history"] is False, family_key
+        assert meta["week_size_days"] == 14, (
+            f"{family_key} should widen to 14-day folds; got {meta['week_size_days']}"
+        )
+        assert meta["fold_count"] >= MIN_WALK_FORWARD_VALID_FOLDS
+        for fold_test_count in meta["rows_per_fold"]:
+            assert fold_test_count >= MIN_WALK_FORWARD_ROWS_PER_FOLD
+
+
 def test_training_per_family_floor_blocks_sparse_family_promotion(tmp_path):
     """A served family with too few rows per fold stays in shadow even
     when a sibling family clears the global gate. Codex round 1 caught

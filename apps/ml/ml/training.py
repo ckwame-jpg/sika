@@ -274,6 +274,7 @@ def _walk_forward_folds(
     captured_at: Any,
     *,
     target_values: np.ndarray | None = None,
+    eligibility_mask: np.ndarray | None = None,
     min_rows_per_fold: int = MIN_WALK_FORWARD_ROWS_PER_FOLD,
     min_valid_folds: int = MIN_WALK_FORWARD_VALID_FOLDS,
 ) -> tuple[list[tuple[np.ndarray, np.ndarray]], dict[str, Any]]:
@@ -300,8 +301,17 @@ def _walk_forward_folds(
     When ``target_values`` is supplied, folds whose training slice has
     fewer than two distinct target classes are dropped (a one-class
     training set crashes LogisticRegression/HGBC during refit). The
-    dropped buckets are still counted in ``meta['rows_per_fold']`` to
-    aid debugging.
+    dropped buckets are still counted in ``meta['single_class_skipped_folds']``
+    so the failure mode stays visible.
+
+    When ``eligibility_mask`` is supplied, only rows where the mask is
+    True count toward the per-fold row floor and toward ``test_idx``.
+    Training stays global (all rows in earlier buckets). This supports
+    per-family floors where the global training cohort feeds a
+    family-restricted evaluation — the auto-widening from weekly to
+    biweekly is then driven by the *family's* density rather than the
+    combined dataset's, so a low-volume family can use biweekly while
+    the global eval stays weekly.
     """
     timestamps = pd.to_datetime(captured_at, utc=True)
     timestamp_values = np.asarray(timestamps, dtype="datetime64[ns]")
@@ -318,6 +328,11 @@ def _walk_forward_folds(
     sort_order = np.argsort(timestamp_values, kind="stable")
     sorted_ts = timestamp_values[sort_order]
     offsets_days = (sorted_ts - sorted_ts[0]) / np.timedelta64(1, "D")
+    sorted_eligibility: np.ndarray | None = None
+    if eligibility_mask is not None:
+        if eligibility_mask.shape != timestamp_values.shape:
+            raise ValueError("eligibility_mask must align with captured_at")
+        sorted_eligibility = np.asarray(eligibility_mask, dtype=bool)[sort_order]
 
     best_attempt: tuple[list[tuple[np.ndarray, np.ndarray]], dict[str, Any]] | None = None
     for week_size in (7, 14):
@@ -327,7 +342,8 @@ def _walk_forward_folds(
         rows_per_fold: list[int] = []
         single_class_skipped = 0
         for bucket in unique_buckets[1:]:
-            test_mask = bucket_ids == bucket
+            bucket_mask = bucket_ids == bucket
+            test_mask = bucket_mask if sorted_eligibility is None else (bucket_mask & sorted_eligibility)
             train_mask = bucket_ids < bucket
             test_count = int(test_mask.sum())
             if test_count < min_rows_per_fold:
@@ -432,7 +448,6 @@ def walk_forward_evaluation(
     candidate_set = candidates if candidates is not None else _candidate_estimators(len(frame))
     family_series = frame["family_key"].astype(str).to_numpy() if "family_key" in frame.columns else None
 
-    fold_predictions: dict[str, list[np.ndarray]] = {name: [] for name in candidate_set}
     for name, template in candidate_set.items():
         fold_briers: list[float] = []
         for train_idx, test_idx in folds:
@@ -448,7 +463,6 @@ def walk_forward_evaluation(
             fold_weights = None if sample_weight is None else sample_weight[train_idx]
             fitted = _fit_estimator(clone(template), x_train, target_array[train_idx], sample_weight=fold_weights)
             probabilities = np.clip(fitted.predict_proba(x_test)[:, 1], 1e-6, 1 - 1e-6)
-            fold_predictions[name].append(probabilities)
             fold_briers.append(round(float(brier_score_loss(target_array[test_idx], probabilities)), 6))
         payload["candidates"][name] = {
             "fold_briers": fold_briers,
@@ -462,33 +476,54 @@ def walk_forward_evaluation(
     if family_series is None:
         raise ValueError("family_keys requested but frame has no 'family_key' column")
 
+    # Per-family walk-forward — the per-family floor (≥25 family rows
+    # per fold, ≥8 folds) is checked AT THE FAMILY's chosen windowing.
+    # A low-volume family runs biweekly even when the combined dataset
+    # cleared weekly; otherwise the documented widening would be
+    # short-circuited by the global gate.
     for family_key in family_keys:
         family_mask = family_series == family_key
-        family_fold_data: list[tuple[int, np.ndarray]] = []
-        for fold_index, (_, test_idx) in enumerate(folds):
-            test_family_mask = family_mask[test_idx]
-            family_test_count = int(test_family_mask.sum())
-            if family_test_count >= min_rows_per_fold:
-                family_fold_data.append((fold_index, test_family_mask))
-        family_rows = [int(mask.sum()) for _, mask in family_fold_data]
-        family_insufficient = len(family_fold_data) < min_valid_folds
+        family_folds, family_meta = _walk_forward_folds(
+            frame["captured_at"],
+            target_values=target_array,
+            eligibility_mask=family_mask,
+            min_rows_per_fold=min_rows_per_fold,
+            min_valid_folds=min_valid_folds,
+        )
         family_payload: dict[str, Any] = {
-            "fold_count": len(family_fold_data),
-            "rows_per_fold": family_rows,
-            "insufficient_history": family_insufficient,
+            "fold_count": int(family_meta["fold_count"]),
+            "window_days": family_meta["week_size_days"],
+            "rows_per_fold": list(family_meta["rows_per_fold"]),
+            "single_class_skipped_folds": int(family_meta.get("single_class_skipped_folds", 0)),
+            "insufficient_history": bool(family_meta["insufficient_history"]),
             "candidates": {},
         }
-        if family_insufficient:
+        if family_payload["insufficient_history"]:
             payload["per_family"][family_key] = family_payload
             continue
-        for name in candidate_set:
+
+        for name, template in candidate_set.items():
             fold_briers_family: list[float] = []
-            for fold_index, test_family_mask in family_fold_data:
-                test_idx = folds[fold_index][1]
-                family_test_absolute = test_idx[test_family_mask]
-                family_probabilities = fold_predictions[name][fold_index][test_family_mask]
+            for train_idx, test_idx in family_folds:
+                train_frame = frame.iloc[train_idx]
+                test_frame = frame.iloc[test_idx]
+                fold_spec = _fold_feature_spec(
+                    train_frame,
+                    feature_spec,
+                    use_median_imputation=use_median_imputation,
+                )
+                x_train = _matrix(train_frame, fold_spec)
+                x_test = _matrix(test_frame, fold_spec)
+                fold_weights = None if sample_weight is None else sample_weight[train_idx]
+                fitted = _fit_estimator(
+                    clone(template),
+                    x_train,
+                    target_array[train_idx],
+                    sample_weight=fold_weights,
+                )
+                probabilities = np.clip(fitted.predict_proba(x_test)[:, 1], 1e-6, 1 - 1e-6)
                 fold_briers_family.append(
-                    round(float(brier_score_loss(target_array[family_test_absolute], family_probabilities)), 6)
+                    round(float(brier_score_loss(target_array[test_idx], probabilities)), 6)
                 )
             family_payload["candidates"][name] = {
                 "fold_briers": fold_briers_family,
