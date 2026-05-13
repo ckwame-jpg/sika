@@ -125,6 +125,39 @@ describe("KalshiAccountPanel", () => {
     expect(screen.getByText("YES Lakers")).toBeInTheDocument();
   });
 
+  it("disables the Refresh button while the force-refresh is in flight", async () => {
+    // Bug #6, codex round-12 P2: ``mutate(key, promise, { revalidate: false })``
+    // doesn't set SWR's ``isValidating``, so without a local
+    // ``isForcing`` flag a rapid double-click would issue multiple
+    // ``/positions?force=true`` requests, each expiring the backend
+    // cache and re-fetching from Kalshi. The button must disable
+    // for the duration of the in-flight force request.
+    let resolveForce!: (value: PositionsRead) => void;
+    const forcePromise = new Promise<PositionsRead>((resolve) => {
+      resolveForce = resolve;
+    });
+    mockFetchPositions.mockImplementation((options?: { force?: boolean }) => {
+      if (options?.force) return forcePromise;
+      return Promise.resolve(connectedPositions);
+    });
+
+    renderWithProviders(<KalshiAccountPanel />);
+    await screen.findByTestId("kalshi-account-panel");
+
+    const user = userEvent.setup();
+    const [refreshButton] = await screen.findAllByRole("button", { name: /refresh/i });
+    await user.click(refreshButton);
+
+    // While the force fetch is still pending, the button must be disabled.
+    expect(refreshButton).toBeDisabled();
+
+    resolveForce(connectedPositions);
+    // After the promise resolves, the button re-enables.
+    await screen.findByRole("button", { name: /refresh/i }).then((button) => {
+      expect(button).not.toBeDisabled();
+    });
+  });
+
   it("force-bypasses the cache when the Refresh button is clicked", async () => {
     // Bug #6, codex round-5 P2: backend caches /positions for ~30 s.
     // The Refresh button must pass force=true so users get fresh
