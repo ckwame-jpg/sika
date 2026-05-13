@@ -63,6 +63,14 @@ _account_snapshot_cache: dict[str, Any] = {
     "value": None,
     "fresh_until": 0.0,
     "stale_until": 0.0,
+    # Codex round-6 P2: monotonically increasing generation token,
+    # bumped each time the cache is invalidated. A background refresh
+    # that started before the invalidation must NOT commit its
+    # pre-invalidation result on top of fresh post-invalidation data
+    # (or after a force-refresh sync path has populated the cache).
+    # The worker captures the generation at start; if it has changed
+    # when the worker tries to commit, the result is discarded.
+    "generation": 0,
 }
 _account_snapshot_lock = threading.Lock()
 # Codex round-3 P2 on PR #40: ``Event.is_set()`` + ``Event.set()`` is
@@ -78,11 +86,14 @@ _background_refresh_slot = threading.Lock()
 
 def invalidate_kalshi_account_cache() -> None:
     """Reset the cached account snapshot. Use in tests and ops paths
-    that mutate Kalshi-visible state."""
+    that mutate Kalshi-visible state. Bumping the generation token
+    ensures any in-flight background refresh discards its result
+    rather than overwriting fresh post-invalidation data."""
     with _account_snapshot_lock:
         _account_snapshot_cache["value"] = None
         _account_snapshot_cache["fresh_until"] = 0.0
         _account_snapshot_cache["stale_until"] = 0.0
+        _account_snapshot_cache["generation"] += 1
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -353,9 +364,19 @@ def _maybe_start_background_refresh() -> None:
 
 def _run_background_refresh() -> None:
     try:
+        start_generation = _account_snapshot_cache["generation"]
         with SessionLocal() as db:
             snapshot = _build_kalshi_account_snapshot_uncached(db, client=None)
         with _account_snapshot_lock:
+            if start_generation != _account_snapshot_cache["generation"]:
+                # Codex round-6 P2: cache was invalidated (or a force-
+                # refresh ran) while we were fetching. Our snapshot is
+                # pre-invalidation and may be stale relative to the
+                # invalidation event — discard it rather than
+                # overwriting whatever the invalidator (or the sync
+                # path that followed it) wrote.
+                logger.info("kalshi_account_background_refresh_discarded_after_invalidation")
+                return
             _commit_refresh_result(snapshot, previous=_account_snapshot_cache["value"])
     except Exception:  # noqa: BLE001 — background refresh must not crash the app
         logger.exception("kalshi_account_background_refresh_failed")

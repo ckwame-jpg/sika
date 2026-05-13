@@ -472,6 +472,68 @@ def test_kalshi_account_snapshot_does_not_cache_error_for_full_ttl_when_no_prior
     )
 
 
+def test_kalshi_account_snapshot_background_refresh_discarded_after_invalidation(db_session, monkeypatch):
+    """Codex round-6 P2 on PR #40: a background refresh started before
+    a force-invalidation must NOT overwrite the post-invalidation cache
+    when it eventually completes. The generation token captured at
+    background-refresh start is re-checked at commit time; if it has
+    changed, the result is discarded."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    class _SessionContext:
+        def __enter__(self):
+            return db_session
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(kalshi_account_module, "SessionLocal", lambda: _SessionContext())
+
+    # Seed a connected cache so we hit the stale branch on the next call.
+    build_kalshi_account_snapshot(db_session)
+    assert counting_client.balance_calls == 1
+
+    # Block the background fetch mid-flight.
+    bg_inside = threading.Event()
+    bg_release = threading.Event()
+    original_get_balance = counting_client.get_balance
+
+    def _bg_blocked_get_balance():
+        bg_inside.set()
+        bg_release.wait(timeout=2)
+        # Mutate to a recognizably-different value so we can prove a
+        # discarded write doesn't leak through.
+        result = original_get_balance()
+        return {**result, "balance": 99999}
+
+    counting_client.get_balance = _bg_blocked_get_balance
+
+    # Advance into the stale window so the next call fires the bg refresh.
+    fake_now = {"value": time.monotonic() + kalshi_account_module._ACCOUNT_SNAPSHOT_FRESH_SECONDS + 5.0}
+    monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
+
+    build_kalshi_account_snapshot(db_session)
+    assert bg_inside.wait(timeout=2), "background refresh did not start"
+
+    # Force-invalidate the cache while the background is still in flight.
+    invalidate_kalshi_account_cache()
+    assert kalshi_account_module._account_snapshot_cache["value"] is None
+
+    # Release the background fetch; its commit must see a generation
+    # mismatch and discard the result.
+    bg_release.set()
+    acquired = kalshi_account_module._background_refresh_slot.acquire(timeout=2)
+    assert acquired
+    kalshi_account_module._background_refresh_slot.release()
+
+    assert kalshi_account_module._account_snapshot_cache["value"] is None, (
+        "background-refresh result must be discarded after invalidation"
+    )
+
+
 def test_kalshi_account_snapshot_force_refresh_bypasses_cache(client, monkeypatch):
     """Codex round-5 P2: the in-app Refresh button must be able to
     bypass the cache. ``/positions?force=true`` invalidates the cache
