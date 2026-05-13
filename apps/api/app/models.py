@@ -89,6 +89,16 @@ class Market(Base):
     status = Column(String, nullable=False, default="open")
     close_time = Column(DateTime(timezone=True), nullable=True, index=True)
     raw_data = Column(JSON, default=dict)
+    # Bug #17: persist the fuzzy-match score + top candidates the
+    # auto-mapper considered, so ops can review ambiguous cases
+    # instead of trusting a silent best-match. ``mapping_overridden_at``
+    # marks a manual override (via /ops/market-mapping/{ticker}); the
+    # auto-mapper skips overridden rows so subsequent runs don't
+    # clobber them.
+    mapping_confidence = Column(Float, nullable=True)
+    mapping_candidates = Column(JSON, nullable=True)
+    mapping_overridden_at = Column(DateTime(timezone=True), nullable=True)
+    mapping_overridden_reason = Column(Text, nullable=True)
 
     event = relationship("Event")
     snapshots = relationship("MarketSnapshot", back_populates="market", cascade="all, delete-orphan")

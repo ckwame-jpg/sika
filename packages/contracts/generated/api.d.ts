@@ -197,6 +197,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/market-mapping/{ticker}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Market Mapping */
+        get: operations["get_market_mapping_ops_market_mapping__ticker__get"];
+        put?: never;
+        /** Post Market Mapping Override */
+        post: operations["post_market_mapping_override_ops_market_mapping__ticker__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/models/readiness": {
         parameters: {
             query?: never;
@@ -946,6 +964,60 @@ export interface components {
             ticker: string;
             /** Title */
             title: string;
+        };
+        /**
+         * MarketMappingCandidateRead
+         * @description A single candidate the auto-mapper scored when matching a
+         *     Kalshi market ticker to a Sika ``Event``. Bug #17: persisted on
+         *     ``Market`` so ops can review ambiguous matches.
+         */
+        MarketMappingCandidateRead: {
+            /** Event Id */
+            event_id: number;
+            /** Event Name */
+            event_name?: string | null;
+            /** Score */
+            score: number;
+            /** Sport Key */
+            sport_key?: string | null;
+            /** Time Delta Seconds */
+            time_delta_seconds?: number | null;
+        };
+        /**
+         * MarketMappingOverrideCreate
+         * @description Body for ``POST /ops/market-mapping/{ticker}``. ``event_id =
+         *     None`` clears the mapping; otherwise links to that event.
+         */
+        MarketMappingOverrideCreate: {
+            /** Event Id */
+            event_id: number | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * MarketMappingStateRead
+         * @description Read-only view of a market's current mapping state, including
+         *     confidence + top-K candidates the auto-mapper considered and any
+         *     manual override stamp.
+         */
+        MarketMappingStateRead: {
+            /** Event Id */
+            event_id?: number | null;
+            /**
+             * Mapping Candidates
+             * @default []
+             */
+            mapping_candidates: components["schemas"]["MarketMappingCandidateRead"][];
+            /** Mapping Confidence */
+            mapping_confidence?: number | null;
+            /** Mapping Overridden At */
+            mapping_overridden_at?: string | null;
+            /** Mapping Overridden Reason */
+            mapping_overridden_reason?: string | null;
+            /** Sport Key */
+            sport_key?: string | null;
+            /** Ticker */
+            ticker: string;
         };
         /** MarketSnapshotRead */
         MarketSnapshotRead: {
@@ -2887,6 +2959,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RefreshJobRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_market_mapping_ops_market_mapping__ticker__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ticker: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarketMappingStateRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_market_mapping_override_ops_market_mapping__ticker__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ticker: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarketMappingOverrideCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarketMappingStateRead"];
                 };
             };
             /** @description Validation Error */

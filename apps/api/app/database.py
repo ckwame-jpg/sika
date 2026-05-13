@@ -88,6 +88,15 @@ SCHEMA_PATCHES: dict[str, dict[str, str]] = {
     "refresh_jobs": {
         "details": "JSON",
     },
+    "markets": {
+        # Bug #17 — surface fuzzy-mapping confidence + candidates plus
+        # the manual-override stamp so ops can review ambiguous Kalshi
+        # ticker → event mappings.
+        "mapping_confidence": "FLOAT",
+        "mapping_candidates": "JSON",
+        "mapping_overridden_at": "TIMESTAMP WITH TIME ZONE",
+        "mapping_overridden_reason": "TEXT",
+    },
 }
 
 

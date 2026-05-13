@@ -198,6 +198,40 @@ class SignalSnapshotRead(BaseModel):
     scoring_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
+class MarketMappingCandidateRead(BaseModel):
+    """A single candidate the auto-mapper scored when matching a
+    Kalshi market ticker to a Sika ``Event``. Bug #17: persisted on
+    ``Market`` so ops can review ambiguous matches."""
+
+    event_id: int
+    event_name: str | None = None
+    sport_key: str | None = None
+    score: float
+    time_delta_seconds: float | None = None
+
+
+class MarketMappingStateRead(BaseModel):
+    """Read-only view of a market's current mapping state, including
+    confidence + top-K candidates the auto-mapper considered and any
+    manual override stamp."""
+
+    ticker: str
+    event_id: int | None = None
+    sport_key: str | None = None
+    mapping_confidence: float | None = None
+    mapping_candidates: list[MarketMappingCandidateRead] = []
+    mapping_overridden_at: UTCDateTime | None = None
+    mapping_overridden_reason: str | None = None
+
+
+class MarketMappingOverrideCreate(BaseModel):
+    """Body for ``POST /ops/market-mapping/{ticker}``. ``event_id =
+    None`` clears the mapping; otherwise links to that event."""
+
+    event_id: int | None
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class MarketDetailRead(BaseModel):
     ticker: str
     title: str
