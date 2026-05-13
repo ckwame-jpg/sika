@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 from math import isfinite
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -1076,7 +1076,11 @@ def get_watchlist_diagnostics(db: Session = Depends(get_db)) -> WatchlistDiagnos
 
 
 @router.get("/watchlist", response_model=list[RecommendationRead])
-def get_watchlist(sport: str | None = None, limit: int = 25, db: Session = Depends(get_db)) -> list[RecommendationRead]:
+def get_watchlist(
+    sport: str | None = None,
+    limit: int = Query(25, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[RecommendationRead]:
     stmt = (
         select(Recommendation)
         .options(joinedload(Recommendation.market), joinedload(Recommendation.event))
@@ -1102,7 +1106,7 @@ def get_watchlist(sport: str | None = None, limit: int = 25, db: Session = Depen
 @router.get("/watchlist/coverage", response_model=list[WatchlistCoverageRowRead])
 def get_watchlist_coverage(
     sport: str | None = None,
-    limit: int = 250,
+    limit: int = Query(250, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[WatchlistCoverageRowRead]:
     normalized_sport = sport.upper() if sport else None
@@ -1127,7 +1131,7 @@ def get_watchlist_coverage(
 def get_parlay_watchlist(
     sport_scope: str = "all",
     leg_count: int | None = None,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> list[ParlayRecommendationRead]:
     scope = _normalized_parlay_sport_scope(sport_scope)
@@ -1169,7 +1173,7 @@ def list_predictions(
     outcome: str | None = None,
     captured_from: date | None = None,
     captured_to: date | None = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[PredictionRead]:
     stmt = _prediction_stmt(
@@ -1209,7 +1213,7 @@ def prediction_summary(
 def list_parlay_predictions(
     sport_scope: str = "all",
     leg_count: int | None = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[ParlayPredictionRead]:
     scope = _normalized_parlay_sport_scope(sport_scope)
@@ -1258,7 +1262,7 @@ def list_markets(
     family: str | None = None,
     status: str | None = None,
     search: str | None = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[MarketListRead]:
     stmt = (
@@ -1375,7 +1379,12 @@ def get_market_history(ticker: str, range: str = "1D", db: Session = Depends(get
 
 
 @ops_router.get("/runs", response_model=list[RunRead])
-def list_runs(kind: str | None = None, status: str | None = None, limit: int = 20, db: Session = Depends(get_db)) -> list[RunRead]:
+def list_runs(
+    kind: str | None = None,
+    status: str | None = None,
+    limit: int = Query(20, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[RunRead]:
     stmt = select(Run)
     if kind:
         stmt = stmt.where(Run.kind == kind)
