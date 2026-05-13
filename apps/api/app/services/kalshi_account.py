@@ -2,6 +2,7 @@ import logging
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import httpx
@@ -158,14 +159,40 @@ def _market_lookup(db: Session, tickers: set[str]) -> dict[str, Market]:
     return {market.ticker: market for market in markets}
 
 
+# Bug #25: previously these chunks ran sequentially inside a request
+# handler, so an account with N×100 distinct tickers paid an N-call
+# latency tax serially. The chunks are independent reads, so a
+# bounded ``ThreadPoolExecutor`` fans them out in parallel while
+# capping peak concurrent calls to Kalshi (default 4). Single-chunk
+# accounts skip the pool entirely and stay synchronous.
+_REMOTE_MARKET_LOOKUP_CHUNK_SIZE = 100
+_REMOTE_MARKET_LOOKUP_MAX_WORKERS = 4
+
+
 def _remote_market_lookup(client: KalshiAccountClient, tickers: set[str]) -> dict[str, dict[str, Any]]:
     if not tickers:
         return {}
-    lookup: dict[str, dict[str, Any]] = {}
     sorted_tickers = sorted(tickers)
-    for index in range(0, len(sorted_tickers), 100):
-        chunk = sorted_tickers[index : index + 100]
-        for market in client.list_markets_by_tickers(chunk):
+    chunks = [
+        sorted_tickers[index : index + _REMOTE_MARKET_LOOKUP_CHUNK_SIZE]
+        for index in range(0, len(sorted_tickers), _REMOTE_MARKET_LOOKUP_CHUNK_SIZE)
+    ]
+    if not chunks:
+        return {}
+
+    if len(chunks) == 1:
+        chunk_results: list[list[dict[str, Any]]] = [client.list_markets_by_tickers(chunks[0])]
+    else:
+        max_workers = min(_REMOTE_MARKET_LOOKUP_MAX_WORKERS, len(chunks))
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="kalshi-market-lookup",
+        ) as executor:
+            chunk_results = list(executor.map(client.list_markets_by_tickers, chunks))
+
+    lookup: dict[str, dict[str, Any]] = {}
+    for chunk_payload in chunk_results:
+        for market in chunk_payload or []:
             ticker = str(market.get("ticker") or "").strip()
             if ticker:
                 lookup[ticker] = market
