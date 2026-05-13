@@ -306,6 +306,53 @@ def latest_snapshot_by_market_id(db: Session, market_ids: list[int]) -> dict[int
     return _latest_per_market_by_captured_at(db, MarketSnapshot, market_ids)
 
 
+def recent_snapshots_by_market_id(
+    db: Session,
+    market_ids: list[int],
+    *,
+    limit_per_market: int,
+) -> dict[int, list[MarketSnapshot]]:
+    """Return up to ``limit_per_market`` most recent snapshots per market
+    in chronological (oldest → newest) order.
+
+    Uses the same ``row_number() over (partition_by market_id order_by
+    captured_at desc, id desc)`` window as
+    :func:`_latest_per_market_by_captured_at`, with ``rn <=
+    limit_per_market`` instead of ``rn == 1``. The output list is
+    re-ordered oldest-first so callers can pass it straight to a
+    sparkline.
+    """
+    if not market_ids or limit_per_market <= 0:
+        return {}
+    ranked = (
+        select(
+            MarketSnapshot,
+            func.row_number()
+            .over(
+                partition_by=MarketSnapshot.market_id,
+                order_by=(MarketSnapshot.captured_at.desc(), MarketSnapshot.id.desc()),
+            )
+            .label("rn"),
+        )
+        .where(MarketSnapshot.market_id.in_(market_ids))
+        .subquery()
+    )
+    rows = db.scalars(
+        select(MarketSnapshot)
+        .join(ranked, MarketSnapshot.id == ranked.c.id)
+        .where(ranked.c.rn <= limit_per_market)
+        .order_by(
+            MarketSnapshot.market_id.asc(),
+            MarketSnapshot.captured_at.asc(),
+            MarketSnapshot.id.asc(),
+        )
+    ).all()
+    by_market: dict[int, list[MarketSnapshot]] = {}
+    for row in rows:
+        by_market.setdefault(row.market_id, []).append(row)
+    return by_market
+
+
 def latest_recommendation_by_market_id(db: Session, market_ids: list[int]) -> dict[int, Recommendation]:
     return _latest_per_market_by_captured_at(db, Recommendation, market_ids)
 

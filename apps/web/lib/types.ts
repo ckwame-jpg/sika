@@ -178,6 +178,11 @@ export interface TradeDeskGameLine {
    *  ``copilot_direction`` so Under-market YES picks resolve to
    *  ``under``). Null for non-total markets. */
   total_direction: "over" | "under" | null;
+  /** Bug #37: most recent ``last_price`` values for this market in
+   *  chronological order (oldest → newest), capped server-side. Empty
+   *  when no captured snapshots exist; the row sparkline falls back to
+   *  a deterministic synthetic walk. */
+  price_history: number[];
 }
 
 export interface TradeDeskThreshold {

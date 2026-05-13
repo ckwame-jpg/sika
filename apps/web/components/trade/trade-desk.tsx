@@ -15,7 +15,7 @@ import { cn, fmtDatetime, fmtEdge, fmtPercent, fmtPrice, fmtRelative, fmtStartsA
 import { PlayerPropGroup } from "@/components/trade/player-prop-group";
 import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
 import { ProbabilitySurfaceHero } from "@/components/trade/probability-surface-hero";
-import { Sparkline, randomWalk } from "@/components/ui/sparkline";
+import { Sparkline } from "@/components/ui/sparkline";
 
 interface TradeKpis {
   events: number;
@@ -42,14 +42,6 @@ function sectionOrder(marketKind: string) {
   if (marketKind === "spread") return 1;
   if (marketKind === "total") return 2;
   return 99;
-}
-
-function seedFromString(value: string): number {
-  let hash = 0;
-  for (let i = 0; i < value.length; i++) {
-    hash = (hash * 31 + value.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash) || 1;
 }
 
 /** Flat pool of every scored edge in the slate. */
@@ -145,7 +137,12 @@ function GameLineRow({
 }) {
   const isSelected = selectedTicker === line.ticker;
   const up = line.edge >= 0;
-  const series = randomWalk(20, up, seedFromString(line.ticker));
+  // Bug #37: render real captured prices straight from the API.
+  // ``Sparkline`` falls back to a flat baseline when ``price_history``
+  // has fewer than two points, so cold-start markets (just discovered,
+  // no MarketSnapshot rows yet) render as a flat line rather than a
+  // synthetic walk that lied about the price trajectory.
+  const series = line.price_history;
   return (
     <button
       type="button"
@@ -163,7 +160,6 @@ function GameLineRow({
       <div className="line-row-price">{fmtPrice(line.entry_price)}</div>
       <div className="line-row-prob">{fmtPercent(line.selected_side_probability)}</div>
       <div className="line-row-spark">
-        {/* TODO(phase5): wire real price history via batched /api/market-history endpoint */}
         <Sparkline values={series} width={64} height={24} trend={up ? "up" : "down"} />
       </div>
       <div className={cn("line-row-edge", up ? "pos" : "neg")}>{fmtEdge(line.edge)}</div>

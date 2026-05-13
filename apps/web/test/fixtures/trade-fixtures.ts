@@ -108,6 +108,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
           kalshi_url: "https://kalshi.com/markets/raptors-win",
           numeric_line: null,
       total_direction: null,
+          price_history: [],
         },
         {
           ticker: "KXNBASPREAD-RAPTORS-3_5",
@@ -124,6 +125,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
           kalshi_url: "https://kalshi.com/markets/raptors-spread",
           numeric_line: -3.5,
       total_direction: null,
+          price_history: [],
         },
         {
           ticker: "KXNBATOTAL-219_5",
@@ -140,6 +142,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
           kalshi_url: "https://kalshi.com/markets/raptors-total",
           numeric_line: 219.5,
       total_direction: null,
+          price_history: [],
         },
       ],
       player_props: [davionMitchellProp],

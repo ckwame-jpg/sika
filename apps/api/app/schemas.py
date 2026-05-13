@@ -323,6 +323,12 @@ class TradeDeskGameLineRead(BaseModel):
     # number to draw against. Consumed by the pick-history strip on the
     # frontend to render a threshold reference line.
     numeric_line: float | None = None
+    # Bug #37: most recent ``last_price`` values for this market in
+    # chronological order (oldest → newest), capped server-side. Empty
+    # when no captured snapshots exist; the frontend sparkline then
+    # falls back to a deterministic synthetic walk so the slot doesn't
+    # collapse on cold-start markets.
+    price_history: list[float] = Field(default_factory=list)
     # Codex round-1 P2 on PR #24: the effective over/under direction the
     # pick represents — folds ``copilot_direction`` + ``selected_side``
     # so the frontend doesn't have to re-derive it. ``"over"`` /
