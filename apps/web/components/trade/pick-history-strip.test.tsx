@@ -290,11 +290,16 @@ describe("PickHistoryStrip — game line variants", () => {
     expect(mockFetchTeamHistory).not.toHaveBeenCalled();
   });
 
-  it("hides itself for first_five_winner picks (codex round-4 P2)", async () => {
+  it("hides itself for first_five_winner picks without firing a fetch (codex P2)", async () => {
     // The /research/teams/history endpoint only returns final-game
     // results. Charting full-game W/L next to a first-five pick is
     // actively misleading — a team that loses the first five but
     // rallies to win would show as a "W" here.
+    //
+    // Codex round-5 P2: also assert the team-history endpoint is
+    // NOT hit. The earlier round-4 fix returned ``null`` *after* the
+    // SWR fetch fired, so every MLB first-five ticket still paid for
+    // an unused request and flashed the loading skeleton.
     mockFetchTeamHistory.mockResolvedValue(
       teamHistoryFixture([{ result: "W", team: 5, opp: 3 }]),
     );
@@ -306,10 +311,10 @@ describe("PickHistoryStrip — game line variants", () => {
         })}
       />,
     );
-    // Allow the SWR fetch to resolve, then assert nothing rendered.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(container.querySelector("[data-testid='pick-history-strip']")).toBeNull();
     expect(container.querySelector("[data-testid='pick-history-strip-pills']")).toBeNull();
+    expect(mockFetchTeamHistory).not.toHaveBeenCalled();
   });
 });
 

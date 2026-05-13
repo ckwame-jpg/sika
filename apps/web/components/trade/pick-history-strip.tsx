@@ -198,6 +198,7 @@ interface GameLineStripProps {
 
 function GameLineStrip({ selection, controls, n, location }: GameLineStripProps) {
   const teamName = inferTeamName(selection);
+  const kind = (selection.marketKind || "").toLowerCase();
   const opts: PickHistoryOptions = { location, opponent: null };
 
   // Codex round-3 P1 on PR #24: keep useSWR unconditional to satisfy
@@ -206,18 +207,26 @@ function GameLineStrip({ selection, controls, n, location }: GameLineStripProps)
   // didn't, which made ``next build`` fail. A ``null`` SWR key
   // short-circuits the fetch, so passing ``null`` when there's no
   // team to chart is equivalent to the old early return.
+  //
+  // Codex round-5 P2 on PR #24: also short-circuit on
+  // ``first_five_winner`` — the strip is hidden for that kind
+  // (round-4 P2) because team-history returns final-game results,
+  // but a non-null SWR key would still trigger one
+  // ``/research/teams/history`` round trip and a skeleton flash
+  // per MLB first-five ticket.
+  const shouldFetch = teamName !== null && kind !== "first_five_winner";
   const { data, error, isLoading } = useSWR<TeamHistoryRead>(
-    teamName !== null ? keys.teamHistory(teamName, selection.sportKey, n, opts) : null,
-    teamName !== null ? () => fetchTeamHistory(teamName, selection.sportKey, n, opts) : null,
+    shouldFetch ? keys.teamHistory(teamName, selection.sportKey, n, opts) : null,
+    shouldFetch ? () => fetchTeamHistory(teamName, selection.sportKey, n, opts) : null,
     { revalidateOnFocus: false, revalidateOnReconnect: false },
   );
 
   if (teamName === null) return null;
+  if (kind === "first_five_winner") return null;
   if (isLoading) return <StripSkeleton n={n} controls={controls} />;
   if (error || !data || data.results.length === 0) return null;
 
   const recent = data.results.slice(0, n);
-  const kind = (selection.marketKind || "").toLowerCase();
   const numericLine = selection.numericLine ?? null;
   const side = (selection.selectedSide || "").toLowerCase();
 
