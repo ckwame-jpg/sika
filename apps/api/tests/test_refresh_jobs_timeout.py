@@ -7,6 +7,7 @@ from time import monotonic
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import RefreshJob, Run
@@ -829,3 +830,302 @@ def test_worker_timeout_marks_visible_associated_run_failed(db_session, monkeypa
     assert complete_attempted.wait(timeout=1)
     persisted_run = _wait_for_run_status(db_session, run_id["value"], "failed")
     assert persisted_run.error_message == refresh_jobs.WORKER_TIMEOUT_ERROR
+
+
+# -----------------------------------------------------------------------------
+# Bug #22: prop_refresh transient errors cap + back-off + dead-letter
+# -----------------------------------------------------------------------------
+
+
+def test_prop_refresh_transient_error_backs_off_with_attempt_counter(db_session, monkeypatch):
+    """Bug #22: an ``httpx.HTTPError`` during ``advance_prop_refresh_job``
+    must not requeue the job for an immediate replay. The fix bumps a
+    per-job ``transient_attempts`` counter and pushes ``queued_at``
+    into the future by ``_prop_refresh_backoff_seconds(attempts)``."""
+    import httpx
+
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    job = _queued_prop_job(db_session)
+
+    def _advance(db, job):
+        raise httpx.ConnectError("simulated upstream connectivity blip")
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+    assert result is not None
+    assert result.status == "queued", "transient error before the cap must requeue, not fail"
+
+    db_session.expire_all()
+    persisted = db_session.get(RefreshJob, job.id)
+    assert persisted.status == "queued"
+    details = persisted.details or {}
+    assert details["transient_attempts"] == 1
+    assert "last_transient_error" in details
+    assert details["last_transient_backoff_seconds"] >= refresh_jobs.PROP_REFRESH_BACKOFF_BASE_SECONDS
+
+    # The back-off must push ``queued_at`` into the future so the claim
+    # loop skips it until the back-off elapses. SQLite stores naive
+    # datetimes, so normalize before comparing.
+    queued_at = persisted.queued_at
+    if queued_at.tzinfo is None:
+        queued_at = queued_at.replace(tzinfo=timezone.utc)
+    assert queued_at > datetime.now(timezone.utc)
+
+
+def test_prop_refresh_claim_skips_jobs_whose_backoff_has_not_elapsed(db_session, monkeypatch):
+    """Bug #22: a row whose ``queued_at`` is still in the future is
+    not eligible for claim — the back-off window enforces itself.
+    A second queued job whose window HAS elapsed should be picked
+    up instead."""
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    now = datetime.now(timezone.utc)
+
+    backing_off = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="transient-retry",
+        status="queued",
+        queued_at=now + timedelta(seconds=300),  # not eligible yet
+        details={"transient_attempts": 2},
+    )
+    eligible = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="fresh",
+        status="queued",
+        queued_at=now - timedelta(seconds=1),
+    )
+    db_session.add_all([backing_off, eligible])
+    db_session.commit()
+
+    advanced_for: list[int] = []
+
+    def _advance(db, job):
+        advanced_for.append(job.id)
+        return _completed_run(db), True
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+    assert result is not None
+    assert result.job_id == eligible.id, "backed-off job must NOT be claimed before its window elapses"
+    assert advanced_for == [eligible.id]
+
+    db_session.expire_all()
+    backing_off_persisted = db_session.get(RefreshJob, backing_off.id)
+    assert backing_off_persisted.status == "queued", "untouched"
+
+
+def test_prop_refresh_dead_letters_after_cap_of_attempts(db_session, monkeypatch):
+    """Bug #22: once ``transient_attempts`` reaches
+    ``PROP_REFRESH_MAX_TRANSIENT_ATTEMPTS``, the next transient error
+    must fail the job instead of requeuing it forever. The error
+    message identifies the dead-letter path so ops can grep for it."""
+    import httpx
+
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    now = datetime.now(timezone.utc)
+
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="cap-test",
+        status="queued",
+        queued_at=now - timedelta(seconds=1),
+        details={"transient_attempts": refresh_jobs.PROP_REFRESH_MAX_TRANSIENT_ATTEMPTS - 1},
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    def _advance(db, job):
+        raise httpx.ReadTimeout("simulated persistent upstream timeout")
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+    assert result is not None
+    assert result.status == "failed"
+    assert refresh_jobs.PROP_REFRESH_DEAD_LETTER_ERROR in (result.error_message or "")
+
+    db_session.expire_all()
+    persisted = db_session.get(RefreshJob, job.id)
+    assert persisted.status == "failed"
+    assert (persisted.details or {}).get("transient_attempts") == refresh_jobs.PROP_REFRESH_MAX_TRANSIENT_ATTEMPTS
+
+
+def test_prop_refresh_backoff_is_exponential_and_capped():
+    """Bug #22: the back-off doubles each attempt (2s → 4s → 8s → 16s
+    → 32s) and caps at ``PROP_REFRESH_BACKOFF_CAP_SECONDS`` so a long
+    outage doesn't strand a job for hours."""
+    assert refresh_jobs._prop_refresh_backoff_seconds(1) == 2.0
+    assert refresh_jobs._prop_refresh_backoff_seconds(2) == 4.0
+    assert refresh_jobs._prop_refresh_backoff_seconds(3) == 8.0
+    assert refresh_jobs._prop_refresh_backoff_seconds(4) == 16.0
+    assert refresh_jobs._prop_refresh_backoff_seconds(5) == 32.0
+    # Way past the cap — clamped to PROP_REFRESH_BACKOFF_CAP_SECONDS.
+    assert refresh_jobs._prop_refresh_backoff_seconds(50) == refresh_jobs.PROP_REFRESH_BACKOFF_CAP_SECONDS
+
+
+def test_enqueue_prop_refresh_skips_during_dead_letter_cooldown(db_session, monkeypatch):
+    """Codex round-3 P2 on PR #47 (bug #22): a dead-lettered prop_refresh
+    cools off cross-job enqueueing for ``PROP_REFRESH_DEAD_LETTER_COOLDOWN_SECONDS``.
+    Otherwise the next scheduler tick would just create a fresh job
+    with a reset counter and walk through the same dead-letter
+    sequence, producing one new log line per tick during a
+    persistent outage."""
+    now = datetime.now(timezone.utc)
+    dead_letter = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="cooldown-test",
+        status="failed",
+        queued_at=now - timedelta(seconds=60),
+        finished_at=now - timedelta(seconds=30),  # within the cooldown window
+        error_message=(
+            f"{refresh_jobs.PROP_REFRESH_DEAD_LETTER_ERROR}: persistent upstream timeout"
+        ),
+        details={"transient_attempts": refresh_jobs.PROP_REFRESH_MAX_TRANSIENT_ATTEMPTS},
+    )
+    db_session.add(dead_letter)
+    db_session.commit()
+    dead_letter_id = dead_letter.id
+
+    # Attempt to enqueue a new prop_refresh — must be suppressed.
+    job, created = refresh_jobs.enqueue_refresh_job(
+        db_session,
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+    )
+    db_session.commit()
+
+    assert created is False, (
+        "while a recent dead-letter is in the cooldown window, "
+        "no new prop_refresh should be enqueued"
+    )
+    assert job.id == dead_letter_id, (
+        "the cooldown helper returns the failed row so the scheduler "
+        "treats the call as a no-op"
+    )
+    # Schema invariant: no new queued prop_refresh was created.
+    queued_count = db_session.scalar(
+        select(func.count(RefreshJob.id)).where(
+            RefreshJob.kind == "prop_refresh",
+            RefreshJob.status == "queued",
+        )
+    )
+    assert queued_count == 0
+
+
+def test_enqueue_prop_refresh_resumes_after_cooldown_elapses(db_session, monkeypatch):
+    """Codex round-3 P2 on PR #47 (bug #22): once the cooldown
+    window expires, the next enqueue must fall through to a fresh
+    queued job. The cooldown is meant to suppress spam, not strand
+    prop_refresh forever."""
+    now = datetime.now(timezone.utc)
+    stale_dead_letter = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="stale-cooldown",
+        status="failed",
+        queued_at=now - timedelta(hours=2),
+        finished_at=now - timedelta(seconds=refresh_jobs.PROP_REFRESH_DEAD_LETTER_COOLDOWN_SECONDS + 60),
+        error_message=(
+            f"{refresh_jobs.PROP_REFRESH_DEAD_LETTER_ERROR}: long-past timeout"
+        ),
+    )
+    db_session.add(stale_dead_letter)
+    db_session.commit()
+
+    job, created = refresh_jobs.enqueue_refresh_job(
+        db_session,
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+    )
+    db_session.commit()
+
+    assert created is True
+    assert job.status == "queued"
+    assert job.id != stale_dead_letter.id
+
+
+def test_enqueue_prop_refresh_not_blocked_by_non_dead_letter_failure(db_session):
+    """A failed prop_refresh that ISN'T the dead-letter signal
+    (e.g. a one-off worker timeout) must NOT suppress fresh
+    enqueues — only the explicit ``PROP_REFRESH_DEAD_LETTER_ERROR``
+    marker triggers cooldown."""
+    now = datetime.now(timezone.utc)
+    plain_failure = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="plain-failure",
+        status="failed",
+        queued_at=now - timedelta(seconds=60),
+        finished_at=now - timedelta(seconds=10),
+        error_message=refresh_jobs.WORKER_TIMEOUT_ERROR,
+    )
+    db_session.add(plain_failure)
+    db_session.commit()
+
+    job, created = refresh_jobs.enqueue_refresh_job(
+        db_session,
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+    )
+    db_session.commit()
+    assert created is True
+    assert job.status == "queued"
+
+
+def test_prop_refresh_successful_batch_resets_transient_attempts(db_session, monkeypatch):
+    """Bug #22 round-2 P2: a long-running prop_refresh that hits 5
+    intermittent blips spaced across many successful batches must NOT
+    dead-letter — the cap is for CONSECUTIVE failures, not lifetime
+    total. A successful ``advance_prop_refresh_job`` clears the
+    ``transient_attempts`` counter so the next blip starts at 1."""
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    now = datetime.now(timezone.utc)
+
+    # Pre-stamp the job with 3 prior transient attempts (e.g. from
+    # earlier blips during the same multi-batch run).
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="reset-test",
+        status="queued",
+        queued_at=now - timedelta(seconds=1),
+        details={
+            "transient_attempts": 3,
+            "last_transient_error": "stale upstream blip",
+            "last_transient_backoff_seconds": 8.0,
+        },
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    def _advance(db, job):
+        # A successful batch advance — no exception, returns ``True``
+        # so the worker exits cleanly.
+        return _completed_run(db), True
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+    assert result is not None
+    assert result.status == "completed"
+
+    db_session.expire_all()
+    persisted = db_session.get(RefreshJob, job.id)
+    details = persisted.details or {}
+    assert "transient_attempts" not in details, (
+        "successful advance must clear the consecutive-failure counter"
+    )
+    assert "last_transient_error" not in details
+    assert "last_transient_backoff_seconds" not in details
