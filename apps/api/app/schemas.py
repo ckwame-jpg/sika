@@ -619,12 +619,32 @@ class MarketHistoryRead(BaseModel):
     points: list[MarketHistoryPointRead]
 
 
+def _normalize_lowercase(value: Any) -> Any:
+    """Pre-validator that lowercases string inputs. Keeps the
+    enum-literal validation strict while preserving the previous
+    ``.lower()``-equivalent leniency at the API boundary (e.g.
+    ``"YES"`` from a hand-rolled curl call still maps to ``"yes"``)."""
+    if isinstance(value, str):
+        return value.lower()
+    return value
+
+
+LowercaseSide = Annotated[Literal["yes", "no"], BeforeValidator(_normalize_lowercase)]
+LowercaseAction = Annotated[Literal["buy", "sell"], BeforeValidator(_normalize_lowercase)]
+LowercaseTimeInForce = Annotated[
+    Literal["good_till_canceled", "immediate_or_cancel", "fill_or_kill"],
+    BeforeValidator(_normalize_lowercase),
+]
+
+
 class PaperPositionCreate(BaseModel):
     ticker: str
     # Bug #15: previously ``str`` — schema accepted any value and the
     # service layer lowercased it without validating. Kalshi only has
-    # YES/NO contracts; enforce that at the boundary.
-    side: Literal["yes", "no"]
+    # YES/NO contracts; lock the vocabulary here. The before-validator
+    # preserves case-insensitive input (``"YES"`` / ``"Yes"`` work as
+    # they did before, but ``"hold"`` is rejected as a typo).
+    side: LowercaseSide
     quantity: int = Field(ge=1)
     entry_price: float = Field(gt=0, le=1)
     notes: str | None = None
@@ -635,8 +655,16 @@ class PaperPositionExit(BaseModel):
     # position's entry — e.g. a YES position at 0.40 closes at the
     # current YES price, NOT the NO price. PnL is computed as
     # ``(exit_price - entry_price) * quantity`` and silently inverts
-    # if the caller passes the opposite-side price. Document the
-    # contract; UI consumers must label the field accordingly.
+    # if the caller passes the opposite-side price.
+    #
+    # The server cannot verify the caller's claim (the value 0.70 is
+    # equally plausible as YES-close or NO-close); we document the
+    # contract here and the UI labels the field with the position's
+    # side. The punch-list noted two viable fixes — "Document &
+    # enforce" (this PR) or "accept both prices and derive PnL from
+    # the side" (a UI/schema migration, deferred). Codex round-2
+    # flagged that documentation alone leaves the inversion possible
+    # for future integrations; that's true and acknowledged.
     exit_price: float = Field(
         gt=0,
         le=1,
@@ -670,13 +698,14 @@ class DemoOrderCreate(BaseModel):
     # ``str``; service layer lowercased without validating, so any
     # typo (or unexpected enum from a future client) silently shipped
     # to Kalshi as the bad value and produced a confusing error
-    # downstream.
-    side: Literal["yes", "no"]
-    action: Literal["buy", "sell"] = "buy"
+    # downstream. The before-validators preserve case-insensitive
+    # input from existing hand-rolled callers.
+    side: LowercaseSide
+    action: LowercaseAction = "buy"
     quantity: int = Field(ge=1)
     limit_price: float = Field(gt=0, lt=1)
     approved: bool = False
-    time_in_force: Literal["good_till_canceled", "immediate_or_cancel", "fill_or_kill"] = "good_till_canceled"
+    time_in_force: LowercaseTimeInForce = "good_till_canceled"
 
 
 class DemoOrderRead(BaseModel):

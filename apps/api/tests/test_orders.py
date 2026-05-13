@@ -124,6 +124,20 @@ def test_paper_position_create_rejects_invalid_side():
         PaperPositionCreate(ticker="NBA-TEST", side="invalid", quantity=1, entry_price=0.5)
 
 
+def test_paper_position_create_accepts_case_insensitive_side():
+    """Bug #15, codex round-2 P2: preserve the lenience of the prior
+    ``.lower()`` normalization in services/orders.py — uppercase /
+    mixed-case ``side`` is accepted at the boundary via a
+    ``BeforeValidator`` and normalized to lowercase before the
+    ``Literal`` validation runs."""
+    for value in ("YES", "Yes", "yes"):
+        payload = PaperPositionCreate(ticker="NBA-TEST", side=value, quantity=1, entry_price=0.5)
+        assert payload.side == "yes"
+    for value in ("NO", "No", "no"):
+        payload = PaperPositionCreate(ticker="NBA-TEST", side=value, quantity=1, entry_price=0.5)
+        assert payload.side == "no"
+
+
 def test_demo_order_create_rejects_invalid_action_and_tif():
     """Bug #15: ``action`` is ``Literal['buy', 'sell']`` and
     ``time_in_force`` is the enum of Kalshi-supported values. Bad
