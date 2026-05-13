@@ -143,13 +143,32 @@ def _cents_to_dollars(value: Any) -> float | None:
 
 
 def _account_error_message(exc: Exception) -> str:
+    """Bug #46 — surface enough detail for the operator to act without
+    leaking secrets. The prior version returned generic phrases
+    (``"Kalshi account request failed."``) that hid status codes,
+    rate-limit hints, and the actual Python exception, forcing the
+    operator to dig through logs to diagnose a stuck account panel.
+
+    Includes the response body (truncated) on HTTP errors and the
+    repr-style message on transport errors. Kalshi's error bodies are
+    JSON envelopes without secret material, so passing them through
+    to operator-facing text is safe.
+    """
     if isinstance(exc, FileNotFoundError):
-        return "Kalshi private key file is not available."
+        return f"Kalshi private key file is not available: {exc}"
     if isinstance(exc, httpx.HTTPStatusError):
-        return f"Kalshi account request failed with HTTP {exc.response.status_code}."
+        body = (exc.response.text or "").strip()
+        snippet = (body[:200] + "…") if len(body) > 200 else body
+        suffix = f": {snippet}" if snippet else "."
+        return f"Kalshi account request returned HTTP {exc.response.status_code}{suffix}"
+    if isinstance(exc, httpx.RequestError):
+        # Transport-layer failure — no response object. Surface the
+        # exception class so DNS / TLS / timeout / connect errors are
+        # distinguishable in the UI.
+        return f"Kalshi account request failed ({type(exc).__name__}): {exc}"
     if isinstance(exc, httpx.HTTPError):
-        return "Kalshi account request failed."
-    return "Kalshi account sync failed."
+        return f"Kalshi account request failed: {exc}"
+    return f"Kalshi account sync failed ({type(exc).__name__}): {exc}"
 
 
 def _market_lookup(db: Session, tickers: set[str]) -> dict[str, Market]:
