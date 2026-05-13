@@ -32,6 +32,9 @@ from app.schemas import (
     MarketDetailRead,
     MarketHistoryRead,
     MarketListRead,
+    MarketMappingCandidateRead,
+    MarketMappingOverrideCreate,
+    MarketMappingStateRead,
     MarketSnapshotRead,
     ModelFamilyReadinessRead,
     ModelReadinessSettingsUpdate,
@@ -65,6 +68,7 @@ from app.schemas import (
     WatchlistCoverageRowRead,
 )
 from app.services.market_history import build_market_history
+from app.services.market_mapping import override_market_mapping
 from app.services.kalshi_account import (
     build_kalshi_account_snapshot,
     expire_kalshi_account_cache,
@@ -1491,6 +1495,75 @@ def settle_prediction_job(db: Session = Depends(get_db)) -> PredictionSettlement
     parlay_summary = settle_parlay_predictions(db)
     db.commit()
     return PredictionSettlementResponse(**_merge_settlement_summaries(single_summary, parlay_summary))
+
+
+def _serialize_market_mapping(market: Market) -> MarketMappingStateRead:
+    """Render a ``Market`` row as a mapping audit envelope (confidence
+    + top candidates the auto-mapper saw + any manual override).
+
+    Bug #17: ops needs a single read-only view to decide whether a
+    fuzzy match was actually right. The candidate list shows the
+    runner-ups; ``mapping_overridden_at`` tells the ops UI whether a
+    human has already pinned the answer.
+    """
+    candidates_raw = market.mapping_candidates or []
+    candidates: list[MarketMappingCandidateRead] = []
+    for entry in candidates_raw:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            candidates.append(
+                MarketMappingCandidateRead(
+                    event_id=int(entry["event_id"]),
+                    event_name=entry.get("event_name"),
+                    sport_key=entry.get("sport_key"),
+                    score=float(entry["score"]),
+                    time_delta_seconds=(
+                        float(entry["time_delta_seconds"])
+                        if entry.get("time_delta_seconds") is not None
+                        else None
+                    ),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return MarketMappingStateRead(
+        ticker=market.ticker,
+        event_id=market.event_id,
+        sport_key=market.sport_key,
+        mapping_confidence=market.mapping_confidence,
+        mapping_candidates=candidates,
+        mapping_overridden_at=market.mapping_overridden_at,
+        mapping_overridden_reason=market.mapping_overridden_reason,
+    )
+
+
+@ops_router.get("/market-mapping/{ticker}", response_model=MarketMappingStateRead)
+def get_market_mapping(ticker: str, db: Session = Depends(get_db)) -> MarketMappingStateRead:
+    market = db.scalar(select(Market).where(Market.ticker == ticker))
+    if market is None:
+        raise HTTPException(status_code=404, detail="Market not found for ticker")
+    return _serialize_market_mapping(market)
+
+
+@ops_router.post("/market-mapping/{ticker}", response_model=MarketMappingStateRead)
+def post_market_mapping_override(
+    ticker: str,
+    payload: MarketMappingOverrideCreate,
+    db: Session = Depends(get_db),
+) -> MarketMappingStateRead:
+    try:
+        market = override_market_mapping(
+            db,
+            ticker=ticker,
+            event_id=payload.event_id,
+            reason=payload.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(market)
+    return _serialize_market_mapping(market)
 
 
 @research_router.post("/stats/query", response_model=StatsQueryRead)

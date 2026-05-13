@@ -1345,6 +1345,168 @@
         "title": "MarketListRead",
         "type": "object"
       },
+      "MarketMappingCandidateRead": {
+        "description": "A single candidate the auto-mapper scored when matching a\nKalshi market ticker to a Sika ``Event``. Bug #17: persisted on\n``Market`` so ops can review ambiguous matches.",
+        "properties": {
+          "event_id": {
+            "title": "Event Id",
+            "type": "integer"
+          },
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "time_delta_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Delta Seconds"
+          }
+        },
+        "required": [
+          "event_id",
+          "score"
+        ],
+        "title": "MarketMappingCandidateRead",
+        "type": "object"
+      },
+      "MarketMappingOverrideCreate": {
+        "description": "Body for ``POST /ops/market-mapping/{ticker}``. ``event_id =\nNone`` clears the mapping; otherwise links to that event.",
+        "properties": {
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "event_id"
+        ],
+        "title": "MarketMappingOverrideCreate",
+        "type": "object"
+      },
+      "MarketMappingStateRead": {
+        "description": "Read-only view of a market's current mapping state, including\nconfidence + top-K candidates the auto-mapper considered and any\nmanual override stamp.",
+        "properties": {
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "mapping_candidates": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MarketMappingCandidateRead"
+            },
+            "title": "Mapping Candidates",
+            "type": "array"
+          },
+          "mapping_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping Confidence"
+          },
+          "mapping_overridden_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping Overridden At"
+          },
+          "mapping_overridden_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping Overridden Reason"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker"
+        ],
+        "title": "MarketMappingStateRead",
+        "type": "object"
+      },
       "MarketSnapshotRead": {
         "properties": {
           "captured_at": {
@@ -6449,6 +6611,98 @@
           }
         },
         "summary": "Refresh Job Detail",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/market-mapping/{ticker}": {
+      "get": {
+        "operationId": "get_market_mapping_ops_market_mapping__ticker__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ticker",
+            "required": true,
+            "schema": {
+              "title": "Ticker",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketMappingStateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Market Mapping",
+        "tags": [
+          "ops"
+        ]
+      },
+      "post": {
+        "operationId": "post_market_mapping_override_ops_market_mapping__ticker__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ticker",
+            "required": true,
+            "schema": {
+              "title": "Ticker",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketMappingOverrideCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketMappingStateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Market Mapping Override",
         "tags": [
           "ops"
         ]

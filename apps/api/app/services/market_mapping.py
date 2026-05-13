@@ -1,4 +1,4 @@
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -6,6 +6,16 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import Event, EventParticipant, Market
 from app.services.market_support import infer_market_sport_key, market_anchor_time
 from app.sports.base import alias_tokens
+
+
+# Bug #17 tuning constants.
+#
+# ``MIN_MAPPING_CONFIDENCE`` is the historical accept threshold (kept
+# at 0.35 — the value the codebase has run with). ``CANDIDATE_TOP_K``
+# bounds how many runners-up we persist on the Market row so the
+# stored JSON stays small.
+MIN_MAPPING_CONFIDENCE = 0.35
+CANDIDATE_TOP_K = 5
 
 
 def _market_text(market: Market) -> str:
@@ -51,6 +61,9 @@ def map_markets_to_events(db: Session, *, candidate_market_ids: set[int] | None 
         if not candidate_market_ids:
             return 0
         stmt = stmt.where(Market.id.in_(tuple(sorted(candidate_market_ids))))
+    # Bug #17: never auto-remap a market that ops has manually
+    # overridden — the override stamp is sticky across refresh cycles.
+    stmt = stmt.where(Market.mapping_overridden_at.is_(None))
     markets = db.scalars(stmt).all()
     if not markets:
         return 0
@@ -81,9 +94,11 @@ def map_markets_to_events(db: Session, *, candidate_market_ids: set[int] | None 
         }
         market_sport_key = infer_market_sport_key(market_payload)
         anchor_time = _normalize_utc(market_anchor_time(market.raw_data or {}) or market.close_time)
-        best_event = None
-        best_score = 0.0
-        best_time_delta: float | None = None
+        # Bug #17: track *every* viable candidate (passes sport +
+        # time-window filter and has any token overlap), not just the
+        # running best, so the persisted record reflects the ambiguity
+        # the auto-mapper actually saw.
+        scored_candidates: list[dict[str, object]] = []
         for event, event_tokens, event_starts_at in event_context:
             if market_sport_key and event.sport_key != market_sport_key:
                 continue
@@ -93,18 +108,81 @@ def map_markets_to_events(db: Session, *, candidate_market_ids: set[int] | None 
                 if time_delta > timedelta(hours=36).total_seconds():
                     continue
             score = _token_score(market_tokens, event_tokens)
-            if score < best_score:
+            if score <= 0.0:
                 continue
-            if score > best_score or (
-                time_delta is not None
-                and (best_time_delta is None or time_delta < best_time_delta)
-            ):
-                best_score = score
-                best_event = event
-                best_time_delta = time_delta
-        if best_event and best_score >= 0.35:
+            scored_candidates.append(
+                {
+                    "event_id": event.id,
+                    "event_name": event.name,
+                    "sport_key": event.sport_key,
+                    "score": round(score, 4),
+                    "time_delta_seconds": (
+                        round(time_delta, 1) if time_delta is not None else None
+                    ),
+                }
+            )
+        scored_candidates.sort(
+            key=lambda candidate: (
+                -float(candidate["score"]),
+                # Tiebreak by smallest time delta (None sorts last).
+                float("inf")
+                if candidate["time_delta_seconds"] is None
+                else float(candidate["time_delta_seconds"]),
+            )
+        )
+        top_candidates = scored_candidates[:CANDIDATE_TOP_K]
+        if scored_candidates and scored_candidates[0]["score"] >= MIN_MAPPING_CONFIDENCE:
+            winner = scored_candidates[0]
+            best_event_id = int(winner["event_id"])
+            best_event = next(event for event, *_ in event_context if event.id == best_event_id)
             market.event_id = best_event.id
             market.sport_key = best_event.sport_key
+            market.mapping_confidence = float(winner["score"])
+            market.mapping_candidates = top_candidates
             updated += 1
+        else:
+            # Below threshold — leave event_id alone but record what
+            # we saw so ops can decide whether to override manually.
+            if scored_candidates:
+                market.mapping_confidence = float(scored_candidates[0]["score"])
+                market.mapping_candidates = top_candidates
+            else:
+                market.mapping_confidence = 0.0
+                market.mapping_candidates = []
     db.flush()
     return updated
+
+
+def override_market_mapping(
+    db: Session,
+    *,
+    ticker: str,
+    event_id: int | None,
+    reason: str | None = None,
+) -> Market:
+    """Manually map ``ticker`` to ``event_id`` (or clear the mapping
+    if ``event_id is None``). Stamps ``mapping_overridden_at`` so the
+    auto-mapper skips this row on subsequent refresh cycles.
+
+    Bug #17: lets ops correct silent best-match errors (doubleheaders,
+    abbreviation collisions, postponed games) without the next
+    ``map_markets_to_events`` call clobbering the fix.
+    """
+    market = db.scalar(select(Market).where(Market.ticker == ticker))
+    if market is None:
+        raise LookupError(f"Market not found for ticker {ticker!r}")
+    if event_id is not None:
+        event = db.get(Event, event_id)
+        if event is None:
+            raise LookupError(f"Event {event_id} not found")
+        market.event_id = event.id
+        market.sport_key = event.sport_key
+    else:
+        market.event_id = None
+    market.mapping_overridden_at = datetime.now(timezone.utc)
+    market.mapping_overridden_reason = reason
+    # Confidence/candidates are intentionally left as-is — they're a
+    # snapshot of what the auto-mapper saw and are useful audit context
+    # even after the override.
+    db.flush()
+    return market
