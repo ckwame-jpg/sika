@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -22,10 +22,17 @@ from app.models import (
     ShadowParlayInference,
     SignalSnapshot,
 )
-from app.services.ml.study_progress import retained_study_cutoff
+from app.services.ml.study_progress import SETTLED_OUTCOMES, retained_study_cutoff
 
 
 TERMINAL_RUN_STATUSES = ("completed", "failed")
+
+# Bug #19: ``prediction_outcome`` for rows that have NOT yet been
+# matched against a market result. The short retention TTL applies
+# to these (they're stale UI noise; nothing to learn from). Rows in
+# ``SETTLED_OUTCOMES`` are ML-relevant and get the longer archive
+# TTL instead.
+_PENDING_PREDICTION_OUTCOME = "pending"
 
 # Slice 2: the snapshot store is append-only per scope. Retain the most
 # recent N rows per scope so a new freshness regression is debuggable, but
@@ -55,11 +62,25 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
 
     market_snapshot_cutoff = now - timedelta(days=settings.market_snapshot_retention_days)
     signal_snapshot_cutoff = now - timedelta(days=settings.signal_snapshot_retention_days)
-    shadow_cutoff = retained_study_cutoff(now=now, settings=settings)
+    shadow_short_cutoff = retained_study_cutoff(now=now, settings=settings)
+    shadow_archive_cutoff = now - timedelta(days=settings.shadow_inference_archive_retention_days)
     run_cutoff = now - timedelta(days=settings.run_retention_days)
     refresh_job_cutoff = now - timedelta(days=settings.refresh_job_retention_days)
-    prediction_cutoff = now - timedelta(days=settings.prediction_retention_days)
+    prediction_short_cutoff = now - timedelta(days=settings.prediction_retention_days)
+    prediction_archive_cutoff = now - timedelta(days=settings.prediction_archive_retention_days)
 
+    # Bug #19: two-tier prediction retention.
+    #
+    # ``prediction_outcome == "pending"`` rows are the ones the
+    # runtime would otherwise churn — markets that never closed,
+    # tickers we dropped, etc. Reap them on the short TTL.
+    #
+    # Settled rows (``SETTLED_OUTCOMES``) are training/calibration
+    # input. Keep them for the much longer archive TTL so promotion
+    # gates and walk-forward eval can read the historical outcomes
+    # without the runtime cleanup eating its own data. The previous
+    # single-cutoff delete reaped 23k+ settled predictions before
+    # the 2026-05-12 retrain, leaving only 1.7k training rows.
     old_refresh_job_ids = _ids_for(
         db,
         select(RefreshJob.id).where(
@@ -69,11 +90,33 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
     )
     old_parlay_prediction_ids = _ids_for(
         db,
-        select(ParlayPrediction.id).where(ParlayPrediction.captured_at < prediction_cutoff),
+        select(ParlayPrediction.id).where(
+            or_(
+                and_(
+                    ParlayPrediction.captured_at < prediction_short_cutoff,
+                    ParlayPrediction.prediction_outcome == _PENDING_PREDICTION_OUTCOME,
+                ),
+                and_(
+                    ParlayPrediction.captured_at < prediction_archive_cutoff,
+                    ParlayPrediction.prediction_outcome.in_(SETTLED_OUTCOMES),
+                ),
+            ),
+        ),
     )
     old_prediction_ids = _ids_for(
         db,
-        select(Prediction.id).where(Prediction.captured_at < prediction_cutoff),
+        select(Prediction.id).where(
+            or_(
+                and_(
+                    Prediction.captured_at < prediction_short_cutoff,
+                    Prediction.prediction_outcome == _PENDING_PREDICTION_OUTCOME,
+                ),
+                and_(
+                    Prediction.captured_at < prediction_archive_cutoff,
+                    Prediction.prediction_outcome.in_(SETTLED_OUTCOMES),
+                ),
+            ),
+        ),
     )
     old_run_ids = _ids_for(
         db,
@@ -93,15 +136,22 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
         .filter(SignalSnapshot.captured_at < signal_snapshot_cutoff)
         .delete(synchronize_session=False)
     )
-    shadow_inferences_deleted = (
-        db.query(ShadowInference)
-        .filter(ShadowInference.captured_at < shadow_cutoff)
-        .delete(synchronize_session=False)
+    # Bug #19: two-tier shadow retention mirrors the prediction
+    # retention above. A shadow whose paired ``Prediction`` is
+    # settled is ML-useful (paired with a real outcome for
+    # calibration analysis) and gets the archive TTL; a shadow
+    # with no paired prediction, or one paired with a still-pending
+    # prediction, was never going to be useful for evaluation and
+    # rolls over on the short TTL.
+    shadow_inferences_deleted = _delete_shadow_inferences(
+        db,
+        short_cutoff=shadow_short_cutoff,
+        archive_cutoff=shadow_archive_cutoff,
     )
-    shadow_parlay_inferences_deleted = (
-        db.query(ShadowParlayInference)
-        .filter(ShadowParlayInference.captured_at < shadow_cutoff)
-        .delete(synchronize_session=False)
+    shadow_parlay_inferences_deleted = _delete_shadow_parlay_inferences(
+        db,
+        short_cutoff=shadow_short_cutoff,
+        archive_cutoff=shadow_archive_cutoff,
     )
     refresh_jobs_deleted = _delete_rows(db, RefreshJob, old_refresh_job_ids)
     parlay_prediction_legs_deleted = (
@@ -179,6 +229,91 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
         "runs_deleted": int(runs_deleted or 0),
         "current_slate_snapshots_deleted": int(current_slate_snapshots_deleted or 0),
     }
+
+
+def _delete_shadow_inferences(
+    db: Session, *, short_cutoff: datetime, archive_cutoff: datetime
+) -> int:
+    """Delete ``ShadowInference`` rows under bug #19's two-tier rule.
+
+    A shadow whose ``source_prediction_id`` points at a settled
+    prediction is paired with a real outcome and gets the long
+    archive TTL. Anything else (no link, broken link, or paired
+    with a still-pending prediction) reverts to the short TTL.
+
+    We compute the id-set in Python and issue a single ``IN`` delete
+    because the join-with-OR shape isn't reliably accepted by
+    SQLAlchemy's ``.delete()`` against both Postgres and SQLite.
+    """
+    short_unsettled_ids = db.scalars(
+        select(ShadowInference.id)
+        .outerjoin(Prediction, ShadowInference.source_prediction_id == Prediction.id)
+        .where(
+            ShadowInference.captured_at < short_cutoff,
+            or_(
+                Prediction.id.is_(None),
+                Prediction.prediction_outcome == _PENDING_PREDICTION_OUTCOME,
+            ),
+        )
+    ).all()
+    archive_settled_ids = db.scalars(
+        select(ShadowInference.id)
+        .join(Prediction, ShadowInference.source_prediction_id == Prediction.id)
+        .where(
+            ShadowInference.captured_at < archive_cutoff,
+            Prediction.prediction_outcome.in_(SETTLED_OUTCOMES),
+        )
+    ).all()
+    victim_ids = {int(x) for x in short_unsettled_ids} | {int(x) for x in archive_settled_ids}
+    if not victim_ids:
+        return 0
+    return int(
+        db.query(ShadowInference)
+        .filter(ShadowInference.id.in_(tuple(victim_ids)))
+        .delete(synchronize_session=False)
+        or 0
+    )
+
+
+def _delete_shadow_parlay_inferences(
+    db: Session, *, short_cutoff: datetime, archive_cutoff: datetime
+) -> int:
+    """Same two-tier rule as ``_delete_shadow_inferences``, joined to
+    ``ParlayPrediction`` via ``source_parlay_prediction_id``."""
+    short_unsettled_ids = db.scalars(
+        select(ShadowParlayInference.id)
+        .outerjoin(
+            ParlayPrediction,
+            ShadowParlayInference.source_parlay_prediction_id == ParlayPrediction.id,
+        )
+        .where(
+            ShadowParlayInference.captured_at < short_cutoff,
+            or_(
+                ParlayPrediction.id.is_(None),
+                ParlayPrediction.prediction_outcome == _PENDING_PREDICTION_OUTCOME,
+            ),
+        )
+    ).all()
+    archive_settled_ids = db.scalars(
+        select(ShadowParlayInference.id)
+        .join(
+            ParlayPrediction,
+            ShadowParlayInference.source_parlay_prediction_id == ParlayPrediction.id,
+        )
+        .where(
+            ShadowParlayInference.captured_at < archive_cutoff,
+            ParlayPrediction.prediction_outcome.in_(SETTLED_OUTCOMES),
+        )
+    ).all()
+    victim_ids = {int(x) for x in short_unsettled_ids} | {int(x) for x in archive_settled_ids}
+    if not victim_ids:
+        return 0
+    return int(
+        db.query(ShadowParlayInference)
+        .filter(ShadowParlayInference.id.in_(tuple(victim_ids)))
+        .delete(synchronize_session=False)
+        or 0
+    )
 
 
 def _prune_current_slate_snapshots(db: Session) -> int:

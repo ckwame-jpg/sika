@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     run_retention_days: int = 14
     refresh_job_retention_days: int = 14
     prediction_retention_days: int = 7
+    # Bug #19: two-tier retention for ML-relevant rows. The short
+    # ``*_retention_days`` settings above are the UI / runtime TTL —
+    # they reap UNSETTLED predictions and shadows that never paired
+    # with a real outcome. The ``*_archive_retention_days`` settings
+    # below extend that TTL for rows that DID settle, so training,
+    # calibration, and promotion can read the historical outcomes
+    # they need without the runtime cleanup eating its own data.
+    prediction_archive_retention_days: int = 365
+    shadow_inference_archive_retention_days: int = 365
     refresh_job_stale_minutes: int = 30
     market_snapshot_heartbeat_minutes: int = 30
     prefer_yes_side_props: bool = True
