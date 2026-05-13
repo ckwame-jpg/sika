@@ -502,7 +502,16 @@ def refresh_kalshi_markets(
     payload_records: list[dict[str, Any]] = []
 
     if include_standalone:
-        for payload in client.list_markets(status="open", limit=1000, mve_filter="exclude"):
+        # Bug #18: 5K default cap missed game-winner tickers buried past
+        # 5K in Kalshi's default ordering. Pass a 120 s wall-clock
+        # budget — well inside the 300 s market-discovery worker
+        # timeout — and let pagination drain the cursor instead.
+        for payload in client.list_markets(
+            status="open",
+            limit=1000,
+            mve_filter="exclude",
+            wall_clock_budget_seconds=120.0,
+        ):
             total_seen += 1
             payload_records.append(
                 {
@@ -538,7 +547,15 @@ def refresh_kalshi_markets(
 
     if discover_combo_props:
         combo_leg_tickers_seen: set[str] = set()
-        for combo_payload in client.list_markets(status="open", limit=1000, mve_filter="include"):
+        # Bug #18: same pagination budget as the standalone scan — combo
+        # markets sit even deeper in Kalshi's ordering so the 5K cap
+        # hurt this path more.
+        for combo_payload in client.list_markets(
+            status="open",
+            limit=1000,
+            mve_filter="include",
+            wall_clock_budget_seconds=120.0,
+        ):
             if not (combo_payload.get("mve_collection_ticker") or combo_payload.get("mve_selected_legs")):
                 continue
             for leg in combo_payload.get("mve_selected_legs") or []:

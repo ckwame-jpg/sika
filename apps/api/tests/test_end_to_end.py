@@ -68,7 +68,7 @@ class FakeSportsProvider:
 
 
 class FakeKalshiPublicClient:
-    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
         return [
             {
                 "ticker": "KXNBAGAME-26MAR30BOSBKN-BOS",
@@ -102,7 +102,7 @@ class FakeKalshiPublicClient:
 
 
 class EmptyKalshiPublicClient:
-    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
         return []
 
 
@@ -360,7 +360,7 @@ class FakeMLBSportsProvider:
 
 
 class FakeMLBFirstFiveKalshiPublicClient:
-    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
         return [
             {
                 "ticker": "KXMLBF5-26MAR312140NYYSEA-SEA",

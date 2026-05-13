@@ -167,7 +167,7 @@ class FakeSportsProvider:
 
 
 class FakeKalshiRefreshClient:
-    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
         return [
             {
                 "ticker": "KXNBAGAME-26MAR30BOSBKN-BOS",
@@ -190,7 +190,7 @@ class FakeSettlementClient:
     def __init__(self, payloads):
         self.payloads = payloads
 
-    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
         return []
 
     def get_market(self, ticker):
@@ -217,13 +217,13 @@ class CurrentSlateTargetClient:
             "last_price_dollars": "0.43",
         }
 
-    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
         self.list_market_calls += 1
         return []
 
 
 class FakeKalshiComboClient:
-    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
         if mve_filter == "exclude":
             return []
         return [
@@ -260,7 +260,7 @@ class FakeKalshiComboClient:
 
 
 class FakeKalshiMixedComboClient:
-    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
         if mve_filter == "exclude":
             return []
         return [
@@ -381,7 +381,7 @@ class TrackedComboRefreshClient:
         self.include_calls = 0
         self.get_market_calls: list[str] = []
 
-    def list_markets(self, status="open", limit=1000, mve_filter="exclude"):
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
         if mve_filter == "include":
             self.include_calls += 1
         return []

@@ -220,3 +220,114 @@ def test_list_markets_stops_when_cursor_empties():
 
     assert fake.call_count == 1
     assert len(markets) == 1
+
+
+# -----------------------------------------------------------------------------
+# Bug #18 — pagination drains the cursor; wall-clock budget bounds runtime
+# -----------------------------------------------------------------------------
+
+
+def test_list_markets_drains_cursor_past_legacy_5k_default():
+    """Bug #18: the previous ``max_pages=5`` default capped discovery
+    at 5,000 markets. Now ``max_pages=50`` is the safety bound and
+    pagination keeps going as long as the upstream returns a non-empty
+    cursor — confirm that 10 pages of 1,000 markets each (10K total)
+    actually come back when Kalshi keeps handing out cursors."""
+    request = httpx.Request("GET", "https://example.test/markets")
+
+    class FakeHttpClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, _url: str, **_kwargs):
+            self.calls += 1
+            # Hand out 10 pages of 1000 markets, each with a cursor
+            # pointing to the next page; the 11th page returns no cursor.
+            page_index = self.calls
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "markets": [
+                        {"ticker": f"KXTEST-{page_index}-{i}"}
+                        for i in range(1000)
+                    ],
+                    "cursor": f"cursor-{page_index}" if page_index < 10 else "",
+                },
+            )
+
+    fake = FakeHttpClient()
+    client = KalshiPublicClient(base_url="https://example.test", http_client=fake)
+    markets = client.list_markets(status="open", limit=1000, mve_filter="exclude")
+
+    # 10 pages of 1000 each → 10K markets. Previously capped at 5K
+    # by the old ``max_pages=5`` default.
+    assert fake.calls == 10
+    assert len(markets) == 10_000
+
+
+def test_list_markets_respects_wall_clock_budget(monkeypatch):
+    """Bug #18: ``wall_clock_budget_seconds`` is the soft cap callers
+    use instead of guessing a page count. Pagination must stop as
+    soon as the cumulative elapsed time exceeds the budget.
+
+    The shared module-level rate-limiter polls ``time.monotonic`` in a
+    while loop to refill tokens; under a faked clock that loop sees no
+    elapsed time and spins forever. Stub the limiter to a no-op so
+    the test isolates ``iter_market_pages``'s budget check.
+    """
+    request = httpx.Request("GET", "https://example.test/markets")
+
+    # No-op the shared rate limiter for this test only.
+    monkeypatch.setattr(
+        kalshi_module._KALSHI_RATE_LIMITER, "acquire", lambda: None
+    )
+
+    # Fake clock that ONLY advances when ``iter_market_pages`` reads
+    # it. The function reads ``time.monotonic`` once before the loop
+    # (started) and once per iteration (budget check). Drive it from a
+    # counter so the elapsed value is deterministic.
+    monotonic_calls = {"count": 0}
+
+    def _fake_monotonic() -> float:
+        monotonic_calls["count"] += 1
+        # Sequence: 0 (started), then 1, 2, 3, … per iteration.
+        return float(monotonic_calls["count"] - 1)
+
+    monkeypatch.setattr(kalshi_module.time, "monotonic", _fake_monotonic)
+
+    class FakeHttpClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, _url: str, **_kwargs):
+            self.calls += 1
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "markets": [{"ticker": f"KX-{self.calls}"}],
+                    # Always hand out a next-cursor so the only stop
+                    # signal is the wall-clock budget.
+                    "cursor": f"cursor-{self.calls}",
+                },
+            )
+
+    fake = FakeHttpClient()
+    client = KalshiPublicClient(base_url="https://example.test", http_client=fake)
+    # ``time.monotonic`` returns 0 (started), then 1, 2, 3, …
+    # With budget=2.5 the iterations see elapsed = 1, 2, 3; the
+    # iter-3 check (elapsed=3 > 2.5) breaks before that page lands,
+    # so we get pages from iterations 1 and 2 only.
+    markets = client.list_markets(
+        status="open",
+        limit=1000,
+        mve_filter="exclude",
+        wall_clock_budget_seconds=2.5,
+    )
+
+    assert fake.calls == 2, (
+        f"wall-clock budget should stop pagination once elapsed > budget; "
+        f"got {fake.calls} pages"
+    )
+    assert len(markets) == 2
