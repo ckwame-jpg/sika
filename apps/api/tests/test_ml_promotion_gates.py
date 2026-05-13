@@ -386,6 +386,23 @@ def test_evaluate_family_does_not_promote_when_walk_forward_insufficient(db_sess
     assert runtime_row.promotion_baseline_brier is None
 
 
+def test_evaluate_family_fresh_row_defaults_to_zero_stability_no_carryover(db_session):
+    """Self-review case (a): a brand-new ``ModelFamilyRuntimeHealth`` row
+    with no stored ``promotion_metrics`` is the legacy-payload path's
+    default. ``_previous_metric_compatible`` returns False for an empty
+    dict so carryover stability resets to 0 and ``same_evaluation_date``
+    forces False. The first walk-forward pass then records day 1, not 0."""
+    _seed_promotion_ready_family(db_session)
+    # ``_seed_promotion_ready_family`` doesn't touch
+    # ``ModelFamilyRuntimeHealth``; ``evaluate_family`` will lazily
+    # insert a fresh row with all defaults.
+    result = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 21, tzinfo=timezone.utc))
+    assert result.gates.stability_days == 1
+    assert result.gates.promoted is False
+    runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one()
+    assert runtime_row.promotion_stability_days == 1
+
+
 def test_evaluate_family_resets_stability_when_previous_payload_predates_walk_forward(db_session):
     """Codex round 4: if the stored ``promotion_metrics`` payload was
     written by the pre-bug-#20 aggregate-Brier gate, those stability days

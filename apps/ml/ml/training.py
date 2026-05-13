@@ -313,7 +313,7 @@ def _walk_forward_folds(
     combined dataset's, so a low-volume family can use biweekly while
     the global eval stays weekly.
     """
-    timestamps = pd.to_datetime(captured_at, utc=True)
+    timestamps = pd.to_datetime(captured_at, utc=True, errors="coerce")
     timestamp_values = np.asarray(timestamps, dtype="datetime64[ns]")
     if timestamp_values.size == 0:
         return [], {
@@ -325,6 +325,15 @@ def _walk_forward_folds(
             "single_class_skipped_folds": 0,
             "insufficient_history": True,
         }
+    # NaT entries break the offset arithmetic ((NaT - NaT) // 7 is
+    # platform-defined and silently buckets the row wrong). dataset.py
+    # drops these upstream, but hand-built frames in tests skip that
+    # path, so guard here too.
+    valid_timestamp_mask = ~np.isnat(timestamp_values)
+    if not bool(valid_timestamp_mask.all()):
+        raise ValueError(
+            "captured_at contains NaT values; drop or filter them before passing to _walk_forward_folds"
+        )
     sort_order = np.argsort(timestamp_values, kind="stable")
     sorted_ts = timestamp_values[sort_order]
     offsets_days = (sorted_ts - sorted_ts[0]) / np.timedelta64(1, "D")
