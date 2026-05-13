@@ -409,15 +409,17 @@ def test_training_uniform_weights_when_advanced_only_active(tmp_path):
 
 
 # Bug #20 — walk-forward gate. The promotion gate consumes the
-# *worst-fold* Brier across an expanding-window walk-forward eval, so
-# fixtures must span enough weeks for the gate to compute ≥8 valid folds
-# with ≥25 rows each. 320 rows × 6-hour steps = ~11 weeks worth of data,
-# which yields 10 weekly folds of ~28 rows each — comfortably above the
-# floor without blowing up runtime.
+# *worst-fold* Brier across an expanding-window walk-forward eval, AND
+# enforces a per-family row floor (≥25 family-specific rows in each of
+# ≥8 walk-forward test folds). Synthetic ``_records`` rows alternate
+# MLB/NBA, so each family only sees half the global per-week density.
+# Tune the fixture so both families clear the floor with margin:
+# 560 rows × 3-hour steps = 70 days ≈ 10 weeks, ~56 rows/week global,
+# ~28 rows/week per family.
 def _walk_forward_records(**overrides):
     params = {
-        "total": 320,
-        "time_step": timedelta(hours=6),
+        "total": 560,
+        "time_step": timedelta(hours=3),
         "advanced_complete_share": 0.3,
     }
     params.update(overrides)
@@ -775,3 +777,160 @@ def test_training_metadata_includes_walk_forward_block(tmp_path):
     expected = walk_forward["candidates"][winner]["worst_fold_brier"]
     assert metadata["promotion"]["candidate_brier"] == expected
     assert metadata["promotion"]["metric"] == "worst_fold_brier"
+
+
+def test_walk_forward_folds_skip_single_class_training_buckets():
+    """Codex round 1: training slices with one class would crash sklearn.
+    Folds whose train slice has < 2 distinct targets are dropped at
+    fold-building time; ``single_class_skipped_folds`` records how many
+    we skipped so the failure mode is visible in metadata."""
+    base = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+    # 11 weekly buckets × 30 rows each. The first two buckets are all
+    # target=0 (single class). Once bucket 2 mixes in target=1, fold 2
+    # has a viable training slice (buckets 0+1 are both target=0, so
+    # the *previous* attempt at "test on bucket 1" sees only-loss
+    # training and must be dropped). Fold-on-bucket-1 is dropped;
+    # subsequent folds remain viable.
+    captured_at: list[datetime] = []
+    targets: list[int] = []
+    # Bucket 0: 30 rows, all target 0.
+    for i in range(30):
+        captured_at.append(base + timedelta(days=0, minutes=i * 10))
+        targets.append(0)
+    # Bucket 1: 30 rows, also all target 0.
+    for i in range(30):
+        captured_at.append(base + timedelta(days=7, minutes=i * 10))
+        targets.append(0)
+    # Buckets 2..10: mixed targets, 30 rows each.
+    for week in range(2, 11):
+        for i in range(30):
+            captured_at.append(base + timedelta(days=week * 7, minutes=i * 10))
+            targets.append(i % 2)
+    target_array = np.asarray(targets, dtype=int)
+    folds, meta = _walk_forward_folds(captured_at, target_values=target_array)
+    # Fold-on-bucket-1 (train = bucket 0, single class) is skipped.
+    # Fold-on-bucket-2 (train = buckets 0+1, still single class) is
+    # also skipped. Folds 3..10 are viable → 8 folds.
+    assert meta["single_class_skipped_folds"] == 2
+    assert meta["fold_count"] == 8
+    assert meta["insufficient_history"] is False
+    # Verify each retained fold's training slice has both classes.
+    for train_idx, _ in folds:
+        assert np.unique(target_array[train_idx]).size == 2
+
+
+def test_walk_forward_evaluation_emits_per_family_block(tmp_path):
+    """Bug #20 / codex round 1 — per-family walk-forward block."""
+    frame = settled_predictions_from_records(_walk_forward_records())
+    spec = build_feature_spec(frame, version="v-walk-forward-fam", use_median_imputation=True)
+    payload = walk_forward_evaluation(
+        frame,
+        spec,
+        sample_weight=None,
+        use_median_imputation=True,
+        family_keys=("mlb_props", "nba_props"),
+    )
+    assert payload["insufficient_history"] is False
+    assert set(payload["per_family"]) == {"mlb_props", "nba_props"}
+    for family_key, family_block in payload["per_family"].items():
+        assert family_block["insufficient_history"] is False, family_key
+        assert family_block["fold_count"] >= MIN_WALK_FORWARD_VALID_FOLDS
+        for rows in family_block["rows_per_fold"]:
+            assert rows >= MIN_WALK_FORWARD_ROWS_PER_FOLD
+        # Each candidate has per-family worst-fold Brier.
+        for name, candidate in family_block["candidates"].items():
+            assert len(candidate["fold_briers"]) == family_block["fold_count"]
+            assert candidate["worst_fold_brier"] == max(candidate["fold_briers"]), name
+
+
+def test_training_per_family_floor_blocks_sparse_family_promotion(tmp_path):
+    """A served family with too few rows per fold stays in shadow even
+    when a sibling family clears the global gate. Codex round 1 caught
+    that the prior global-only gate let a sparse family ride a sibling's
+    history."""
+    # Build a dataset with rich MLB rows + a small smear of NBA rows.
+    # MLB has 540 rows over 10 weeks (~54/week → 27/week per ... wait —
+    # all of these synthetic rows go to mlb_props because we override
+    # the family assignment below).
+    mlb_records = _records(
+        total=560,
+        time_step=timedelta(hours=3),
+        advanced_complete_share=0.3,
+    )
+    for record in mlb_records:
+        record["sport_key"] = "MLB"
+        features = dict(record["features"] or {})
+        features["family_key"] = "mlb_props"
+        record["features"] = features
+    # Tack on a sparse smear of NBA props rows (3 rows total — far below
+    # any per-family floor). Slot them across the same 10-week span so
+    # they share the global fold boundaries.
+    nba_base = datetime(2026, 4, 17, 18, 0, tzinfo=timezone.utc)
+    sparse_nba = []
+    for nba_index, day_offset in enumerate((10, 30, 50)):
+        sparse_nba.append(
+            {
+                "id": 10_000 + nba_index,
+                "market_id": 10_000 + nba_index,
+                "event_id": 99_000 + nba_index,
+                "ticker": f"NBA-SPARSE-{nba_index}",
+                "sport_key": "NBA",
+                "event_name": f"Sparse NBA {nba_index}",
+                "market_family": "player_prop",
+                "market_kind": "player_prop",
+                "stat_key": "points",
+                "threshold": 5.5,
+                "subject_name": f"Sparse Player {nba_index}",
+                "subject_team": f"Sparse Team {nba_index}",
+                "capture_scope": "recommendation",
+                "side": "yes",
+                "suggested_price": 0.5,
+                "fair_yes_price": 0.55,
+                "edge": 0.05,
+                "confidence": 0.6,
+                "selection_score": 0.1,
+                "features": {
+                    "family_key": "nba_props",
+                    "recent_average": 6.0,
+                    "threshold": 5.5,
+                    "yes_probability": 0.6,
+                    "has_team_context": True,
+                    "latest_log_days_ago": 0,
+                },
+                "scoring_diagnostics": {},
+                "market_status_at_capture": "active",
+                "prediction_outcome": "won" if nba_index % 2 == 0 else "lost",
+                "settled_at": (nba_base + timedelta(days=day_offset, hours=3)).isoformat(),
+                "realized_pnl": 0.5 if nba_index % 2 == 0 else -0.5,
+                "captured_at": (nba_base + timedelta(days=day_offset)).isoformat(),
+            }
+        )
+    frame = settled_predictions_from_records(mlb_records + sparse_nba)
+
+    result = train_and_package(
+        frame,
+        artifact_root=tmp_path / "artifacts",
+        manifest_out=tmp_path / "manifests" / "current.json",
+        serve_family_keys=("mlb_props", "nba_props"),
+        model_version="2026-05-06",
+        promotion_baseline_brier=1.0,  # impossibly loose — anything clearing the floor promotes
+    )
+    metadata = json.loads((result.artifact_dir / "training_metadata.json").read_text())
+    per_family = metadata["promotion"]["per_family"]
+    # MLB has plenty of rows per fold → eligible and promotes against
+    # the loose baseline.
+    assert per_family["mlb_props"]["insufficient_history"] is False
+    assert per_family["mlb_props"]["promoted"] is True
+    # NBA is too sparse (only 3 rows total) → insufficient_history blocks
+    # promotion even though the global gate would otherwise let it through.
+    assert per_family["nba_props"]["insufficient_history"] is True
+    assert per_family["nba_props"]["promoted"] is False
+    # Per-family modes match per-family decisions in the manifest.
+    manifest = json.loads(result.manifest_path.read_text())
+    mode_by_family = {entry["serves_family_key"]: entry["mode"] for entry in manifest["families"]}
+    assert mode_by_family["mlb_props"] == "ml"
+    assert mode_by_family["nba_props"] == "shadow"
+    # Top-level serving_mode flips to "ml" because at least one family
+    # promoted; that's correct behaviour even though one family stayed
+    # shadow.
+    assert manifest["serving_mode"] == "ml"

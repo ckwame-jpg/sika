@@ -273,6 +273,7 @@ MIN_WALK_FORWARD_VALID_FOLDS = 8
 def _walk_forward_folds(
     captured_at: Any,
     *,
+    target_values: np.ndarray | None = None,
     min_rows_per_fold: int = MIN_WALK_FORWARD_ROWS_PER_FOLD,
     min_valid_folds: int = MIN_WALK_FORWARD_VALID_FOLDS,
 ) -> tuple[list[tuple[np.ndarray, np.ndarray]], dict[str, Any]]:
@@ -295,6 +296,12 @@ def _walk_forward_folds(
     The earliest bucket is always training-only — expanding-window has
     no history before the first observation. Subsequent buckets become
     test folds whose training slice is every row in earlier buckets.
+
+    When ``target_values`` is supplied, folds whose training slice has
+    fewer than two distinct target classes are dropped (a one-class
+    training set crashes LogisticRegression/HGBC during refit). The
+    dropped buckets are still counted in ``meta['rows_per_fold']`` to
+    aid debugging.
     """
     timestamps = pd.to_datetime(captured_at, utc=True)
     timestamp_values = np.asarray(timestamps, dtype="datetime64[ns]")
@@ -305,6 +312,7 @@ def _walk_forward_folds(
             "min_rows_per_fold": min_rows_per_fold,
             "min_valid_folds": min_valid_folds,
             "rows_per_fold": [],
+            "single_class_skipped_folds": 0,
             "insufficient_history": True,
         }
     sort_order = np.argsort(timestamp_values, kind="stable")
@@ -317,6 +325,7 @@ def _walk_forward_folds(
         unique_buckets = sorted(set(int(b) for b in bucket_ids.tolist()))
         folds: list[tuple[np.ndarray, np.ndarray]] = []
         rows_per_fold: list[int] = []
+        single_class_skipped = 0
         for bucket in unique_buckets[1:]:
             test_mask = bucket_ids == bucket
             train_mask = bucket_ids < bucket
@@ -325,7 +334,16 @@ def _walk_forward_folds(
                 continue
             if int(train_mask.sum()) == 0:
                 continue
-            folds.append((sort_order[train_mask], sort_order[test_mask]))
+            train_idx = sort_order[train_mask]
+            test_idx = sort_order[test_mask]
+            if target_values is not None and np.unique(target_values[train_idx]).size < 2:
+                # Single-class training set would crash the sklearn fits
+                # downstream; drop the fold rather than promote on a
+                # partial walk-forward. Once a row of the missing class
+                # appears later, subsequent folds become viable.
+                single_class_skipped += 1
+                continue
+            folds.append((train_idx, test_idx))
             rows_per_fold.append(test_count)
         meta = {
             "fold_count": len(folds),
@@ -333,6 +351,7 @@ def _walk_forward_folds(
             "min_rows_per_fold": min_rows_per_fold,
             "min_valid_folds": min_valid_folds,
             "rows_per_fold": rows_per_fold,
+            "single_class_skipped_folds": single_class_skipped,
             "insufficient_history": len(folds) < min_valid_folds,
         }
         if len(folds) >= min_valid_folds:
@@ -354,6 +373,7 @@ def walk_forward_evaluation(
     candidates: dict[str, Any] | None = None,
     min_rows_per_fold: int = MIN_WALK_FORWARD_ROWS_PER_FOLD,
     min_valid_folds: int = MIN_WALK_FORWARD_VALID_FOLDS,
+    family_keys: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Expanding-window walk-forward Brier per candidate.
 
@@ -363,6 +383,16 @@ def walk_forward_evaluation(
     ``worst_fold_brier`` — the maximum across folds — so a candidate
     that ships only because of one favourable stretch fails the gate.
 
+    When ``family_keys`` is supplied, a per-family block is emitted in
+    addition to the global one. Each entry restricts the *test* fold
+    to rows belonging to that family (training stays global, matching
+    the served-model topology — one shared artifact per training run).
+    A family with fewer than ``min_valid_folds`` family-filtered test
+    folds (each with ``min_rows_per_fold`` rows of that family) is
+    flagged ``insufficient_history`` and must not promote regardless
+    of how the global gate scores. This enforces the per-family
+    history floor demanded by bug #20.
+
     Returns a dict with ``insufficient_history`` set when the
     fold-building stage can't assemble at least ``min_valid_folds``
     folds with ``min_rows_per_fold`` rows each (after the weekly →
@@ -370,8 +400,10 @@ def walk_forward_evaluation(
     no fits are run — and callers must treat the result as "do not
     promote".
     """
+    target_array = frame["target"].to_numpy()
     folds, fold_meta = _walk_forward_folds(
         frame["captured_at"],
+        target_values=target_array,
         min_rows_per_fold=min_rows_per_fold,
         min_valid_folds=min_valid_folds,
     )
@@ -381,15 +413,26 @@ def walk_forward_evaluation(
         "rows_per_fold": list(fold_meta["rows_per_fold"]),
         "min_rows_per_fold": fold_meta["min_rows_per_fold"],
         "min_valid_folds": fold_meta["min_valid_folds"],
+        "single_class_skipped_folds": int(fold_meta.get("single_class_skipped_folds", 0)),
         "insufficient_history": fold_meta["insufficient_history"],
         "candidates": {},
+        "per_family": {},
     }
     if payload["insufficient_history"]:
+        # When the global fold-building fails, no family can promote.
+        for family_key in family_keys:
+            payload["per_family"][family_key] = {
+                "fold_count": 0,
+                "rows_per_fold": [],
+                "insufficient_history": True,
+                "candidates": {},
+            }
         return payload
 
     candidate_set = candidates if candidates is not None else _candidate_estimators(len(frame))
-    y = frame["target"].to_numpy()
+    family_series = frame["family_key"].astype(str).to_numpy() if "family_key" in frame.columns else None
 
+    fold_predictions: dict[str, list[np.ndarray]] = {name: [] for name in candidate_set}
     for name, template in candidate_set.items():
         fold_briers: list[float] = []
         for train_idx, test_idx in folds:
@@ -403,14 +446,57 @@ def walk_forward_evaluation(
             x_train = _matrix(train_frame, fold_spec)
             x_test = _matrix(test_frame, fold_spec)
             fold_weights = None if sample_weight is None else sample_weight[train_idx]
-            fitted = _fit_estimator(clone(template), x_train, y[train_idx], sample_weight=fold_weights)
+            fitted = _fit_estimator(clone(template), x_train, target_array[train_idx], sample_weight=fold_weights)
             probabilities = np.clip(fitted.predict_proba(x_test)[:, 1], 1e-6, 1 - 1e-6)
-            fold_briers.append(round(float(brier_score_loss(y[test_idx], probabilities)), 6))
+            fold_predictions[name].append(probabilities)
+            fold_briers.append(round(float(brier_score_loss(target_array[test_idx], probabilities)), 6))
         payload["candidates"][name] = {
             "fold_briers": fold_briers,
             "worst_fold_brier": round(float(max(fold_briers)), 6),
             "mean_fold_brier": round(float(np.mean(fold_briers)), 6),
         }
+
+    if not family_keys:
+        return payload
+
+    if family_series is None:
+        raise ValueError("family_keys requested but frame has no 'family_key' column")
+
+    for family_key in family_keys:
+        family_mask = family_series == family_key
+        family_fold_data: list[tuple[int, np.ndarray]] = []
+        for fold_index, (_, test_idx) in enumerate(folds):
+            test_family_mask = family_mask[test_idx]
+            family_test_count = int(test_family_mask.sum())
+            if family_test_count >= min_rows_per_fold:
+                family_fold_data.append((fold_index, test_family_mask))
+        family_rows = [int(mask.sum()) for _, mask in family_fold_data]
+        family_insufficient = len(family_fold_data) < min_valid_folds
+        family_payload: dict[str, Any] = {
+            "fold_count": len(family_fold_data),
+            "rows_per_fold": family_rows,
+            "insufficient_history": family_insufficient,
+            "candidates": {},
+        }
+        if family_insufficient:
+            payload["per_family"][family_key] = family_payload
+            continue
+        for name in candidate_set:
+            fold_briers_family: list[float] = []
+            for fold_index, test_family_mask in family_fold_data:
+                test_idx = folds[fold_index][1]
+                family_test_absolute = test_idx[test_family_mask]
+                family_probabilities = fold_predictions[name][fold_index][test_family_mask]
+                fold_briers_family.append(
+                    round(float(brier_score_loss(target_array[family_test_absolute], family_probabilities)), 6)
+                )
+            family_payload["candidates"][name] = {
+                "fold_briers": fold_briers_family,
+                "worst_fold_brier": round(float(max(fold_briers_family)), 6),
+                "mean_fold_brier": round(float(np.mean(fold_briers_family)), 6),
+            }
+        payload["per_family"][family_key] = family_payload
+
     return payload
 
 
@@ -740,6 +826,7 @@ def train_and_package(
         feature_spec,
         sample_weight=sample_weights,
         use_median_imputation=use_median_imputation,
+        family_keys=resolved_serve_keys,
     )
     x = _matrix(dataset, feature_spec)
     y = dataset["target"].to_numpy()
@@ -750,41 +837,78 @@ def train_and_package(
         sample_weight=sample_weights,
     )
 
-    # Bug #20 — promotion gate consumes the *worst-fold* walk-forward
-    # Brier, not the single 80/20 time-split Brier. A model that ships
-    # only because of one favourable stretch fails the gate. When
-    # walk-forward can't assemble the per-family minimum (8 folds,
-    # ≥25 rows each, weekly with 2-week fall-back), the family stays
-    # in shadow regardless of the baseline supplied.
+    # Bug #20 — promotion is decided per ``serves_family_key`` against
+    # the *worst-fold* walk-forward Brier. A family must accumulate
+    # ≥``MIN_WALK_FORWARD_VALID_FOLDS`` test folds (each with
+    # ≥``MIN_WALK_FORWARD_ROWS_PER_FOLD`` rows of that family) before it
+    # is even eligible. The trained model is global, so the family's
+    # walk-forward uses the global training slice and a family-restricted
+    # test slice — measuring "how well does the global model serve this
+    # family over time." Sparse families fall back to shadow even when a
+    # sibling family is rich enough to clear the gate on its own.
     #
     # NOTE on ``serving_mode`` values: ``apps/api/app/services/ml/runtime.py``
-    # accepts only ``"shadow"`` and ``"ml"`` from the manifest. ``"serving"``
-    # is rejected and falls back to auto-shadow, which would silently no-op
-    # the entire promotion path.
-    walk_forward_winner = walk_forward["candidates"].get(winner)
-    candidate_brier: float | None = (
-        float(walk_forward_winner["worst_fold_brier"]) if walk_forward_winner is not None else None
+    # accepts only ``"shadow"`` and ``"ml"`` from a manifest. ``"serving"``
+    # is rejected and falls back to auto-shadow, which would silently
+    # no-op the entire promotion path. The top-level ``serving_mode``
+    # flips to ``"ml"`` when at least one served family promotes; each
+    # ``ModelArtifact`` carries its own per-family ``mode``.
+    baseline_value: float | None = (
+        float(promotion_baseline_brier) if promotion_baseline_brier is not None else None
     )
-    insufficient_history = bool(walk_forward["insufficient_history"]) or candidate_brier is None
+
+    def _decide_family(family_key: str) -> dict[str, Any]:
+        family_block = walk_forward["per_family"].get(family_key, {})
+        family_candidates = family_block.get("candidates", {})
+        winner_block = family_candidates.get(winner)
+        candidate_brier_value: float | None = (
+            float(winner_block["worst_fold_brier"]) if winner_block is not None else None
+        )
+        family_insufficient = bool(family_block.get("insufficient_history", True)) or candidate_brier_value is None
+        decision: dict[str, Any] = {
+            "candidate_brier": candidate_brier_value,
+            "promoted": False,
+            "insufficient_history": family_insufficient,
+            "fold_count": int(family_block.get("fold_count", 0)),
+            "rows_per_fold": list(family_block.get("rows_per_fold", [])),
+        }
+        if baseline_value is None:
+            return decision
+        if family_insufficient:
+            decision["reason"] = "insufficient_history"
+            return decision
+        decision["promoted"] = candidate_brier_value < baseline_value
+        return decision
+
+    per_family_decisions: dict[str, dict[str, Any]] = {
+        family_key: _decide_family(family_key) for family_key in resolved_serve_keys
+    }
+    any_family_promoted = any(decision["promoted"] for decision in per_family_decisions.values())
+    serving_mode = "ml" if any_family_promoted else "shadow"
+
+    # Aggregate decision for the global-model promotion block. The
+    # ``candidate_brier`` carried here is the winner's overall worst-fold
+    # Brier (across all families) — informational only; per-family
+    # decisions live in ``per_family_decisions``.
+    overall_winner_block = walk_forward["candidates"].get(winner)
+    overall_candidate_brier: float | None = (
+        float(overall_winner_block["worst_fold_brier"]) if overall_winner_block is not None else None
+    )
+    overall_insufficient = bool(walk_forward["insufficient_history"]) or overall_candidate_brier is None
     promotion_decision: dict[str, Any] = {
-        "baseline_brier": None if promotion_baseline_brier is None else float(promotion_baseline_brier),
-        "candidate_brier": candidate_brier,
-        "promoted": False,
-        "insufficient_history": insufficient_history,
+        "baseline_brier": baseline_value,
+        "candidate_brier": overall_candidate_brier,
+        "promoted": any_family_promoted,
+        "insufficient_history": overall_insufficient,
         "fold_count": int(walk_forward["fold_count"]),
         "fold_window_days": walk_forward["fold_window_days"],
         "min_rows_per_fold": int(walk_forward["min_rows_per_fold"]),
         "min_valid_folds": int(walk_forward["min_valid_folds"]),
         "metric": "worst_fold_brier",
+        "per_family": per_family_decisions,
     }
-    if promotion_baseline_brier is None or insufficient_history:
-        serving_mode = "shadow"
-        if insufficient_history:
-            promotion_decision["reason"] = "insufficient_history"
-    else:
-        promoted = candidate_brier < float(promotion_baseline_brier)
-        serving_mode = "ml" if promoted else "shadow"
-        promotion_decision["promoted"] = promoted
+    if overall_insufficient:
+        promotion_decision["reason"] = "insufficient_history"
 
     model_name = f"global_{winner}_residual"
     timestamp = model_version.replace("-", "")
@@ -845,7 +969,10 @@ def train_and_package(
                         calibration_version="calibrated_v1",
                         feature_set_version=feature_set_version,
                         artifact_path=str(relative_artifact),
-                        mode=serving_mode,
+                        # Per-family mode: a family that doesn't clear its
+                        # own walk-forward floor stays in shadow even when
+                        # a sibling family promotes the global manifest.
+                        mode="ml" if per_family_decisions[serves_key]["promoted"] else "shadow",
                         metadata={
                             "behavior": "sklearn_predict_proba",
                             "feature_mode": "residual_calibration",
