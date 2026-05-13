@@ -89,6 +89,8 @@ from app.services.trade_desk import (
     build_trade_desk_response as build_trade_desk_response_live,
     load_trade_desk_snapshot,
     sport_availability_rows,
+    sport_order as _sport_order,  # bug #30 — shared with trade_desk
+    visible_sports as _visible_sports,  # bug #30 — shared with trade_desk
 )
 from app.services.watchlist_coverage import (
     CURRENT_WATCHLIST_SPORTS,
@@ -217,13 +219,10 @@ KALSHI_PROP_CATEGORY_SLUGS = {
 }
 
 
-def _visible_sports() -> list[str]:
-    return [sport.upper() for sport in get_settings().enabled_sports if sport.upper() != "UFC"]
-
-
-def _sport_order(sport_key: str | None) -> int:
-    sport_map = {sport: index for index, sport in enumerate(_visible_sports())}
-    return sport_map.get((sport_key or "").upper(), len(sport_map))
+# Bug #30 — ``_visible_sports`` / ``_sport_order`` previously lived
+# both here and in ``app/services/trade_desk.py``. The canonical
+# definition stays in trade_desk; this module aliases it via the
+# import above.
 
 
 def _latest_successful_refresh_at(db: Session) -> datetime | None:

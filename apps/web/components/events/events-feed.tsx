@@ -22,19 +22,7 @@ import {
   sportLabel,
 } from "@/lib/utils";
 
-const SPORT_TINTS: Record<string, string> = {
-  nba: "var(--sport-nba)",
-  nfl: "var(--sport-nfl)",
-  mlb: "var(--sport-mlb)",
-  soccer: "var(--sport-soccer)",
-  tennis: "var(--sport-tennis)",
-  ufc: "var(--sport-ufc)",
-};
-
-function sportTint(sportKey: string | null | undefined): string {
-  if (!sportKey) return "var(--color-cosmos-violet-default-tint)";
-  return SPORT_TINTS[sportKey.toLowerCase()] ?? "var(--color-cosmos-violet-default-tint)";
-}
+import { sportTint } from "@/lib/sport-tints";  // bug #30 — shared map
 
 function SportPill({ sportKey }: { sportKey: string }) {
   const tint = sportTint(sportKey);
