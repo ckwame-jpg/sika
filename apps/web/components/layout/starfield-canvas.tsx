@@ -317,6 +317,24 @@ export function StarfieldCanvas() {
       sky.tx = cx * 20;
       sky.ty = cy * 14;
     };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!sky.dragging) return;
+      sky.ox = sky.startOx + (e.clientX - lx) * 0.6;
+      sky.oy = sky.startOy + (e.clientY - ly) * 0.6;
+    };
+    const onPointerUp = () => {
+      if (sky.dragging) {
+        sky.dragging = false;
+        document.body.style.cursor = "";
+      }
+      // Bug #26 — detach pointermove + pointerup as soon as the drag
+      // ends so we're not handling every mouse movement on the page
+      // for the rest of the session. Re-attached on the next
+      // pointerdown that lands on a drag-eligible target.
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    };
     const onPointerDown = (e: PointerEvent) => {
       const tgt = e.target;
       if (!(tgt instanceof Element)) return;
@@ -335,34 +353,44 @@ export function StarfieldCanvas() {
       document.body.style.cursor = "grabbing";
       const hint = document.getElementById("orbitHint");
       if (hint) hint.classList.add("hide");
+      // Attach the move/up listeners only for the lifetime of this
+      // drag; ``onPointerUp`` removes them.
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerUp);
     };
-    const onPointerMove = (e: PointerEvent) => {
-      if (!sky.dragging) return;
-      sky.ox = sky.startOx + (e.clientX - lx) * 0.6;
-      sky.oy = sky.startOy + (e.clientY - ly) * 0.6;
-    };
-    const onPointerUp = () => {
-      sky.dragging = false;
-      document.body.style.cursor = "";
+
+    // Bug #26 — pause the animation loop while the tab is hidden so
+    // the canvas isn't burning CPU + battery in the background. The
+    // ``frame`` closure reschedules itself; ``raf = 0`` stops the
+    // loop, and ``visibilitychange`` restarts it when we return.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        if (raf) {
+          cancelAnimationFrame(raf);
+          raf = 0;
+        }
+      } else if (!raf) {
+        raf = requestAnimationFrame(frame);
+      }
     };
 
     resize();
     window.addEventListener("resize", resize);
     window.addEventListener("mousemove", onMove, { passive: true });
     window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("pointercancel", onPointerUp);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     raf = requestAnimationFrame(frame);
 
     return () => {
-      cancelAnimationFrame(raf);
+      if (raf) cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerUp);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
