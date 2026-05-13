@@ -10,6 +10,7 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
@@ -246,6 +247,171 @@ def _split_by_time(frame: pd.DataFrame, *, test_size: float = 0.2) -> tuple[np.n
     split_at = max(int(len(ordered) * (1.0 - test_size)), 1)
     split_at = min(split_at, len(ordered) - 1)
     return ordered[:split_at], ordered[split_at:]
+
+
+# Bug #20 — walk-forward evaluation
+#
+# The original promotion gate consumed the single 80/20 time-split Brier
+# (``_split_by_time``). That is not robust against a "one lucky week"
+# regime — a model that happens to look good on the final 20% of rows
+# can promote and then regress on the next slate. The fix is an
+# expanding-window walk-forward: bucket rows into weekly windows, fit
+# on every prior week, evaluate on the current week, and consume the
+# *worst* per-fold Brier as the promotion candidate.
+#
+# Low-volume families (game-winner markets settle ~30 picks/week) need
+# 2-week buckets to clear the 25-row threshold per fold; we auto-widen
+# when weekly bucketing fails to assemble enough valid folds.
+#
+# A parallel implementation lives in ``apps/api/app/services/ml/promotion.py``
+# (post-hoc heuristic-vs-shadow Brier per week). The two implementations
+# can be consolidated when bug #29 introduces a shared package.
+MIN_WALK_FORWARD_ROWS_PER_FOLD = 25
+MIN_WALK_FORWARD_VALID_FOLDS = 8
+
+
+def _walk_forward_folds(
+    captured_at: Any,
+    *,
+    min_rows_per_fold: int = MIN_WALK_FORWARD_ROWS_PER_FOLD,
+    min_valid_folds: int = MIN_WALK_FORWARD_VALID_FOLDS,
+) -> tuple[list[tuple[np.ndarray, np.ndarray]], dict[str, Any]]:
+    """Expanding-window walk-forward folds keyed off capture time.
+
+    Returns ``(folds, meta)``. ``folds`` is a list of
+    ``(train_idx, test_idx)`` tuples whose indices refer to positions in
+    the input ``captured_at`` array (suitable for ``frame.iloc``).
+    ``meta`` records the windowing decision so callers can surface it
+    in training metadata.
+
+    Bucketing rule:
+      1. Try 7-day buckets first. If at least ``min_valid_folds`` test
+         buckets clear ``min_rows_per_fold`` rows, use weekly.
+      2. Otherwise try 14-day buckets — the low-volume escape hatch.
+      3. If neither attempt clears the floor, mark
+         ``insufficient_history`` and return the better-populated of the
+         two attempts so observability survives the failure.
+
+    The earliest bucket is always training-only — expanding-window has
+    no history before the first observation. Subsequent buckets become
+    test folds whose training slice is every row in earlier buckets.
+    """
+    timestamps = pd.to_datetime(captured_at, utc=True)
+    timestamp_values = np.asarray(timestamps, dtype="datetime64[ns]")
+    if timestamp_values.size == 0:
+        return [], {
+            "fold_count": 0,
+            "week_size_days": None,
+            "min_rows_per_fold": min_rows_per_fold,
+            "min_valid_folds": min_valid_folds,
+            "rows_per_fold": [],
+            "insufficient_history": True,
+        }
+    sort_order = np.argsort(timestamp_values, kind="stable")
+    sorted_ts = timestamp_values[sort_order]
+    offsets_days = (sorted_ts - sorted_ts[0]) / np.timedelta64(1, "D")
+
+    best_attempt: tuple[list[tuple[np.ndarray, np.ndarray]], dict[str, Any]] | None = None
+    for week_size in (7, 14):
+        bucket_ids = (offsets_days // week_size).astype(int)
+        unique_buckets = sorted(set(int(b) for b in bucket_ids.tolist()))
+        folds: list[tuple[np.ndarray, np.ndarray]] = []
+        rows_per_fold: list[int] = []
+        for bucket in unique_buckets[1:]:
+            test_mask = bucket_ids == bucket
+            train_mask = bucket_ids < bucket
+            test_count = int(test_mask.sum())
+            if test_count < min_rows_per_fold:
+                continue
+            if int(train_mask.sum()) == 0:
+                continue
+            folds.append((sort_order[train_mask], sort_order[test_mask]))
+            rows_per_fold.append(test_count)
+        meta = {
+            "fold_count": len(folds),
+            "week_size_days": week_size,
+            "min_rows_per_fold": min_rows_per_fold,
+            "min_valid_folds": min_valid_folds,
+            "rows_per_fold": rows_per_fold,
+            "insufficient_history": len(folds) < min_valid_folds,
+        }
+        if len(folds) >= min_valid_folds:
+            return folds, meta
+        if best_attempt is None or len(folds) > len(best_attempt[0]):
+            best_attempt = (folds, meta)
+
+    assert best_attempt is not None
+    folds, meta = best_attempt
+    return folds, {**meta, "insufficient_history": True}
+
+
+def walk_forward_evaluation(
+    frame: pd.DataFrame,
+    feature_spec: FeatureSpec,
+    *,
+    sample_weight: np.ndarray | None = None,
+    use_median_imputation: bool = True,
+    candidates: dict[str, Any] | None = None,
+    min_rows_per_fold: int = MIN_WALK_FORWARD_ROWS_PER_FOLD,
+    min_valid_folds: int = MIN_WALK_FORWARD_VALID_FOLDS,
+) -> dict[str, Any]:
+    """Expanding-window walk-forward Brier per candidate.
+
+    Each fold refits the candidate on the training slice (every row in
+    earlier weeks), evaluates on the test bucket (the current week), and
+    records the Brier. The promotion gate downstream consumes
+    ``worst_fold_brier`` — the maximum across folds — so a candidate
+    that ships only because of one favourable stretch fails the gate.
+
+    Returns a dict with ``insufficient_history`` set when the
+    fold-building stage can't assemble at least ``min_valid_folds``
+    folds with ``min_rows_per_fold`` rows each (after the weekly →
+    biweekly fall-back). When insufficient, ``candidates`` is empty —
+    no fits are run — and callers must treat the result as "do not
+    promote".
+    """
+    folds, fold_meta = _walk_forward_folds(
+        frame["captured_at"],
+        min_rows_per_fold=min_rows_per_fold,
+        min_valid_folds=min_valid_folds,
+    )
+    payload: dict[str, Any] = {
+        "fold_window_days": fold_meta["week_size_days"],
+        "fold_count": fold_meta["fold_count"],
+        "rows_per_fold": list(fold_meta["rows_per_fold"]),
+        "min_rows_per_fold": fold_meta["min_rows_per_fold"],
+        "min_valid_folds": fold_meta["min_valid_folds"],
+        "insufficient_history": fold_meta["insufficient_history"],
+        "candidates": {},
+    }
+    if payload["insufficient_history"]:
+        return payload
+
+    candidate_set = candidates if candidates is not None else _candidate_estimators(len(frame))
+    y = frame["target"].to_numpy()
+
+    for name, template in candidate_set.items():
+        fold_briers: list[float] = []
+        for train_idx, test_idx in folds:
+            train_frame = frame.iloc[train_idx]
+            test_frame = frame.iloc[test_idx]
+            fold_spec = _fold_feature_spec(
+                train_frame,
+                feature_spec,
+                use_median_imputation=use_median_imputation,
+            )
+            x_train = _matrix(train_frame, fold_spec)
+            x_test = _matrix(test_frame, fold_spec)
+            fold_weights = None if sample_weight is None else sample_weight[train_idx]
+            fitted = _fit_estimator(clone(template), x_train, y[train_idx], sample_weight=fold_weights)
+            probabilities = np.clip(fitted.predict_proba(x_test)[:, 1], 1e-6, 1 - 1e-6)
+            fold_briers.append(round(float(brier_score_loss(y[test_idx], probabilities)), 6))
+        payload["candidates"][name] = {
+            "fold_briers": fold_briers,
+            "worst_fold_brier": round(float(max(fold_briers)), 6),
+            "mean_fold_brier": round(float(np.mean(fold_briers)), 6),
+        }
+    return payload
 
 
 def _metrics_for_predictions(frame: pd.DataFrame, indices: np.ndarray, probabilities: np.ndarray) -> dict[str, Any]:
@@ -569,6 +735,12 @@ def train_and_package(
         sample_weight=sample_weights,
         use_median_imputation=use_median_imputation,
     )
+    walk_forward = walk_forward_evaluation(
+        dataset,
+        feature_spec,
+        sample_weight=sample_weights,
+        use_median_imputation=use_median_imputation,
+    )
     x = _matrix(dataset, feature_spec)
     y = dataset["target"].to_numpy()
     final_estimator = _fit_estimator(
@@ -578,28 +750,41 @@ def train_and_package(
         sample_weight=sample_weights,
     )
 
-    # PR 3d — promotion gate. If a baseline brier is supplied, only flip
-    # serving_mode to "ml" (the runtime sentinel that activates the model)
-    # when v2 strictly beats the baseline on the held-out time slice; ties
-    # stay in shadow so the API runtime keeps using the heuristic /
-    # previous serving model.
+    # Bug #20 — promotion gate consumes the *worst-fold* walk-forward
+    # Brier, not the single 80/20 time-split Brier. A model that ships
+    # only because of one favourable stretch fails the gate. When
+    # walk-forward can't assemble the per-family minimum (8 folds,
+    # ≥25 rows each, weekly with 2-week fall-back), the family stays
+    # in shadow regardless of the baseline supplied.
     #
     # NOTE on ``serving_mode`` values: ``apps/api/app/services/ml/runtime.py``
     # accepts only ``"shadow"`` and ``"ml"`` from the manifest. ``"serving"``
     # is rejected and falls back to auto-shadow, which would silently no-op
     # the entire promotion path.
-    time_brier = float(evaluations[winner]["time"]["brier"])
-    if promotion_baseline_brier is None:
+    walk_forward_winner = walk_forward["candidates"].get(winner)
+    candidate_brier: float | None = (
+        float(walk_forward_winner["worst_fold_brier"]) if walk_forward_winner is not None else None
+    )
+    insufficient_history = bool(walk_forward["insufficient_history"]) or candidate_brier is None
+    promotion_decision: dict[str, Any] = {
+        "baseline_brier": None if promotion_baseline_brier is None else float(promotion_baseline_brier),
+        "candidate_brier": candidate_brier,
+        "promoted": False,
+        "insufficient_history": insufficient_history,
+        "fold_count": int(walk_forward["fold_count"]),
+        "fold_window_days": walk_forward["fold_window_days"],
+        "min_rows_per_fold": int(walk_forward["min_rows_per_fold"]),
+        "min_valid_folds": int(walk_forward["min_valid_folds"]),
+        "metric": "worst_fold_brier",
+    }
+    if promotion_baseline_brier is None or insufficient_history:
         serving_mode = "shadow"
-        promotion_decision: dict[str, Any] = {"baseline_brier": None, "candidate_brier": time_brier, "promoted": False}
+        if insufficient_history:
+            promotion_decision["reason"] = "insufficient_history"
     else:
-        promoted = time_brier < float(promotion_baseline_brier)
+        promoted = candidate_brier < float(promotion_baseline_brier)
         serving_mode = "ml" if promoted else "shadow"
-        promotion_decision = {
-            "baseline_brier": float(promotion_baseline_brier),
-            "candidate_brier": time_brier,
-            "promoted": promoted,
-        }
+        promotion_decision["promoted"] = promoted
 
     model_name = f"global_{winner}_residual"
     timestamp = model_version.replace("-", "")
@@ -637,6 +822,7 @@ def train_and_package(
             "final refit / serving model"
             if use_median_imputation else None
         ),
+        "walk_forward_evaluation": walk_forward,
         "promotion": promotion_decision,
     }
     if not dry_run:
