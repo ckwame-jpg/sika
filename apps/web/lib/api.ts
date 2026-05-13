@@ -39,9 +39,17 @@ const BASE = "/api";
 
 async function request<T>(
   path: string,
-  init?: RequestInit,
+  init?: RequestInit & { noRetry?: boolean },
 ): Promise<T> {
-  const maxAttempts = init?.method && init.method !== "GET" ? 1 : 3;
+  // Bug #6, codex round-15 P2 on PR #40: callers can opt out of the
+  // GET retry behavior. Used by ``fetchPositions({ force: true })``
+  // — each retry would call ``/positions?force=true`` again, which
+  // ``expire_kalshi_account_cache`` the freshly-populated cache and
+  // trigger another Kalshi fetch. From one user click that could be
+  // 3× upstream calls; opt out so a single click is a single fetch.
+  const { noRetry, ...fetchInit } = init ?? {};
+  const maxAttempts =
+    noRetry || (fetchInit.method && fetchInit.method !== "GET") ? 1 : 3;
   const delays = [1000, 2000, 4000];
   let lastError: Error | undefined;
 
@@ -50,9 +58,9 @@ async function request<T>(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
       const res = await fetch(`${BASE}${path}`, {
-        headers: { "Content-Type": "application/json", ...init?.headers },
-        ...init,
-        signal: init?.signal ?? controller.signal,
+        headers: { "Content-Type": "application/json", ...fetchInit.headers },
+        ...fetchInit,
+        signal: fetchInit.signal ?? controller.signal,
       });
       clearTimeout(timeout);
 
@@ -104,7 +112,13 @@ export const fetchEvents = (sport?: string, day?: string) => {
   return request<EventRead[]>(`/events${qs ? `?${qs}` : ""}`);
 };
 
-export const fetchPositions = () => request<PositionsRead>("/positions");
+export const fetchPositions = (options?: { force?: boolean }) =>
+  // Codex round-15 P2 on PR #40: pass ``noRetry`` when forcing so a
+  // 15 s client timeout doesn't lead to retries that each ``expire``
+  // the cache and trigger another Kalshi fetch.
+  options?.force
+    ? request<PositionsRead>("/positions?force=true", { noRetry: true })
+    : request<PositionsRead>("/positions");
 
 export const openPaperPosition = (body: PaperPositionCreate) =>
   request<PaperPositionRead>("/paper-positions", {

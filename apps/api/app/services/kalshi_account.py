@@ -1,4 +1,7 @@
+import logging
 import re
+import threading
+import time
 from typing import Any
 
 import httpx
@@ -6,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clients.kalshi import KalshiAccountClient
+from app.database import SessionLocal
 from app.models import Market
 from app.schemas import (
     KalshiAccountBalanceRead,
@@ -13,6 +17,112 @@ from app.schemas import (
     KalshiAccountMarketPositionRead,
     KalshiAccountRead,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+# Bug #6: cache the ``build_kalshi_account_snapshot`` response so
+# /positions polling every ~15 s doesn't fan out to 3+ live Kalshi
+# calls per request. The endpoint is single-tenant (one API key per
+# process), so a single global cache key is sufficient.
+#
+# Two-tier TTL implementing stale-while-revalidate.
+#
+# Codex round-2 on PR #40: a flat 5 s TTL is shorter than the 15 s
+# polling interval — every poll still refetches and the cache only
+# coalesced concurrent requests.
+#
+# Codex round-4: a 5 s FRESH with 60 s STALE moved the Kalshi calls
+# to a daemon thread but didn't reduce them — every poll still fired
+# one upstream fetch (just async). To actually cut RPM, the fresh
+# window must cover at least one polling interval, so 15 s polls
+# inside FRESH never trigger a fetch.
+#
+# Window semantics:
+# * within ``FRESH_SECONDS`` (30 s): serve cached, no refresh — covers
+#   the 15 s portfolio poll twice. Roughly 50 % RPM reduction in the
+#   common case.
+# * between FRESH and ``STALE_SECONDS`` (120 s): serve cached AND
+#   fire a single background refresh that updates the cache in place.
+# * beyond STALE_SECONDS: cache is too stale to serve; the caller
+#   blocks on a fresh fetch (still coalesced via the lock).
+#
+# Error-backoff: codex round-4 P2 — when a background refresh errors
+# while we have a good cached snapshot, ``_build_..._uncached``
+# returns ``KalshiAccountRead(status="error")`` rather than raising.
+# Storing that over the connected snapshot would surface a transient
+# Kalshi error to the user for the full TTL window. Instead, the
+# background-refresh path preserves the good cache and extends the
+# fresh marker by ``ERROR_BACKOFF_SECONDS`` so we don't immediately
+# retry — the next stale-hit after the backoff fires a fresh attempt.
+_ACCOUNT_SNAPSHOT_FRESH_SECONDS = 30.0
+_ACCOUNT_SNAPSHOT_STALE_SECONDS = 120.0
+_ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS = 15.0
+# Codex round-13 P2: how long the sync path waits for an in-flight
+# background refresh before falling through and doing its own fetch.
+# Tuned to be longer than a typical Kalshi response (~1 s) but short
+# enough that a hung worker doesn't make /positions hang.
+_ACCOUNT_SNAPSHOT_SYNC_COALESCE_TIMEOUT_SECONDS = 5.0
+_account_snapshot_cache: dict[str, Any] = {
+    "value": None,
+    "fresh_until": 0.0,
+    "stale_until": 0.0,
+    # Codex round-6 P2: monotonically increasing generation token,
+    # bumped each time the cache is invalidated. A background refresh
+    # that started before the invalidation must NOT commit its
+    # pre-invalidation result on top of fresh post-invalidation data
+    # (or after a force-refresh sync path has populated the cache).
+    # The worker captures the generation at start; if it has changed
+    # when the worker tries to commit, the result is discarded.
+    "generation": 0,
+    # Codex round-9 P2: monotonic timestamp of the last connected
+    # commit. The preserve-cache-on-error path consults this to
+    # avoid serving an arbitrarily-old connected snapshot during
+    # persistent failures (e.g. credential revocation or a long
+    # outage). Once ``now - last_successful_at`` exceeds
+    # ``STALE_SECONDS``, errors are surfaced instead of preserved.
+    "last_successful_at": 0.0,
+}
+_account_snapshot_lock = threading.Lock()
+# Codex round-3 P2 on PR #40: ``Event.is_set()`` + ``Event.set()`` is
+# not an atomic test-and-set — two concurrent stale-hits can both pass
+# the check and spawn a refresh, defeating the coalescing.
+# ``Lock.acquire(blocking=False)`` IS atomic: exactly one caller wins
+# the slot, the rest get False and bow out. The background thread
+# releases the lock in its ``finally`` so subsequent stale windows can
+# fire fresh refreshes. (Python's ``Lock`` permits release from a
+# thread other than the acquirer.)
+_background_refresh_slot = threading.Lock()
+
+
+def invalidate_kalshi_account_cache() -> None:
+    """Hard-reset the cached account snapshot — clears the value and
+    timestamps. Use in tests and any path where the cached value must
+    not be served (e.g. credential change). Bumping the generation
+    ensures any in-flight background refresh discards its result
+    rather than overwriting post-invalidation data."""
+    with _account_snapshot_lock:
+        _account_snapshot_cache["value"] = None
+        _account_snapshot_cache["fresh_until"] = 0.0
+        _account_snapshot_cache["stale_until"] = 0.0
+        _account_snapshot_cache["generation"] += 1
+        _account_snapshot_cache["last_successful_at"] = 0.0
+
+
+def expire_kalshi_account_cache() -> None:
+    """Mark the cached snapshot as expired (past STALE) WITHOUT
+    clearing the stored value. The next ``build_kalshi_account_snapshot``
+    call will go to the sync fetch path with ``previous`` set to the
+    old value — so if the fresh Kalshi fetch errors, the connected
+    snapshot is preserved (codex round-8 P2 on PR #40). Use this for
+    user-initiated force-refreshes; use ``invalidate`` only when the
+    stored value itself must not be served (e.g. tests, credential
+    rotation)."""
+    with _account_snapshot_lock:
+        _account_snapshot_cache["fresh_until"] = 0.0
+        _account_snapshot_cache["stale_until"] = 0.0
+        _account_snapshot_cache["generation"] += 1
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -172,6 +282,212 @@ def build_kalshi_account_snapshot(
     db: Session,
     *,
     client: KalshiAccountClient | None = None,
+) -> KalshiAccountRead:
+    # Bug #6: cache the production path (no explicit client) so the
+    # portfolio page's ~15 s polling doesn't fan out 3+ Kalshi calls
+    # per request. Tests that pass an explicit ``client`` bypass the
+    # cache so they can drive specific scenarios.
+    if client is not None:
+        return _build_kalshi_account_snapshot_uncached(db, client=client)
+
+    # Codex round-7 P2: read the cache state and generation token
+    # atomically under the lock. Without the lock, an invalidate
+    # racing this read could be visible to the generation check but
+    # not to the cache-state check (or vice versa), letting a
+    # background refresh slip past discard.
+    with _account_snapshot_lock:
+        now = time.monotonic()
+        cached = _account_snapshot_cache["value"]
+        fresh_until = _account_snapshot_cache["fresh_until"]
+        stale_until = _account_snapshot_cache["stale_until"]
+        observed_generation = _account_snapshot_cache["generation"]
+
+    if cached is not None and now < fresh_until:
+        # Fresh: return cached, no refresh.
+        return cached
+
+    if cached is not None and now < stale_until:
+        # Stale-but-usable: serve cached immediately and fire a
+        # single background refresh so the next poll lands fresh
+        # data. Pass ``observed_generation`` so the worker can
+        # discard its result if the cache is invalidated (or another
+        # commit lands) before its Kalshi fetch finishes.
+        _maybe_start_background_refresh(observed_generation)
+        return cached
+
+    # No cache (or beyond STALE_SECONDS): block on a synchronous
+    # fetch. Codex round-13 P2: also coalesce with any in-flight
+    # background refresh by acquiring the bg slot (with a timeout
+    # so we don't hang behind a stuck worker). If the bg landed a
+    # fresh commit while we were waiting, return that cached value
+    # — saves an upstream call in the auto-poll-races-bg case.
+    acquired_slot = _background_refresh_slot.acquire(
+        timeout=_ACCOUNT_SNAPSHOT_SYNC_COALESCE_TIMEOUT_SECONDS
+    )
+    try:
+        with _account_snapshot_lock:
+            now = time.monotonic()
+            cached = _account_snapshot_cache["value"]
+            if cached is not None and now < _account_snapshot_cache["fresh_until"]:
+                return cached
+            previous = cached
+            result = _build_kalshi_account_snapshot_uncached(db, client=None)
+            return _commit_refresh_result(result, previous=previous)
+    finally:
+        if acquired_slot:
+            _background_refresh_slot.release()
+
+
+def _commit_refresh_result(
+    snapshot: KalshiAccountRead,
+    *,
+    previous: KalshiAccountRead | None,
+) -> KalshiAccountRead:
+    """Store the new snapshot in the cache with the appropriate TTL,
+    and return what should be served to the caller. Bumps the
+    generation token on every write so any in-flight background
+    refresh checking against an older generation discards its result.
+
+    Codex round-4 + round-5 P2: ``_build_..._uncached`` catches Kalshi
+    exceptions and returns ``status="error"`` rather than raising.
+    Storing that over a good cache with the normal TTL would surface
+    a transient HTTP/429 to the portfolio UI for a full ``FRESH``
+    window. Instead:
+
+    * error + good prior cache → preserve the cached connected
+      snapshot, extend ``fresh_until`` by ``ERROR_BACKOFF_SECONDS``,
+      and return the cached snapshot (not the error).
+    * error + no good prior → store the error with a short backoff so
+      the next request retries soon, not the full ``FRESH`` window.
+    * connected → store with the normal TTLs.
+    """
+    if snapshot.status == "error":
+        if previous is not None and previous.status == "connected":
+            # Codex round-9 P2: only preserve the connected cache if
+            # its last successful refresh is within the stale horizon.
+            # Past that, the snapshot is too old to keep serving as
+            # ``connected`` — surface the error so credential
+            # revocations / extended outages aren't silently masked.
+            now = time.monotonic()
+            last_successful = _account_snapshot_cache["last_successful_at"]
+            stale_horizon = last_successful + _ACCOUNT_SNAPSHOT_STALE_SECONDS
+            if now < stale_horizon:
+                # Extend fresh_until by ERROR_BACKOFF so we don't
+                # immediately retry. Codex round-10 P2: ALSO restore
+                # ``stale_until`` to the cached snapshot's original
+                # stale horizon — without this, ``expire`` had reset
+                # ``stale_until`` to 0 and subsequent polls would
+                # skip SWR and block on a sync fetch.
+                #
+                # Codex round-11 P2: cap ``fresh_until`` at the
+                # stale horizon. Without this cap, an error near the
+                # horizon (e.g. at 119s with STALE=120s, ERROR_BACKOFF=15s)
+                # could push fresh_until to 134s — serving a
+                # ``connected`` snapshot past the configured maximum
+                # stale age. Cap ensures the next poll after the
+                # horizon falls through to the sync path, where the
+                # round-9 check surfaces the error.
+                _account_snapshot_cache["fresh_until"] = min(
+                    now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS,
+                    stale_horizon,
+                )
+                _account_snapshot_cache["stale_until"] = stale_horizon
+                _account_snapshot_cache["generation"] += 1
+                logger.warning(
+                    "kalshi_account_refresh_error_preserved_cache",
+                    extra={"error_message": snapshot.error_message},
+                )
+                return previous
+            logger.warning(
+                "kalshi_account_refresh_error_cache_too_stale_to_preserve",
+                extra={
+                    "error_message": snapshot.error_message,
+                    "cache_age_seconds": now - last_successful,
+                },
+            )
+        # No good prior cache to preserve — store the error with a
+        # short backoff so the next request retries soon.
+        now = time.monotonic()
+        _account_snapshot_cache["value"] = snapshot
+        _account_snapshot_cache["fresh_until"] = now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+        _account_snapshot_cache["stale_until"] = now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+        _account_snapshot_cache["generation"] += 1
+        return snapshot
+    _store_account_snapshot(snapshot)
+    return snapshot
+
+
+def _store_account_snapshot(snapshot: KalshiAccountRead) -> None:
+    now = time.monotonic()
+    _account_snapshot_cache["value"] = snapshot
+    _account_snapshot_cache["fresh_until"] = now + _ACCOUNT_SNAPSHOT_FRESH_SECONDS
+    _account_snapshot_cache["stale_until"] = now + _ACCOUNT_SNAPSHOT_STALE_SECONDS
+    # Codex round-7 P2: bump the generation on every commit so a
+    # background refresh whose Kalshi fetch started before this write
+    # will see a generation mismatch and discard its result instead
+    # of overwriting a fresher cache.
+    _account_snapshot_cache["generation"] += 1
+    # Codex round-9 P2: track the last successful connected commit
+    # so the preserve-cache-on-error path can bound how long stale
+    # data is served during persistent failures.
+    if snapshot.status == "connected":
+        _account_snapshot_cache["last_successful_at"] = now
+
+
+def _maybe_start_background_refresh(observed_generation: int) -> None:
+    """Fire a daemon thread to refresh the cache in place. At most
+    one refresh runs at a time — concurrent stale-hits race on
+    ``_background_refresh_slot.acquire(blocking=False)`` and only
+    one wins. The losers return immediately; the winner spawns the
+    worker, which releases the slot in ``finally``."""
+    if not _background_refresh_slot.acquire(blocking=False):
+        return
+    try:
+        # Codex round-7 P2: pass the caller's observed generation in,
+        # rather than re-reading it inside the worker. If we read it
+        # in the worker, an invalidate that fires between the caller
+        # observing the cache state and the worker starting would
+        # already have bumped the generation — so the worker's
+        # captured value would match the post-invalidate state and
+        # the commit guard would not fire.
+        thread = threading.Thread(
+            target=_run_background_refresh,
+            args=(observed_generation,),
+            daemon=True,
+            name="kalshi-account-refresh",
+        )
+        thread.start()
+    except BaseException:
+        # If the thread couldn't start, release the slot so a future
+        # stale-hit can retry.
+        _background_refresh_slot.release()
+        raise
+
+
+def _run_background_refresh(start_generation: int) -> None:
+    try:
+        with SessionLocal() as db:
+            snapshot = _build_kalshi_account_snapshot_uncached(db, client=None)
+        with _account_snapshot_lock:
+            if start_generation != _account_snapshot_cache["generation"]:
+                # Cache was invalidated or a force-refresh / sync
+                # commit landed while we were fetching. Our snapshot
+                # is pre-event and may be stale relative to whatever
+                # bumped the generation — discard rather than
+                # overwriting the current cache value.
+                logger.info("kalshi_account_background_refresh_discarded_after_invalidation")
+                return
+            _commit_refresh_result(snapshot, previous=_account_snapshot_cache["value"])
+    except Exception:  # noqa: BLE001 — background refresh must not crash the app
+        logger.exception("kalshi_account_background_refresh_failed")
+    finally:
+        _background_refresh_slot.release()
+
+
+def _build_kalshi_account_snapshot_uncached(
+    db: Session,
+    *,
+    client: KalshiAccountClient | None,
 ) -> KalshiAccountRead:
     kalshi_client = client or KalshiAccountClient()
     if not kalshi_client.is_configured():

@@ -239,6 +239,14 @@ function Metric({ label, value, tone = "default", testId }: MetricProps) {
 export function KalshiAccountPanel() {
   const [openPicksExpanded, setOpenPicksExpanded] = useState(true);
   const [recentFillsExpanded, setRecentFillsExpanded] = useState(false);
+  // Bug #6, codex round-12 P2: track in-flight force-refresh state
+  // locally. ``mutate(key, promise, { revalidate: false })`` does NOT
+  // set SWR's ``isValidating``, so without this local flag the
+  // Refresh button stays clickable during the force fetch — a rapid
+  // double-click would spawn multiple ``/positions?force=true``
+  // requests, each expiring the backend cache and re-fetching from
+  // Kalshi (undermining the rate-limit protection).
+  const [isForcing, setIsForcing] = useState(false);
   const { data, isLoading, error, isValidating } = useSWR<PositionsRead>(
     keys.positions,
     fetchPositions,
@@ -251,9 +259,22 @@ export function KalshiAccountPanel() {
     (total, position) => total + (position.realized_pnl_dollars ?? 0),
     0,
   );
+  const isRefreshing = isValidating || isForcing;
 
   async function refresh() {
-    await mutate(keys.positions);
+    // Bug #6, codex round-5 P2: backend caches the Kalshi account
+    // snapshot for ~30 s to throttle the 15 s polling cadence.
+    // User-initiated refreshes pass ``force=true`` so they bypass the
+    // cache instead of seeing stale data until the next auto-poll.
+    if (isForcing) return;
+    setIsForcing(true);
+    try {
+      await mutate(keys.positions, fetchPositions({ force: true }), {
+        revalidate: false,
+      });
+    } finally {
+      setIsForcing(false);
+    }
   }
 
   if (error) {
@@ -294,8 +315,8 @@ export function KalshiAccountPanel() {
         <p className="max-w-xl text-sm text-muted-foreground">
           {account.error_message ?? "Kalshi account data is unavailable."}
         </p>
-        <Button variant="ghost" size="sm" onClick={refresh} disabled={isValidating} className="gap-1.5">
-          <RefreshCw size={13} />
+        <Button variant="ghost" size="sm" onClick={refresh} disabled={isRefreshing} className="gap-1.5">
+          <RefreshCw size={13} className={cn(isRefreshing && "animate-spin")} />
           Refresh
         </Button>
       </div>
@@ -311,8 +332,8 @@ export function KalshiAccountPanel() {
             Updated {fmtUnixTimestamp(account.balance?.updated_ts)}
           </span>
         </div>
-        <Button variant="ghost" size="sm" onClick={refresh} disabled={isValidating} className="gap-1.5">
-          <RefreshCw size={13} className={cn(isValidating && "animate-spin")} />
+        <Button variant="ghost" size="sm" onClick={refresh} disabled={isRefreshing} className="gap-1.5">
+          <RefreshCw size={13} className={cn(isRefreshing && "animate-spin")} />
           Refresh
         </Button>
       </div>

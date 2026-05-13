@@ -65,7 +65,10 @@ from app.schemas import (
     WatchlistCoverageRowRead,
 )
 from app.services.market_history import build_market_history
-from app.services.kalshi_account import build_kalshi_account_snapshot
+from app.services.kalshi_account import (
+    build_kalshi_account_snapshot,
+    expire_kalshi_account_cache,
+)
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
 from app.services.ml.study_progress import retained_study_cutoff
 from app.services.operator_settings import set_ml_serving_mode
@@ -1227,7 +1230,18 @@ def parlay_prediction_summary(
 
 
 @router.get("/positions", response_model=PositionsRead)
-def get_positions(db: Session = Depends(get_db)) -> PositionsRead:
+def get_positions(force: bool = False, db: Session = Depends(get_db)) -> PositionsRead:
+    # Bug #6, codex round-5 P2: the Kalshi account snapshot is cached
+    # for 30 s to throttle the portfolio page's 15 s polling. A user
+    # clicking the in-app Refresh button needs a way to bypass the
+    # cache so they can see fresh data without waiting out the TTL.
+    #
+    # Codex round-8 P2: use ``expire`` (not ``invalidate``) so a
+    # failing Kalshi fetch can fall back to the preserved cached
+    # value — otherwise a transient HTTP/429 during a user-initiated
+    # refresh would replace good data with an error response.
+    if force:
+        expire_kalshi_account_cache()
     paper_positions = db.scalars(select(PaperPosition).order_by(PaperPosition.opened_at.desc())).all()
     demo_orders = db.scalars(select(DemoOrder).order_by(DemoOrder.id.desc())).all()
     kalshi_account = build_kalshi_account_snapshot(db)
