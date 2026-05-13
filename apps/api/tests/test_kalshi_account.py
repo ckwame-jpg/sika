@@ -582,6 +582,88 @@ def test_kalshi_account_snapshot_error_preserve_caps_fresh_at_stale_horizon(db_s
     )
 
 
+def test_kalshi_account_snapshot_sync_path_coalesces_with_in_flight_background(db_session, monkeypatch):
+    """Codex round-13 P2 on PR #40: when a past-stale sync request
+    arrives during an in-flight background refresh, it used to fan
+    out its own Kalshi call alongside the bg's — doubling the
+    upstream RPM in exactly the auto-poll window the cache is meant
+    to protect. Fix: the sync path acquires the bg slot (with
+    timeout), so it waits for the bg to land its commit and then
+    returns the now-fresh cache without an additional fetch."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    class _SessionContext:
+        def __enter__(self):
+            return db_session
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(kalshi_account_module, "SessionLocal", lambda: _SessionContext())
+
+    # Seed a connected cache so the first poll's bg trigger has
+    # something to refresh.
+    build_kalshi_account_snapshot(db_session)
+    counting_client.balance_calls = 0  # reset
+
+    # Make the bg's Kalshi fetch block until we release it. The
+    # captured ``original_get_balance`` already increments
+    # ``balance_calls`` via ``_CountingKalshiAccountClient.get_balance``;
+    # don't double-count by incrementing here too.
+    bg_inside = threading.Event()
+    bg_release = threading.Event()
+    original_get_balance = counting_client.get_balance
+
+    def _slow_get_balance():
+        bg_inside.set()
+        bg_release.wait(timeout=2)
+        return original_get_balance()
+
+    counting_client.get_balance = _slow_get_balance
+
+    # Advance into the stale window and trigger the bg via an
+    # auto-poll-style call.
+    fake_now = {
+        "value": time.monotonic() + kalshi_account_module._ACCOUNT_SNAPSHOT_FRESH_SECONDS + 5.0
+    }
+    monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
+
+    build_kalshi_account_snapshot(db_session)  # spawns bg
+    assert bg_inside.wait(timeout=2), "background refresh did not start"
+
+    # Concurrently start a past-stale sync request. Advance time
+    # past STALE so the request lands in the sync branch.
+    fake_now["value"] += kalshi_account_module._ACCOUNT_SNAPSHOT_STALE_SECONDS
+
+    sync_results: list[object] = []
+
+    def _sync_runner():
+        sync_results.append(build_kalshi_account_snapshot(db_session))
+
+    sync_thread = threading.Thread(target=_sync_runner)
+    sync_thread.start()
+    # Give the sync thread a moment to enter the sync path and block
+    # on the bg slot acquire.
+    threading.Event().wait(timeout=0.1)
+
+    # Release the bg fetch — its commit lands, the sync thread
+    # acquires the released slot, re-checks the cache, sees fresh,
+    # and returns without its own Kalshi call.
+    bg_release.set()
+    sync_thread.join(timeout=5)
+
+    assert len(sync_results) == 1
+    assert sync_results[0].status == "connected"
+    # Only the bg's Kalshi call happened — not 2.
+    assert counting_client.balance_calls == 1, (
+        f"sync path must coalesce with in-flight bg refresh, "
+        f"got {counting_client.balance_calls} upstream calls (expected 1)"
+    )
+
+
 def test_kalshi_account_snapshot_force_error_restores_stale_horizon(db_session, monkeypatch):
     """Codex round-10 P2 on PR #40: when a force-refresh errors and
     the preserve-cache fallback kicks in, ``stale_until`` must be

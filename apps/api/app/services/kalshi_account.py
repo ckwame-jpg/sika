@@ -59,6 +59,11 @@ logger = logging.getLogger(__name__)
 _ACCOUNT_SNAPSHOT_FRESH_SECONDS = 30.0
 _ACCOUNT_SNAPSHOT_STALE_SECONDS = 120.0
 _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS = 15.0
+# Codex round-13 P2: how long the sync path waits for an in-flight
+# background refresh before falling through and doing its own fetch.
+# Tuned to be longer than a typical Kalshi response (~1 s) but short
+# enough that a hung worker doesn't make /positions hang.
+_ACCOUNT_SNAPSHOT_SYNC_COALESCE_TIMEOUT_SECONDS = 5.0
 _account_snapshot_cache: dict[str, Any] = {
     "value": None,
     "fresh_until": 0.0,
@@ -311,16 +316,26 @@ def build_kalshi_account_snapshot(
         return cached
 
     # No cache (or beyond STALE_SECONDS): block on a synchronous
-    # fetch. The lock coalesces concurrent callers — the second
-    # caller observes the populated cache when it acquires the lock.
-    with _account_snapshot_lock:
-        now = time.monotonic()
-        cached = _account_snapshot_cache["value"]
-        if cached is not None and now < _account_snapshot_cache["fresh_until"]:
-            return cached
-        previous = cached
-        result = _build_kalshi_account_snapshot_uncached(db, client=None)
-        return _commit_refresh_result(result, previous=previous)
+    # fetch. Codex round-13 P2: also coalesce with any in-flight
+    # background refresh by acquiring the bg slot (with a timeout
+    # so we don't hang behind a stuck worker). If the bg landed a
+    # fresh commit while we were waiting, return that cached value
+    # — saves an upstream call in the auto-poll-races-bg case.
+    acquired_slot = _background_refresh_slot.acquire(
+        timeout=_ACCOUNT_SNAPSHOT_SYNC_COALESCE_TIMEOUT_SECONDS
+    )
+    try:
+        with _account_snapshot_lock:
+            now = time.monotonic()
+            cached = _account_snapshot_cache["value"]
+            if cached is not None and now < _account_snapshot_cache["fresh_until"]:
+                return cached
+            previous = cached
+            result = _build_kalshi_account_snapshot_uncached(db, client=None)
+            return _commit_refresh_result(result, previous=previous)
+    finally:
+        if acquired_slot:
+            _background_refresh_slot.release()
 
 
 def _commit_refresh_result(
