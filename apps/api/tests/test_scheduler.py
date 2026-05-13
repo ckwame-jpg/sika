@@ -883,3 +883,60 @@ def test_shadow_backfill_failure_does_not_mark_completed_prop_refresh_failed(db_
     assert prop_refresh_job.status == "completed"
     assert shadow_job.status == "failed"
     assert shadow_job.error_message == "shadow backfill failed for backfill"
+
+
+# -----------------------------------------------------------------------------
+# Bug #21: ``weekly_model_retrain`` is registered NEITHER as a function nor
+# as a scheduler job — training lives in GitHub Actions now.
+# -----------------------------------------------------------------------------
+
+
+def test_scheduler_does_not_register_weekly_model_retrain_job(monkeypatch):
+    """Bug #21: the old in-API retrain APScheduler entry silently no-op'd
+    on any deploy that didn't ship ``apps/ml`` + writable artifact paths.
+    Training moved to .github/workflows/ml-retrain.yml; this guard makes
+    sure no one accidentally re-adds it to the scheduler. If you're
+    here because this test failed, the right answer is to add the new
+    job to the GH Actions workflow, not the scheduler."""
+    # Capture every ``scheduler.add_job`` call ``start_scheduler`` makes.
+    add_job_calls: list[dict[str, object]] = []
+
+    class _SpyScheduler:
+        running = False
+
+        def add_job(self, _func, **kwargs):
+            add_job_calls.append(kwargs)
+
+        def start(self):  # pragma: no cover - never invoked here
+            pass
+
+    monkeypatch.setattr(scheduler, "scheduler", _SpyScheduler())
+    # Force the scheduler-enabled gate open so add_job actually runs.
+    monkeypatch.setattr(
+        scheduler,
+        "get_settings",
+        lambda: SimpleNamespace(
+            scheduler_enabled=True,
+            queue_poll_interval_seconds=60,
+            cleanup_interval_hours=12,
+            advanced_stats_enabled=False,
+        ),
+    )
+
+    scheduler.start_scheduler()
+
+    job_ids = {call.get("id") for call in add_job_calls}
+    assert "weekly_model_retrain" not in job_ids, (
+        "Weekly retrain belongs in .github/workflows/ml-retrain.yml, "
+        f"not the API scheduler. Registered ids: {sorted(filter(None, job_ids))}"
+    )
+    # Sanity check: the spy actually saw OTHER add_job calls. If this
+    # collapses to 0 the spy is broken and the assertion above would
+    # vacuously pass.
+    assert len(add_job_calls) >= 5
+
+    # The retrain function itself should also be gone from the module
+    # so accidental imports fail loudly rather than silently no-op.
+    assert not hasattr(scheduler, "_weekly_model_retrain_job"), (
+        "Remove ``_weekly_model_retrain_job`` along with its scheduler entry."
+    )

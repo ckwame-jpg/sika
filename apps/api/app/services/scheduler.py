@@ -1,10 +1,7 @@
 import logging
 import re
-import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -378,37 +375,18 @@ def _evaluate_model_promotions_job() -> None:
         db.commit()
 
 
-def _weekly_model_retrain_job() -> None:
-    apps_ml_dir = Path(__file__).resolve().parents[3] / "ml"
-    if not apps_ml_dir.exists():
-        logger.warning("Skipping model retrain; apps/ml workspace not found at %s", apps_ml_dir)
-        return
-    command = [
-        sys.executable,
-        "-m",
-        "ml.cli",
-        "train",
-        "--artifact-root",
-        "artifacts",
-        "--manifest-out",
-        "manifests/current.json",
-    ]
-    try:
-        result = subprocess.run(
-            command,
-            cwd=apps_ml_dir,
-            timeout=3600,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.TimeoutExpired:
-        logger.exception("Weekly model retrain timed out after 3600 seconds")
-        return
-    if result.returncode != 0:
-        logger.error("Weekly model retrain failed with exit code %s: %s", result.returncode, result.stderr[-2000:])
-        return
-    logger.info("Weekly model retrain completed: %s", result.stdout[-2000:])
+# Bug #21: the weekly model retrain used to live HERE as an
+# APScheduler job inside the API process. On any deploy that
+# doesn't ship the ``apps/ml`` workspace + a writable artifact path
+# (notably anything FastAPI-only), the job silently no-op'd. Moved
+# to a GitHub Actions cron (``.github/workflows/ml-retrain.yml``)
+# so the training step is independent of the API process and the
+# API only SERVES the manifests it didn't produce.
+#
+# The API's ``load_model_manifest`` already reads
+# ``apps/ml/manifests/current.json`` lazily on startup, so the API
+# side needs no further change — the file lands via the workflow's
+# PR commit and is picked up on the next deploy / restart.
 
 
 def _process_refresh_queue_job() -> None:
@@ -497,14 +475,9 @@ def start_scheduler() -> None:
         coalesce=True,
         max_instances=1,
     )
-    scheduler.add_job(
-        _weekly_model_retrain_job,
-        trigger=CronTrigger(day_of_week="sun", hour=3, minute=0),
-        id="weekly_model_retrain",
-        replace_existing=True,
-        coalesce=True,
-        max_instances=1,
-    )
+    # Bug #21: removed ``weekly_model_retrain`` scheduler entry. Retraining
+    # now runs in GitHub Actions (.github/workflows/ml-retrain.yml). The
+    # API only consumes the manifest produced by that workflow.
     if get_settings().advanced_stats_enabled:
         scheduler.add_job(
             _queue_advanced_stats_warm_job,
