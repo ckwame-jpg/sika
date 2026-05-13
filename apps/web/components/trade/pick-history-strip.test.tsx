@@ -289,6 +289,28 @@ describe("PickHistoryStrip — game line variants", () => {
     expect(container.firstChild).toBeNull();
     expect(mockFetchTeamHistory).not.toHaveBeenCalled();
   });
+
+  it("hides itself for first_five_winner picks (codex round-4 P2)", async () => {
+    // The /research/teams/history endpoint only returns final-game
+    // results. Charting full-game W/L next to a first-five pick is
+    // actively misleading — a team that loses the first five but
+    // rallies to win would show as a "W" here.
+    mockFetchTeamHistory.mockResolvedValue(
+      teamHistoryFixture([{ result: "W", team: 5, opp: 3 }]),
+    );
+    const { container } = renderWithProviders(
+      <PickHistoryStrip
+        selection={makeGameLineSelection({
+          marketKind: "first_five_winner",
+          numericLine: null,
+        })}
+      />,
+    );
+    // Allow the SWR fetch to resolve, then assert nothing rendered.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector("[data-testid='pick-history-strip']")).toBeNull();
+    expect(container.querySelector("[data-testid='pick-history-strip-pills']")).toBeNull();
+  });
 });
 
 describe("PickHistoryStrip — N toggle + filters", () => {

@@ -1222,11 +1222,8 @@ export interface components {
              * @default true
              */
             enqueue_shadow_backfill: boolean;
-            /**
-             * Ml Serving Mode
-             * @enum {string}
-             */
-            ml_serving_mode: "heuristic" | "shadow" | "ml";
+            /** Ml Serving Mode */
+            ml_serving_mode?: ("heuristic" | "shadow" | "ml") | null;
             /** Pick History Default N */
             pick_history_default_n?: number | null;
         };

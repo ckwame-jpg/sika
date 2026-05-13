@@ -1156,9 +1156,15 @@ def update_model_readiness_settings(
     payload: ModelReadinessSettingsUpdate,
     db: Session = Depends(get_db),
 ) -> ModelReadinessSummaryRead:
-    set_ml_serving_mode(db, payload.ml_serving_mode)
-    if payload.ml_serving_mode in {"shadow", "ml"} and payload.enqueue_shadow_backfill:
-        enqueue_shadow_capture_job(db, scope="backfill")
+    # Codex round-4 P2 on PR #24: ``ml_serving_mode`` is now optional;
+    # skip the write (and the shadow-backfill side effect) when the
+    # caller didn't include it. This lets partial PATCHes (e.g.
+    # depth-only changes from the settings page) leave a previously
+    # set mode untouched instead of clobbering it with a stale value.
+    if payload.ml_serving_mode is not None:
+        set_ml_serving_mode(db, payload.ml_serving_mode)
+        if payload.ml_serving_mode in {"shadow", "ml"} and payload.enqueue_shadow_backfill:
+            enqueue_shadow_capture_job(db, scope="backfill")
     if payload.pick_history_default_n is not None:
         set_pick_history_default_n(db, payload.pick_history_default_n)
     db.commit()

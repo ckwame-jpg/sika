@@ -2061,13 +2061,20 @@
             "type": "boolean"
           },
           "ml_serving_mode": {
-            "enum": [
-              "heuristic",
-              "shadow",
-              "ml"
+            "anyOf": [
+              {
+                "enum": [
+                  "heuristic",
+                  "shadow",
+                  "ml"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Ml Serving Mode",
-            "type": "string"
+            "title": "Ml Serving Mode"
           },
           "pick_history_default_n": {
             "anyOf": [
@@ -2083,9 +2090,6 @@
             "title": "Pick History Default N"
           }
         },
-        "required": [
-          "ml_serving_mode"
-        ],
         "title": "ModelReadinessSettingsUpdate",
         "type": "object"
       },

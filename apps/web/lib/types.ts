@@ -433,7 +433,7 @@ export interface ModelReadinessSummaryRead {
 }
 
 export interface ModelReadinessSettingsUpdate {
-  ml_serving_mode: "heuristic" | "shadow" | "ml";
+  ml_serving_mode?: "heuristic" | "shadow" | "ml";
   enqueue_shadow_backfill?: boolean;
   pick_history_default_n?: number;
 }

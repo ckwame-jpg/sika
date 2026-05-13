@@ -103,3 +103,28 @@ def test_readiness_settings_endpoint_422_on_out_of_range_n(client):
         },
     )
     assert response.status_code == 422
+
+
+def test_readiness_settings_endpoint_depth_only_does_not_clobber_serving_mode(client):
+    """Codex round-4 P2 on PR #24: a depth-only PATCH (omitting
+    ``ml_serving_mode``) must leave the previously set mode in place.
+    The settings page used to echo back the SWR-cached mode, which
+    could revert a fresh mode change made in another tab. The route
+    now treats ``ml_serving_mode`` as optional and skips the write
+    when absent."""
+    # Pin ml_serving_mode to "shadow"
+    pinned = client.patch(
+        "/ops/models/readiness/settings",
+        json={"ml_serving_mode": "shadow", "enqueue_shadow_backfill": False},
+    )
+    assert pinned.json()["ml_serving_mode"] == "shadow"
+
+    # Depth-only PATCH must NOT clobber the pinned mode.
+    response = client.patch(
+        "/ops/models/readiness/settings",
+        json={"pick_history_default_n": 10},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pick_history_default_n"] == 10
+    assert body["ml_serving_mode"] == "shadow"

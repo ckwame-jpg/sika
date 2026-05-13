@@ -645,7 +645,12 @@ class ModelReadinessSummaryRead(BaseModel):
 
 
 class ModelReadinessSettingsUpdate(BaseModel):
-    ml_serving_mode: Literal["heuristic", "shadow", "ml"]
+    # Codex round-4 P2 on PR #24: ``ml_serving_mode`` is optional so
+    # callers can do partial updates (e.g. change ONLY
+    # ``pick_history_default_n`` from the settings page without
+    # writing back a possibly-stale serving mode from SWR cache).
+    # The route skips ``set_ml_serving_mode`` when this is None.
+    ml_serving_mode: Literal["heuristic", "shadow", "ml"] | None = None
     enqueue_shadow_backfill: bool = True
     pick_history_default_n: int | None = Field(default=None, ge=1, le=20)
 

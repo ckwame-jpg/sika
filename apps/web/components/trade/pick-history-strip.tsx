@@ -253,7 +253,15 @@ function GameLineStrip({ selection, controls, n, location }: GameLineStripProps)
     );
   }
 
-  // moneyline, first_five_winner, or any game-line pick missing numericLine.
+  // Codex round-4 P2 on PR #24: first_five_winner picks settle on
+  // the score after 5 innings, but the team-history endpoint only
+  // returns FINAL-game W/L. Charting full-game results next to a
+  // first-five pick is actively misleading (a team that loses the
+  // first five but rallies to win shows as a "W" here). Hide the
+  // strip until we have first-five-inning history to back it.
+  if (kind === "first_five_winner") return null;
+
+  // moneyline (or any game-line pick missing numericLine).
   return (
     <MoneylinePills
       team={data.team_name}

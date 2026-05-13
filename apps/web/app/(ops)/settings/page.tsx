@@ -44,10 +44,13 @@ export default function SettingsPage() {
   const currentDepth = settings?.pick_history_default_n ?? 5;
 
   async function selectDepth(next: number) {
-    if (!settings) return;
+    // Codex round-4 P2 on PR #24: previously this PATCH echoed back
+    // the SWR-cached ``ml_serving_mode``. If another tab/operator
+    // had flipped the mode in the meantime, a depth-only click here
+    // would silently revert it. Send only the field we're actually
+    // changing — the API now treats the mode as optional and leaves
+    // it untouched when omitted.
     await updateModelReadinessSettings({
-      ml_serving_mode: settings.ml_serving_mode,
-      enqueue_shadow_backfill: false,
       pick_history_default_n: next,
     });
     await refreshSettings();
