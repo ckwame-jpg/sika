@@ -202,7 +202,10 @@ def test_evaluate_family_promotes_after_three_passing_daily_evaluations(db_sessi
     assert third.gates.promoted is True
     runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one()
     assert runtime_row.promotion_mode == "ml"
-    assert runtime_row.promotion_baseline_brier == third.metrics.shadow_brier
+    # Bug #20 / codex round 4: kill switch compares its 50-row rolling
+    # aggregate Brier against this baseline; storing the aggregate
+    # (rather than worst-fold) keeps the comparison apples-to-apples.
+    assert runtime_row.promotion_baseline_brier == third.metrics.aggregate_shadow_brier
 
 
 def test_runtime_uses_promotion_mode_below_explicit_family_override(db_session, monkeypatch, tmp_path):
@@ -381,6 +384,75 @@ def test_evaluate_family_does_not_promote_when_walk_forward_insufficient(db_sess
     # promotion_baseline_brier must NOT be overwritten — only successful
     # promotions stamp the baseline.
     assert runtime_row.promotion_baseline_brier is None
+
+
+def test_evaluate_family_resets_stability_when_previous_payload_predates_walk_forward(db_session):
+    """Codex round 4: if the stored ``promotion_metrics`` payload was
+    written by the pre-bug-#20 aggregate-Brier gate, those stability days
+    were earned under different semantics and must not transfer."""
+    _seed_promotion_ready_family(db_session)
+    # Simulate legacy state: 2 stability days already accumulated under
+    # the old gate, but the stored payload has no walk_forward marker.
+    runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one_or_none()
+    if runtime_row is None:
+        runtime_row = ModelFamilyRuntimeHealth(family_key="nba_singles")
+        db_session.add(runtime_row)
+        db_session.flush()
+    runtime_row.promotion_stability_days = 2
+    runtime_row.promotion_metrics = {
+        "last_evaluation_date": "2026-04-19",  # different day, no walk_forward marker
+        "metrics": {
+            "sample_count": 200,
+            "heuristic_brier": 0.22,
+            "shadow_brier": 0.19,
+            "heuristic_top_decile_roi": 0.01,
+            "shadow_top_decile_roi": 0.08,
+        },
+        "gates": {},
+    }
+    db_session.flush()
+
+    result = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 21, tzinfo=timezone.utc))
+    # Stability counter resets to 1 (only this evaluation counts under
+    # the new gate); promotion should NOT fire on this single pass even
+    # though the legacy counter would have crossed the threshold.
+    assert result.gates.stability_days == 1
+    assert result.gates.promoted is False
+
+
+def test_evaluate_family_keeps_stability_when_previous_payload_already_walk_forward(db_session):
+    """Companion to the reset test: when the stored payload was already
+    produced by the walk-forward gate (``metric == worst_fold_brier``),
+    the stability counter carries forward as before."""
+    _seed_promotion_ready_family(db_session)
+    runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one_or_none()
+    if runtime_row is None:
+        runtime_row = ModelFamilyRuntimeHealth(family_key="nba_singles")
+        db_session.add(runtime_row)
+        db_session.flush()
+    runtime_row.promotion_stability_days = 2
+    runtime_row.promotion_metrics = {
+        "last_evaluation_date": "2026-04-19",
+        "metrics": {
+            "sample_count": 200,
+            "heuristic_brier": 0.22,
+            "shadow_brier": 0.19,
+            "heuristic_top_decile_roi": 0.01,
+            "shadow_top_decile_roi": 0.08,
+            "walk_forward": {
+                "metric": "worst_fold_brier",
+                "fold_count": 10,
+                "insufficient_history": False,
+            },
+        },
+        "gates": {},
+    }
+    db_session.flush()
+
+    result = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 21, tzinfo=timezone.utc))
+    # Carry-over preserves the previous 2 days → this third pass promotes.
+    assert result.gates.stability_days == 3
+    assert result.gates.promoted is True
 
 
 def test_promotion_metrics_to_dict_exposes_walk_forward_block():

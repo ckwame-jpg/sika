@@ -431,15 +431,43 @@ def evaluate_promotion_gates(
     )
 
 
+WALK_FORWARD_METRIC_MARKER = "worst_fold_brier"
+
+
+def _previous_metric_compatible(previous_payload: dict[str, Any]) -> bool:
+    """True when the stored ``promotion_metrics`` payload was emitted by
+    the walk-forward gate.
+
+    Bug #20 changed the meaning of ``shadow_brier`` (aggregate → worst
+    fold). Carry-over stability days from the prior gate semantics would
+    let a family promote with fewer than ``STABILITY_DAYS_REQUIRED``
+    walk-forward passes — codex round 4 caught the seam. We detect the
+    new gate by the ``walk_forward.metric`` marker and reset stability
+    when the marker is missing.
+    """
+    walk_forward = (previous_payload.get("metrics") or {}).get("walk_forward")
+    if not isinstance(walk_forward, dict):
+        return False
+    return walk_forward.get("metric") == WALK_FORWARD_METRIC_MARKER
+
+
 def evaluate_family(db: Session, family_key: str, *, now: datetime | None = None) -> PromotionEvaluation:
     reference_now = now or _now_utc()
     row = _runtime_row(db, family_key)
     metrics = metrics_for_examples(paired_examples_for_family(db, family_key))
     previous_payload = dict(row.promotion_metrics or {})
     current_date = reference_now.date().isoformat()
+    # Reset stability accumulation when the stored payload predates the
+    # walk-forward gate — those passing days were earned under the old
+    # aggregate-Brier comparison and don't transfer.
+    carryover_stability_days = (
+        int(row.promotion_stability_days or 0)
+        if _previous_metric_compatible(previous_payload)
+        else 0
+    )
     gates = evaluate_promotion_gates(
         metrics,
-        previous_stability_days=int(row.promotion_stability_days or 0),
+        previous_stability_days=carryover_stability_days,
         same_evaluation_date=previous_payload.get("last_evaluation_date") == current_date,
     )
 
@@ -451,7 +479,13 @@ def evaluate_family(db: Session, family_key: str, *, now: datetime | None = None
     row.promotion_mode = next_mode
     row.promotion_stability_days = gates.stability_days
     if gates.promoted:
-        row.promotion_baseline_brier = metrics.shadow_brier
+        # The kill switch compares an aggregate rolling-50 Brier to this
+        # baseline (apps/api/app/services/ml/kill_switch.py); store the
+        # aggregate value so the comparison stays apples-to-apples.
+        # Storing the worst-fold instead would let aggregate regressions
+        # slip past the kill switch until they exceeded a much looser
+        # threshold — codex round 4 traced this through.
+        row.promotion_baseline_brier = metrics.aggregate_shadow_brier
     row.promotion_metrics = {
         "last_evaluation_date": current_date,
         "metrics": metrics.to_dict(),
