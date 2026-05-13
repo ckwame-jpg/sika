@@ -310,16 +310,48 @@ export const fetchTeamHistory = (
     }),
   });
 
+// Bug #24: canonical SWR-key serializer.
+//
+// (a) Insertion-order dependence: ``new URLSearchParams(Object.entries(args))``
+// preserves whatever order the object was constructed in. A future
+// refactor that swaps two ``filterArgs`` fields would silently flip
+// every SWR key, doubling fetches and busting the cache. Sort the
+// entries before serializing so a stable shape ⇒ a stable key.
+//
+// (b) "All sports" normalization: callers express "no sport filter"
+// three different ways — ``undefined``, ``""``, or the literal
+// string ``"all"`` (the select widget's value). All three mean the
+// same logical fetch; they should produce the same SWR key.
+const ALL_SPORTS_ALIASES = new Set(["", "all"]);
+
+function normalizeAllSports(value: string | null | undefined): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = value.trim().toLowerCase();
+  return ALL_SPORTS_ALIASES.has(trimmed) ? undefined : value;
+}
+
+function serializeQuery(args: Record<string, string | number | undefined | null>): string {
+  const entries = Object.entries(args)
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(([key, value]) => [key, String(value)] as [string, string])
+    .sort(([a], [b]) => a.localeCompare(b));
+  return new URLSearchParams(entries).toString();
+}
+
+function pathWithQuery(path: string, qs: string): string {
+  return qs ? `${path}?${qs}` : path;
+}
+
 export const keys = {
   health: "/health",
   sports: "/sports",
   sportAvailability: "/sports/availability",
   productSports: "/product/sports",
   productFreshness: "/product/freshness",
-  tradeDesk: (sport?: string) =>
-    `/trade-desk?sport=${sport ?? ""}`,
-  events: (sport?: string, day?: string) =>
-    `/events?sport=${sport ?? ""}&day=${day ?? ""}`,
+  tradeDesk: (sport?: string | null) =>
+    pathWithQuery("/trade-desk", serializeQuery({ sport: normalizeAllSports(sport) })),
+  events: (sport?: string | null, day?: string | null) =>
+    pathWithQuery("/events", serializeQuery({ sport: normalizeAllSports(sport), day })),
   watchlistDiagnostics: "/ops/watchlist/diagnostics",
   positions: "/positions",
   market: (ticker: string) => `/markets/${ticker}`,
@@ -329,23 +361,28 @@ export const keys = {
   run: (id: number) => `/ops/runs/${id}`,
   refreshJob: (id: number) => `/ops/jobs/${id}`,
   predictions: (args?: Record<string, string | number | undefined>) =>
-    `/predictions?${new URLSearchParams(
-      Object.entries(args ?? {}).flatMap(([key, value]) =>
-        value == null || value === "" ? [] : [[key, String(value)]],
-      ),
-    ).toString()}`,
+    pathWithQuery("/predictions", serializeQuery(args ?? {})),
   predictionSummary: (args?: Record<string, string | number | undefined>) =>
-    `/predictions/summary?${new URLSearchParams(
-      Object.entries(args ?? {}).flatMap(([key, value]) =>
-        value == null || value === "" ? [] : [[key, String(value)]],
-      ),
-    ).toString()}`,
+    pathWithQuery("/predictions/summary", serializeQuery(args ?? {})),
   modelReadinessSummary: "/ops/models/readiness",
   modelReadinessDetail: (familyKey: string) => `/ops/models/readiness/${familyKey}`,
   parlayPredictions: (sportScope = "all", legCount?: number, limit = 100) =>
-    `/parlays/predictions?sport_scope=${sportScope}&leg_count=${legCount ?? ""}&limit=${limit}`,
+    pathWithQuery(
+      "/parlays/predictions",
+      serializeQuery({
+        sport_scope: normalizeAllSports(sportScope) ?? "all",
+        leg_count: legCount,
+        limit,
+      }),
+    ),
   parlayPredictionSummary: (sportScope = "all", legCount?: number) =>
-    `/parlays/predictions/summary?sport_scope=${sportScope}&leg_count=${legCount ?? ""}`,
+    pathWithQuery(
+      "/parlays/predictions/summary",
+      serializeQuery({
+        sport_scope: normalizeAllSports(sportScope) ?? "all",
+        leg_count: legCount,
+      }),
+    ),
   playerHistory: (
     subjectName: string,
     sportKey: string,
