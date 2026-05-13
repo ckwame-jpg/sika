@@ -1,0 +1,137 @@
+# Bug #21: weekly retraining used to live as an APScheduler job inside the
+# FastAPI process. On any deploy that doesn't ship the ``apps/ml`` workspace
+# + a writable artifact path it silently no-op'd. Moved here so the training
+# step is independent of the API process.
+#
+# Deployment model: sika runs locally (operator's laptop). The API reads
+# ``apps/ml/manifests/current.json`` via ``_default_manifest_path`` after a
+# restart, so the workflow's PR-merge → local-pull → API-restart loop is
+# the full delivery path. (Render config was retired 2026-04 — ``render.yaml``
+# is gone from this repo.)
+#
+# How the result lands back in the repo:
+# - The job trains under ``apps/ml/``, producing
+#   ``apps/ml/manifests/current.json`` + a versioned directory under
+#   ``apps/ml/artifacts/``.
+# - The trained artifacts are uploaded as a workflow artifact (downloadable
+#   from the Actions run) so they don't bloat the repo. ``apps/ml/artifacts/``
+#   stays gitignored.
+# - A pull request is opened with ONLY the manifest change. Reviewing the
+#   manifest diff (model_version + metrics fields) is the audit checkpoint.
+#   After merging, pull the workflow artifact ZIP and extract it under
+#   ``apps/ml/artifacts/`` on whichever host serves the API.
+#
+# Required repo secret:
+# - ``ML_TRAINING_DATABASE_URL`` — Postgres URL (or any SQLAlchemy URL that
+#   ``ml.cli train --database-url`` accepts) pointing at a database with the
+#   settled predictions to learn from. If unset, the job logs a warning and
+#   exits cleanly so the cron doesn't fail loudly while you wire it up.
+
+name: ML Weekly Retrain
+
+on:
+  schedule:
+    # Codex round-2 P2 on PR #51: the old APScheduler config used
+    # ``BackgroundScheduler(timezone=America/Chicago)`` and
+    # ``CronTrigger(hour=3)`` — Sunday 03:00 Central. GitHub Actions
+    # cron is UTC-only, so the literal ``0 3 * * 0`` here would have
+    # fired Saturday 21:00/22:00 Central, missing Saturday-night
+    # settlement rows. ``0 9 * * 0`` is Sunday 09:00 UTC = Sunday
+    # 03:00 CST (winter) / 04:00 CDT (summer); preserves the old
+    # cadence within DST tolerance and stays AFTER weekend
+    # settlement.
+    - cron: "0 9 * * 0"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # One retrain at a time; the old in-API job used ``max_instances=1`` for
+  # the same reason. Don't auto-cancel — a long training run is the whole
+  # point of the cron.
+  group: ml-retrain
+  cancel-in-progress: false
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/ml/requirements.txt
+
+      - name: Install apps/ml deps
+        working-directory: apps/ml
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Train
+        id: train
+        working-directory: apps/ml
+        env:
+          DATABASE_URL: ${{ secrets.ML_TRAINING_DATABASE_URL }}
+        run: |
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "::warning::ML_TRAINING_DATABASE_URL not set; skipping training. Configure the secret on the repo to enable weekly retraining."
+            echo "skipped=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Codex round-1 P2 on PR #51: ``ml.cli train`` defaults
+          # ``--model-version`` to today's UTC date. Two ``workflow_dispatch``
+          # runs on the same day would emit identical manifests and the
+          # ``create-pull-request`` step below would have nothing to commit.
+          # Stamp a per-run version so manual reruns always produce a
+          # reviewable diff.
+          MODEL_VERSION="$(date -u +%Y-%m-%dT%H%M%SZ)"
+          python -m ml.cli train \
+            --artifact-root artifacts \
+            --manifest-out manifests/current.json \
+            --model-version "${MODEL_VERSION}" \
+            --database-url "${DATABASE_URL}"
+          echo "skipped=false" >>"$GITHUB_OUTPUT"
+
+      - name: Upload trained artifacts
+        if: steps.train.outputs.skipped == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-artifacts
+          # The manifest references ``artifact_path: "../artifacts/<version>"``
+          # so the consumer needs the artifacts directory as-is. Manifest is
+          # bundled too so a download can be unpacked into ``apps/ml/`` with
+          # the layout the API expects.
+          path: |
+            apps/ml/artifacts/
+            apps/ml/manifests/current.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Open PR with updated manifest
+        if: steps.train.outputs.skipped == 'false'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: ml-retrain-weekly
+          delete-branch: true
+          commit-message: "chore(ml): weekly retrain manifest"
+          title: "chore(ml): weekly retrain manifest"
+          body: |
+            Weekly retrain produced an updated manifest. The new model
+            artifacts are attached to the workflow run as the
+            ``ml-artifacts`` artifact.
+
+            Merge after reviewing the manifest diff (especially
+            ``model_version`` and any metrics carried in the manifest).
+            After merge, deploy / pull the workflow artifact onto the
+            host that serves the API.
+          add-paths: |
+            apps/ml/manifests/current.json
