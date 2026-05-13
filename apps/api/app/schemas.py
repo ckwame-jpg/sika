@@ -652,7 +652,12 @@ class ModelReadinessSettingsUpdate(BaseModel):
     # The route skips ``set_ml_serving_mode`` when this is None.
     ml_serving_mode: Literal["heuristic", "shadow", "ml"] | None = None
     enqueue_shadow_backfill: bool = True
-    pick_history_default_n: int | None = Field(default=None, ge=1, le=20)
+    # Codex round-6 P2 on PR #24: pinned to the exact UI options
+    # (the trade-ticket strip's ``HISTORY_OPTIONS``). Accepting an
+    # in-range-but-non-canonical value (6, 15, …) would have the
+    # readiness summary echo it back while the strip silently
+    # coerced it to 5.
+    pick_history_default_n: Literal[5, 10, 20] | None = None
 
 
 class MarketHistoryPointRead(BaseModel):

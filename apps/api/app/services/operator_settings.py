@@ -16,8 +16,18 @@ VALID_RUNTIME_MODES = {"heuristic", "shadow", "ml"}
 
 PICK_HISTORY_DEFAULT_N_KEY = "pick_history_default_n"
 DEFAULT_PICK_HISTORY_N = 5
-PICK_HISTORY_N_MIN = 1
-PICK_HISTORY_N_MAX = 20
+# Codex round-6 P2 on PR #24: the strip's HISTORY_OPTIONS is exactly
+# {5, 10, 20}, and ``clampToHistoryOption`` falls back to 5 for any
+# value outside that set. If the API accepted (say) 6, the readiness
+# summary would echo 6 back but the trade ticket would silently
+# fetch last-5. Restrict writes to the same set the UI offers so
+# operator-pinned defaults always round-trip through the strip.
+PICK_HISTORY_N_OPTIONS = frozenset({5, 10, 20})
+# Compat aliases — older tests reference the legacy MIN/MAX bounds.
+# They no longer drive validation; the canonical set is
+# ``PICK_HISTORY_N_OPTIONS``.
+PICK_HISTORY_N_MIN = min(PICK_HISTORY_N_OPTIONS)
+PICK_HISTORY_N_MAX = max(PICK_HISTORY_N_OPTIONS)
 
 
 def _now_utc() -> datetime:
@@ -62,12 +72,15 @@ def set_ml_serving_mode(db: Session, mode: RuntimeMode) -> OperatorSetting:
     return row
 
 
-def _clamp_pick_history_n(value: object) -> int | None:
+def _canonical_pick_history_n(value: object) -> int | None:
+    """Return ``value`` if it parses to an int in ``PICK_HISTORY_N_OPTIONS``;
+    otherwise ``None``. Used for both READ (fall back to default on legacy
+    or corrupted values) and WRITE (reject anything the UI can't render)."""
     try:
         as_int = int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-    if as_int < PICK_HISTORY_N_MIN or as_int > PICK_HISTORY_N_MAX:
+    if as_int not in PICK_HISTORY_N_OPTIONS:
         return None
     return as_int
 
@@ -81,21 +94,22 @@ def effective_pick_history_default_n(db: Session | None = None) -> int:
         return DEFAULT_PICK_HISTORY_N
     row = db.scalar(select(OperatorSetting).where(OperatorSetting.key == PICK_HISTORY_DEFAULT_N_KEY))
     raw = dict(row.value or {}).get("n") if row is not None else None
-    clamped = _clamp_pick_history_n(raw)
-    return clamped if clamped is not None else DEFAULT_PICK_HISTORY_N
+    canonical = _canonical_pick_history_n(raw)
+    return canonical if canonical is not None else DEFAULT_PICK_HISTORY_N
 
 
 def set_pick_history_default_n(db: Session, n: int) -> OperatorSetting:
-    clamped = _clamp_pick_history_n(n)
-    if clamped is None:
+    canonical = _canonical_pick_history_n(n)
+    if canonical is None:
+        allowed = ", ".join(str(value) for value in sorted(PICK_HISTORY_N_OPTIONS))
         raise ValueError(
-            f"pick_history_default_n must be an int in [{PICK_HISTORY_N_MIN}, {PICK_HISTORY_N_MAX}]; got {n!r}"
+            f"pick_history_default_n must be one of {{{allowed}}}; got {n!r}"
         )
     row = db.scalar(select(OperatorSetting).where(OperatorSetting.key == PICK_HISTORY_DEFAULT_N_KEY))
     if row is None:
         row = OperatorSetting(key=PICK_HISTORY_DEFAULT_N_KEY)
         db.add(row)
-    row.value = {"n": clamped, "source": "operator"}
+    row.value = {"n": canonical, "source": "operator"}
     row.updated_at = _now_utc()
     db.flush()
     return row

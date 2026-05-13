@@ -11,6 +11,7 @@ import { fetchModelReadinessSummary, keys, updateModelReadinessSettings } from "
 import type { ModelReadinessSummaryRead } from "@/lib/types";
 
 const PICK_HISTORY_DEPTH_OPTIONS = [5, 10, 20] as const;
+type PickHistoryDepth = (typeof PICK_HISTORY_DEPTH_OPTIONS)[number];
 
 const DISPLAY_MODES: Array<{
   value: PriceDisplayMode;
@@ -43,7 +44,7 @@ export default function SettingsPage() {
   );
   const currentDepth = settings?.pick_history_default_n ?? 5;
 
-  async function selectDepth(next: number) {
+  async function selectDepth(next: PickHistoryDepth) {
     // Codex round-4 P2 on PR #24: previously this PATCH echoed back
     // the SWR-cached ``ml_serving_mode``. If another tab/operator
     // had flipped the mode in the meantime, a depth-only click here

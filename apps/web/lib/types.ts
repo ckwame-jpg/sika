@@ -435,7 +435,10 @@ export interface ModelReadinessSummaryRead {
 export interface ModelReadinessSettingsUpdate {
   ml_serving_mode?: "heuristic" | "shadow" | "ml";
   enqueue_shadow_backfill?: boolean;
-  pick_history_default_n?: number;
+  // Codex round-6 P2 on PR #24: restricted to the same options the
+  // strip's HISTORY_OPTIONS renders, so a non-canonical write can't
+  // round-trip back as a silent fallback to 5.
+  pick_history_default_n?: 5 | 10 | 20;
 }
 
 export interface PaperPositionRead {

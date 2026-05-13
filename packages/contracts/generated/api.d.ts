@@ -1225,7 +1225,7 @@ export interface components {
             /** Ml Serving Mode */
             ml_serving_mode?: ("heuristic" | "shadow" | "ml") | null;
             /** Pick History Default N */
-            pick_history_default_n?: number | null;
+            pick_history_default_n?: (5 | 10 | 20) | null;
         };
         /** ModelReadinessSummaryRead */
         ModelReadinessSummaryRead: {

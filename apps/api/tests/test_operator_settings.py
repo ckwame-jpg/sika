@@ -41,6 +41,17 @@ def test_set_default_rejects_out_of_range(db_session):
         set_pick_history_default_n(db_session, PICK_HISTORY_N_MAX + 1)
 
 
+def test_set_default_rejects_non_canonical_value(db_session):
+    """Codex round-6 P2 on PR #24: in-range-but-non-UI values
+    (e.g. 6, 15) must be rejected — the trade ticket only renders
+    the three canonical depths, so accepting anything else would
+    silently coerce back to 5 on the next mount."""
+    with pytest.raises(ValueError):
+        set_pick_history_default_n(db_session, 6)
+    with pytest.raises(ValueError):
+        set_pick_history_default_n(db_session, 15)
+
+
 def test_set_default_rejects_non_int(db_session):
     with pytest.raises(ValueError):
         set_pick_history_default_n(db_session, "five")  # type: ignore[arg-type]

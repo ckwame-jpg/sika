@@ -2079,8 +2079,11 @@
           "pick_history_default_n": {
             "anyOf": [
               {
-                "maximum": 20.0,
-                "minimum": 1.0,
+                "enum": [
+                  5,
+                  10,
+                  20
+                ],
                 "type": "integer"
               },
               {
