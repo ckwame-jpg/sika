@@ -355,22 +355,28 @@ def _commit_refresh_result(
             # revocations / extended outages aren't silently masked.
             now = time.monotonic()
             last_successful = _account_snapshot_cache["last_successful_at"]
-            if now - last_successful < _ACCOUNT_SNAPSHOT_STALE_SECONDS:
+            stale_horizon = last_successful + _ACCOUNT_SNAPSHOT_STALE_SECONDS
+            if now < stale_horizon:
                 # Extend fresh_until by ERROR_BACKOFF so we don't
                 # immediately retry. Codex round-10 P2: ALSO restore
                 # ``stale_until`` to the cached snapshot's original
-                # stale horizon (last_successful + STALE_SECONDS).
-                # Without this, ``expire_kalshi_account_cache``
-                # (force-refresh) had reset ``stale_until`` to 0 —
-                # so after the ERROR_BACKOFF expires, normal polls
-                # would skip the SWR branch and block on a sync
-                # fetch every time.
-                _account_snapshot_cache["fresh_until"] = (
-                    now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+                # stale horizon — without this, ``expire`` had reset
+                # ``stale_until`` to 0 and subsequent polls would
+                # skip SWR and block on a sync fetch.
+                #
+                # Codex round-11 P2: cap ``fresh_until`` at the
+                # stale horizon. Without this cap, an error near the
+                # horizon (e.g. at 119s with STALE=120s, ERROR_BACKOFF=15s)
+                # could push fresh_until to 134s — serving a
+                # ``connected`` snapshot past the configured maximum
+                # stale age. Cap ensures the next poll after the
+                # horizon falls through to the sync path, where the
+                # round-9 check surfaces the error.
+                _account_snapshot_cache["fresh_until"] = min(
+                    now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS,
+                    stale_horizon,
                 )
-                _account_snapshot_cache["stale_until"] = (
-                    last_successful + _ACCOUNT_SNAPSHOT_STALE_SECONDS
-                )
+                _account_snapshot_cache["stale_until"] = stale_horizon
                 _account_snapshot_cache["generation"] += 1
                 logger.warning(
                     "kalshi_account_refresh_error_preserved_cache",

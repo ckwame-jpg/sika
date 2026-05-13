@@ -538,6 +538,50 @@ def test_kalshi_account_snapshot_background_refresh_discarded_after_invalidation
     )
 
 
+def test_kalshi_account_snapshot_error_preserve_caps_fresh_at_stale_horizon(db_session, monkeypatch):
+    """Codex round-11 P2 on PR #40: when an error happens just inside
+    the stale horizon, the previous code extended ``fresh_until`` to
+    ``now + ERROR_BACKOFF`` — which could push it PAST the stale
+    horizon. Polls in that overshoot window hit the fresh branch and
+    served a ``connected`` snapshot beyond the configured max stale
+    age. Cap ``fresh_until`` at the stale horizon so the next poll
+    past that point falls through to the sync path and surfaces the
+    error (round-9 check)."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    # Seed a connected cache.
+    build_kalshi_account_snapshot(db_session)
+    last_successful = kalshi_account_module._account_snapshot_cache["last_successful_at"]
+    stale_horizon = last_successful + kalshi_account_module._ACCOUNT_SNAPSHOT_STALE_SECONDS
+
+    # Make Kalshi error.
+    def _failing_get_balance():
+        counting_client.balance_calls += 1
+        raise RuntimeError("upstream 429")
+
+    counting_client.get_balance = _failing_get_balance
+
+    # Advance time to JUST inside the stale horizon — close enough
+    # that ``now + ERROR_BACKOFF`` would overshoot it.
+    fake_now = {
+        "value": stale_horizon - 1.0,  # 1 s before the horizon
+    }
+    monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
+
+    expire_kalshi_account_cache()
+    served = build_kalshi_account_snapshot(db_session)
+    assert served.status == "connected"  # preserve path triggered
+
+    fresh_until = kalshi_account_module._account_snapshot_cache["fresh_until"]
+    assert fresh_until <= stale_horizon, (
+        f"fresh_until ({fresh_until}) must be capped at the stale horizon "
+        f"({stale_horizon}); ERROR_BACKOFF cannot push us past the configured max age"
+    )
+
+
 def test_kalshi_account_snapshot_force_error_restores_stale_horizon(db_session, monkeypatch):
     """Codex round-10 P2 on PR #40: when a force-refresh errors and
     the preserve-cache fallback kicks in, ``stale_until`` must be
