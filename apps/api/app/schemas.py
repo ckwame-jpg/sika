@@ -548,6 +548,12 @@ ReadinessStatus = Literal[
     "insufficient_history",
     "shadow_not_started",
     "shadowing",
+    # Bug #20 walk-forward floor: shadow coverage cleared but settled
+    # history (≥200 rows across ≥8 weeks) hasn't accumulated yet, so
+    # advancing to ``ready_for_review`` would mislead operators —
+    # arming auto-promotion in this state yields nothing because the
+    # gate keeps returning ``insufficient_history``.
+    "history_accumulating",
     "ready_for_review",
     "serving",
 ]
@@ -635,6 +641,12 @@ class ModelReadinessSummaryRead(BaseModel):
     shadow_enabled: bool = False
     auto_promotion_enabled: bool = False
     min_settled_for_review: int = 40
+    # Bug #20 walk-forward floor — settled rows needed before the
+    # promotion gate can evaluate. Distinct from
+    # ``min_settled_for_review`` (40), which gates shadow-mode entry.
+    # The readiness ladder holds at ``history_accumulating`` between the
+    # two thresholds.
+    min_settled_for_promotion_review: int = 200
     min_shadow_coverage: float = 0.75
     min_promotion_shadow_samples: int = 150
     promotion_stability_days_required: int = 3

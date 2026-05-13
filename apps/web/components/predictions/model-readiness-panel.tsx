@@ -22,6 +22,7 @@ const STUDY_LADDER = [
   "insufficient history",
   "shadow not started",
   "shadowing",
+  "history accumulating",
   "ready for review",
   "serving",
 ] as const;
@@ -51,6 +52,7 @@ function rolloutAction(summary: ModelReadinessSummaryRead, family: ModelFamilyRe
   if (!summary.shadow_enabled) return "Enable shadow mode";
   if (family.shadow_predictions === 0) return "Waiting for shadow capture";
   if (family.readiness_status === "shadowing") return "Collecting shadow coverage";
+  if (family.readiness_status === "history_accumulating") return "Accumulating settled history";
   if (family.readiness_status === "ready_for_review" && !summary.auto_promotion_enabled) return "Ready to arm auto-promotion";
   if (summary.auto_promotion_enabled) return "Auto-promotion armed";
   return family.readiness_status.replaceAll("_", " ");
@@ -58,7 +60,12 @@ function rolloutAction(summary: ModelReadinessSummaryRead, family: ModelFamilyRe
 
 function readinessPillClass(status: ReadinessStatus): string {
   if (status === "serving" || status === "ready_for_review") return "settled";
-  if (status === "shadowing" || status === "shadow_not_started" || status === "insufficient_history") return "pending";
+  if (
+    status === "shadowing" ||
+    status === "shadow_not_started" ||
+    status === "insufficient_history" ||
+    status === "history_accumulating"
+  ) return "pending";
   return "";
 }
 

@@ -34,6 +34,7 @@ function summaryFixture(n = 5): ModelReadinessSummaryRead {
     shadow_enabled: false,
     auto_promotion_enabled: false,
     min_settled_for_review: 40,
+    min_settled_for_promotion_review: 200,
     min_shadow_coverage: 0.75,
     min_promotion_shadow_samples: 150,
     promotion_stability_days_required: 3,

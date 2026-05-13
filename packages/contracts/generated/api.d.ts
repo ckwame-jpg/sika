@@ -1116,7 +1116,7 @@ export interface components {
              * Readiness Status
              * @enum {string}
              */
-            readiness_status: "heuristic_only" | "insufficient_history" | "shadow_not_started" | "shadowing" | "ready_for_review" | "serving";
+            readiness_status: "heuristic_only" | "insufficient_history" | "shadow_not_started" | "shadowing" | "history_accumulating" | "ready_for_review" | "serving";
             runtime: components["schemas"]["ModelFamilyRuntimeHealthRead"];
             /** Scope */
             scope: string;
@@ -1243,6 +1243,11 @@ export interface components {
              * @default 150
              */
             min_promotion_shadow_samples: number;
+            /**
+             * Min Settled For Promotion Review
+             * @default 200
+             */
+            min_settled_for_promotion_review: number;
             /**
              * Min Settled For Review
              * @default 40

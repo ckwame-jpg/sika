@@ -1760,6 +1760,7 @@
               "insufficient_history",
               "shadow_not_started",
               "shadowing",
+              "history_accumulating",
               "ready_for_review",
               "serving"
             ],
@@ -2117,6 +2118,11 @@
           "min_promotion_shadow_samples": {
             "default": 150,
             "title": "Min Promotion Shadow Samples",
+            "type": "integer"
+          },
+          "min_settled_for_promotion_review": {
+            "default": 200,
+            "title": "Min Settled For Promotion Review",
             "type": "integer"
           },
           "min_settled_for_review": {
