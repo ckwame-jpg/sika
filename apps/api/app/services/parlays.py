@@ -580,10 +580,21 @@ def _settle_parlay_rows(unsettled: list[ParlayPrediction]) -> dict[str, int]:
     for parlay in unsettled:
         source_predictions = [leg.source_prediction for leg in parlay.legs if leg.source_prediction is not None]
         if len(source_predictions) != len(parlay.legs):
-            parlay.settlement_status = "unresolved"
-            parlay.prediction_outcome = "unresolved"
-            parlay.settlement_notes = "One or more source leg predictions are missing."
-            summary["updated"] += 1
+            # Bug #27: only count the row as updated when its
+            # state actually changed. A parlay that's already
+            # ``unresolved`` from a prior settlement pass would
+            # otherwise inflate the operator-facing "updated"
+            # counter on every cron tick.
+            new_notes = "One or more source leg predictions are missing."
+            if (
+                parlay.settlement_status != "unresolved"
+                or parlay.prediction_outcome != "unresolved"
+                or parlay.settlement_notes != new_notes
+            ):
+                parlay.settlement_status = "unresolved"
+                parlay.prediction_outcome = "unresolved"
+                parlay.settlement_notes = new_notes
+                summary["updated"] += 1
             summary["unresolved"] += 1
             continue
 
@@ -637,10 +648,20 @@ def _settle_parlay_rows(unsettled: list[ParlayPrediction]) -> dict[str, int]:
             summary["pending"] += 1
             continue
 
-        parlay.settlement_status = "unresolved"
-        parlay.prediction_outcome = "unresolved"
-        parlay.settlement_notes = "Parlay settlement did not match a recognized terminal pattern."
-        summary["updated"] += 1
+        # Bug #27: same state-change guard as the missing-source
+        # branch above — a parlay that already failed to match a
+        # recognized terminal pattern on a prior pass shouldn't
+        # re-bump "updated" on every retry.
+        new_notes = "Parlay settlement did not match a recognized terminal pattern."
+        if (
+            parlay.settlement_status != "unresolved"
+            or parlay.prediction_outcome != "unresolved"
+            or parlay.settlement_notes != new_notes
+        ):
+            parlay.settlement_status = "unresolved"
+            parlay.prediction_outcome = "unresolved"
+            parlay.settlement_notes = new_notes
+            summary["updated"] += 1
         summary["unresolved"] += 1
 
     return summary

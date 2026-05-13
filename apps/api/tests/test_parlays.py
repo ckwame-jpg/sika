@@ -199,6 +199,64 @@ def test_settle_parlay_predictions_follows_leg_outcomes(db_session):
     assert parlay_by_run[13].prediction_outcome == "cancelled"
 
 
+def test_settle_parlay_predictions_does_not_inflate_updated_on_unchanged_unresolved_row(db_session):
+    """Bug #27: a parlay that's already ``unresolved`` from a prior
+    settlement pass should NOT bump ``summary['updated']`` again on
+    each subsequent pass. The pre-fix code re-wrote the same status +
+    notes and incremented ``updated`` unconditionally, inflating the
+    operator-facing throughput counter."""
+    # Build a parlay where the source predictions are intentionally
+    # nulled out post-capture — that drives the "missing source
+    # predictions" branch that previously inflated the counter.
+    leg_a = _make_candidate(
+        db_session,
+        sport_key="NBA",
+        ticker="MISSING-SRC-A",
+        side="yes",
+        suggested_price=0.42,
+        fair_yes_price=0.58,
+        fair_no_price=0.42,
+        edge=0.16,
+        confidence=0.72,
+    )
+    leg_b = _make_candidate(
+        db_session,
+        sport_key="MLB",
+        ticker="MISSING-SRC-B",
+        side="yes",
+        suggested_price=0.39,
+        fair_yes_price=0.55,
+        fair_no_price=0.45,
+        edge=0.16,
+        confidence=0.68,
+    )
+    capture_parlay_artifacts(db_session, run_id=99, candidates=[leg_a, leg_b])
+    db_session.commit()
+
+    # Drop the source predictions so the legs are orphaned — every
+    # subsequent settlement pass will hit the "missing source" branch.
+    parlay = db_session.scalars(select(ParlayPrediction)).one()
+    for leg in parlay.legs:
+        leg.source_prediction_id = None
+    db_session.commit()
+
+    # First pass — parlay transitions from default to unresolved.
+    first = settle_parlay_predictions(db_session)
+    db_session.commit()
+    assert first["updated"] == 1
+    assert first["unresolved"] == 1
+
+    # Second pass — row state is already unresolved with the same notes,
+    # so nothing changes and ``updated`` should NOT bump. The pre-fix
+    # code returned ``updated == 1`` here too, inflating the counter.
+    second = settle_parlay_predictions(db_session)
+    db_session.commit()
+    assert second["updated"] == 0, (
+        "An already-unresolved parlay must not re-bump the updated counter"
+    )
+    assert second["unresolved"] == 1
+
+
 def test_parlay_routes_filter_scope_and_leg_count(client, db_session):
     candidates = [
         _make_candidate(db_session, sport_key="NBA", ticker="ROUTE-NBA-1", side="yes", suggested_price=0.42, fair_yes_price=0.58, fair_no_price=0.42, edge=0.16, confidence=0.74),
