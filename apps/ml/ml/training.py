@@ -370,11 +370,56 @@ def _fit_estimator(
     return estimator.fit(x_train, y_train, **direct_fit_kwargs)
 
 
+def _fold_feature_spec(
+    train_frame: pd.DataFrame,
+    base_spec: FeatureSpec,
+    *,
+    use_median_imputation: bool,
+) -> FeatureSpec:
+    """Return a ``FeatureSpec`` whose schema (``ordered_keys`` +
+    ``family_one_hot_keys``) matches ``base_spec`` but whose
+    ``default_values`` are recomputed using *only* the training fold.
+
+    Bug #16: ``build_feature_spec`` fitted medians on the full dataset
+    before train/test split, leaking holdout statistics into the
+    imputation prior. Held-out Brier was correspondingly optimistic
+    and the promotion gate sat downstream of that leak. The train-
+    fold-only medians here keep the test fold genuinely held out.
+
+    The schema (column set) is taken from ``base_spec`` so train and
+    test vectors stay aligned. Only the imputation prior changes.
+    Skip-list semantics from ``build_feature_spec`` are preserved:
+    completeness markers and binary-only keys keep the 0.0 prior so
+    the present/absent signal stays meaningful.
+    """
+    if not use_median_imputation:
+        return base_spec
+    accumulator = _collect_feature_values(train_frame, list(base_spec.ordered_keys))
+    binary_only_keys = {
+        key for key, values in accumulator.items()
+        if values and all(v in (0.0, 1.0) for v in values)
+    }
+    skip_set = set(ADVANCED_COMPLETENESS_MARKERS) | binary_only_keys
+    medians = _medians_from_accumulator(accumulator)
+    new_defaults = {key: 0.0 for key in base_spec.ordered_keys}
+    for key, median_value in medians.items():
+        if key in skip_set:
+            continue
+        new_defaults[key] = median_value
+    return FeatureSpec(
+        version=base_spec.version,
+        ordered_keys=base_spec.ordered_keys,
+        default_values=new_defaults,
+        family_one_hot_keys=base_spec.family_one_hot_keys,
+    )
+
+
 def _evaluate_candidates(
     frame: pd.DataFrame,
     feature_spec: FeatureSpec,
     *,
     sample_weight: np.ndarray | None = None,
+    use_median_imputation: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     """Pick a candidate by held-out brier across three splits.
 
@@ -383,8 +428,13 @@ def _evaluate_candidates(
     we want the brier on the natural row distribution, not a weighted view.
     Pipeline candidates that don't accept ``sample_weight`` silently fall
     back to uniform weights (see ``_fit_estimator``).
+
+    Bug #16: imputation medians are recomputed inside each train fold
+    via ``_fold_feature_spec``. The vectors that go into both train
+    and test are produced with the train-only prior, so the held-out
+    Brier reflects genuine generalization rather than a leak from
+    the test rows' values back into the imputation defaults.
     """
-    x = _matrix(frame, feature_spec)
     y = frame["target"].to_numpy()
     player_train, player_test = _split_by_group(frame, "player_group")
     event_train, event_test = _split_by_group(frame, "event_group")
@@ -393,14 +443,26 @@ def _evaluate_candidates(
     def _train_weight(idx: np.ndarray) -> np.ndarray | None:
         return None if sample_weight is None else sample_weight[idx]
 
+    def _fold_matrices(train_idx: np.ndarray, test_idx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        fold_spec = _fold_feature_spec(
+            frame.iloc[train_idx],
+            feature_spec,
+            use_median_imputation=use_median_imputation,
+        )
+        return _matrix(frame.iloc[train_idx], fold_spec), _matrix(frame.iloc[test_idx], fold_spec)
+
+    x_player_train, x_player_test = _fold_matrices(player_train, player_test)
+    x_event_train, x_event_test = _fold_matrices(event_train, event_test)
+    x_time_train, x_time_test = _fold_matrices(time_train, time_test)
+
     evaluations: dict[str, Any] = {}
     for name, estimator in _candidate_estimators(len(frame)).items():
-        fitted = _fit_estimator(estimator, x[player_train], y[player_train], sample_weight=_train_weight(player_train))
-        player_prob = fitted.predict_proba(x[player_test])[:, 1]
-        event_fitted = _fit_estimator(estimator, x[event_train], y[event_train], sample_weight=_train_weight(event_train))
-        event_prob = event_fitted.predict_proba(x[event_test])[:, 1]
-        time_fitted = _fit_estimator(estimator, x[time_train], y[time_train], sample_weight=_train_weight(time_train))
-        time_prob = time_fitted.predict_proba(x[time_test])[:, 1]
+        fitted = _fit_estimator(estimator, x_player_train, y[player_train], sample_weight=_train_weight(player_train))
+        player_prob = fitted.predict_proba(x_player_test)[:, 1]
+        event_fitted = _fit_estimator(estimator, x_event_train, y[event_train], sample_weight=_train_weight(event_train))
+        event_prob = event_fitted.predict_proba(x_event_test)[:, 1]
+        time_fitted = _fit_estimator(estimator, x_time_train, y[time_train], sample_weight=_train_weight(time_train))
+        time_prob = time_fitted.predict_proba(x_time_test)[:, 1]
         evaluations[name] = {
             "player_group": _metrics_for_predictions(frame, player_test, player_prob),
             "event_group": _metrics_for_predictions(frame, event_test, event_prob),
@@ -501,7 +563,12 @@ def train_and_package(
     if not advanced_only_active and advanced_sample_weight != 1.0:
         sample_weights = _build_sample_weights(dataset, advanced_weight=advanced_sample_weight)
 
-    winner, evaluations = _evaluate_candidates(dataset, feature_spec, sample_weight=sample_weights)
+    winner, evaluations = _evaluate_candidates(
+        dataset,
+        feature_spec,
+        sample_weight=sample_weights,
+        use_median_imputation=use_median_imputation,
+    )
     x = _matrix(dataset, feature_spec)
     y = dataset["target"].to_numpy()
     final_estimator = _fit_estimator(

@@ -28,6 +28,7 @@ from ml.training import (
     _advanced_completeness_mask,
     _build_sample_weights,
     _compute_feature_medians,
+    _fold_feature_spec,
     _row_is_advanced_complete,
     build_feature_spec,
     train_and_package,
@@ -486,6 +487,67 @@ def test_promoted_manifest_uses_runtime_compatible_mode(tmp_path):
     assert manifest["serving_mode"] in {"shadow", "ml"}
     for family in manifest["families"]:
         assert family["mode"] in {"shadow", "ml"}
+
+
+def test_fold_feature_spec_uses_only_train_fold_medians():
+    """Bug #16: ``_fold_feature_spec`` must compute medians using only
+    the training-fold rows so that test-fold values don't leak into
+    the imputation prior. Holdout Brier reported by
+    ``_evaluate_candidates`` is downstream of this prior, and the
+    promotion gate is downstream of that — leakage made the gate
+    look more favorable than the underlying generalization."""
+    # Train fold: ``foo`` clusters at 10. Test fold: ``foo`` clusters
+    # at 1000. A full-dataset median would land in the middle and
+    # leak the test distribution into the imputation default; a
+    # train-only median stays close to 10.
+    train_frame = pd.DataFrame(
+        [
+            {"features": {"foo": 10.0, "family_key": "fam"}, "family_key": "fam", "ticker": "T1"},
+            {"features": {"foo": 11.0, "family_key": "fam"}, "family_key": "fam", "ticker": "T2"},
+            {"features": {"foo": 9.0, "family_key": "fam"}, "family_key": "fam", "ticker": "T3"},
+        ]
+    )
+    full_frame = pd.concat(
+        [
+            train_frame,
+            pd.DataFrame(
+                [
+                    {"features": {"foo": 1000.0, "family_key": "fam"}, "family_key": "fam", "ticker": "T4"},
+                    {"features": {"foo": 1010.0, "family_key": "fam"}, "family_key": "fam", "ticker": "T5"},
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    base_spec = build_feature_spec(full_frame, version="v-test", use_median_imputation=True)
+    fold_spec = _fold_feature_spec(train_frame, base_spec, use_median_imputation=True)
+
+    # Same schema (keys + family list) but train-only medians.
+    assert fold_spec.ordered_keys == base_spec.ordered_keys
+    assert fold_spec.family_one_hot_keys == base_spec.family_one_hot_keys
+    train_median = float(np.median([10.0, 11.0, 9.0]))
+    full_median = float(np.median([10.0, 11.0, 9.0, 1000.0, 1010.0]))
+    assert fold_spec.default_values["foo"] == train_median
+    assert base_spec.default_values["foo"] == full_median
+    assert fold_spec.default_values["foo"] != base_spec.default_values["foo"], (
+        "fold spec must differ from full-dataset spec — otherwise the leak persists"
+    )
+
+
+def test_fold_feature_spec_passthrough_when_imputation_disabled():
+    """When ``use_median_imputation=False`` is requested at the
+    training call, ``_fold_feature_spec`` must return the base spec
+    unchanged — the 0.0 defaults from ``build_feature_spec`` are the
+    desired prior in that mode, and recomputing per-fold would
+    silently re-introduce medians."""
+    frame = pd.DataFrame(
+        [
+            {"features": {"foo": 10.0, "family_key": "fam"}, "family_key": "fam", "ticker": "T1"},
+        ]
+    )
+    base_spec = build_feature_spec(frame, version="v-test", use_median_imputation=False)
+    fold_spec = _fold_feature_spec(frame, base_spec, use_median_imputation=False)
+    assert fold_spec is base_spec
 
 
 def test_training_no_baseline_stays_shadow(tmp_path):
