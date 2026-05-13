@@ -921,28 +921,41 @@ def train_and_package(
     any_family_promoted = any(decision["promoted"] for decision in per_family_decisions.values())
     serving_mode = "ml" if any_family_promoted else "shadow"
 
-    # Aggregate decision for the global-model promotion block. The
-    # ``candidate_brier`` carried here is the winner's overall worst-fold
-    # Brier (across all families) — informational only; per-family
-    # decisions live in ``per_family_decisions``.
-    overall_winner_block = walk_forward["candidates"].get(winner)
-    overall_candidate_brier: float | None = (
-        float(overall_winner_block["worst_fold_brier"]) if overall_winner_block is not None else None
+    # ``candidate_brier`` reported here is the worst (max) per-family
+    # value across the served families. For a single-family training run
+    # this matches the gate's actual comparand exactly, so the existing
+    # tie workflow (``baseline = previous candidate_brier``) keeps
+    # working — codex round 3 caught that reporting the global worst-fold
+    # could be strictly less than the family value used for promotion,
+    # so a tie at the top level could still promote at the family level.
+    # ``insufficient_history`` at the top level mirrors "no served family
+    # cleared the floor" rather than the global eval, for the same
+    # reason: the global eval is informational, the gate is per-family.
+    valid_family_briers = [
+        decision["candidate_brier"]
+        for decision in per_family_decisions.values()
+        if decision["candidate_brier"] is not None
+    ]
+    all_families_insufficient = all(
+        decision["insufficient_history"] for decision in per_family_decisions.values()
     )
-    overall_insufficient = bool(walk_forward["insufficient_history"]) or overall_candidate_brier is None
+    aggregate_candidate_brier: float | None = (
+        max(valid_family_briers) if valid_family_briers else None
+    )
     promotion_decision: dict[str, Any] = {
         "baseline_brier": baseline_value,
-        "candidate_brier": overall_candidate_brier,
+        "candidate_brier": aggregate_candidate_brier,
         "promoted": any_family_promoted,
-        "insufficient_history": overall_insufficient,
+        "insufficient_history": all_families_insufficient or aggregate_candidate_brier is None,
         "fold_count": int(walk_forward["fold_count"]),
         "fold_window_days": walk_forward["fold_window_days"],
         "min_rows_per_fold": int(walk_forward["min_rows_per_fold"]),
         "min_valid_folds": int(walk_forward["min_valid_folds"]),
         "metric": "worst_fold_brier",
+        "candidate_brier_aggregation": "max_over_served_families",
         "per_family": per_family_decisions,
     }
-    if overall_insufficient:
+    if promotion_decision["insufficient_history"]:
         promotion_decision["reason"] = "insufficient_history"
 
     model_name = f"global_{winner}_residual"

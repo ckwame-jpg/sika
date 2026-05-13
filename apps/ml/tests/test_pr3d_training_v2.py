@@ -757,7 +757,12 @@ def test_training_promotion_insufficient_history_blocks_promotion(tmp_path):
 
 
 def test_training_metadata_includes_walk_forward_block(tmp_path):
-    """Walk-forward observability lives in metadata['walk_forward_evaluation']."""
+    """Walk-forward observability lives in metadata['walk_forward_evaluation'].
+
+    Promotion's top-level ``candidate_brier`` mirrors the per-family
+    worst-fold the gate actually consumed — for a single-family run
+    this is exactly that family's worst-fold, NOT the global eval's
+    worst-fold (codex round 3 caught the divergence)."""
     frame = settled_predictions_from_records(_walk_forward_records())
     result = train_and_package(
         frame,
@@ -772,11 +777,39 @@ def test_training_metadata_includes_walk_forward_block(tmp_path):
     assert walk_forward["fold_count"] >= MIN_WALK_FORWARD_VALID_FOLDS
     assert walk_forward["min_rows_per_fold"] == MIN_WALK_FORWARD_ROWS_PER_FOLD
     assert walk_forward["min_valid_folds"] == MIN_WALK_FORWARD_VALID_FOLDS
-    # Promotion candidate_brier = winner's worst-fold from walk-forward.
+
     winner = metadata["winner"]
-    expected = walk_forward["candidates"][winner]["worst_fold_brier"]
-    assert metadata["promotion"]["candidate_brier"] == expected
+    family_block = walk_forward["per_family"]["mlb_props"]
+    family_worst = family_block["candidates"][winner]["worst_fold_brier"]
+    assert metadata["promotion"]["candidate_brier"] == family_worst
     assert metadata["promotion"]["metric"] == "worst_fold_brier"
+    assert metadata["promotion"]["candidate_brier_aggregation"] == "max_over_served_families"
+
+
+def test_training_promotion_top_level_uses_max_family_brier_for_multi_family(tmp_path):
+    """For multi-family runs, top-level ``candidate_brier`` is the worst
+    (max) per-family value. This keeps the tie workflow (read top-level
+    brier, pass as next baseline) conservative — the family with the
+    highest per-family Brier ties at the baseline, the others have
+    room to beat it. Codex round 3 traced this through and we capture
+    the invariant here."""
+    frame = settled_predictions_from_records(_walk_forward_records())
+    result = train_and_package(
+        frame,
+        artifact_root=tmp_path / "artifacts",
+        manifest_out=tmp_path / "manifests" / "current.json",
+        serve_family_keys=("mlb_props", "nba_props"),
+        model_version="2026-05-07",
+    )
+    metadata = json.loads((result.artifact_dir / "training_metadata.json").read_text())
+    winner = metadata["winner"]
+    walk_forward = metadata["walk_forward_evaluation"]
+    per_family_briers = {
+        family: block["candidates"][winner]["worst_fold_brier"]
+        for family, block in walk_forward["per_family"].items()
+        if block.get("candidates")
+    }
+    assert metadata["promotion"]["candidate_brier"] == max(per_family_briers.values())
 
 
 def test_walk_forward_folds_skip_single_class_training_buckets():
