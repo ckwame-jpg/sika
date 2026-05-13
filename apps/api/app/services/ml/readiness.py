@@ -11,6 +11,7 @@ from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParl
 from app.services.ml.promotion import MIN_PROMOTION_SHADOW_SAMPLES, STABILITY_DAYS_REQUIRED
 from app.services.ml.runtime import read_family_runtime, shadow_capture_blocker
 from app.services.ml.study_progress import (
+    MIN_SETTLED_FOR_PROMOTION_REVIEW,
     MIN_SETTLED_FOR_REVIEW,
     MIN_SHADOW_COVERAGE,
     SETTLED_OUTCOMES,
@@ -18,6 +19,7 @@ from app.services.ml.study_progress import (
     retained_study_cutoff,
     shadow_coverage_ratio,
     shadow_coverage_ready,
+    walk_forward_history_ready,
 )
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition, parlay_family_key, single_family_key
 from app.services.operator_settings import effective_ml_serving_mode, effective_pick_history_default_n
@@ -347,6 +349,19 @@ def _readiness_status(
         )
     if not shadow_coverage_ready(shadow_coverage_ratio):
         return "shadowing", f"Shadow coverage is {shadow_coverage_ratio:.0%}; need at least {MIN_SHADOW_COVERAGE:.0%} before review."
+    # Bug #20 walk-forward gate needs ≥200 settled rows spread across ≥8
+    # weekly folds; advancing to ``ready_for_review`` before that floor
+    # is operator-misleading — the gate will keep returning
+    # ``insufficient_history`` until enough weeks accumulate. Hold the
+    # status at ``history_accumulating`` until the per-family settled
+    # count clears the walk-forward floor.
+    if not walk_forward_history_ready(settled_predictions):
+        return "history_accumulating", (
+            f"Shadow coverage is high, but only {settled_predictions} settled predictions are available. "
+            f"The walk-forward promotion gate needs ≥{MIN_SETTLED_FOR_PROMOTION_REVIEW} rows "
+            f"across ≥8 weeks before it can evaluate. Keep collecting settled history; "
+            f"the status will advance to ``ready_for_review`` once the floor is cleared."
+        )
     return "ready_for_review", (
         "Settled history and shadow coverage are high enough for a promotion review. This does not enable live ML serving until desired mode is set to ml."
     )
@@ -626,6 +641,7 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
         "shadow_enabled": serving_mode in {"shadow", "ml"},
         "auto_promotion_enabled": serving_mode == "ml",
         "min_settled_for_review": MIN_SETTLED_FOR_REVIEW,
+        "min_settled_for_promotion_review": MIN_SETTLED_FOR_PROMOTION_REVIEW,
         "min_shadow_coverage": MIN_SHADOW_COVERAGE,
         "min_promotion_shadow_samples": MIN_PROMOTION_SHADOW_SAMPLES,
         "promotion_stability_days_required": STABILITY_DAYS_REQUIRED,

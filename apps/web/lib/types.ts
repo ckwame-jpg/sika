@@ -338,6 +338,7 @@ export type ReadinessStatus =
   | "insufficient_history"
   | "shadow_not_started"
   | "shadowing"
+  | "history_accumulating"
   | "ready_for_review"
   | "serving";
 
@@ -423,6 +424,12 @@ export interface ModelReadinessSummaryRead {
   shadow_enabled: boolean;
   auto_promotion_enabled: boolean;
   min_settled_for_review: number;
+  /** Bug #20 walk-forward floor — settled-rows needed before the
+   *  promotion gate can even evaluate (~200 rows across ≥8 weeks).
+   *  Distinct from ``min_settled_for_review`` (40), which only gates
+   *  shadow-mode entry. The readiness ladder holds at
+   *  ``history_accumulating`` between the two thresholds. */
+  min_settled_for_promotion_review: number;
   min_shadow_coverage: number;
   min_promotion_shadow_samples: number;
   promotion_stability_days_required: number;
