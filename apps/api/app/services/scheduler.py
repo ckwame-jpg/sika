@@ -366,6 +366,34 @@ def _reconcile_job() -> None:
         db.commit()
 
 
+def _drain_outbox_job() -> None:
+    """Bug #31 — drain pending outbox entries. Imported lazily so the
+    handler-registration side effects in ``services/orders.py`` fire
+    before the first drain (orders.py is the canonical home for the
+    Kalshi-side handlers)."""
+    # Import inside the function for two reasons: (1) avoid pulling
+    # ``services.orders`` into module-import order at scheduler import,
+    # which would create a circular path through routes.py; (2) ensure
+    # the handler registrations happen when the scheduler kicks off,
+    # not when ``services.scheduler`` is first imported (which can
+    # happen during pytest collection).
+    from app.services import orders as _orders  # noqa: F401 — registers handlers
+    from app.services.outbox import drain_once
+
+    with SessionLocal() as db:
+        counts = drain_once(db)
+        if counts.get("processed"):
+            logger.info(
+                "Outbox drain processed=%s succeeded=%s failed=%s dead_lettered=%s skipped=%s",
+                counts["processed"],
+                counts["succeeded"],
+                counts["failed"],
+                counts["dead_lettered"],
+                counts["skipped"],
+            )
+        db.commit()
+
+
 def _evaluate_model_promotions_job() -> None:
     from app.services.ml import kill_switch, promotion
 
@@ -466,6 +494,18 @@ def start_scheduler() -> None:
         trigger=CronTrigger(minute="*/15"),
         id="demo_reconcile",
         replace_existing=True,
+    )
+    # Bug #31 — outbox drain. Polls every 5s so a freshly-enqueued
+    # demo-order submit reaches Kalshi with sub-10s latency in the
+    # common case; per-entry exponential backoff still throttles
+    # repeated failures.
+    scheduler.add_job(
+        _drain_outbox_job,
+        trigger=IntervalTrigger(seconds=5),
+        id="outbox_drain",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
     )
     scheduler.add_job(
         _evaluate_model_promotions_job,

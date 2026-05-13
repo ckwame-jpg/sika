@@ -830,6 +830,41 @@ class DemoOrder(Base):
     fills = relationship("DemoFill", back_populates="order", cascade="all, delete-orphan")
 
 
+class OutboxEntry(Base):
+    """Transactional outbox for side-effecting work (bug #31).
+
+    Records an intent to perform an external action (today: Kalshi demo
+    order submit + cancel) atomically with the local DB write that
+    motivated it. A background worker drains pending entries with
+    retries + dead-lettering, so the local DB and Kalshi can never
+    diverge silently — either both reflect the intent or only the local
+    side does (and the outbox row exposes the divergence to be
+    reconciled).
+
+    The ``intent_kind`` discriminates which handler runs; ``payload`` is
+    a JSON blob of handler-specific args. ``target_kind`` + ``target_id``
+    let a handler look up the row whose lifecycle this entry tracks
+    (e.g., the ``DemoOrder`` to mark as submitted on success).
+    """
+
+    __tablename__ = "outbox_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    intent_kind = Column(String, nullable=False, index=True)
+    target_kind = Column(String, nullable=True, index=True)
+    target_id = Column(Integer, nullable=True, index=True)
+    payload = Column(JSON, default=dict, nullable=False)
+    status = Column(String, nullable=False, default="pending", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=5)
+    last_error = Column(Text, nullable=True)
+    last_error_at = Column(DateTime(timezone=True), nullable=True)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class DemoFill(Base):
     __tablename__ = "demo_fills"
 

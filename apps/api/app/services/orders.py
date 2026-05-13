@@ -6,8 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clients.kalshi import KalshiDemoClient
-from app.models import DemoFill, DemoOrder, Market, PaperPosition
+from app.models import DemoFill, DemoOrder, Market, OutboxEntry, PaperPosition
 from app.schemas import DemoOrderCreate, PaperPositionCreate, PaperPositionExit
+from app.services.outbox import (
+    INTENT_KALSHI_ORDER_CANCEL,
+    INTENT_KALSHI_ORDER_SUBMIT,
+    enqueue as enqueue_outbox,
+    register_intent_handler,
+)
 
 
 def create_paper_position(db: Session, payload: PaperPositionCreate) -> PaperPosition:
@@ -43,7 +49,17 @@ def close_paper_position(db: Session, position_id: int, payload: PaperPositionEx
     return position
 
 
-def create_demo_order(db: Session, payload: DemoOrderCreate, client: KalshiDemoClient | None = None) -> DemoOrder:
+def create_demo_order(db: Session, payload: DemoOrderCreate) -> DemoOrder:
+    """Submit a demo order via the bug-#31 transactional outbox.
+
+    The local ``DemoOrder`` row is written together with an
+    ``OutboxEntry`` recording the intent to call Kalshi; both rows
+    persist atomically when the request commits. The actual Kalshi
+    submission happens out-of-band in the outbox drain worker
+    (``_drain_outbox_job`` in scheduler.py), so a network glitch or
+    crash between the local commit and the Kalshi call can no longer
+    leave the two sides in disagreement.
+    """
     if not payload.approved:
         raise HTTPException(status_code=400, detail="Manual approval is required before submitting demo orders")
 
@@ -51,67 +67,126 @@ def create_demo_order(db: Session, payload: DemoOrderCreate, client: KalshiDemoC
     if not market:
         raise HTTPException(status_code=404, detail="Market not found for ticker")
 
+    client_order_id = str(uuid4())
     order = DemoOrder(
         market_id=market.id,
         ticker=payload.ticker,
-        client_order_id=str(uuid4()),
+        client_order_id=client_order_id,
         side=payload.side.lower(),
         action=payload.action.lower(),
         quantity=payload.quantity,
         limit_price=payload.limit_price,
         approved_by_user=True,
+        # ``submitting`` matches the pre-#31 status the UI already
+        # knows; the drain worker advances to ``resting`` /
+        # ``submission_failed`` once Kalshi responds.
         status="submitting",
     )
     db.add(order)
     db.flush()
 
-    kalshi_client = client or KalshiDemoClient()
-    try:
-        response = kalshi_client.create_order(
-            ticker=payload.ticker,
-            side=order.side,
-            action=order.action,
-            quantity=order.quantity,
-            limit_price=order.limit_price,
-            time_in_force=payload.time_in_force,
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        order.status = "submission_failed"
-        db.flush()
-        raise HTTPException(status_code=502, detail=f"Kalshi demo order submission failed: {exc}") from exc
-
-    remote_order = response.get("order", {})
-    order.kalshi_order_id = remote_order.get("order_id")
-    order.client_order_id = remote_order.get("client_order_id") or order.client_order_id
-    order.status = remote_order.get("status") or "submitted"
-    order.request_body = response.get("request", {})
-    order.response_body = response
-    order.submitted_at = datetime.now(timezone.utc)
-    order.last_synced_at = order.submitted_at
-    db.flush()
+    enqueue_outbox(
+        db,
+        intent_kind=INTENT_KALSHI_ORDER_SUBMIT,
+        target_kind="demo_order",
+        target_id=order.id,
+        payload={
+            "client_order_id": client_order_id,
+            "ticker": payload.ticker,
+            "side": order.side,
+            "action": order.action,
+            "quantity": order.quantity,
+            "limit_price": order.limit_price,
+            "time_in_force": payload.time_in_force,
+        },
+    )
     return order
 
 
-def cancel_demo_order(db: Session, order_id: int, client: KalshiDemoClient | None = None) -> DemoOrder:
+def cancel_demo_order(db: Session, order_id: int) -> DemoOrder:
+    """Cancel a demo order via the outbox (bug #31).
+
+    Cancel is enqueued for the worker so the local state shift is
+    atomic with the recorded intent. The DemoOrder must already have a
+    Kalshi-assigned ``kalshi_order_id`` (i.e., the submit-side outbox
+    entry has already drained) — otherwise there's nothing on Kalshi
+    to cancel and we return 400 the same as before.
+    """
     order = db.get(DemoOrder, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Demo order not found")
     if not order.kalshi_order_id:
         raise HTTPException(status_code=400, detail="Demo order was not accepted by Kalshi")
 
-    kalshi_client = client or KalshiDemoClient()
-    try:
-        response = kalshi_client.cancel_order(order.kalshi_order_id)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Kalshi demo order cancel failed: {exc}") from exc
+    # ``cancelling`` is the new intermediate state — operator UI uses
+    # this to suppress the cancel button while the drain processes the
+    # request, similar to how ``submitting`` works on the create side.
+    order.status = "cancelling"
+    db.flush()
+    enqueue_outbox(
+        db,
+        intent_kind=INTENT_KALSHI_ORDER_CANCEL,
+        target_kind="demo_order",
+        target_id=order.id,
+        payload={"kalshi_order_id": order.kalshi_order_id},
+    )
+    return order
 
+
+def _kalshi_submit_handler(db: Session, entry: OutboxEntry) -> None:
+    """Outbox handler for ``kalshi_order_submit`` — calls
+    ``KalshiDemoClient.create_order`` and reconciles the DemoOrder row.
+    Idempotent: Kalshi's ``client_order_id`` ensures a re-submit of the
+    same payload returns the same order.
+    """
+    payload = dict(entry.payload or {})
+    order = db.get(DemoOrder, int(entry.target_id)) if entry.target_id is not None else None
+    if order is None:
+        raise RuntimeError(f"DemoOrder id={entry.target_id} not found for outbox entry {entry.id}")
+
+    client = KalshiDemoClient()
+    response = client.create_order(
+        ticker=payload["ticker"],
+        side=payload["side"],
+        action=payload["action"],
+        quantity=int(payload["quantity"]),
+        limit_price=float(payload["limit_price"]),
+        time_in_force=payload.get("time_in_force"),
+    )
+
+    remote_order = response.get("order", {})
+    now = datetime.now(timezone.utc)
+    order.kalshi_order_id = remote_order.get("order_id") or order.kalshi_order_id
+    order.client_order_id = remote_order.get("client_order_id") or order.client_order_id
+    order.status = remote_order.get("status") or "submitted"
+    order.request_body = response.get("request", {})
+    order.response_body = response
+    order.submitted_at = order.submitted_at or now
+    order.last_synced_at = now
+
+
+def _kalshi_cancel_handler(db: Session, entry: OutboxEntry) -> None:
+    """Outbox handler for ``kalshi_order_cancel`` — calls
+    ``KalshiDemoClient.cancel_order``. Idempotent: cancelling an
+    already-cancelled order is a no-op on Kalshi.
+    """
+    payload = dict(entry.payload or {})
+    order = db.get(DemoOrder, int(entry.target_id)) if entry.target_id is not None else None
+    if order is None:
+        raise RuntimeError(f"DemoOrder id={entry.target_id} not found for outbox entry {entry.id}")
+
+    client = KalshiDemoClient()
+    response = client.cancel_order(payload["kalshi_order_id"])
     order.status = (response.get("order") or {}).get("status") or "cancelled"
     order.response_body = response
     order.last_synced_at = datetime.now(timezone.utc)
-    db.flush()
-    return order
+
+
+# Wire handlers at import time so the scheduler's drain job picks them
+# up. ``register_intent_handler`` is idempotent on re-registration so
+# importing this module twice (e.g., in test fixtures) is safe.
+register_intent_handler(INTENT_KALSHI_ORDER_SUBMIT, _kalshi_submit_handler)
+register_intent_handler(INTENT_KALSHI_ORDER_CANCEL, _kalshi_cancel_handler)
 
 
 def reconcile_demo_state(db: Session, client: KalshiDemoClient | None = None) -> None:

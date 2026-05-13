@@ -5,14 +5,23 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from app.clients.kalshi import KalshiDemoClient
-from app.models import Market, PaperPosition
+from app.models import Market, OutboxEntry, PaperPosition
 from app.schemas import DemoOrderCreate, PaperPositionCreate, PaperPositionExit
-from app.services.orders import close_paper_position, create_demo_order, create_paper_position
+from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
+from app.services.outbox import (
+    INTENT_KALSHI_ORDER_SUBMIT,
+    STATUS_DONE,
+    STATUS_PENDING,
+    drain_once,
+)
 
 
 class FakeDemoClient:
+    """Stand-in for ``KalshiDemoClient`` used by the outbox drain in tests."""
+
     def create_order(self, *, ticker, side, action, quantity, limit_price, time_in_force):
         return {
             "request": {"ticker": ticker},
@@ -22,6 +31,9 @@ class FakeDemoClient:
                 "status": "resting",
             },
         }
+
+    def cancel_order(self, order_id):
+        return {"order": {"order_id": order_id, "status": "cancelled"}}
 
 
 def test_sign_request_produces_base64_signature(tmp_path: Path):
@@ -51,13 +63,15 @@ def test_demo_orders_require_manual_approval(db_session):
         create_demo_order(
             db_session,
             DemoOrderCreate(ticker="NBA-TEST", side="yes", quantity=1, limit_price=0.51, approved=False),
-            client=FakeDemoClient(),
         )
 
     assert exc.value.status_code == 400
 
 
-def test_demo_order_submission_persists_remote_status(db_session):
+def test_demo_order_create_atomically_writes_outbox_entry(db_session):
+    """Bug #31: ``create_demo_order`` now writes the local DemoOrder
+    AND an outbox entry in the same transaction. The Kalshi call
+    happens later in the drain worker."""
     market = Market(ticker="NBA-TEST", title="Test market", status="open")
     db_session.add(market)
     db_session.commit()
@@ -65,11 +79,91 @@ def test_demo_order_submission_persists_remote_status(db_session):
     order = create_demo_order(
         db_session,
         DemoOrderCreate(ticker="NBA-TEST", side="yes", quantity=2, limit_price=0.55, approved=True),
-        client=FakeDemoClient(),
     )
 
+    # Local row exists in ``submitting`` state — Kalshi has NOT been
+    # called yet; the drain worker will advance to ``resting`` /
+    # ``submission_failed`` once the handler runs.
+    assert order.status == "submitting"
+    assert order.kalshi_order_id is None
+
+    # Outbox entry was enqueued in the same transaction, pointing at
+    # this order.
+    entries = db_session.scalars(
+        select(OutboxEntry).where(OutboxEntry.target_id == order.id)
+    ).all()
+    assert len(entries) == 1
+    assert entries[0].intent_kind == INTENT_KALSHI_ORDER_SUBMIT
+    assert entries[0].status == STATUS_PENDING
+    assert entries[0].payload["client_order_id"] == order.client_order_id
+    assert entries[0].payload["ticker"] == "NBA-TEST"
+
+
+def test_demo_order_drain_reconciles_remote_status(db_session, monkeypatch):
+    """Submit + drain round-trip — after the outbox drains, the order
+    reflects the Kalshi response and the outbox entry is marked done."""
+    monkeypatch.setattr("app.services.orders.KalshiDemoClient", FakeDemoClient)
+    market = Market(ticker="NBA-TEST", title="Test market", status="open")
+    db_session.add(market)
+    db_session.commit()
+
+    order = create_demo_order(
+        db_session,
+        DemoOrderCreate(ticker="NBA-TEST", side="yes", quantity=2, limit_price=0.55, approved=True),
+    )
+    db_session.commit()
+
+    counts = drain_once(db_session)
+    assert counts["succeeded"] == 1
+    assert counts["failed"] == 0
+
+    db_session.refresh(order)
     assert order.kalshi_order_id == "ord_123"
     assert order.status == "resting"
+    assert order.submitted_at is not None
+
+    entries = db_session.scalars(
+        select(OutboxEntry).where(OutboxEntry.target_id == order.id)
+    ).all()
+    assert entries[0].status == STATUS_DONE
+    assert entries[0].completed_at is not None
+
+
+def test_demo_order_cancel_roundtrip_via_outbox(db_session, monkeypatch):
+    """Cancel path mirrors submit: enqueue a cancel intent, drain
+    flips the Kalshi side, local row reflects the cancelled status."""
+    monkeypatch.setattr("app.services.orders.KalshiDemoClient", FakeDemoClient)
+    market = Market(ticker="NBA-CANCEL", title="Cancel test", status="open")
+    db_session.add(market)
+    db_session.commit()
+
+    order = create_demo_order(
+        db_session,
+        DemoOrderCreate(ticker="NBA-CANCEL", side="yes", quantity=1, limit_price=0.5, approved=True),
+    )
+    db_session.commit()
+    drain_once(db_session)  # submit drains, order.kalshi_order_id set
+    db_session.refresh(order)
+    assert order.kalshi_order_id == "ord_123"
+
+    cancel_demo_order(db_session, order.id)
+    db_session.commit()
+    db_session.refresh(order)
+    # Immediate state shift to ``cancelling`` so the UI can hide the
+    # cancel button while the drain processes.
+    assert order.status == "cancelling"
+
+    drain_once(db_session)
+    db_session.refresh(order)
+    assert order.status == "cancelled"
+
+    cancel_entries = db_session.scalars(
+        select(OutboxEntry)
+        .where(OutboxEntry.target_id == order.id)
+        .where(OutboxEntry.intent_kind == "kalshi_order_cancel")
+    ).all()
+    assert len(cancel_entries) == 1
+    assert cancel_entries[0].status == STATUS_DONE
 
 
 def test_paper_position_yes_round_trip_pnl(db_session):

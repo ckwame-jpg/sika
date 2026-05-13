@@ -118,7 +118,7 @@ class FakeDemoClient:
         }
 
 
-def test_mixed_sport_refresh_and_trading_flow(db_session):
+def test_mixed_sport_refresh_and_trading_flow(db_session, monkeypatch):
     run = run_refresh_cycle(
         db_session,
         provider=FakeSportsProvider(),
@@ -138,12 +138,20 @@ def test_mixed_sport_refresh_and_trading_flow(db_session):
         db_session,
         PaperPositionCreate(ticker="KXNBAGAME-26MAR30BOSBKN-BOS", side="yes", quantity=2, entry_price=0.42),
     )
+    # Bug #31 — Kalshi side effect happens in the outbox drain; monkey-
+    # patch the client used by the handler so this e2e test stays
+    # network-free.
+    monkeypatch.setattr("app.services.orders.KalshiDemoClient", FakeDemoClient)
     order = create_demo_order(
         db_session,
         DemoOrderCreate(ticker="KXNBAGAME-26MAR30BOSBKN-BOS", side="yes", quantity=2, limit_price=0.42, approved=True),
-        client=FakeDemoClient(),
     )
     close_paper_position(db_session, position.id, PaperPositionExit(exit_price=0.58))
+    db_session.commit()
+
+    # Drain the outbox so the Kalshi-side reconciliation lands.
+    from app.services.outbox import drain_once
+    drain_once(db_session)
     db_session.commit()
 
     stored_position = db_session.get(PaperPosition, position.id)
