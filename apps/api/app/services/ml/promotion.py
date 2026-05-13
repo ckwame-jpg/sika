@@ -17,6 +17,17 @@ BRIER_NOISE_BAND = 1.02
 STABILITY_DAYS_REQUIRED = 3
 SETTLED_BINARY_OUTCOMES = {"won", "lost"}
 
+# Bug #20 — walk-forward worst-fold gating. The Brier headline reported
+# on ``PromotionMetrics`` is the worst per-week-bucket value, not the
+# aggregate; one favourable stretch should not be enough to promote.
+# Low-volume families (game-winner markets at ~30 settled picks/week)
+# auto-widen to 2-week buckets so each bucket clears the row floor.
+# A family below the fold floor stays "insufficient history" and never
+# promotes regardless of the aggregate Brier.
+MIN_WALK_FORWARD_ROWS_PER_FOLD = 25
+MIN_WALK_FORWARD_VALID_FOLDS = 8
+WALK_FORWARD_WEEK_SIZES_DAYS = (7, 14)
+
 
 @dataclass(frozen=True, slots=True)
 class PromotionExample:
@@ -35,14 +46,37 @@ class PromotionMetrics:
     shadow_brier: float
     heuristic_top_decile_roi: float
     shadow_top_decile_roi: float
+    walk_forward_fold_count: int = 0
+    walk_forward_window_days: int | None = None
+    walk_forward_rows_per_fold: tuple[int, ...] = ()
+    walk_forward_min_rows_per_fold: int = MIN_WALK_FORWARD_ROWS_PER_FOLD
+    walk_forward_min_valid_folds: int = MIN_WALK_FORWARD_VALID_FOLDS
+    insufficient_history: bool = False
+    aggregate_heuristic_brier: float = 0.0
+    aggregate_shadow_brier: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
+        # Emit None for aggregate Brier when there are no samples — keeps
+        # downstream consumers from mistaking ``brier_score([])==0.0`` for
+        # a real zero-Brier signal.
+        has_samples = self.sample_count > 0
         return {
             "sample_count": self.sample_count,
             "heuristic_brier": self.heuristic_brier,
             "shadow_brier": self.shadow_brier,
             "heuristic_top_decile_roi": self.heuristic_top_decile_roi,
             "shadow_top_decile_roi": self.shadow_top_decile_roi,
+            "walk_forward": {
+                "fold_count": self.walk_forward_fold_count,
+                "window_days": self.walk_forward_window_days,
+                "rows_per_fold": list(self.walk_forward_rows_per_fold),
+                "min_rows_per_fold": self.walk_forward_min_rows_per_fold,
+                "min_valid_folds": self.walk_forward_min_valid_folds,
+                "insufficient_history": self.insufficient_history,
+                "metric": "worst_fold_brier",
+                "aggregate_heuristic_brier": self.aggregate_heuristic_brier if has_samples else None,
+                "aggregate_shadow_brier": self.aggregate_shadow_brier if has_samples else None,
+            },
         }
 
 
@@ -244,13 +278,113 @@ def top_decile_roi(examples: list[PromotionExample], *, model: str) -> float:
     return round(sum(example.realized_pnl for example in selected) / len(selected), 6)
 
 
+def _walk_forward_buckets(
+    examples: list[PromotionExample],
+    *,
+    min_rows_per_fold: int = MIN_WALK_FORWARD_ROWS_PER_FOLD,
+    min_valid_folds: int = MIN_WALK_FORWARD_VALID_FOLDS,
+) -> tuple[list[list[int]], dict[str, Any]]:
+    """Bucket examples by capture week (or fortnight) for walk-forward Brier.
+
+    Returns ``(buckets, meta)``. ``buckets`` is a list of index lists —
+    each inner list is the positions of ``examples`` that fall in one
+    weekly (or biweekly) window. ``meta`` records the windowing choice
+    and whether the fold floor was cleared.
+
+    Unlike the training-side variant in ``apps/ml/ml/training.py``,
+    the API-side gate has no train slice — the heuristic and shadow
+    probabilities are already-recorded observations, so every bucket
+    with enough rows is a valid "fold" for the worst-Brier check.
+    """
+    if not examples:
+        return [], {
+            "fold_count": 0,
+            "window_days": None,
+            "min_rows_per_fold": min_rows_per_fold,
+            "min_valid_folds": min_valid_folds,
+            "rows_per_fold": [],
+            "insufficient_history": True,
+        }
+
+    timestamps: list[datetime] = []
+    for example in examples:
+        captured = example.captured_at
+        if captured.tzinfo is None:
+            captured = captured.replace(tzinfo=timezone.utc)
+        timestamps.append(captured)
+
+    order = sorted(range(len(examples)), key=lambda i: timestamps[i])
+    earliest = timestamps[order[0]]
+
+    best_attempt: tuple[list[list[int]], dict[str, Any]] | None = None
+    for window_days in WALK_FORWARD_WEEK_SIZES_DAYS:
+        bucket_to_indices: dict[int, list[int]] = {}
+        for position in order:
+            offset_seconds = (timestamps[position] - earliest).total_seconds()
+            bucket = int(offset_seconds // (window_days * 86400.0))
+            bucket_to_indices.setdefault(bucket, []).append(position)
+
+        buckets = [
+            bucket_to_indices[bucket_id]
+            for bucket_id in sorted(bucket_to_indices)
+            if len(bucket_to_indices[bucket_id]) >= min_rows_per_fold
+        ]
+        meta = {
+            "fold_count": len(buckets),
+            "window_days": window_days,
+            "min_rows_per_fold": min_rows_per_fold,
+            "min_valid_folds": min_valid_folds,
+            "rows_per_fold": [len(bucket) for bucket in buckets],
+            "insufficient_history": len(buckets) < min_valid_folds,
+        }
+        if len(buckets) >= min_valid_folds:
+            return buckets, meta
+        if best_attempt is None or len(buckets) > len(best_attempt[0]):
+            best_attempt = (buckets, meta)
+
+    assert best_attempt is not None
+    buckets, meta = best_attempt
+    return buckets, {**meta, "insufficient_history": True}
+
+
+def _per_bucket_brier(examples: list[PromotionExample], indices: list[int], *, model: str) -> float:
+    fold_examples = [examples[i] for i in indices]
+    return brier_score(fold_examples, model=model)
+
+
 def metrics_for_examples(examples: list[PromotionExample]) -> PromotionMetrics:
+    aggregate_heuristic = brier_score(examples, model="heuristic")
+    aggregate_shadow = brier_score(examples, model="shadow")
+    heuristic_roi = top_decile_roi(examples, model="heuristic")
+    shadow_roi = top_decile_roi(examples, model="shadow")
+
+    buckets, fold_meta = _walk_forward_buckets(examples)
+    insufficient = bool(fold_meta["insufficient_history"])
+
+    if insufficient:
+        # Fall back to the aggregate so the runtime dashboard still
+        # reflects something useful — the gate fails via the
+        # ``insufficient_history`` flag regardless of these numbers.
+        heuristic_brier = aggregate_heuristic
+        shadow_brier = aggregate_shadow
+    else:
+        heuristic_brier = round(max(_per_bucket_brier(examples, idx, model="heuristic") for idx in buckets), 6)
+        shadow_brier = round(max(_per_bucket_brier(examples, idx, model="shadow") for idx in buckets), 6)
+
     return PromotionMetrics(
         sample_count=len(examples),
-        heuristic_brier=brier_score(examples, model="heuristic"),
-        shadow_brier=brier_score(examples, model="shadow"),
-        heuristic_top_decile_roi=top_decile_roi(examples, model="heuristic"),
-        shadow_top_decile_roi=top_decile_roi(examples, model="shadow"),
+        heuristic_brier=heuristic_brier,
+        shadow_brier=shadow_brier,
+        heuristic_top_decile_roi=heuristic_roi,
+        shadow_top_decile_roi=shadow_roi,
+        walk_forward_fold_count=int(fold_meta["fold_count"]),
+        walk_forward_window_days=fold_meta["window_days"],
+        walk_forward_rows_per_fold=tuple(int(v) for v in fold_meta["rows_per_fold"]),
+        walk_forward_min_rows_per_fold=int(fold_meta["min_rows_per_fold"]),
+        walk_forward_min_valid_folds=int(fold_meta["min_valid_folds"]),
+        insufficient_history=insufficient,
+        aggregate_heuristic_brier=aggregate_heuristic,
+        aggregate_shadow_brier=aggregate_shadow,
     )
 
 
@@ -261,7 +395,16 @@ def evaluate_promotion_gates(
     same_evaluation_date: bool = False,
 ) -> PromotionGateResult:
     volume_passed = metrics.sample_count >= MIN_PROMOTION_SHADOW_SAMPLES
-    calibration_passed = metrics.shadow_brier <= metrics.heuristic_brier * BRIER_NOISE_BAND
+    # Bug #20 — calibration is gated on the *worst-fold* walk-forward
+    # Brier. If walk-forward couldn't assemble the per-family minimum
+    # (8 folds × ≥25 rows, with 2-week fall-back), the comparison is
+    # untrustworthy and we fail calibration regardless of the headline
+    # numbers — the family stays in shadow until enough history piles
+    # up.
+    calibration_passed = (
+        not metrics.insufficient_history
+        and metrics.shadow_brier <= metrics.heuristic_brier * BRIER_NOISE_BAND
+    )
     ranking_passed = metrics.shadow_top_decile_roi >= metrics.heuristic_top_decile_roi
     first_three_passed = volume_passed and calibration_passed and ranking_passed
     stability_days = previous_stability_days if same_evaluation_date else (previous_stability_days + 1 if first_three_passed else 0)
@@ -269,8 +412,14 @@ def evaluate_promotion_gates(
     reasons: list[str] = []
     if not volume_passed:
         reasons.append(f"Need {MIN_PROMOTION_SHADOW_SAMPLES}+ settled shadow predictions.")
-    if not calibration_passed:
-        reasons.append("Shadow Brier did not clear the heuristic Brier noise band.")
+    if metrics.insufficient_history:
+        reasons.append(
+            f"Need {MIN_WALK_FORWARD_VALID_FOLDS}+ walk-forward folds with "
+            f"≥{MIN_WALK_FORWARD_ROWS_PER_FOLD} settled rows each "
+            f"(got {metrics.walk_forward_fold_count})."
+        )
+    elif not calibration_passed:
+        reasons.append("Worst-fold shadow Brier did not clear the heuristic Brier noise band.")
     if not ranking_passed:
         reasons.append("Shadow top-decile ROI did not beat the heuristic ranking.")
     if first_three_passed and not stability_passed:
@@ -286,16 +435,49 @@ def evaluate_promotion_gates(
     )
 
 
+WALK_FORWARD_METRIC_MARKER = "worst_fold_brier"
+
+
+def _previous_metric_compatible(previous_payload: dict[str, Any]) -> bool:
+    """True when the stored ``promotion_metrics`` payload was emitted by
+    the walk-forward gate.
+
+    Bug #20 changed the meaning of ``shadow_brier`` (aggregate → worst
+    fold). Carry-over stability days from the prior gate semantics would
+    let a family promote with fewer than ``STABILITY_DAYS_REQUIRED``
+    walk-forward passes — codex round 4 caught the seam. We detect the
+    new gate by the ``walk_forward.metric`` marker and reset stability
+    when the marker is missing.
+    """
+    walk_forward = (previous_payload.get("metrics") or {}).get("walk_forward")
+    if not isinstance(walk_forward, dict):
+        return False
+    return walk_forward.get("metric") == WALK_FORWARD_METRIC_MARKER
+
+
 def evaluate_family(db: Session, family_key: str, *, now: datetime | None = None) -> PromotionEvaluation:
     reference_now = now or _now_utc()
     row = _runtime_row(db, family_key)
     metrics = metrics_for_examples(paired_examples_for_family(db, family_key))
     previous_payload = dict(row.promotion_metrics or {})
     current_date = reference_now.date().isoformat()
+    # Reset stability accumulation when the stored payload predates the
+    # walk-forward gate — those passing days were earned under the old
+    # aggregate-Brier comparison and don't transfer. Same-day legacy
+    # payloads also force ``same_evaluation_date=False`` so the first
+    # new-gate pass counts as day 1 instead of being treated as an
+    # additional same-day re-evaluation that holds the stability counter
+    # at zero (codex round 5 edge case).
+    previous_is_walk_forward = _previous_metric_compatible(previous_payload)
+    carryover_stability_days = int(row.promotion_stability_days or 0) if previous_is_walk_forward else 0
+    same_evaluation_date = (
+        previous_is_walk_forward
+        and previous_payload.get("last_evaluation_date") == current_date
+    )
     gates = evaluate_promotion_gates(
         metrics,
-        previous_stability_days=int(row.promotion_stability_days or 0),
-        same_evaluation_date=previous_payload.get("last_evaluation_date") == current_date,
+        previous_stability_days=carryover_stability_days,
+        same_evaluation_date=same_evaluation_date,
     )
 
     previous_mode = str(row.promotion_mode or "").strip().lower() or None
@@ -306,7 +488,21 @@ def evaluate_family(db: Session, family_key: str, *, now: datetime | None = None
     row.promotion_mode = next_mode
     row.promotion_stability_days = gates.stability_days
     if gates.promoted:
-        row.promotion_baseline_brier = metrics.shadow_brier
+        # The kill switch compares an aggregate rolling-50 Brier to this
+        # baseline (apps/api/app/services/ml/kill_switch.py); store the
+        # aggregate value so the comparison stays apples-to-apples.
+        # Storing the worst-fold instead would let aggregate regressions
+        # slip past the kill switch until they exceeded a much looser
+        # threshold — codex round 4 traced this through.
+        #
+        # NOTE on legacy rows: the pre-bug-#20 ``promotion_baseline_brier``
+        # was also the aggregate (the prior gate's ``shadow_brier`` was
+        # aggregate). So existing on-disk values are byte-compatible with
+        # the post-#20 write — no data migration is required. Only the
+        # ``shadow_brier`` field *inside* the JSON ``promotion_metrics``
+        # blob changed semantics, and that's gated by the
+        # ``WALK_FORWARD_METRIC_MARKER`` reset above.
+        row.promotion_baseline_brier = metrics.aggregate_shadow_brier
     row.promotion_metrics = {
         "last_evaluation_date": current_date,
         "metrics": metrics.to_dict(),

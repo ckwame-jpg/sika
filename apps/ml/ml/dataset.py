@@ -63,7 +63,13 @@ def _prepare_frame(rows: pd.DataFrame, *, drop_pushes: bool, dedupe_markets: boo
     frame = frame[frame["side"].astype(str).str.lower().isin({"yes", "no"})]
     if "capture_scope" in frame.columns:
         frame = frame[(frame["capture_scope"].isna()) | (frame["capture_scope"] != "coverage")]
-    frame["captured_at"] = pd.to_datetime(frame["captured_at"], utc=True)
+    # Bug #20 walk-forward folds use captured_at to assign rows to weekly
+    # buckets. A row with an unparseable / null captured_at would coerce
+    # to NaT and silently land in a spurious bucket; ``errors='coerce'``
+    # plus ``dropna`` filters those rows out so the fold builder only
+    # sees real timestamps.
+    frame["captured_at"] = pd.to_datetime(frame["captured_at"], utc=True, errors="coerce")
+    frame = frame.dropna(subset=["captured_at"])
     frame = frame.sort_values(["captured_at", "id"], ascending=[True, True])
     if dedupe_markets:
         frame = frame.drop_duplicates(subset=["market_id"], keep="first")

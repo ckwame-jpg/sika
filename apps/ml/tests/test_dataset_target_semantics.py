@@ -124,3 +124,17 @@ def test_rows_with_unexpected_side_are_dropped():
     frame = settled_predictions_from_records(records)
     assert frame["market_id"].tolist() == [1, 4]
     assert frame["target"].tolist() == [1, 1]
+
+
+def test_rows_with_unparseable_captured_at_are_dropped():
+    """Bug #20 walk-forward folds bucket by ``captured_at``. A row whose
+    timestamp coerces to NaT would otherwise land in a spurious bucket
+    (NaT arithmetic is platform-dependent). Drop such rows in dataset
+    prep so the fold builder downstream only sees real timestamps."""
+    rows = [
+        _record(side="yes", outcome="won", market_id=1),
+        _record(side="yes", outcome="lost", market_id=2),
+    ]
+    rows[1]["captured_at"] = "not-a-timestamp"
+    frame = settled_predictions_from_records(rows)
+    assert frame["market_id"].tolist() == [1]

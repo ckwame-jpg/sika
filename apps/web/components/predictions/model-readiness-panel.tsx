@@ -521,11 +521,11 @@ export function ModelReadinessPanel() {
             {(selectedHeuristicBrier != null || selectedShadowBrier != null || selectedShadowTopDecileRoi != null) ? (
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="stats-tile">
-                  <p className="stats-tile-label">Heuristic Brier</p>
+                  <p className="stats-tile-label" title="Worst per-week walk-forward fold; bug #20 promotion gate metric.">Heuristic Brier (worst fold)</p>
                   <p className="stats-tile-value font-mono">{selectedHeuristicBrier?.toFixed(4) ?? "—"}</p>
                 </div>
                 <div className="stats-tile">
-                  <p className="stats-tile-label">Shadow Brier</p>
+                  <p className="stats-tile-label" title="Worst per-week walk-forward fold; bug #20 promotion gate metric.">Shadow Brier (worst fold)</p>
                   <p className="stats-tile-value font-mono">{selectedShadowBrier?.toFixed(4) ?? "—"}</p>
                 </div>
                 <div className="stats-tile">
