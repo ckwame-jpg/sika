@@ -99,15 +99,26 @@ export const fetchHealth = () => request<HealthResponse>("/health");
 export const fetchProductFreshness = () =>
   request<ProductFreshnessResponse>("/product/freshness");
 export const fetchTradeDesk = (sport?: string) => {
+  // Bug #24 (codex round-1 P2): the SWR key collapses ``undefined`` /
+  // ``""`` / ``"all"`` to a single unfiltered key. The fetcher has
+  // to apply the same normalization or it'll send ``?sport=all`` to
+  // the API for one of those callers — that response would land
+  // under the unfiltered key and serve stale data to true
+  // all-sports callers.
+  const normalized = normalizeAllSports(sport);
   const params = new URLSearchParams();
-  if (sport) params.set("sport", sport);
+  if (normalized) params.set("sport", normalized);
   const qs = params.toString();
   return request<TradeDeskResponse>(`/trade-desk${qs ? `?${qs}` : ""}`);
 };
 
 export const fetchEvents = (sport?: string, day?: string) => {
+  // Bug #24 (codex round-1 P2): same all-sports normalization as
+  // ``fetchTradeDesk`` so the fetcher's URL matches the canonical
+  // SWR key one-to-one.
+  const normalized = normalizeAllSports(sport);
   const params = new URLSearchParams();
-  if (sport) params.set("sport", sport);
+  if (normalized) params.set("sport", normalized);
   if (day) params.set("day", day);
   const qs = params.toString();
   return request<EventRead[]>(`/events${qs ? `?${qs}` : ""}`);

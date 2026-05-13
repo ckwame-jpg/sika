@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { keys } from "./api";
+import { fetchEvents, fetchTradeDesk, keys } from "./api";
 
 /**
  * Bug #24: SWR cache keys had two failure modes.
@@ -90,5 +90,57 @@ describe("keys — canonical SWR cache keys (bug #24)", () => {
         "/events?day=2026-05-13&sport=NBA",
       );
     });
+  });
+});
+
+describe("fetchers also normalize all-sports (codex round-1 P2 on bug #24)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function mockJsonFetch() {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    return fetchSpy;
+  }
+
+  it("fetchTradeDesk drops the sport param for 'all'", async () => {
+    const fetchSpy = mockJsonFetch();
+    await fetchTradeDesk("all");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/trade-desk",
+      expect.any(Object),
+    );
+  });
+
+  it("fetchTradeDesk drops the sport param for the empty string", async () => {
+    const fetchSpy = mockJsonFetch();
+    await fetchTradeDesk("");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/trade-desk",
+      expect.any(Object),
+    );
+  });
+
+  it("fetchTradeDesk preserves a real sport filter", async () => {
+    const fetchSpy = mockJsonFetch();
+    await fetchTradeDesk("NBA");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/trade-desk?sport=NBA",
+      expect.any(Object),
+    );
+  });
+
+  it("fetchEvents drops 'all' but keeps an explicit day", async () => {
+    const fetchSpy = mockJsonFetch();
+    await fetchEvents("all", "2026-05-13");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/events?day=2026-05-13",
+      expect.any(Object),
+    );
   });
 });
