@@ -420,6 +420,44 @@ def test_evaluate_family_resets_stability_when_previous_payload_predates_walk_fo
     assert result.gates.promoted is False
 
 
+def test_evaluate_family_first_walk_forward_pass_counts_after_same_day_legacy_payload(db_session):
+    """Codex round 5 edge case: legacy payload was written earlier on the
+    same calendar day as the first walk-forward evaluation. The naive
+    reset (``previous_stability_days=0`` + ``same_evaluation_date=True``)
+    leaves the gate computing ``stability_days = previous_stability_days
+    = 0``, so the first new-gate pass records 0 days instead of 1. Force
+    ``same_evaluation_date=False`` when the previous payload is legacy
+    so the first walk-forward pass counts as day 1."""
+    _seed_promotion_ready_family(db_session)
+    runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one_or_none()
+    if runtime_row is None:
+        runtime_row = ModelFamilyRuntimeHealth(family_key="nba_singles")
+        db_session.add(runtime_row)
+        db_session.flush()
+    eval_date = datetime(2026, 4, 21, tzinfo=timezone.utc)
+    # Legacy payload stamped on the SAME calendar day as the impending
+    # walk-forward evaluation.
+    runtime_row.promotion_stability_days = 2
+    runtime_row.promotion_metrics = {
+        "last_evaluation_date": eval_date.date().isoformat(),
+        "metrics": {
+            "sample_count": 200,
+            "heuristic_brier": 0.22,
+            "shadow_brier": 0.19,
+            "heuristic_top_decile_roi": 0.01,
+            "shadow_top_decile_roi": 0.08,
+            # No ``walk_forward`` block — payload predates bug #20.
+        },
+        "gates": {},
+    }
+    db_session.flush()
+
+    result = evaluate_family(db_session, "nba_singles", now=eval_date)
+    # First pass under the new gate must count as day 1 (not stay at 0).
+    assert result.gates.stability_days == 1
+    assert result.gates.promoted is False
+
+
 def test_evaluate_family_keeps_stability_when_previous_payload_already_walk_forward(db_session):
     """Companion to the reset test: when the stored payload was already
     produced by the walk-forward gate (``metric == worst_fold_brier``),

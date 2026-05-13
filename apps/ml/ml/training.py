@@ -921,27 +921,43 @@ def train_and_package(
     any_family_promoted = any(decision["promoted"] for decision in per_family_decisions.values())
     serving_mode = "ml" if any_family_promoted else "shadow"
 
-    # ``candidate_brier`` reported here is the worst (max) per-family
-    # value across the served families. For a single-family training run
-    # this matches the gate's actual comparand exactly, so the existing
-    # tie workflow (``baseline = previous candidate_brier``) keeps
-    # working — codex round 3 caught that reporting the global worst-fold
-    # could be strictly less than the family value used for promotion,
-    # so a tie at the top level could still promote at the family level.
-    # ``insufficient_history`` at the top level mirrors "no served family
-    # cleared the floor" rather than the global eval, for the same
-    # reason: the global eval is informational, the gate is per-family.
+    # ``candidate_brier`` reporting must be tight enough to recycle as
+    # the next baseline without loosening the gate. Two cases:
+    #
+    #   * Run promoted (some family beat the baseline) → report the
+    #     worst-fold Brier of the PROMOTED families only. Including
+    #     families whose Brier was above the baseline would let an
+    #     operator reuse this value and unintentionally widen the gate
+    #     for the next run. Codex round 5 traced this through.
+    #
+    #   * Run did not promote → report the worst Brier across families
+    #     with valid walk-forward (informational; the operator isn't
+    #     using this as a baseline because nothing promoted yet).
+    #
+    # Single-family runs still see the same value the gate compared
+    # against, preserving the tie workflow from round 3.
     valid_family_briers = [
         decision["candidate_brier"]
         for decision in per_family_decisions.values()
         if decision["candidate_brier"] is not None
     ]
+    promoted_family_briers = [
+        decision["candidate_brier"]
+        for decision in per_family_decisions.values()
+        if decision["promoted"] and decision["candidate_brier"] is not None
+    ]
     all_families_insufficient = all(
         decision["insufficient_history"] for decision in per_family_decisions.values()
     )
-    aggregate_candidate_brier: float | None = (
-        max(valid_family_briers) if valid_family_briers else None
-    )
+    if any_family_promoted and promoted_family_briers:
+        aggregate_candidate_brier: float | None = max(promoted_family_briers)
+        candidate_brier_aggregation = "max_over_promoted_families"
+    elif valid_family_briers:
+        aggregate_candidate_brier = max(valid_family_briers)
+        candidate_brier_aggregation = "max_over_served_families"
+    else:
+        aggregate_candidate_brier = None
+        candidate_brier_aggregation = "none"
     promotion_decision: dict[str, Any] = {
         "baseline_brier": baseline_value,
         "candidate_brier": aggregate_candidate_brier,
@@ -952,7 +968,7 @@ def train_and_package(
         "min_rows_per_fold": int(walk_forward["min_rows_per_fold"]),
         "min_valid_folds": int(walk_forward["min_valid_folds"]),
         "metric": "worst_fold_brier",
-        "candidate_brier_aggregation": "max_over_served_families",
+        "candidate_brier_aggregation": candidate_brier_aggregation,
         "per_family": per_family_decisions,
     }
     if promotion_decision["insufficient_history"]:

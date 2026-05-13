@@ -459,16 +459,21 @@ def evaluate_family(db: Session, family_key: str, *, now: datetime | None = None
     current_date = reference_now.date().isoformat()
     # Reset stability accumulation when the stored payload predates the
     # walk-forward gate — those passing days were earned under the old
-    # aggregate-Brier comparison and don't transfer.
-    carryover_stability_days = (
-        int(row.promotion_stability_days or 0)
-        if _previous_metric_compatible(previous_payload)
-        else 0
+    # aggregate-Brier comparison and don't transfer. Same-day legacy
+    # payloads also force ``same_evaluation_date=False`` so the first
+    # new-gate pass counts as day 1 instead of being treated as an
+    # additional same-day re-evaluation that holds the stability counter
+    # at zero (codex round 5 edge case).
+    previous_is_walk_forward = _previous_metric_compatible(previous_payload)
+    carryover_stability_days = int(row.promotion_stability_days or 0) if previous_is_walk_forward else 0
+    same_evaluation_date = (
+        previous_is_walk_forward
+        and previous_payload.get("last_evaluation_date") == current_date
     )
     gates = evaluate_promotion_gates(
         metrics,
         previous_stability_days=carryover_stability_days,
-        same_evaluation_date=previous_payload.get("last_evaluation_date") == current_date,
+        same_evaluation_date=same_evaluation_date,
     )
 
     previous_mode = str(row.promotion_mode or "").strip().lower() or None

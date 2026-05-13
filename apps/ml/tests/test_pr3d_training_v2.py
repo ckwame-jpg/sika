@@ -787,12 +787,12 @@ def test_training_metadata_includes_walk_forward_block(tmp_path):
 
 
 def test_training_promotion_top_level_uses_max_family_brier_for_multi_family(tmp_path):
-    """For multi-family runs, top-level ``candidate_brier`` is the worst
-    (max) per-family value. This keeps the tie workflow (read top-level
-    brier, pass as next baseline) conservative — the family with the
-    highest per-family Brier ties at the baseline, the others have
-    room to beat it. Codex round 3 traced this through and we capture
-    the invariant here."""
+    """For multi-family runs without promotion, top-level
+    ``candidate_brier`` is the worst (max) per-family value across all
+    served families. This keeps the tie workflow conservative — the
+    family with the highest per-family Brier ties at the baseline, the
+    others have room to beat it. Codex round 3 traced this through and
+    we capture the invariant here."""
     frame = settled_predictions_from_records(_walk_forward_records())
     result = train_and_package(
         frame,
@@ -802,6 +802,8 @@ def test_training_promotion_top_level_uses_max_family_brier_for_multi_family(tmp
         model_version="2026-05-07",
     )
     metadata = json.loads((result.artifact_dir / "training_metadata.json").read_text())
+    assert metadata["promotion"]["promoted"] is False
+    assert metadata["promotion"]["candidate_brier_aggregation"] == "max_over_served_families"
     winner = metadata["winner"]
     walk_forward = metadata["walk_forward_evaluation"]
     per_family_briers = {
@@ -810,6 +812,125 @@ def test_training_promotion_top_level_uses_max_family_brier_for_multi_family(tmp
         if block.get("candidates")
     }
     assert metadata["promotion"]["candidate_brier"] == max(per_family_briers.values())
+
+
+def test_training_promotion_promoted_run_reports_only_promoted_family_briers(tmp_path):
+    """Codex round 5: a partial multi-family promotion must NOT report a
+    top-level ``candidate_brier`` that includes families which failed
+    the gate. Reusing such a value as the next baseline would loosen
+    the gate. With promotion fired, top-level reports the worst Brier
+    among PROMOTED families only.
+
+    Setup: two families with markedly different Brier; pick a baseline
+    that promotes only one. Assert the reported candidate is the
+    promoted family's Brier, not the failed family's.
+    """
+    # Build a dataset where MLB picks have strong signal (low Brier) and
+    # NBA picks are noisy (high Brier). The candidate model should
+    # achieve a lower worst-fold for MLB than NBA. 56 rows/week (28 per
+    # family) clears the 25-row per-family floor; 10 weeks gives 9 test
+    # folds.
+    base = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+    rows: list[dict[str, Any]] = []
+    rng = np.random.default_rng(0)
+    for week in range(10):
+        for slot in range(56):
+            captured = base + timedelta(days=week * 7, hours=slot * 3)
+            sport = "MLB" if slot % 2 == 0 else "NBA"
+            family = "mlb_props" if sport == "MLB" else "nba_props"
+            if sport == "MLB":
+                # Strong, learnable signal: features perfectly track the
+                # outcome, model achieves near-zero Brier.
+                won = (slot // 2) % 2 == 0
+                yes_probability = 0.95 if won else 0.05
+                recent_average = 9.0 if won else 1.0
+                latest_log_days_ago = 0 if won else 3
+            else:
+                # No signal: outcome is independent of features (random)
+                # and features are noise. Model can't beat 50/50, Brier
+                # stays high.
+                won = bool(rng.integers(0, 2))
+                yes_probability = float(rng.uniform(0.45, 0.55))
+                recent_average = float(rng.uniform(4.0, 6.0))
+                latest_log_days_ago = int(rng.integers(0, 4))
+            rows.append(
+                {
+                    "id": week * 100 + slot,
+                    "market_id": week * 100 + slot,
+                    "event_id": (week * 100 + slot) // 4,
+                    "ticker": f"{sport}-PROMO-{week}-{slot}",
+                    "sport_key": sport,
+                    "event_name": f"Event {week}-{slot}",
+                    "market_family": "player_prop",
+                    "market_kind": "player_prop",
+                    "stat_key": "points" if sport == "NBA" else "hits",
+                    "threshold": 5.5,
+                    "subject_name": f"P{slot}",
+                    "subject_team": f"T{slot % 4}",
+                    "capture_scope": "recommendation",
+                    "side": "yes",
+                    "suggested_price": 0.5,
+                    "fair_yes_price": yes_probability,
+                    "edge": yes_probability - 0.5,
+                    "confidence": yes_probability,
+                    "selection_score": 0.1,
+                    "features": {
+                        "family_key": family,
+                        "recent_average": recent_average,
+                        "threshold": 5.5,
+                        "yes_probability": yes_probability,
+                        "has_team_context": True,
+                        "latest_log_days_ago": latest_log_days_ago,
+                    },
+                    "scoring_diagnostics": {},
+                    "market_status_at_capture": "active",
+                    "prediction_outcome": "won" if won else "lost",
+                    "settled_at": (captured + timedelta(hours=3)).isoformat(),
+                    "realized_pnl": 0.5 if won else -0.5,
+                    "captured_at": captured.isoformat(),
+                }
+            )
+    frame = settled_predictions_from_records(rows)
+    # First pass: discover MLB / NBA worst-folds without a baseline.
+    discover = train_and_package(
+        frame,
+        artifact_root=tmp_path / "discover-artifacts",
+        manifest_out=tmp_path / "discover-manifest" / "current.json",
+        serve_family_keys=("mlb_props", "nba_props"),
+        model_version="2026-05-08-discover",
+    )
+    discover_meta = json.loads((discover.artifact_dir / "training_metadata.json").read_text())
+    per_family = discover_meta["promotion"]["per_family"]
+    mlb_brier = per_family["mlb_props"]["candidate_brier"]
+    nba_brier = per_family["nba_props"]["candidate_brier"]
+    assert mlb_brier is not None and nba_brier is not None
+    assert mlb_brier < nba_brier, (
+        f"fixture must keep MLB tighter than NBA; got MLB={mlb_brier} NBA={nba_brier}"
+    )
+
+    # Choose a baseline that fires MLB but not NBA.
+    baseline = (mlb_brier + nba_brier) / 2
+    result = train_and_package(
+        frame,
+        artifact_root=tmp_path / "artifacts",
+        manifest_out=tmp_path / "manifests" / "current.json",
+        serve_family_keys=("mlb_props", "nba_props"),
+        model_version="2026-05-08",
+        promotion_baseline_brier=baseline,
+    )
+    metadata = json.loads((result.artifact_dir / "training_metadata.json").read_text())
+    promotion = metadata["promotion"]
+    assert promotion["per_family"]["mlb_props"]["promoted"] is True
+    assert promotion["per_family"]["nba_props"]["promoted"] is False
+    assert promotion["promoted"] is True
+    # Critical assertion: top-level candidate_brier reflects ONLY the
+    # promoted family. NBA's higher Brier must not pollute the reported
+    # baseline.
+    assert promotion["candidate_brier"] == promotion["per_family"]["mlb_props"]["candidate_brier"]
+    assert promotion["candidate_brier_aggregation"] == "max_over_promoted_families"
+    # And reusing this top-level brier as the next baseline must not
+    # loosen the gate enough to promote NBA.
+    assert promotion["candidate_brier"] < nba_brier
 
 
 def test_walk_forward_folds_skip_single_class_training_buckets():
