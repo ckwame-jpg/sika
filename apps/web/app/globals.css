@@ -1502,6 +1502,17 @@
   border-style: dashed;
   border-color: var(--color-cosmos-border-soft);
 }
+/* Codex round-7 P2 on PR #24: empty-state message keeps the same
+   panel chrome as the populated strip — header / controls stay
+   visible above so the operator can clear filters. */
+.pick-history-strip-empty-message {
+  margin: 0;
+  padding: 6px 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--color-cosmos-text-muted);
+  font-variant-numeric: tabular-nums;
+}
 .pick-history-strip-pill-letter {
   font-size: 13px;
   font-weight: 700;
