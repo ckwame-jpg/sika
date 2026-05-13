@@ -781,6 +781,76 @@ def test_refresh_kalshi_markets_refreshes_tracked_combo_prop_tickers_without_dis
     assert summary["combo_prop_legs_discovered"] == 0
 
 
+def test_tracked_combo_prop_refresh_filters_in_sql_not_python(db_session):
+    """Bug #23: the combo-prop refresh path used to load every open market
+    into Python and filter ``raw_data["copilot_market_family"]`` /
+    ``raw_data["copilot_source_type"]`` on each row. That's O(all open
+    markets) per refresh tick. After the fix, only markets that match
+    BOTH JSON keys at the DB level are visited — the others never load.
+
+    The behavioral fingerprint of the SQL filter: an open market with the
+    wrong family (e.g. ``winner``) or the wrong source (``standalone``)
+    must NOT have ``client.get_market`` called against it."""
+    # A real combo-derived prop leg — should be visited.
+    combo_prop = Market(
+        ticker="KXNBAPTS-FILTER-COMBO",
+        sport_key="NBA",
+        title="Filter combo prop",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_source_type": "combo_derived",
+        },
+    )
+    # Same family but standalone — must be excluded.
+    standalone_prop = Market(
+        ticker="KXNBAPTS-FILTER-STANDALONE",
+        sport_key="NBA",
+        title="Filter standalone prop",
+        status="active",
+        raw_data={
+            "copilot_market_family": "player_prop",
+            "copilot_source_type": "standalone",
+        },
+    )
+    # Winner market with the matching source — must be excluded (family
+    # doesn't match).
+    combo_winner = Market(
+        ticker="KXNBAGAME-FILTER-WINNER",
+        sport_key="NBA",
+        title="Filter winner",
+        status="active",
+        raw_data={
+            "copilot_market_family": "winner",
+            "copilot_source_type": "combo_derived",
+        },
+    )
+    # Market with no copilot_* keys at all — must be excluded.
+    legacy_market = Market(
+        ticker="KX-FILTER-LEGACY",
+        sport_key="NBA",
+        title="Filter legacy",
+        status="active",
+        raw_data={},
+    )
+    db_session.add_all([combo_prop, standalone_prop, combo_winner, legacy_market])
+    db_session.commit()
+
+    client = TrackedComboRefreshClient()
+    refresh_kalshi_markets(
+        db_session,
+        client=client,
+        include_standalone=False,
+        refresh_combo_prop_tickers=True,
+        discover_combo_props=False,
+    )
+
+    assert client.get_market_calls == [combo_prop.ticker], (
+        "Only the combo-derived player_prop market should be visited. "
+        f"Got: {client.get_market_calls}"
+    )
+
+
 def test_refresh_current_slate_kalshi_markets_uses_targeted_get_market_before_broad_scan(db_session):
     event = _seed_team_event(db_session, sport_key="NBA", external_id="target-current")
     event.starts_at = datetime.now(timezone.utc)

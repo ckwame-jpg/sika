@@ -523,12 +523,19 @@ def refresh_kalshi_markets(
             )
 
     if refresh_combo_prop_tickers:
-        tracked_combo_prop_markets = [
-            market
-            for market in db.scalars(select(Market).where(Market.status.in_(tuple(OPEN_MARKET_STATUSES)))).all()
-            if (market.raw_data or {}).get("copilot_market_family") == "player_prop"
-            and (market.raw_data or {}).get("copilot_source_type") == "combo_derived"
-        ]
+        # Bug #23: previously loaded every open market into Python and
+        # filtered by ``raw_data["copilot_market_family"]`` /
+        # ``raw_data["copilot_source_type"]`` on each row — O(all open
+        # markets) per refresh tick. Push the JSON filter into SQL via
+        # the dialect-portable ``.as_string()`` accessor (same shape
+        # ``routes.py:1263`` already uses for the markets list filter).
+        tracked_combo_prop_markets = db.scalars(
+            select(Market).where(
+                Market.status.in_(tuple(OPEN_MARKET_STATUSES)),
+                Market.raw_data["copilot_market_family"].as_string() == "player_prop",
+                Market.raw_data["copilot_source_type"].as_string() == "combo_derived",
+            )
+        ).all()
         for market in tracked_combo_prop_markets:
             try:
                 payload = client.get_market(market.ticker)

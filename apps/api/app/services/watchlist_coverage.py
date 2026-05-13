@@ -164,6 +164,14 @@ def load_current_watchlist_markets(
     scoped_event_ids = set(event_ids or current_watchlist_event_ids(db, sport=sport, now=now))
     if not scoped_event_ids:
         return []
+    # Bug #23: push the ``copilot_market_family`` filter into SQL.
+    # ``is_current_watchlist_market`` (called downstream by
+    # ``current_watchlist_markets``) checks the same set in Python
+    # against ``raw_data["copilot_market_family"]``; doing the filter
+    # in the DB cuts the row set so the watchlist tick doesn't load
+    # every open market into memory just to drop the non-watchlist
+    # families. The Python check stays for the event-time / sport
+    # logic that depends on the joined event row.
     stmt = (
         select(Market)
         .options(
@@ -175,6 +183,9 @@ def load_current_watchlist_markets(
             Market.event_id.in_(tuple(sorted(scoped_event_ids))),
             Market.status.in_(tuple(OPEN_MARKET_STATUSES)),
             Market.sport_key.in_(tuple(allowed_sports)),
+            Market.raw_data["copilot_market_family"]
+            .as_string()
+            .in_(tuple(CURRENT_WATCHLIST_MARKET_FAMILIES)),
         )
     )
     if market_ids is not None:
