@@ -125,6 +125,26 @@ describe("KalshiAccountPanel", () => {
     expect(screen.getByText("YES Lakers")).toBeInTheDocument();
   });
 
+  it("force-bypasses the cache when the Refresh button is clicked", async () => {
+    // Bug #6, codex round-5 P2: backend caches /positions for ~30 s.
+    // The Refresh button must pass force=true so users get fresh
+    // Kalshi data without waiting out the TTL.
+    mockFetchPositions.mockResolvedValue(connectedPositions);
+
+    renderWithProviders(<KalshiAccountPanel />);
+    await screen.findByTestId("kalshi-account-panel");
+    // First call is the auto-load on mount; tests are about what the
+    // Refresh button does.
+    mockFetchPositions.mockClear();
+
+    const user = userEvent.setup();
+    const [refreshButton] = await screen.findAllByRole("button", { name: /refresh/i });
+    await user.click(refreshButton);
+
+    expect(mockFetchPositions).toHaveBeenCalled();
+    expect(mockFetchPositions).toHaveBeenCalledWith({ force: true });
+  });
+
   it("renders a setup state when account credentials are missing", async () => {
     mockFetchPositions.mockResolvedValue({
       paper_positions: [],

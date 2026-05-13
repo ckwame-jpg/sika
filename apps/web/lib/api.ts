@@ -104,7 +104,8 @@ export const fetchEvents = (sport?: string, day?: string) => {
   return request<EventRead[]>(`/events${qs ? `?${qs}` : ""}`);
 };
 
-export const fetchPositions = () => request<PositionsRead>("/positions");
+export const fetchPositions = (options?: { force?: boolean }) =>
+  request<PositionsRead>(options?.force ? "/positions?force=true" : "/positions");
 
 export const openPaperPosition = (body: PaperPositionCreate) =>
   request<PaperPositionRead>("/paper-positions", {

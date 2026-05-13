@@ -444,6 +444,58 @@ def test_kalshi_account_snapshot_background_error_preserves_connected_cache(db_s
     )
 
 
+def test_kalshi_account_snapshot_does_not_cache_error_for_full_ttl_when_no_prior(db_session, monkeypatch):
+    """Codex round-5 P2: when there's no good prior cache and the
+    Kalshi fetch errors, the sync path used to store the error
+    response with the full FRESH TTL — so /positions would skip
+    retries and surface the error for 30 s. The error must use a
+    short ``ERROR_BACKOFF_SECONDS`` window so the next request
+    retries soon."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    def _failing_get_balance():
+        raise RuntimeError("upstream 429")
+
+    counting_client.get_balance = _failing_get_balance
+
+    first = build_kalshi_account_snapshot(db_session)
+    assert first.status == "error"
+
+    cached_fresh_until = kalshi_account_module._account_snapshot_cache["fresh_until"]
+    now = time.monotonic()
+    error_window = cached_fresh_until - now
+    assert 0.0 < error_window < kalshi_account_module._ACCOUNT_SNAPSHOT_FRESH_SECONDS, (
+        f"error response must use a short backoff window, got {error_window:.1f}s"
+    )
+
+
+def test_kalshi_account_snapshot_force_refresh_bypasses_cache(client, monkeypatch):
+    """Codex round-5 P2: the in-app Refresh button must be able to
+    bypass the cache. ``/positions?force=true`` invalidates the cache
+    before serving so the next call lands a fresh Kalshi fetch."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    response_a = client.get("/positions")
+    assert response_a.status_code == 200
+    assert counting_client.balance_calls == 1
+
+    response_b = client.get("/positions")
+    assert response_b.status_code == 200
+    assert counting_client.balance_calls == 1  # cached
+
+    response_c = client.get("/positions?force=true")
+    assert response_c.status_code == 200
+    assert counting_client.balance_calls == 2, (
+        "force=true must bypass the cache and re-fetch from Kalshi"
+    )
+
+
 def test_kalshi_account_snapshot_refetches_after_cache_invalidation(db_session, monkeypatch):
     """The cache must yield to a manual invalidation (used by ops paths
     that change Kalshi-visible state) and refetch from Kalshi."""

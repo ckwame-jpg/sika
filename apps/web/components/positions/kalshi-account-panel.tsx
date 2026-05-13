@@ -253,7 +253,13 @@ export function KalshiAccountPanel() {
   );
 
   async function refresh() {
-    await mutate(keys.positions);
+    // Bug #6, codex round-5 P2: backend caches the Kalshi account
+    // snapshot for ~30 s to throttle the 15 s polling cadence.
+    // User-initiated refreshes pass ``force=true`` so they bypass the
+    // cache instead of seeing stale data until the next auto-poll.
+    await mutate(keys.positions, fetchPositions({ force: true }), {
+      revalidate: false,
+    });
   }
 
   if (error) {

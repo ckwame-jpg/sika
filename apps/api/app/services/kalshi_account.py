@@ -275,9 +275,51 @@ def build_kalshi_account_snapshot(
         cached = _account_snapshot_cache["value"]
         if cached is not None and now < _account_snapshot_cache["fresh_until"]:
             return cached
+        previous = cached
         result = _build_kalshi_account_snapshot_uncached(db, client=None)
-        _store_account_snapshot(result)
-        return result
+        return _commit_refresh_result(result, previous=previous)
+
+
+def _commit_refresh_result(
+    snapshot: KalshiAccountRead,
+    *,
+    previous: KalshiAccountRead | None,
+) -> KalshiAccountRead:
+    """Store the new snapshot in the cache with the appropriate TTL,
+    and return what should be served to the caller.
+
+    Codex round-4 + round-5 P2: ``_build_..._uncached`` catches Kalshi
+    exceptions and returns ``status="error"`` rather than raising.
+    Storing that over a good cache with the normal TTL would surface
+    a transient HTTP/429 to the portfolio UI for a full ``FRESH``
+    window. Instead:
+
+    * error + good prior cache → preserve the cached connected
+      snapshot, extend ``fresh_until`` by ``ERROR_BACKOFF_SECONDS``,
+      and return the cached snapshot (not the error).
+    * error + no good prior → store the error with a short backoff so
+      the next request retries soon, not the full ``FRESH`` window.
+    * connected → store with the normal TTLs.
+    """
+    if snapshot.status == "error":
+        if previous is not None and previous.status == "connected":
+            _account_snapshot_cache["fresh_until"] = (
+                time.monotonic() + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+            )
+            logger.warning(
+                "kalshi_account_refresh_error_preserved_cache",
+                extra={"error_message": snapshot.error_message},
+            )
+            return previous
+        # No good prior cache to preserve — store the error with a
+        # short backoff so the next request retries soon.
+        now = time.monotonic()
+        _account_snapshot_cache["value"] = snapshot
+        _account_snapshot_cache["fresh_until"] = now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+        _account_snapshot_cache["stale_until"] = now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+        return snapshot
+    _store_account_snapshot(snapshot)
+    return snapshot
 
 
 def _store_account_snapshot(snapshot: KalshiAccountRead) -> None:
@@ -314,26 +356,7 @@ def _run_background_refresh() -> None:
         with SessionLocal() as db:
             snapshot = _build_kalshi_account_snapshot_uncached(db, client=None)
         with _account_snapshot_lock:
-            previous = _account_snapshot_cache["value"]
-            if (
-                snapshot.status == "error"
-                and previous is not None
-                and previous.status == "connected"
-            ):
-                # Codex round-4 P2: don't overwrite a connected
-                # snapshot with a transient error. Preserve the good
-                # cache; extend the fresh marker by ERROR_BACKOFF so
-                # we don't immediately retry — the next stale-hit
-                # after the backoff fires a fresh attempt.
-                _account_snapshot_cache["fresh_until"] = (
-                    time.monotonic() + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
-                )
-                logger.warning(
-                    "kalshi_account_background_refresh_error_preserved_cache",
-                    extra={"error_message": snapshot.error_message},
-                )
-            else:
-                _store_account_snapshot(snapshot)
+            _commit_refresh_result(snapshot, previous=_account_snapshot_cache["value"])
     except Exception:  # noqa: BLE001 — background refresh must not crash the app
         logger.exception("kalshi_account_background_refresh_failed")
     finally:
