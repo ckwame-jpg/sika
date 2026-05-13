@@ -1,10 +1,24 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 export type PriceDisplayMode = "american" | "prediction" | "kalshi";
 
-const STORAGE_KEY = "sika.price-display-mode";
+export const PRICE_DISPLAY_COOKIE = "sika.price-display-mode";
+const LEGACY_STORAGE_KEY = "sika.price-display-mode";
+const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+
+export function isPriceDisplayMode(value: unknown): value is PriceDisplayMode {
+  return value === "american" || value === "prediction" || value === "kalshi";
+}
 
 interface PriceDisplayContextValue {
   mode: PriceDisplayMode;
@@ -61,19 +75,86 @@ function parseMarketPriceInput(input: string, mode: PriceDisplayMode): number | 
   return cents > 0 && cents < 1 ? cents : null;
 }
 
-export function PriceDisplayProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setMode] = useState<PriceDisplayMode>("american");
+function readModeFromDocumentCookie(): PriceDisplayMode | null {
+  if (typeof document === "undefined") return null;
+  const cookies = document.cookie ? document.cookie.split(";") : [];
+  for (const entry of cookies) {
+    const [rawName, ...rest] = entry.split("=");
+    if (rawName?.trim() !== PRICE_DISPLAY_COOKIE) continue;
+    const value = decodeURIComponent(rest.join("=").trim());
+    if (isPriceDisplayMode(value)) return value;
+  }
+  return null;
+}
 
-  useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === "american" || stored === "prediction" || stored === "kalshi") {
-      setMode(stored);
-    }
+function writeModeToDocumentCookie(mode: PriceDisplayMode): void {
+  if (typeof document === "undefined") return;
+  const value = encodeURIComponent(mode);
+  document.cookie = `${PRICE_DISPLAY_COOKIE}=${value}; path=/; max-age=${COOKIE_MAX_AGE_SECONDS}; samesite=lax`;
+}
+
+function readLegacyLocalStorage(): PriceDisplayMode | null {
+  try {
+    const stored = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    return isPriceDisplayMode(stored) ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearLegacyLocalStorage(): void {
+  try {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // Best-effort cleanup; safe to ignore quota / privacy-mode errors.
+  }
+}
+
+interface PriceDisplayProviderProps {
+  children: React.ReactNode;
+  initialMode?: PriceDisplayMode;
+}
+
+export function PriceDisplayProvider({ children, initialMode }: PriceDisplayProviderProps) {
+  const [mode, setModeState] = useState<PriceDisplayMode>(initialMode ?? "american");
+  // Bug #36 — track first-mount migration separately from explicit
+  // setMode calls. Persisting only on real intent (user toggle or
+  // legacy migration) avoids echoing a default value back into the
+  // cookie before the legacy-localStorage read has had a chance to
+  // run.
+  const migratedRef = useRef(false);
+
+  const setMode = useCallback((next: PriceDisplayMode) => {
+    setModeState(next);
+    writeModeToDocumentCookie(next);
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, mode);
-  }, [mode]);
+    if (migratedRef.current) return;
+    migratedRef.current = true;
+
+    if (initialMode) {
+      // Server saw the cookie on this request; the cookie is now the
+      // source of truth. Drop any leftover legacy entry so we don't
+      // leak state across two stores.
+      clearLegacyLocalStorage();
+      return;
+    }
+
+    const cookieMode = readModeFromDocumentCookie();
+    if (cookieMode) {
+      clearLegacyLocalStorage();
+      if (cookieMode !== mode) setModeState(cookieMode);
+      return;
+    }
+
+    const legacyMode = readLegacyLocalStorage();
+    if (legacyMode) {
+      writeModeToDocumentCookie(legacyMode);
+      clearLegacyLocalStorage();
+      if (legacyMode !== mode) setModeState(legacyMode);
+    }
+  }, [initialMode, mode]);
 
   const value = useMemo<PriceDisplayContextValue>(() => ({
     mode,
@@ -81,7 +162,7 @@ export function PriceDisplayProvider({ children }: { children: React.ReactNode }
     formatPrice: (price) => formatMarketPrice(price, mode),
     formatEditablePrice: (price) => formatEditableMarketPrice(price, mode),
     parsePriceInput: (input) => parseMarketPriceInput(input, mode),
-  }), [mode]);
+  }), [mode, setMode]);
 
   return (
     <PriceDisplayContext.Provider value={value}>
