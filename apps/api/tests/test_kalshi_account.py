@@ -5,7 +5,11 @@ import pytest
 
 from app.models import Market
 from app.services import kalshi_account as kalshi_account_module
-from app.services.kalshi_account import build_kalshi_account_snapshot, invalidate_kalshi_account_cache
+from app.services.kalshi_account import (
+    build_kalshi_account_snapshot,
+    expire_kalshi_account_cache,
+    invalidate_kalshi_account_cache,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -532,6 +536,46 @@ def test_kalshi_account_snapshot_background_refresh_discarded_after_invalidation
     assert kalshi_account_module._account_snapshot_cache["value"] is None, (
         "background-refresh result must be discarded after invalidation"
     )
+
+
+def test_kalshi_account_snapshot_force_refresh_falls_back_to_cache_when_fetch_errors(client, monkeypatch):
+    """Codex round-8 P2 on PR #40: a user-initiated force-refresh
+    that hits a transient Kalshi error must NOT replace a good
+    connected snapshot with an error response. The /positions
+    endpoint uses ``expire_kalshi_account_cache`` (not ``invalidate``)
+    so the previous value is preserved as ``previous`` in the sync
+    fetch — and ``_commit_refresh_result`` falls back to it when the
+    new snapshot is ``status="error"``."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    # Seed a connected cache.
+    response_seed = client.get("/positions")
+    assert response_seed.status_code == 200
+    body_seed = response_seed.json()
+    assert body_seed["kalshi_account"]["status"] == "connected"
+    assert counting_client.balance_calls == 1
+
+    # Make the next Kalshi call fail (still increment the counter so
+    # the test can verify the fetch attempt happened).
+    def _failing_get_balance():
+        counting_client.balance_calls += 1
+        raise RuntimeError("upstream 429")
+
+    counting_client.get_balance = _failing_get_balance
+
+    # Force-refresh — the fetch errors, but the user must still see
+    # the connected snapshot (not the error response).
+    response_force = client.get("/positions?force=true")
+    assert response_force.status_code == 200
+    body_force = response_force.json()
+    assert body_force["kalshi_account"]["status"] == "connected", (
+        "force-refresh + error must fall back to the cached connected snapshot, "
+        f"got status={body_force['kalshi_account']['status']}"
+    )
+    assert counting_client.balance_calls == 2, "force-refresh must have attempted a fetch"
 
 
 def test_kalshi_account_snapshot_force_refresh_bypasses_cache(client, monkeypatch):

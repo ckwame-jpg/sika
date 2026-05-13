@@ -85,12 +85,28 @@ _background_refresh_slot = threading.Lock()
 
 
 def invalidate_kalshi_account_cache() -> None:
-    """Reset the cached account snapshot. Use in tests and ops paths
-    that mutate Kalshi-visible state. Bumping the generation token
+    """Hard-reset the cached account snapshot — clears the value and
+    timestamps. Use in tests and any path where the cached value must
+    not be served (e.g. credential change). Bumping the generation
     ensures any in-flight background refresh discards its result
-    rather than overwriting fresh post-invalidation data."""
+    rather than overwriting post-invalidation data."""
     with _account_snapshot_lock:
         _account_snapshot_cache["value"] = None
+        _account_snapshot_cache["fresh_until"] = 0.0
+        _account_snapshot_cache["stale_until"] = 0.0
+        _account_snapshot_cache["generation"] += 1
+
+
+def expire_kalshi_account_cache() -> None:
+    """Mark the cached snapshot as expired (past STALE) WITHOUT
+    clearing the stored value. The next ``build_kalshi_account_snapshot``
+    call will go to the sync fetch path with ``previous`` set to the
+    old value — so if the fresh Kalshi fetch errors, the connected
+    snapshot is preserved (codex round-8 P2 on PR #40). Use this for
+    user-initiated force-refreshes; use ``invalidate`` only when the
+    stored value itself must not be served (e.g. tests, credential
+    rotation)."""
+    with _account_snapshot_lock:
         _account_snapshot_cache["fresh_until"] = 0.0
         _account_snapshot_cache["stale_until"] = 0.0
         _account_snapshot_cache["generation"] += 1
