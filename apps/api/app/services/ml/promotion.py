@@ -56,6 +56,10 @@ class PromotionMetrics:
     aggregate_shadow_brier: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
+        # Emit None for aggregate Brier when there are no samples — keeps
+        # downstream consumers from mistaking ``brier_score([])==0.0`` for
+        # a real zero-Brier signal.
+        has_samples = self.sample_count > 0
         return {
             "sample_count": self.sample_count,
             "heuristic_brier": self.heuristic_brier,
@@ -70,8 +74,8 @@ class PromotionMetrics:
                 "min_valid_folds": self.walk_forward_min_valid_folds,
                 "insufficient_history": self.insufficient_history,
                 "metric": "worst_fold_brier",
-                "aggregate_heuristic_brier": self.aggregate_heuristic_brier,
-                "aggregate_shadow_brier": self.aggregate_shadow_brier,
+                "aggregate_heuristic_brier": self.aggregate_heuristic_brier if has_samples else None,
+                "aggregate_shadow_brier": self.aggregate_shadow_brier if has_samples else None,
             },
         }
 
@@ -490,6 +494,14 @@ def evaluate_family(db: Session, family_key: str, *, now: datetime | None = None
         # Storing the worst-fold instead would let aggregate regressions
         # slip past the kill switch until they exceeded a much looser
         # threshold — codex round 4 traced this through.
+        #
+        # NOTE on legacy rows: the pre-bug-#20 ``promotion_baseline_brier``
+        # was also the aggregate (the prior gate's ``shadow_brier`` was
+        # aggregate). So existing on-disk values are byte-compatible with
+        # the post-#20 write — no data migration is required. Only the
+        # ``shadow_brier`` field *inside* the JSON ``promotion_metrics``
+        # blob changed semantics, and that's gated by the
+        # ``WALK_FORWARD_METRIC_MARKER`` reset above.
         row.promotion_baseline_brier = metrics.aggregate_shadow_brier
     row.promotion_metrics = {
         "last_evaluation_date": current_date,

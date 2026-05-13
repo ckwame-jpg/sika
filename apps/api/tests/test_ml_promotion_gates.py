@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.config import get_settings
-from app.models import ModelFamilyRuntimeHealth, Prediction, ShadowInference
+from app.models import ModelFamilyRuntimeHealth, ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
 from app.services.ml.promotion import (
     MIN_WALK_FORWARD_ROWS_PER_FOLD,
     MIN_WALK_FORWARD_VALID_FOLDS,
@@ -508,6 +508,109 @@ def test_evaluate_family_keeps_stability_when_previous_payload_already_walk_forw
     # Carry-over preserves the previous 2 days → this third pass promotes.
     assert result.gates.stability_days == 3
     assert result.gates.promoted is True
+
+
+def _seed_parlay_shadow_pair(
+    db_session,
+    *,
+    index: int,
+    won: bool,
+    shadow_probability: float,
+    leg_count: int = 2,
+    sport_scope: str = "NBA",
+    family_key: str = "nba_parlay_2leg",
+    time_step: timedelta = WALK_FORWARD_TIME_STEP,
+) -> None:
+    captured_at = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc) + index * time_step
+    parlay = ParlayPrediction(
+        run_id=1,
+        leg_count=leg_count,
+        sport_scope=sport_scope,
+        participating_sports=[sport_scope],
+        combined_market_price=0.5,
+        combined_model_probability=0.55,
+        american_odds="+100",
+        edge=0.05,
+        confidence=0.6,
+        selection_score=0.1,
+        model_name="heuristic-parlay",
+        rationale="parlay test",
+        scoring_diagnostics={},
+        settlement_status="settled",
+        prediction_outcome="won" if won else "lost",
+        settled_at=captured_at + timedelta(hours=3),
+        realized_pnl=0.5 if won else -0.5,
+        captured_at=captured_at,
+    )
+    db_session.add(parlay)
+    db_session.flush()
+    db_session.add(
+        ShadowParlayInference(
+            run_id=1,
+            source_parlay_prediction_id=parlay.id,
+            leg_count=leg_count,
+            sport_scope=sport_scope,
+            participating_sports=[sport_scope],
+            leg_tickers=[f"L{index}A", f"L{index}B"],
+            combined_market_price=0.5,
+            combined_model_probability=shadow_probability,
+            edge=shadow_probability - 0.5,
+            confidence=shadow_probability,
+            model_name="shadow-parlay",
+            model_version="v1",
+            calibration_version="cal-v1",
+            feature_set_version="features-v1",
+            model_metadata={"family_key": family_key},
+            rationale="shadow parlay",
+            features={},
+            captured_at=captured_at,
+        )
+    )
+
+
+def test_evaluate_family_parlay_with_sparse_volume_reports_insufficient_history(db_session):
+    """Codex-style second-pass catch: bug #20's walk-forward floor
+    (8 folds × ≥25 rows) is steep for parlay families whose settled
+    volume is typically much lower than singles. Verify the gate path
+    doesn't crash on parlay examples and reports insufficient_history
+    for a low-volume parlay family — protecting against degenerate
+    behavior if ``combined_market_price``/``combined_model_probability``
+    were nullable / defaulted in ways that broke the Brier compute."""
+    # 20 parlay rows total — well below the 200-row floor and the
+    # ≥25-rows-per-week × ≥8-folds requirement. Spread across 5 days
+    # so they all land in a single weekly bucket.
+    for index in range(20):
+        won = index % 2 == 0
+        _seed_parlay_shadow_pair(
+            db_session,
+            index=index,
+            won=won,
+            shadow_probability=0.7 if won else 0.3,
+        )
+    db_session.flush()
+
+    result = evaluate_family(db_session, "nba_parlay_2leg", now=datetime(2026, 5, 1, tzinfo=timezone.utc))
+    assert result.metrics.sample_count == 20
+    assert result.metrics.insufficient_history is True
+    assert result.gates.calibration_passed is False
+    assert result.gates.promoted is False
+    # The walk_forward block must surface the actual fold-build outcome
+    # for ops visibility — not a degenerate empty / nan result.
+    walk_forward_payload = result.metrics.to_dict()["walk_forward"]
+    assert walk_forward_payload["fold_count"] <= 1
+    assert walk_forward_payload["insufficient_history"] is True
+
+
+def test_promotion_metrics_to_dict_emits_none_for_empty_aggregates():
+    """When no examples are seeded, aggregate Brier returns 0.0 from
+    ``brier_score([])`` — emit None in ``to_dict`` so downstream
+    consumers don't mistake the empty case for a real zero-Brier
+    signal."""
+    metrics = metrics_for_examples([])
+    payload = metrics.to_dict()
+    assert payload["sample_count"] == 0
+    assert payload["walk_forward"]["aggregate_heuristic_brier"] is None
+    assert payload["walk_forward"]["aggregate_shadow_brier"] is None
 
 
 def test_promotion_metrics_to_dict_exposes_walk_forward_block():
