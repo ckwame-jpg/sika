@@ -8,7 +8,7 @@ from typing import Any
 
 import joblib
 
-from app.services.ml.features import FeatureSpec
+from ml_features import FeatureSpec
 
 
 @dataclass(frozen=True, slots=True)

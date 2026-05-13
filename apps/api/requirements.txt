@@ -13,3 +13,7 @@ scikit-learn>=1.6
 joblib>=1.4
 pytest==8.4.2
 ruff>=0.6.0
+# Bug #29 — shared train/serve feature spec. Relative path resolves
+# from this file's directory, so ``pip install -r apps/api/requirements.txt``
+# from any cwd picks up ``packages/ml-features/`` at the repo root.
+-e ../../packages/ml-features

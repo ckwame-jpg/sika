@@ -20,8 +20,8 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from ml.dataset import load_settled_predictions
-from ml.features import FeatureSpec, vectorize
 from ml.manifest import ModelArtifact, ModelManifest
+from ml_features import FeatureSpec, vectorize
 
 
 HEURISTIC_DERIVED_KEYS = {

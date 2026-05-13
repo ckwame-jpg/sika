@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ml.features import FeatureSpec, vectorize
+from ml_features import FeatureSpec, vectorize
 
 
 def test_vectorize_uses_defaults_and_family_one_hot():

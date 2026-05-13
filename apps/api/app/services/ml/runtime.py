@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import ModelFamilyRuntimeHealth
 from app.services.ml.artifact_loader import load_sklearn_artifact
-from app.services.ml.features import vectorize
+from ml_features import vectorize
 from app.services.ml.lineage import HEURISTIC_PARLAY_MODEL, HEURISTIC_SINGLE_MODEL, ModelLineage
 from app.services.ml.registry import ModelManifest, ModelManifestFamily, load_model_manifest
 from app.services.ml.study_progress import history_ready_for_shadow, is_active_study_family, settled_prediction_count_for_family
