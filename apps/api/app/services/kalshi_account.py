@@ -27,21 +27,38 @@ logger = logging.getLogger(__name__)
 # calls per request. The endpoint is single-tenant (one API key per
 # process), so a single global cache key is sufficient.
 #
-# Two-tier TTL implementing stale-while-revalidate (codex round-2 on
-# PR #40: a flat 5 s TTL is shorter than the 15 s polling interval,
-# so every poll still refetches and the cache only helps coalesce
-# concurrent requests):
+# Two-tier TTL implementing stale-while-revalidate.
 #
-# * within ``FRESH_SECONDS`` (5 s): serve cached, no refresh.
-# * between FRESH and ``STALE_SECONDS`` (60 s): serve cached AND
-#   fire a single background refresh thread that updates the cache
-#   in place. Subsequent 15 s polls within this window keep landing
-#   the cached value while the latest data is fetched out-of-band.
+# Codex round-2 on PR #40: a flat 5 s TTL is shorter than the 15 s
+# polling interval — every poll still refetches and the cache only
+# coalesced concurrent requests.
+#
+# Codex round-4: a 5 s FRESH with 60 s STALE moved the Kalshi calls
+# to a daemon thread but didn't reduce them — every poll still fired
+# one upstream fetch (just async). To actually cut RPM, the fresh
+# window must cover at least one polling interval, so 15 s polls
+# inside FRESH never trigger a fetch.
+#
+# Window semantics:
+# * within ``FRESH_SECONDS`` (30 s): serve cached, no refresh — covers
+#   the 15 s portfolio poll twice. Roughly 50 % RPM reduction in the
+#   common case.
+# * between FRESH and ``STALE_SECONDS`` (120 s): serve cached AND
+#   fire a single background refresh that updates the cache in place.
 # * beyond STALE_SECONDS: cache is too stale to serve; the caller
-#   blocks on a fresh fetch (with coalescing via the lock so
-#   concurrent callers share one upstream call).
-_ACCOUNT_SNAPSHOT_FRESH_SECONDS = 5.0
-_ACCOUNT_SNAPSHOT_STALE_SECONDS = 60.0
+#   blocks on a fresh fetch (still coalesced via the lock).
+#
+# Error-backoff: codex round-4 P2 — when a background refresh errors
+# while we have a good cached snapshot, ``_build_..._uncached``
+# returns ``KalshiAccountRead(status="error")`` rather than raising.
+# Storing that over the connected snapshot would surface a transient
+# Kalshi error to the user for the full TTL window. Instead, the
+# background-refresh path preserves the good cache and extends the
+# fresh marker by ``ERROR_BACKOFF_SECONDS`` so we don't immediately
+# retry — the next stale-hit after the backoff fires a fresh attempt.
+_ACCOUNT_SNAPSHOT_FRESH_SECONDS = 30.0
+_ACCOUNT_SNAPSHOT_STALE_SECONDS = 120.0
+_ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS = 15.0
 _account_snapshot_cache: dict[str, Any] = {
     "value": None,
     "fresh_until": 0.0,
@@ -297,7 +314,26 @@ def _run_background_refresh() -> None:
         with SessionLocal() as db:
             snapshot = _build_kalshi_account_snapshot_uncached(db, client=None)
         with _account_snapshot_lock:
-            _store_account_snapshot(snapshot)
+            previous = _account_snapshot_cache["value"]
+            if (
+                snapshot.status == "error"
+                and previous is not None
+                and previous.status == "connected"
+            ):
+                # Codex round-4 P2: don't overwrite a connected
+                # snapshot with a transient error. Preserve the good
+                # cache; extend the fresh marker by ERROR_BACKOFF so
+                # we don't immediately retry — the next stale-hit
+                # after the backoff fires a fresh attempt.
+                _account_snapshot_cache["fresh_until"] = (
+                    time.monotonic() + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+                )
+                logger.warning(
+                    "kalshi_account_background_refresh_error_preserved_cache",
+                    extra={"error_message": snapshot.error_message},
+                )
+            else:
+                _store_account_snapshot(snapshot)
     except Exception:  # noqa: BLE001 — background refresh must not crash the app
         logger.exception("kalshi_account_background_refresh_failed")
     finally:

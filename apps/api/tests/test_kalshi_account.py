@@ -280,7 +280,7 @@ def test_kalshi_account_snapshot_serves_stale_while_revalidating(db_session, mon
     assert counting_client.balance_calls == 1
 
     # Advance time past the fresh window but inside the stale window.
-    fake_now = {"value": time.monotonic() + 10.0}
+    fake_now = {"value": time.monotonic() + kalshi_account_module._ACCOUNT_SNAPSHOT_FRESH_SECONDS + 5.0}
     monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
 
     second = build_kalshi_account_snapshot(db_session)
@@ -336,7 +336,7 @@ def test_kalshi_account_snapshot_stale_refresh_fires_only_once_under_concurrency
     inside_fetch.clear()
 
     # Advance time into the stale window.
-    fake_now = {"value": time.monotonic() + 10.0}
+    fake_now = {"value": time.monotonic() + kalshi_account_module._ACCOUNT_SNAPSHOT_FRESH_SECONDS + 5.0}
     monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
 
     # Fire many concurrent stale-hits.
@@ -377,7 +377,7 @@ def test_kalshi_account_snapshot_blocks_on_fetch_when_beyond_stale_window(db_ses
     assert counting_client.balance_calls == 1
 
     # Advance time past the stale window entirely.
-    fake_now = {"value": time.monotonic() + 120.0}
+    fake_now = {"value": time.monotonic() + kalshi_account_module._ACCOUNT_SNAPSHOT_STALE_SECONDS + 5.0}
     monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
 
     second = build_kalshi_account_snapshot(db_session)
@@ -385,6 +385,62 @@ def test_kalshi_account_snapshot_blocks_on_fetch_when_beyond_stale_window(db_ses
     assert second.status == "connected"
     assert counting_client.balance_calls == 2, (
         "callers past the stale window must block on a fresh synchronous fetch"
+    )
+
+
+def test_kalshi_account_snapshot_background_error_preserves_connected_cache(db_session, monkeypatch):
+    """Bug #6, codex round-4 P2: when the background refresh hits a
+    transient Kalshi error, ``_build_..._uncached`` returns a
+    ``KalshiAccountRead(status="error")`` rather than raising. Storing
+    that over the good cached snapshot would surface the error to the
+    portfolio UI for a full TTL window. Instead, the background path
+    must preserve the connected snapshot and only extend the fresh
+    marker by the error backoff."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    class _SessionContext:
+        def __enter__(self):
+            return db_session
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(kalshi_account_module, "SessionLocal", lambda: _SessionContext())
+
+    # Seed the cache with a good "connected" snapshot.
+    seeded = build_kalshi_account_snapshot(db_session)
+    assert seeded.status == "connected"
+
+    # Make the next Kalshi call fail. ``_build_..._uncached`` catches
+    # the exception and returns ``status="error"`` — the background
+    # refresh path must NOT cache that response.
+    def _failing_get_balance():
+        raise RuntimeError("upstream 429")
+
+    counting_client.get_balance = _failing_get_balance
+
+    # Advance into the stale window so the next call fires the
+    # background refresh.
+    fake_now = {"value": time.monotonic() + kalshi_account_module._ACCOUNT_SNAPSHOT_FRESH_SECONDS + 5.0}
+    monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
+
+    served = build_kalshi_account_snapshot(db_session)
+    assert served.status == "connected", "stale-hit must serve the cached connected snapshot"
+
+    # Wait for the background refresh worker to finish.
+    acquired = kalshi_account_module._background_refresh_slot.acquire(timeout=2)
+    assert acquired
+    kalshi_account_module._background_refresh_slot.release()
+
+    # The cached value must still be the good one — NOT the error
+    # response from the failing background refresh.
+    cached = kalshi_account_module._account_snapshot_cache["value"]
+    assert cached is not None
+    assert cached.status == "connected", (
+        "transient background-refresh errors must not overwrite a connected cache"
     )
 
 
