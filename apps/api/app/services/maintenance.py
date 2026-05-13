@@ -368,8 +368,22 @@ def _prune_current_slate_snapshots(db: Session) -> int:
     computing the survivor set in Python rather than a windowed subquery —
     the table is tiny (one row per scope per refresh), so two round trips
     are cheaper than a dialect-specific CTE.
+
+    Bug #32: the original early-return short-circuited both the
+    "table is empty" case (correct — nothing to delete) AND the
+    "every row is a survivor" / "KEEP_PER_SCOPE=0" cases together.
+    Now the two paths are split: empty table returns 0 immediately;
+    a non-empty table always runs the delete and lets the ``NOT IN``
+    filter no-op when every existing row is a survivor. When
+    ``KEEP_PER_SCOPE`` is 0 (no survivors despite a populated table),
+    we drop the ``NOT IN`` clause entirely so every row is deleted —
+    SQLAlchemy's ``~col.in_(())`` is unreliable across drivers, hence
+    the explicit branch.
     """
     all_scopes = db.scalars(select(CurrentSlateSnapshot.scope).distinct()).all()
+    if not all_scopes:
+        return 0
+
     survivor_ids: list[int] = []
     for scope in all_scopes:
         ids_to_keep = db.scalars(
@@ -382,13 +396,11 @@ def _prune_current_slate_snapshots(db: Session) -> int:
             .limit(_CURRENT_SLATE_SNAPSHOT_KEEP_PER_SCOPE)
         ).all()
         survivor_ids.extend(int(x) for x in ids_to_keep)
-    if not survivor_ids:
-        return 0
-    deleted = (
-        db.query(CurrentSlateSnapshot)
-        .filter(~CurrentSlateSnapshot.id.in_(tuple(survivor_ids)))
-        .delete(synchronize_session=False)
-    )
+
+    query = db.query(CurrentSlateSnapshot)
+    if survivor_ids:
+        query = query.filter(~CurrentSlateSnapshot.id.in_(tuple(survivor_ids)))
+    deleted = query.delete(synchronize_session=False)
     return int(deleted or 0)
 
 

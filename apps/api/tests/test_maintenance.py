@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from sqlalchemy import select
 
 from app.models import (
+    CurrentSlateSnapshot,
     EspnPlayerGamelogCache,
     EspnPlayerSearchCache,
     Event,
@@ -796,3 +797,79 @@ def test_prune_runtime_artifacts_reaps_unresolved_predictions_on_short_ttl(
         "Unresolved predictions past the short TTL must reap. "
         "Falling through both buckets would leak them forever."
     )
+
+
+def _seed_slate_snapshots(db_session, scope: str, count: int) -> list[int]:
+    """Insert ``count`` ``CurrentSlateSnapshot`` rows for ``scope`` with
+    monotonically increasing ``generated_at`` so retention order is
+    deterministic. Returns the IDs in insertion (oldest-first) order."""
+    base = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    ids: list[int] = []
+    for index in range(count):
+        row = CurrentSlateSnapshot(
+            scope=scope,
+            generated_at=base + timedelta(minutes=index),
+            payload={"i": index},
+        )
+        db_session.add(row)
+        db_session.flush()
+        ids.append(row.id)
+    return ids
+
+
+def test_prune_current_slate_snapshots_empty_table_is_a_no_op(db_session):
+    """Bug #32 — pre-fix early-return covered this case. Confirm it
+    still returns 0 without raising on an empty table."""
+    deleted = maintenance._prune_current_slate_snapshots(db_session)
+    assert deleted == 0
+
+
+def test_prune_current_slate_snapshots_keeps_all_when_under_threshold(db_session):
+    """Bug #32 — when every row is a survivor (row count per scope
+    ≤ ``KEEP_PER_SCOPE``) the delete must run AND no-op cleanly.
+    Pre-fix, the early-return treated this case the same as the
+    empty-table case; post-fix, the delete fires but the ``NOT IN``
+    filter matches zero rows."""
+    _seed_slate_snapshots(db_session, "nba", count=3)
+    _seed_slate_snapshots(db_session, "mlb", count=2)
+    db_session.commit()
+
+    deleted = maintenance._prune_current_slate_snapshots(db_session)
+    db_session.commit()
+
+    assert deleted == 0
+    remaining = db_session.scalars(select(CurrentSlateSnapshot)).all()
+    assert len(remaining) == 5
+
+
+def test_prune_current_slate_snapshots_drops_excess_per_scope(db_session, monkeypatch):
+    """Headline behaviour: with KEEP=2, a scope of 5 rows keeps the 2
+    newest and drops the 3 oldest."""
+    monkeypatch.setattr(maintenance, "_CURRENT_SLATE_SNAPSHOT_KEEP_PER_SCOPE", 2)
+    nba_ids = _seed_slate_snapshots(db_session, "nba", count=5)
+    db_session.commit()
+
+    deleted = maintenance._prune_current_slate_snapshots(db_session)
+    db_session.commit()
+
+    assert deleted == 3
+    remaining_ids = {row.id for row in db_session.scalars(select(CurrentSlateSnapshot)).all()}
+    # Newest two survive.
+    assert remaining_ids == {nba_ids[-1], nba_ids[-2]}
+
+
+def test_prune_current_slate_snapshots_keep_zero_deletes_everything(db_session, monkeypatch):
+    """Bug #32 — the pre-fix early-return short-circuited this case
+    (every survivor is dropped → ``survivor_ids`` empty → no delete).
+    With the split-empty-table path, KEEP=0 now correctly deletes the
+    whole table."""
+    monkeypatch.setattr(maintenance, "_CURRENT_SLATE_SNAPSHOT_KEEP_PER_SCOPE", 0)
+    _seed_slate_snapshots(db_session, "nba", count=3)
+    _seed_slate_snapshots(db_session, "mlb", count=2)
+    db_session.commit()
+
+    deleted = maintenance._prune_current_slate_snapshots(db_session)
+    db_session.commit()
+
+    assert deleted == 5
+    assert db_session.scalars(select(CurrentSlateSnapshot)).all() == []
