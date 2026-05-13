@@ -538,6 +538,49 @@ def test_kalshi_account_snapshot_background_refresh_discarded_after_invalidation
     )
 
 
+def test_kalshi_account_snapshot_force_error_restores_stale_horizon(db_session, monkeypatch):
+    """Codex round-10 P2 on PR #40: when a force-refresh errors and
+    the preserve-cache fallback kicks in, ``stale_until`` must be
+    restored to the original horizon (``last_successful_at +
+    STALE_SECONDS``). Otherwise ``expire_kalshi_account_cache`` left
+    ``stale_until=0``, and after the ERROR_BACKOFF expired every
+    normal poll would skip the SWR path and block on a sync fetch."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    # Seed a connected cache. Capture ``last_successful_at`` for the
+    # expected horizon assertion.
+    build_kalshi_account_snapshot(db_session)
+    last_successful = kalshi_account_module._account_snapshot_cache["last_successful_at"]
+    assert last_successful > 0
+
+    # Force-refresh, but Kalshi errors.
+    def _failing_get_balance():
+        counting_client.balance_calls += 1
+        raise RuntimeError("upstream 429")
+
+    counting_client.get_balance = _failing_get_balance
+
+    expire_kalshi_account_cache()
+    served = build_kalshi_account_snapshot(db_session)
+    assert served.status == "connected"  # fell back to cache
+
+    # The preserve path must have restored ``stale_until`` to the
+    # original horizon — without this, the next poll would land in
+    # the past-stale sync path.
+    expected_stale_until = last_successful + kalshi_account_module._ACCOUNT_SNAPSHOT_STALE_SECONDS
+    assert (
+        kalshi_account_module._account_snapshot_cache["stale_until"]
+        == pytest.approx(expected_stale_until)
+    ), (
+        f"stale_until must be restored to last_successful + STALE_SECONDS "
+        f"({expected_stale_until}); got "
+        f"{kalshi_account_module._account_snapshot_cache['stale_until']}"
+    )
+
+
 def test_kalshi_account_snapshot_surfaces_error_when_cache_too_stale_to_preserve(db_session, monkeypatch):
     """Codex round-9 P2 on PR #40: the preserve-cache-on-error
     fallback used to extend ``fresh_until`` by ERROR_BACKOFF every

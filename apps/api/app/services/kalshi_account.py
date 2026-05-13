@@ -356,8 +356,20 @@ def _commit_refresh_result(
             now = time.monotonic()
             last_successful = _account_snapshot_cache["last_successful_at"]
             if now - last_successful < _ACCOUNT_SNAPSHOT_STALE_SECONDS:
+                # Extend fresh_until by ERROR_BACKOFF so we don't
+                # immediately retry. Codex round-10 P2: ALSO restore
+                # ``stale_until`` to the cached snapshot's original
+                # stale horizon (last_successful + STALE_SECONDS).
+                # Without this, ``expire_kalshi_account_cache``
+                # (force-refresh) had reset ``stale_until`` to 0 —
+                # so after the ERROR_BACKOFF expires, normal polls
+                # would skip the SWR branch and block on a sync
+                # fetch every time.
                 _account_snapshot_cache["fresh_until"] = (
                     now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+                )
+                _account_snapshot_cache["stale_until"] = (
+                    last_successful + _ACCOUNT_SNAPSHOT_STALE_SECONDS
                 )
                 _account_snapshot_cache["generation"] += 1
                 logger.warning(
