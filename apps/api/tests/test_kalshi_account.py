@@ -965,3 +965,71 @@ def test_remote_market_lookup_single_chunk_stays_synchronous(monkeypatch):
     assert observed_thread_ids == [main_thread_id], (
         "single-chunk path must run on the caller's thread, no executor"
     )
+
+
+# Bug #46 — _account_error_message contract.
+
+
+def _make_http_status_error(status_code: int, body: str):
+    import httpx
+    request = httpx.Request("GET", "https://example.invalid/x")
+    response = httpx.Response(status_code, request=request, text=body)
+    return httpx.HTTPStatusError("status error", request=request, response=response)
+
+
+def test_account_error_message_surfaces_http_status_and_body_snippet():
+    """HTTP errors should include the status code AND the response
+    body so the operator can act on rate-limit hints / "missing param"
+    text without log diving."""
+    from app.services.kalshi_account import _account_error_message
+
+    exc = _make_http_status_error(429, '{"error":"rate_limited","retry_after":30}')
+    message = _account_error_message(exc)
+    assert "429" in message
+    assert "rate_limited" in message
+
+
+def test_account_error_message_truncates_long_bodies():
+    """A pathological body shouldn't blow up operator-facing text."""
+    from app.services.kalshi_account import _account_error_message
+
+    huge_body = "x" * 5000
+    exc = _make_http_status_error(500, huge_body)
+    message = _account_error_message(exc)
+    assert "500" in message
+    assert len(message) < 400
+    assert "…" in message
+
+
+def test_account_error_message_distinguishes_transport_errors():
+    """A connect/timeout/DNS failure is a different operator problem
+    than an HTTP error — surface the exception class so the UI can
+    tell them apart."""
+    import httpx
+    from app.services.kalshi_account import _account_error_message
+
+    exc = httpx.ConnectTimeout("connect timeout after 5s")
+    message = _account_error_message(exc)
+    assert "ConnectTimeout" in message
+    assert "connect timeout after 5s" in message
+
+
+def test_account_error_message_falls_back_to_exception_class_name():
+    """Unknown exceptions still get the class name + message."""
+    from app.services.kalshi_account import _account_error_message
+
+    exc = ValueError("simulated coding mistake")
+    message = _account_error_message(exc)
+    assert "ValueError" in message
+    assert "simulated coding mistake" in message
+
+
+def test_account_error_message_for_missing_key_file():
+    """FileNotFoundError still gets the friendly phrase but appends
+    the path / message from the underlying exception."""
+    from app.services.kalshi_account import _account_error_message
+
+    exc = FileNotFoundError("/missing/kalshi.key")
+    message = _account_error_message(exc)
+    assert "private key file is not available" in message
+    assert "/missing/kalshi.key" in message
