@@ -4921,6 +4921,13 @@
             ],
             "title": "Losses"
           },
+          "metric_categories": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Metric Categories",
+            "type": "object"
+          },
           "metrics": {
             "additionalProperties": {
               "anyOf": [
@@ -4933,6 +4940,13 @@
               ]
             },
             "title": "Metrics",
+            "type": "object"
+          },
+          "percentiles": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Percentiles",
             "type": "object"
           },
           "stat_line": {
@@ -6192,6 +6206,8 @@
             "required": false,
             "schema": {
               "default": 100,
+              "maximum": 500,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
             }
@@ -6312,6 +6328,28 @@
           }
         },
         "summary": "Get Market History"
+      }
+    },
+    "/ops/jobs/market-discovery": {
+      "post": {
+        "description": "Queue a Kalshi standalone-market discovery job on demand.\n\nUseful when you need to ingest newly-listed game-winner markets ahead\nof the next scheduled cron tick (e.g. just before a slate of games).",
+        "operationId": "queue_market_discovery_job_ops_jobs_market_discovery_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRefreshResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Queue Market Discovery Job",
+        "tags": [
+          "ops"
+        ]
       }
     },
     "/ops/jobs/refresh": {
@@ -6544,6 +6582,8 @@
             "required": false,
             "schema": {
               "default": 20,
+              "maximum": 200,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
             }
@@ -6767,6 +6807,8 @@
             "required": false,
             "schema": {
               "default": 100,
+              "maximum": 500,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
             }
@@ -6893,6 +6935,8 @@
             "required": false,
             "schema": {
               "default": 50,
+              "maximum": 200,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
             }
@@ -7053,6 +7097,8 @@
             "required": false,
             "schema": {
               "default": 100,
+              "maximum": 500,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
             }
@@ -7410,6 +7456,8 @@
             "required": false,
             "schema": {
               "default": 25,
+              "maximum": 200,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
             }
@@ -7470,6 +7518,8 @@
             "required": false,
             "schema": {
               "default": 250,
+              "maximum": 500,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
             }

@@ -1182,3 +1182,39 @@ def test_product_freshness_ranks_degraded_above_stale_and_empty(client, db_sessi
     assert nba["generated_from_run_id"] == 123
     assert next(row for row in payload["scopes"] if row["scope"] == "all")["status"] == "empty"
     assert next(row for row in payload["scopes"] if row["scope"] == "MLB")["status"] == "stale"
+
+
+def test_public_list_endpoints_reject_out_of_range_limit_values(client):
+    """Bug #14: every public list endpoint must validate ``limit``
+    against an explicit ``ge=1, le=…`` range. Negative/zero values
+    and values beyond the documented cap return 422; the endpoint
+    never executes its query with an unsafe limit."""
+    cases = [
+        ("/watchlist", 200),
+        ("/watchlist/coverage", 500),
+        ("/parlays/watchlist", 200),
+        ("/predictions", 500),
+        ("/parlays/predictions", 500),
+        ("/markets", 500),
+        ("/ops/runs", 200),
+    ]
+    for path, max_allowed in cases:
+        # Zero and negative are rejected.
+        for invalid in (0, -1, -10):
+            response = client.get(f"{path}?limit={invalid}")
+            assert response.status_code == 422, (
+                f"{path}?limit={invalid} expected 422, got {response.status_code} "
+                f"({response.json() if response.status_code != 422 else ''})"
+            )
+        # Just past the cap is rejected.
+        response = client.get(f"{path}?limit={max_allowed + 1}")
+        assert response.status_code == 422, (
+            f"{path}?limit={max_allowed + 1} expected 422, got {response.status_code} "
+            f"({response.json() if response.status_code != 422 else ''})"
+        )
+        # The cap itself is accepted.
+        response = client.get(f"{path}?limit={max_allowed}")
+        assert response.status_code == 200, (
+            f"{path}?limit={max_allowed} expected 200 (cap is inclusive), "
+            f"got {response.status_code}"
+        )
