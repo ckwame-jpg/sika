@@ -27,12 +27,12 @@ from app.services.ml.study_progress import SETTLED_OUTCOMES, retained_study_cuto
 
 TERMINAL_RUN_STATUSES = ("completed", "failed")
 
-# Bug #19: ``prediction_outcome`` for rows that have NOT yet been
-# matched against a market result. The short retention TTL applies
-# to these (they're stale UI noise; nothing to learn from). Rows in
-# ``SETTLED_OUTCOMES`` are ML-relevant and get the longer archive
-# TTL instead.
-_PENDING_PREDICTION_OUTCOME = "pending"
+# Bug #19 (round-1 P2): the short retention TTL applies to every
+# ``prediction_outcome`` that ISN'T in ``SETTLED_OUTCOMES`` — that
+# captures ``pending`` (never matched), ``unresolved`` (closed
+# market with no result, parlay with missing source legs), and any
+# future non-canonical outcome. Only rows in ``SETTLED_OUTCOMES``
+# are training/calibration input and get the longer archive TTL.
 
 # Slice 2: the snapshot store is append-only per scope. Retain the most
 # recent N rows per scope so a new freshness regression is debuggable, but
@@ -71,16 +71,22 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
 
     # Bug #19: two-tier prediction retention.
     #
-    # ``prediction_outcome == "pending"`` rows are the ones the
-    # runtime would otherwise churn — markets that never closed,
-    # tickers we dropped, etc. Reap them on the short TTL.
+    # Anything NOT in ``SETTLED_OUTCOMES`` — ``pending`` (never
+    # matched), ``unresolved`` (closed market with no result,
+    # parlay missing source legs), unknown future values — is
+    # runtime churn and reaps on the short TTL.
     #
-    # Settled rows (``SETTLED_OUTCOMES``) are training/calibration
+    # Settled rows (``SETTLED_OUTCOMES``) are training / calibration
     # input. Keep them for the much longer archive TTL so promotion
     # gates and walk-forward eval can read the historical outcomes
     # without the runtime cleanup eating its own data. The previous
     # single-cutoff delete reaped 23k+ settled predictions before
     # the 2026-05-12 retrain, leaving only 1.7k training rows.
+    #
+    # Codex round-1 P2 on PR #46 caught the earlier ``== "pending"``
+    # spelling — that left ``unresolved`` rows in neither bucket so
+    # they'd accumulate forever; ``notin_(SETTLED_OUTCOMES)`` is the
+    # right complement.
     old_refresh_job_ids = _ids_for(
         db,
         select(RefreshJob.id).where(
@@ -94,7 +100,7 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
             or_(
                 and_(
                     ParlayPrediction.captured_at < prediction_short_cutoff,
-                    ParlayPrediction.prediction_outcome == _PENDING_PREDICTION_OUTCOME,
+                    ParlayPrediction.prediction_outcome.notin_(SETTLED_OUTCOMES),
                 ),
                 and_(
                     ParlayPrediction.captured_at < prediction_archive_cutoff,
@@ -109,7 +115,7 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
             or_(
                 and_(
                     Prediction.captured_at < prediction_short_cutoff,
-                    Prediction.prediction_outcome == _PENDING_PREDICTION_OUTCOME,
+                    Prediction.prediction_outcome.notin_(SETTLED_OUTCOMES),
                 ),
                 and_(
                     Prediction.captured_at < prediction_archive_cutoff,
@@ -201,6 +207,42 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
         if old_run_ids
         else 0
     )
+    # Bug #19 (round-1 P1): a settled prediction kept past
+    # ``run_retention_days`` (because the archive TTL is longer)
+    # still references its terminal ``Run``. On Postgres with FK
+    # enforcement the run-delete below would FK-error. Null the
+    # ``run_id`` on every retained archive row that points at an
+    # about-to-be-deleted run BEFORE the bulk run-delete fires.
+    # No-op on SQLite (FKs aren't enforced by default), so the
+    # cost is one extra UPDATE on the archive path.
+    prediction_run_links_cleared = (
+        db.query(Prediction)
+        .filter(Prediction.run_id.in_(tuple(old_run_ids)))
+        .update({Prediction.run_id: None}, synchronize_session=False)
+        if old_run_ids
+        else 0
+    )
+    parlay_prediction_run_links_cleared = (
+        db.query(ParlayPrediction)
+        .filter(ParlayPrediction.run_id.in_(tuple(old_run_ids)))
+        .update({ParlayPrediction.run_id: None}, synchronize_session=False)
+        if old_run_ids
+        else 0
+    )
+    shadow_inference_run_links_cleared = (
+        db.query(ShadowInference)
+        .filter(ShadowInference.run_id.in_(tuple(old_run_ids)))
+        .update({ShadowInference.run_id: None}, synchronize_session=False)
+        if old_run_ids
+        else 0
+    )
+    shadow_parlay_inference_run_links_cleared = (
+        db.query(ShadowParlayInference)
+        .filter(ShadowParlayInference.run_id.in_(tuple(old_run_ids)))
+        .update({ShadowParlayInference.run_id: None}, synchronize_session=False)
+        if old_run_ids
+        else 0
+    )
     runs_deleted = (
         db.query(Run)
         .filter(Run.id.in_(tuple(old_run_ids)))
@@ -226,6 +268,10 @@ def prune_runtime_artifacts(db: Session) -> dict[str, int]:
         "player_search_cache_deleted": int(player_search_cache_deleted or 0),
         "player_gamelog_cache_deleted": int(player_gamelog_cache_deleted or 0),
         "parlay_recommendation_run_links_cleared": int(parlay_recommendation_run_links_cleared or 0),
+        "prediction_run_links_cleared": int(prediction_run_links_cleared or 0),
+        "parlay_prediction_run_links_cleared": int(parlay_prediction_run_links_cleared or 0),
+        "shadow_inference_run_links_cleared": int(shadow_inference_run_links_cleared or 0),
+        "shadow_parlay_inference_run_links_cleared": int(shadow_parlay_inference_run_links_cleared or 0),
         "runs_deleted": int(runs_deleted or 0),
         "current_slate_snapshots_deleted": int(current_slate_snapshots_deleted or 0),
     }
@@ -252,7 +298,7 @@ def _delete_shadow_inferences(
             ShadowInference.captured_at < short_cutoff,
             or_(
                 Prediction.id.is_(None),
-                Prediction.prediction_outcome == _PENDING_PREDICTION_OUTCOME,
+                Prediction.prediction_outcome.notin_(SETTLED_OUTCOMES),
             ),
         )
     ).all()
@@ -290,7 +336,7 @@ def _delete_shadow_parlay_inferences(
             ShadowParlayInference.captured_at < short_cutoff,
             or_(
                 ParlayPrediction.id.is_(None),
-                ParlayPrediction.prediction_outcome == _PENDING_PREDICTION_OUTCOME,
+                ParlayPrediction.prediction_outcome.notin_(SETTLED_OUTCOMES),
             ),
         )
     ).all()
