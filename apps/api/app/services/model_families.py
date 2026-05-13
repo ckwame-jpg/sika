@@ -1,3 +1,18 @@
+"""Canonical ML family registry — single source of truth.
+
+Bug #41: a parallel registry used to live at ``apps/ml/ml/families.py``
+with ``_v1``-suffixed keys (e.g. ``nba_singles_v1``) and a
+``required_feature_groups`` field that nothing actually consumed. It
+duplicated the logical family list defined here and drifted (the
+``parlay_4_6_leg_combiner`` family added below was never mirrored
+there). That registry has been deleted; all runtime metadata —
+serving, readiness, kill-switch, promotion, and shadow capture — flows
+through ``FAMILY_DEFINITIONS``. Training artifacts may still carry
+``_v1`` suffixes in their packaged ``family_key``; the manifest's
+``serves_family_key`` field maps each artifact to the runtime key
+documented here.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
