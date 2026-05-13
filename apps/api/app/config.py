@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     kalshi_public_base_url: str = "https://api.elections.kalshi.com/trade-api/v2"
     kalshi_demo_base_url: str = "https://demo-api.kalshi.co/trade-api/v2"
     kalshi_key_id: str = ""
-    kalshi_private_key_path: Path = Path("/Users/chris/.config/kalshi/kalshi-demo.key")
+    kalshi_private_key_path: Path = Path.home() / ".config" / "kalshi" / "kalshi-demo.key"
     default_timezone: str = "America/Chicago"
     web_origins: list[str] = Field(
         default_factory=lambda: [
