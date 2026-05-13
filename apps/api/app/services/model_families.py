@@ -30,6 +30,14 @@ FAMILY_DEFINITIONS: tuple[ModelFamilyDefinition, ...] = (
         leg_count=2,
         study_track="active",
     ),
+    # 3-leg + 4-6-leg parlay families intentionally stay
+    # ``study_track="heuristic_only"`` (the default) — bug #42 flagged the
+    # apparent inconsistency, but per-family settled volume at these leg
+    # counts is too low to clear bug #20's walk-forward floor in any
+    # reasonable window, so promoting them to "active" would just leave
+    # them stuck at ``insufficient_history`` forever. The keys exist for
+    # accounting/UI grouping; ML promotion only applies to singles +
+    # 2-leg parlays today.
     ModelFamilyDefinition(key="nba_parlay_3leg", label="NBA 3-leg parlays", scope="parlay", sport_scope="NBA", leg_count=3),
     ModelFamilyDefinition(
         key="mlb_parlay_2leg",
