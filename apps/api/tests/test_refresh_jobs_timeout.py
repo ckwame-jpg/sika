@@ -967,3 +967,51 @@ def test_prop_refresh_backoff_is_exponential_and_capped():
     assert refresh_jobs._prop_refresh_backoff_seconds(5) == 32.0
     # Way past the cap — clamped to PROP_REFRESH_BACKOFF_CAP_SECONDS.
     assert refresh_jobs._prop_refresh_backoff_seconds(50) == refresh_jobs.PROP_REFRESH_BACKOFF_CAP_SECONDS
+
+
+def test_prop_refresh_successful_batch_resets_transient_attempts(db_session, monkeypatch):
+    """Bug #22 round-2 P2: a long-running prop_refresh that hits 5
+    intermittent blips spaced across many successful batches must NOT
+    dead-letter — the cap is for CONSECUTIVE failures, not lifetime
+    total. A successful ``advance_prop_refresh_job`` clears the
+    ``transient_attempts`` counter so the next blip starts at 1."""
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    now = datetime.now(timezone.utc)
+
+    # Pre-stamp the job with 3 prior transient attempts (e.g. from
+    # earlier blips during the same multi-batch run).
+    job = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="reset-test",
+        status="queued",
+        queued_at=now - timedelta(seconds=1),
+        details={
+            "transient_attempts": 3,
+            "last_transient_error": "stale upstream blip",
+            "last_transient_backoff_seconds": 8.0,
+        },
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    def _advance(db, job):
+        # A successful batch advance — no exception, returns ``True``
+        # so the worker exits cleanly.
+        return _completed_run(db), True
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    result = refresh_jobs.process_refresh_job_queue_once()
+    assert result is not None
+    assert result.status == "completed"
+
+    db_session.expire_all()
+    persisted = db_session.get(RefreshJob, job.id)
+    details = persisted.details or {}
+    assert "transient_attempts" not in details, (
+        "successful advance must clear the consecutive-failure counter"
+    )
+    assert "last_transient_error" not in details
+    assert "last_transient_backoff_seconds" not in details

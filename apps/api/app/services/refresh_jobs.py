@@ -527,6 +527,24 @@ def _guarded_requeue_job(db: Session, job_id: int) -> bool:
     )
 
 
+def _clear_prop_refresh_transient_state(job: RefreshJob) -> None:
+    """Bug #22 round-2 P2: reset the counter + telemetry fields a
+    transient-error requeue stamped onto ``job.details``. Called
+    after every successful ``advance_prop_refresh_job`` batch so the
+    dead-letter cap reflects CONSECUTIVE failures, not a running
+    lifetime total."""
+    details = dict(job.details or {})
+    if not details.get("transient_attempts"):
+        return
+    for key in (
+        "transient_attempts",
+        "last_transient_error",
+        "last_transient_backoff_seconds",
+    ):
+        details.pop(key, None)
+    job.details = details
+
+
 def _prop_refresh_backoff_seconds(transient_attempts: int) -> float:
     """Bug #22: exponential back-off after a transient HTTP error.
     Caller has just incremented ``transient_attempts``, so attempt N
@@ -897,6 +915,15 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 while True:
                     run, completed = advance_prop_refresh_job(db, job=job)
                     job.run_id = run.id
+                    # Bug #22 round-2 P2: ``transient_attempts`` bounds
+                    # CONSECUTIVE transient HTTP errors — not the
+                    # lifetime total. A long-running prop_refresh that
+                    # hits 5 intermittent blips spaced across many
+                    # successful batches would otherwise dead-letter
+                    # even though the upstream isn't persistently
+                    # broken. Clear the counter (and its sibling
+                    # telemetry fields) on any successful batch advance.
+                    _clear_prop_refresh_transient_state(job)
                     if completed:
                         break
                     if _current_slate_refresh_pending(db):
