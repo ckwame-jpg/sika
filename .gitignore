@@ -30,3 +30,5 @@ coverage/
 apps/web/test-results/
 sika-handoff/
 apps/ml/artifacts/
+# Bug #29 — pip-generated metadata from ``pip install -e ./packages/ml-features``
+*.egg-info/

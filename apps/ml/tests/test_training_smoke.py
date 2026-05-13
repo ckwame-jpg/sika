@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 import joblib
 
 from ml.dataset import settled_predictions_from_records
-from ml.features import FeatureSpec, vectorize
 from ml.training import train_and_package
+from ml_features import FeatureSpec, vectorize
 
 
 def _records(total: int = 240):

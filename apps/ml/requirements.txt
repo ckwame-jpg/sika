@@ -9,3 +9,7 @@ pydantic>=2.10
 sqlalchemy>=2.0
 psycopg[binary]>=3.2
 pytest>=8.0
+# Bug #29 — shared train/serve feature spec. Relative path resolves
+# from this file's directory, so ``pip install -r apps/ml/requirements.txt``
+# from any cwd picks up ``packages/ml-features/`` at the repo root.
+-e ../../packages/ml-features
