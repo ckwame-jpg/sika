@@ -874,3 +874,94 @@ def test_kalshi_account_snapshot_coalesces_concurrent_callers(db_session, monkey
     assert counting_client.balance_calls == 1, (
         "concurrent callers must coalesce on a single Kalshi fetch"
     )
+
+
+# -----------------------------------------------------------------------------
+# Bug #25: ``_remote_market_lookup`` chunked Kalshi calls fan out in parallel
+# -----------------------------------------------------------------------------
+
+
+def test_remote_market_lookup_runs_chunks_in_parallel(monkeypatch):
+    """Bug #25: a request that needs ``list_markets_by_tickers`` for
+    many distinct tickers used to walk the 100-ticker chunks
+    sequentially — N chunks paid an N-call latency tax. The fix
+    fans the chunks out in a bounded ``ThreadPoolExecutor`` so they
+    overlap.
+
+    The behavioral fingerprint: with three chunks, all three
+    ``list_markets_by_tickers`` invocations are observed
+    concurrently inside the executor (worker-thread count > 1) and
+    the merged lookup contains every ticker."""
+    import time as _time
+
+    from app.services import kalshi_account as kalshi_account_module
+
+    # 250 tickers → 3 chunks at the 100-per-chunk size.
+    tickers = {f"KX-FAKE-{i:04d}" for i in range(250)}
+
+    enter_count = 0
+    peak_concurrent = 0
+    lock = threading.Lock()
+    barrier_entered = threading.Event()
+    proceed = threading.Event()
+
+    class _ConcurrentClient:
+        def list_markets_by_tickers(self, chunk):
+            nonlocal enter_count, peak_concurrent
+            with lock:
+                enter_count += 1
+                peak_concurrent = max(peak_concurrent, enter_count)
+            barrier_entered.set()
+            # Hold until the test releases, so we can observe whether
+            # multiple chunks sit inside the call simultaneously.
+            proceed.wait(timeout=1.0)
+            with lock:
+                enter_count -= 1
+            return [{"ticker": ticker, "title": ticker} for ticker in chunk]
+
+    client = _ConcurrentClient()
+    holder: dict[str, object] = {}
+
+    def _run() -> None:
+        holder["result"] = kalshi_account_module._remote_market_lookup(client, tickers)
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    # Wait for at least one chunk to be in flight, then release.
+    assert barrier_entered.wait(timeout=1.0)
+    # Allow time for the executor to schedule the others before we let
+    # any of them complete.
+    _time.sleep(0.05)
+    proceed.set()
+    worker.join(timeout=5)
+
+    assert "result" in holder, "lookup never returned"
+    lookup = holder["result"]
+    assert isinstance(lookup, dict)
+    assert len(lookup) == 250
+    assert peak_concurrent >= 2, (
+        f"expected at least 2 chunks in flight concurrently; observed {peak_concurrent}"
+    )
+
+
+def test_remote_market_lookup_single_chunk_stays_synchronous(monkeypatch):
+    """Bug #25: spinning up the executor for a single chunk would add
+    pure overhead, so the helper short-circuits when only one chunk
+    is needed."""
+    from app.services import kalshi_account as kalshi_account_module
+
+    main_thread_id = threading.get_ident()
+    observed_thread_ids: list[int] = []
+
+    class _SingleChunkClient:
+        def list_markets_by_tickers(self, chunk):
+            observed_thread_ids.append(threading.get_ident())
+            return [{"ticker": ticker} for ticker in chunk]
+
+    tickers = {f"KX-SOLO-{i}" for i in range(5)}
+    lookup = kalshi_account_module._remote_market_lookup(_SingleChunkClient(), tickers)
+
+    assert set(lookup.keys()) == tickers
+    assert observed_thread_ids == [main_thread_id], (
+        "single-chunk path must run on the caller's thread, no executor"
+    )
