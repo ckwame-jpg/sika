@@ -71,6 +71,13 @@ _account_snapshot_cache: dict[str, Any] = {
     # The worker captures the generation at start; if it has changed
     # when the worker tries to commit, the result is discarded.
     "generation": 0,
+    # Codex round-9 P2: monotonic timestamp of the last connected
+    # commit. The preserve-cache-on-error path consults this to
+    # avoid serving an arbitrarily-old connected snapshot during
+    # persistent failures (e.g. credential revocation or a long
+    # outage). Once ``now - last_successful_at`` exceeds
+    # ``STALE_SECONDS``, errors are surfaced instead of preserved.
+    "last_successful_at": 0.0,
 }
 _account_snapshot_lock = threading.Lock()
 # Codex round-3 P2 on PR #40: ``Event.is_set()`` + ``Event.set()`` is
@@ -95,6 +102,7 @@ def invalidate_kalshi_account_cache() -> None:
         _account_snapshot_cache["fresh_until"] = 0.0
         _account_snapshot_cache["stale_until"] = 0.0
         _account_snapshot_cache["generation"] += 1
+        _account_snapshot_cache["last_successful_at"] = 0.0
 
 
 def expire_kalshi_account_cache() -> None:
@@ -340,15 +348,30 @@ def _commit_refresh_result(
     """
     if snapshot.status == "error":
         if previous is not None and previous.status == "connected":
-            _account_snapshot_cache["fresh_until"] = (
-                time.monotonic() + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
-            )
-            _account_snapshot_cache["generation"] += 1
+            # Codex round-9 P2: only preserve the connected cache if
+            # its last successful refresh is within the stale horizon.
+            # Past that, the snapshot is too old to keep serving as
+            # ``connected`` — surface the error so credential
+            # revocations / extended outages aren't silently masked.
+            now = time.monotonic()
+            last_successful = _account_snapshot_cache["last_successful_at"]
+            if now - last_successful < _ACCOUNT_SNAPSHOT_STALE_SECONDS:
+                _account_snapshot_cache["fresh_until"] = (
+                    now + _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS
+                )
+                _account_snapshot_cache["generation"] += 1
+                logger.warning(
+                    "kalshi_account_refresh_error_preserved_cache",
+                    extra={"error_message": snapshot.error_message},
+                )
+                return previous
             logger.warning(
-                "kalshi_account_refresh_error_preserved_cache",
-                extra={"error_message": snapshot.error_message},
+                "kalshi_account_refresh_error_cache_too_stale_to_preserve",
+                extra={
+                    "error_message": snapshot.error_message,
+                    "cache_age_seconds": now - last_successful,
+                },
             )
-            return previous
         # No good prior cache to preserve — store the error with a
         # short backoff so the next request retries soon.
         now = time.monotonic()
@@ -371,6 +394,11 @@ def _store_account_snapshot(snapshot: KalshiAccountRead) -> None:
     # will see a generation mismatch and discard its result instead
     # of overwriting a fresher cache.
     _account_snapshot_cache["generation"] += 1
+    # Codex round-9 P2: track the last successful connected commit
+    # so the preserve-cache-on-error path can bound how long stale
+    # data is served during persistent failures.
+    if snapshot.status == "connected":
+        _account_snapshot_cache["last_successful_at"] = now
 
 
 def _maybe_start_background_refresh(observed_generation: int) -> None:

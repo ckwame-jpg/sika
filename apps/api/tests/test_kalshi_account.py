@@ -538,6 +538,47 @@ def test_kalshi_account_snapshot_background_refresh_discarded_after_invalidation
     )
 
 
+def test_kalshi_account_snapshot_surfaces_error_when_cache_too_stale_to_preserve(db_session, monkeypatch):
+    """Codex round-9 P2 on PR #40: the preserve-cache-on-error
+    fallback used to extend ``fresh_until`` by ERROR_BACKOFF every
+    time the upstream errored — with no upper bound. During a long
+    Kalshi outage (or after credential revocation), /positions would
+    serve a ``connected`` snapshot with arbitrarily old balances
+    forever. Fix: track ``last_successful_at`` and bypass the
+    preserve path once the cached value is older than
+    ``STALE_SECONDS``."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    # Seed a connected cache.
+    seeded = build_kalshi_account_snapshot(db_session)
+    assert seeded.status == "connected"
+
+    # Make all subsequent Kalshi calls error.
+    def _failing_get_balance():
+        raise RuntimeError("upstream 429")
+
+    counting_client.get_balance = _failing_get_balance
+
+    # Advance time WELL past the stale horizon — the cached snapshot
+    # is now older than STALE_SECONDS since its last successful
+    # commit. ``expire`` doesn't reset ``last_successful_at`` so the
+    # horizon check operates on the original commit time.
+    fake_now = {"value": time.monotonic() + kalshi_account_module._ACCOUNT_SNAPSHOT_STALE_SECONDS + 10.0}
+    monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
+
+    # Trigger a sync fetch (force ensures we hit the sync path).
+    expire_kalshi_account_cache()
+    served = build_kalshi_account_snapshot(db_session)
+
+    assert served.status == "error", (
+        "after STALE_SECONDS with persistent errors, /positions must surface "
+        f"the error rather than serve an arbitrarily-old connected snapshot; got {served.status}"
+    )
+
+
 def test_kalshi_account_snapshot_force_refresh_falls_back_to_cache_when_fetch_errors(client, monkeypatch):
     """Codex round-8 P2 on PR #40: a user-initiated force-refresh
     that hits a transient Kalshi error must NOT replace a good
