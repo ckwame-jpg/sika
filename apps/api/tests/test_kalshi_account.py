@@ -1,4 +1,5 @@
 import threading
+import time
 
 import pytest
 
@@ -231,8 +232,8 @@ class _CountingKalshiAccountClient(FakeConfiguredKalshiAccountClient):
 def test_kalshi_account_snapshot_caches_when_called_without_explicit_client(db_session, monkeypatch):
     """Bug #6: ``/positions`` polls every ~15 s and fans out 3+ Kalshi
     calls per request. The production path (``client=None``) must
-    cache the snapshot for the TTL window so consecutive callers
-    inside the window don't all re-fetch from Kalshi."""
+    cache the snapshot inside the fresh window so consecutive callers
+    don't all re-fetch from Kalshi."""
     counting_client = _CountingKalshiAccountClient()
     monkeypatch.setattr(
         kalshi_account_module, "KalshiAccountClient", lambda: counting_client
@@ -249,6 +250,76 @@ def test_kalshi_account_snapshot_caches_when_called_without_explicit_client(db_s
     )
     assert counting_client.positions_calls == 1
     assert counting_client.fills_calls == 1
+
+
+def test_kalshi_account_snapshot_serves_stale_while_revalidating(db_session, monkeypatch):
+    """Bug #6, codex round-2 P2: the portfolio page polls every 15 s
+    but the fresh TTL is 5 s. Without stale-while-revalidate, every
+    poll re-fetches from Kalshi and the cache is useless for the
+    actual polling cadence. The SWR path must (a) serve cached data
+    immediately when the fresh window has elapsed but the stale
+    window hasn't, and (b) fire a single background refresh that
+    updates the cache out-of-band of the request."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+    # ``SessionLocal`` is called by the background refresh thread —
+    # return the test session so the in-memory DB is reused.
+
+    class _SessionContext:
+        def __enter__(self):
+            return db_session
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(kalshi_account_module, "SessionLocal", lambda: _SessionContext())
+
+    first = build_kalshi_account_snapshot(db_session)
+    assert counting_client.balance_calls == 1
+
+    # Advance time past the fresh window but inside the stale window.
+    fake_now = {"value": time.monotonic() + 10.0}
+    monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
+
+    second = build_kalshi_account_snapshot(db_session)
+
+    assert second == first, "stale-hit must return the cached value, not block on a fetch"
+    # The background refresh fires; wait for it to finish then verify
+    # it incremented the counter exactly once.
+    deadline = time.monotonic() + 2
+    while kalshi_account_module._background_refresh_in_progress.is_set():
+        if time.monotonic() > deadline:
+            raise AssertionError("background refresh did not complete")
+        time.sleep(0.01)
+    assert counting_client.balance_calls == 2, (
+        "stale-hit must fire exactly one background refresh, not multiple"
+    )
+
+
+def test_kalshi_account_snapshot_blocks_on_fetch_when_beyond_stale_window(db_session, monkeypatch):
+    """Past the stale window, the cache is no longer usable. The
+    caller must block on a synchronous fetch so they don't get a
+    minute-old snapshot."""
+    counting_client = _CountingKalshiAccountClient()
+    monkeypatch.setattr(
+        kalshi_account_module, "KalshiAccountClient", lambda: counting_client
+    )
+
+    build_kalshi_account_snapshot(db_session)
+    assert counting_client.balance_calls == 1
+
+    # Advance time past the stale window entirely.
+    fake_now = {"value": time.monotonic() + 120.0}
+    monkeypatch.setattr(kalshi_account_module.time, "monotonic", lambda: fake_now["value"])
+
+    second = build_kalshi_account_snapshot(db_session)
+
+    assert second.status == "connected"
+    assert counting_client.balance_calls == 2, (
+        "callers past the stale window must block on a fresh synchronous fetch"
+    )
 
 
 def test_kalshi_account_snapshot_refetches_after_cache_invalidation(db_session, monkeypatch):

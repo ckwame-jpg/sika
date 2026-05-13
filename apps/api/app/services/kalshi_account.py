@@ -1,3 +1,4 @@
+import logging
 import re
 import threading
 import time
@@ -8,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clients.kalshi import KalshiAccountClient
+from app.database import SessionLocal
 from app.models import Market
 from app.schemas import (
     KalshiAccountBalanceRead,
@@ -17,18 +19,36 @@ from app.schemas import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 # Bug #6: cache the ``build_kalshi_account_snapshot`` response so
 # /positions polling every ~15 s doesn't fan out to 3+ live Kalshi
 # calls per request. The endpoint is single-tenant (one API key per
-# process), so a single global cache key is sufficient. The lock
-# coalesces concurrent fetches — first caller fans out, the rest
-# observe the populated cache.
-_ACCOUNT_SNAPSHOT_TTL_SECONDS = 5.0
+# process), so a single global cache key is sufficient.
+#
+# Two-tier TTL implementing stale-while-revalidate (codex round-2 on
+# PR #40: a flat 5 s TTL is shorter than the 15 s polling interval,
+# so every poll still refetches and the cache only helps coalesce
+# concurrent requests):
+#
+# * within ``FRESH_SECONDS`` (5 s): serve cached, no refresh.
+# * between FRESH and ``STALE_SECONDS`` (60 s): serve cached AND
+#   fire a single background refresh thread that updates the cache
+#   in place. Subsequent 15 s polls within this window keep landing
+#   the cached value while the latest data is fetched out-of-band.
+# * beyond STALE_SECONDS: cache is too stale to serve; the caller
+#   blocks on a fresh fetch (with coalescing via the lock so
+#   concurrent callers share one upstream call).
+_ACCOUNT_SNAPSHOT_FRESH_SECONDS = 5.0
+_ACCOUNT_SNAPSHOT_STALE_SECONDS = 60.0
 _account_snapshot_cache: dict[str, Any] = {
     "value": None,
-    "expires_at": 0.0,
+    "fresh_until": 0.0,
+    "stale_until": 0.0,
 }
 _account_snapshot_lock = threading.Lock()
+_background_refresh_in_progress = threading.Event()
 
 
 def invalidate_kalshi_account_cache() -> None:
@@ -36,7 +56,8 @@ def invalidate_kalshi_account_cache() -> None:
     that mutate Kalshi-visible state."""
     with _account_snapshot_lock:
         _account_snapshot_cache["value"] = None
-        _account_snapshot_cache["expires_at"] = 0.0
+        _account_snapshot_cache["fresh_until"] = 0.0
+        _account_snapshot_cache["stale_until"] = 0.0
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -201,30 +222,75 @@ def build_kalshi_account_snapshot(
     # portfolio page's ~15 s polling doesn't fan out 3+ Kalshi calls
     # per request. Tests that pass an explicit ``client`` bypass the
     # cache so they can drive specific scenarios.
-    if client is None:
-        cached = _serve_cached_account_snapshot()
-        if cached is not None:
-            return cached
-        with _account_snapshot_lock:
-            # Re-check inside the lock — another thread may have
-            # populated the cache while we waited.
-            cached = _serve_cached_account_snapshot()
-            if cached is not None:
-                return cached
-            result = _build_kalshi_account_snapshot_uncached(db, client=None)
-            _account_snapshot_cache["value"] = result
-            _account_snapshot_cache["expires_at"] = time.monotonic() + _ACCOUNT_SNAPSHOT_TTL_SECONDS
-            return result
-    return _build_kalshi_account_snapshot_uncached(db, client=client)
+    if client is not None:
+        return _build_kalshi_account_snapshot_uncached(db, client=client)
 
-
-def _serve_cached_account_snapshot() -> KalshiAccountRead | None:
+    now = time.monotonic()
     cached = _account_snapshot_cache["value"]
-    if cached is None:
-        return None
-    if time.monotonic() >= _account_snapshot_cache["expires_at"]:
-        return None
-    return cached
+    fresh_until = _account_snapshot_cache["fresh_until"]
+    stale_until = _account_snapshot_cache["stale_until"]
+
+    if cached is not None and now < fresh_until:
+        # Fresh: return cached, no refresh.
+        return cached
+
+    if cached is not None and now < stale_until:
+        # Stale-but-usable: serve cached immediately and fire a
+        # single background refresh so the next poll lands fresh
+        # data. Subsequent polls inside the stale window keep
+        # landing the cached value out-of-band of the upstream call.
+        _maybe_start_background_refresh()
+        return cached
+
+    # No cache (or beyond STALE_SECONDS): block on a synchronous
+    # fetch. The lock coalesces concurrent callers — the second
+    # caller observes the populated cache when it acquires the lock.
+    with _account_snapshot_lock:
+        now = time.monotonic()
+        cached = _account_snapshot_cache["value"]
+        if cached is not None and now < _account_snapshot_cache["fresh_until"]:
+            return cached
+        result = _build_kalshi_account_snapshot_uncached(db, client=None)
+        _store_account_snapshot(result)
+        return result
+
+
+def _store_account_snapshot(snapshot: KalshiAccountRead) -> None:
+    now = time.monotonic()
+    _account_snapshot_cache["value"] = snapshot
+    _account_snapshot_cache["fresh_until"] = now + _ACCOUNT_SNAPSHOT_FRESH_SECONDS
+    _account_snapshot_cache["stale_until"] = now + _ACCOUNT_SNAPSHOT_STALE_SECONDS
+
+
+def _maybe_start_background_refresh() -> None:
+    """Fire a daemon thread to refresh the cache in place. At most
+    one refresh runs at a time — a second stale-hit observes the
+    in-progress flag and skips firing another."""
+    if _background_refresh_in_progress.is_set():
+        return
+    # ``Event.set`` is atomic; race between two stale-hits resolves
+    # by letting both call ``set`` but only one actually launches a
+    # thread because we double-check the flag inside the worker.
+    if not _background_refresh_in_progress.is_set():
+        _background_refresh_in_progress.set()
+        thread = threading.Thread(
+            target=_run_background_refresh,
+            daemon=True,
+            name="kalshi-account-refresh",
+        )
+        thread.start()
+
+
+def _run_background_refresh() -> None:
+    try:
+        with SessionLocal() as db:
+            snapshot = _build_kalshi_account_snapshot_uncached(db, client=None)
+        with _account_snapshot_lock:
+            _store_account_snapshot(snapshot)
+    except Exception:  # noqa: BLE001 — background refresh must not crash the app
+        logger.exception("kalshi_account_background_refresh_failed")
+    finally:
+        _background_refresh_in_progress.clear()
 
 
 def _build_kalshi_account_snapshot_uncached(
