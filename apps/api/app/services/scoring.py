@@ -1657,6 +1657,7 @@ def _score_player_prop(
     # multiply both a proxy and its advanced replacement for the same concept.
     if resolved.sport_key.upper() == "NBA":
         from app.services.advanced_stats import (
+            emit_nba_interaction_term,
             emit_nba_opponent_team_features,
             emit_nba_player_features,
             emit_nba_workload_features,
@@ -1695,6 +1696,19 @@ def _score_player_prop(
                 if opponent_team_result.payload:
                     features.update(emit_nba_opponent_team_features(opponent_team_result.payload))
                     features["opponent_team_cache_status"] = opponent_team_result.cache_status
+
+        # Smarter #12: emit the usage × pace × (1 / opponent_DRtg) interaction
+        # term once both source caches have contributed. The emitter returns
+        # {} when any input is missing, so this is safe to run unconditionally
+        # — the model handles absent keys via median imputation.
+        features.update(
+            emit_nba_interaction_term(
+                usage_pct=features.get("recent_usage_pct") or features.get("season_usage_pct"),
+                opponent_pace=features.get("opponent_pace_recent_5")
+                    or features.get("opponent_pace_season"),
+                opponent_drtg=features.get("opponent_def_rating_recent_5"),
+            )
+        )
 
         # Long-tail NBA features — hustle, drives, clutch — for the prop subject.
         # Cached only at scoring time (allow_network=False); the daily warm job
