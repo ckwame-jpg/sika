@@ -62,7 +62,15 @@ ADVANCED_COMPLETENESS_MARKERS = (
     "pitcher_data_complete",          # opposing-starter advanced
     "park_data_complete",             # park factors
     "weather_data_complete",          # weather (non-dome)
-    "lineup_data_complete",           # batting-order position
+    "lineup_data_complete",           # lineup data present (post-Smarter-#16:
+                                      # also fires for scratch rows; in
+                                      # practice those rows are suppressed
+                                      # at capture so the training corpus
+                                      # never sees them)
+    # Smarter #16: additionally flag the confirmed-in-lineup case
+    # explicitly. Captures the original "batting-order position is
+    # populated" intent that ``lineup_data_complete`` used to carry alone.
+    "player_in_starting_lineup",
 )
 
 

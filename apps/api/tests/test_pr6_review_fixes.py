@@ -120,7 +120,14 @@ def test_emit_lineup_features_falls_back_to_legacy_team_block():
     assert out["batting_order_position"] == 2.0
 
 
-def test_emit_lineup_features_returns_empty_when_player_not_in_lineup():
+def test_emit_lineup_features_signals_scratch_when_player_not_in_confirmed_lineup():
+    """Smarter #16 changed this contract: when lineup data IS in the payload
+    but the target player is NOT in any starting lineup, we now emit
+    ``{"lineup_data_complete": 1.0, "player_in_starting_lineup": 0.0}``
+    (the actionable scratch / DNP signal) instead of ``{}``. The empty
+    dict is reserved for the pre-lineup window when no lineup data exists
+    at all."""
+
     payload = {
         "raw": {
             "dates": [
@@ -137,6 +144,16 @@ def test_emit_lineup_features_returns_empty_when_player_not_in_lineup():
             ]
         }
     }
+    assert mlb_advanced.emit_lineup_features(payload, "999") == {
+        "lineup_data_complete": 1.0,
+        "player_in_starting_lineup": 0.0,
+    }
+
+
+def test_emit_lineup_features_returns_empty_when_no_lineup_data_at_all():
+    """Pre-lineup window contract: payload has games but no lineup arrays."""
+
+    payload = {"raw": {"dates": [{"games": [{"lineups": {}}]}]}}
     assert mlb_advanced.emit_lineup_features(payload, "999") == {}
 
 

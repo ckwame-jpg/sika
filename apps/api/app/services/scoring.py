@@ -160,6 +160,8 @@ def _suppression_outcome_reason(scored: ScoredRecommendation, *, current_watchli
     suppression_reasons = {str(value) for value in list(diagnostics.get("suppression_reasons") or [])}
     if "critical_market_snapshot_missing" in suppression_reasons:
         return "missing_snapshot"
+    if "player_not_in_starting_lineup" in suppression_reasons:
+        return "suppressed_player_not_in_starting_lineup"
     if "no_side_not_actionable_on_kalshi" in suppression_reasons:
         return "suppressed_no_side_not_actionable"
     if "min_edge" in suppression_reasons or "yes_side_negative_edge" in suppression_reasons:
@@ -1927,7 +1929,19 @@ def _score_player_prop(
     if resolved.context_stale:
         reasons.append("Using stale cached prop context while live ESPN refresh catches up.")
     if metadata.get("copilot_requires_lineup"):
-        reasons.append("Recommendation is only valid if the player is confirmed active / in the starting lineup.")
+        # Smarter #16: only warn the operator about lineup uncertainty when
+        # we don't already have a confirmed-in-lineup signal. Once
+        # ``player_in_starting_lineup == 1.0`` the prop is resolved on that
+        # axis — surfacing a stale "only valid if confirmed" line would
+        # contradict the scoring outcome.
+        lineup_data_complete = float(features.get("lineup_data_complete") or 0.0) >= 1.0
+        player_in_starting_lineup = (
+            float(features.get("player_in_starting_lineup") or 0.0) >= 1.0
+        )
+        if not (lineup_data_complete and player_in_starting_lineup):
+            reasons.append(
+                "Recommendation is only valid if the player is confirmed active / in the starting lineup."
+            )
 
     return probability_yes, confidence, reasons, features
 
@@ -1952,6 +1966,11 @@ def _single_scoring_adjustments(
         "market_snapshot": snapshot is not None,
     }
     missing_context: list[str] = []
+    # Smarter #16: flipped to True when ``copilot_requires_lineup`` is set
+    # AND lineup data IS confirmed AND the player is NOT in the starting
+    # lineup. Threaded back via diagnostics so the scoring kernel can add a
+    # ``player_not_in_starting_lineup`` entry to ``suppression_reasons``.
+    lineup_scratch_suppression = False
 
     if "has_schedule_context" in features:
         feature_flags["schedule_context"] = bool(features.get("has_schedule_context"))
@@ -1979,8 +1998,31 @@ def _single_scoring_adjustments(
         if bool(features.get("uses_stale_prop_context")):
             missing_context.append("fresh_prop_context")
         if metadata.get("copilot_requires_lineup"):
-            feature_flags["lineup_confirmation"] = False
-            missing_context.append("lineup_confirmation")
+            # Smarter #16 — three states, each gets a distinct response:
+            #
+            # 1. Lineup data not yet in payload (``lineup_data_complete``
+            #    absent) — pre-lineup window. Keep the existing
+            #    missing-context penalty so confidence reflects the
+            #    uncertainty.
+            # 2. Lineup data IS in payload AND player NOT in starting
+            #    lineup. Scratch / DNP. The original 0.025 penalty is far
+            #    too lenient — we know the prop is already a near-zero.
+            #    Signal a suppression hint here; the scoring kernel adds
+            #    it to ``suppression_reasons`` so the recommendation is
+            #    dropped instead of merely penalized.
+            # 3. Lineup data IS in payload AND player IS in lineup —
+            #    confirmation, no penalty.
+            lineup_data_complete = float(features.get("lineup_data_complete") or 0.0) >= 1.0
+            player_in_starting_lineup = (
+                float(features.get("player_in_starting_lineup") or 0.0) >= 1.0
+            )
+            feature_flags["lineup_confirmation"] = (
+                lineup_data_complete and player_in_starting_lineup
+            )
+            if not lineup_data_complete:
+                missing_context.append("lineup_confirmation")
+            elif not player_in_starting_lineup:
+                lineup_scratch_suppression = True
 
     if snapshot is None:
         missing_context.append("market_snapshot")
@@ -2032,7 +2074,7 @@ def _single_scoring_adjustments(
     total_penalty = round(sum(penalties.values()), 4)
     confidence_floor = 0.25 if family_key.endswith("_props") else 0.2
     adjusted_confidence = clamp(base_confidence - total_penalty, confidence_floor, 0.95)
-    diagnostics = {
+    diagnostics: dict[str, Any] = {
         "family_key": family_key,
         "confidence_semantics": "heuristic_reliability",
         "base_confidence": round(base_confidence, 4),
@@ -2044,6 +2086,8 @@ def _single_scoring_adjustments(
         "missing_context": missing_context,
         "penalties": penalties,
     }
+    if lineup_scratch_suppression:
+        diagnostics["lineup_suppression_reason"] = "player_not_in_starting_lineup"
     return adjusted_confidence, diagnostics
 
 
@@ -2306,7 +2350,18 @@ def _build_scored_recommendation(
         confidence = round(_selected_side_probability(probability_yes, side), 4)
 
     if market_family == "player_prop" and metadata.get("copilot_requires_lineup"):
-        invalidation = f"{invalidation}. Cancel if the player is not confirmed active / in the starting lineup."
+        # Smarter #16: only append the "cancel if not confirmed" rider when
+        # we don't already have a confirmed-in-lineup signal. A player
+        # already confirmed in the starting lineup shouldn't carry a
+        # disclaimer that contradicts the scoring outcome.
+        lineup_data_complete = float(features.get("lineup_data_complete") or 0.0) >= 1.0
+        player_in_starting_lineup = (
+            float(features.get("player_in_starting_lineup") or 0.0) >= 1.0
+        )
+        if not (lineup_data_complete and player_in_starting_lineup):
+            invalidation = (
+                f"{invalidation}. Cancel if the player is not confirmed active / in the starting lineup."
+            )
 
     selected_side_probability = _selected_side_probability(probability_yes, side)
     selected_subject_name = _selected_subject_name(
@@ -2393,6 +2448,11 @@ def _build_scored_recommendation(
     # surfacing a non-actionable pick.
     if side == "no":
         suppression_reasons.append("no_side_not_actionable_on_kalshi")
+    # Smarter #16: lineup data IS confirmed AND the player is NOT in the
+    # starting lineup. The 0.025 missing-context penalty was far too lenient
+    # for a clear scratch/DNP signal — suppress entirely rather than nudge.
+    if str(scoring_diagnostics.get("lineup_suppression_reason") or "") == "player_not_in_starting_lineup":
+        suppression_reasons.append("player_not_in_starting_lineup")
     signal_diagnostics = {
         **signal_diagnostics,
         "suppression_reasons": suppression_reasons,
