@@ -80,19 +80,37 @@ class PredictionSettlement:
     settlement_notes: str | None
 
 
-def _session_predictions(db: Session) -> list[Prediction]:
-    seen_ids: set[int] = set()
-    predictions: list[Prediction] = []
-    for collection in (db.identity_map.values(), db.new):
-        for item in collection:
-            if not isinstance(item, Prediction):
-                continue
-            identity = id(item)
-            if identity in seen_ids:
-                continue
-            seen_ids.add(identity)
-            predictions.append(item)
-    return predictions
+# Bug #43 — pre-fix ``_session_predictions`` walked the entire
+# SQLAlchemy identity_map plus ``db.new`` on every ``capture_prediction``
+# call, producing O(N×M) cost over a refresh that captured M markets
+# while N in-session predictions grew. The per-session lookup dicts
+# below give O(1) hit rate for predictions added via
+# ``capture_prediction`` itself; the existing fall-through to
+# ``db.scalar(select(...))`` catches predictions that entered the
+# session via a query.
+_SESSION_PRED_RUN_MARKET = "_session_prediction_by_run_market"
+_SESSION_PRED_MARKET_SCOPE = "_session_prediction_by_market_scope"
+
+
+def _session_prediction_by_run_market(db: Session, run_id: int, market_id: int) -> Prediction | None:
+    return db.info.get(_SESSION_PRED_RUN_MARKET, {}).get((run_id, market_id))
+
+
+def _session_predictions_by_market_scope(db: Session, market_id: int, capture_scope: str) -> list[Prediction]:
+    return list(db.info.get(_SESSION_PRED_MARKET_SCOPE, {}).get((market_id, capture_scope), ()))
+
+
+def _record_session_prediction(db: Session, prediction: Prediction) -> None:
+    """Update the per-session lookup dicts with a freshly-added or
+    freshly-updated prediction so subsequent lookups hit O(1)."""
+    if prediction.run_id is not None and prediction.market_id is not None:
+        index = db.info.setdefault(_SESSION_PRED_RUN_MARKET, {})
+        index[(prediction.run_id, prediction.market_id)] = prediction
+    if prediction.market_id is not None and prediction.capture_scope:
+        scope_index = db.info.setdefault(_SESSION_PRED_MARKET_SCOPE, {})
+        bucket = scope_index.setdefault((prediction.market_id, prediction.capture_scope), [])
+        if prediction not in bucket:
+            bucket.append(prediction)
 
 
 def _apply_prediction_capture(
@@ -201,14 +219,9 @@ def capture_prediction(
             signal.captured_at = captured_at
 
     if run_id is not None:
-        existing = next(
-            (
-                item
-                for item in _session_predictions(db)
-                if item.run_id == run_id and item.market_id == market.id
-            ),
-            None,
-        )
+        # Bug #43 — O(1) per-session lookup; falls through to the DB
+        # query for predictions loaded via a non-capture_prediction path.
+        existing = _session_prediction_by_run_market(db, run_id, market.id)
         if existing is None:
             existing = db.scalar(
                 select(Prediction).where(
@@ -239,17 +252,23 @@ def capture_prediction(
                     captured_at=captured_at,
                     reset_settlement=recommendation is None,
                 )
+            # Bug #43 — register in the per-session index so the next
+            # call hits the O(1) lookup even when ``existing`` came
+            # from the DB-query fall-through path.
+            _record_session_prediction(db, existing)
             return existing
 
     if capture_scope == "coverage":
         coverage_window_start, coverage_window_end = _coverage_day_window(captured_at)
+        # Bug #43 — same O(1) per-session lookup pattern as the
+        # run_id+market_id branch above; the index narrows to
+        # (market_id, "coverage") and the in-window filter runs only
+        # on that bucket instead of every Prediction in the session.
         sampled = next(
             (
                 item
-                for item in _session_predictions(db)
-                if item.market_id == market.id
-                and item.capture_scope == "coverage"
-                and item.captured_at is not None
+                for item in _session_predictions_by_market_scope(db, market.id, "coverage")
+                if item.captured_at is not None
                 and coverage_window_start <= _coerce_utc(item.captured_at) < coverage_window_end
             ),
             None,
@@ -267,7 +286,7 @@ def capture_prediction(
                 .limit(1)
             )
         if sampled is not None:
-            return _apply_prediction_capture(
+            updated = _apply_prediction_capture(
                 sampled,
                 run_id=run_id,
                 event=event,
@@ -288,6 +307,11 @@ def capture_prediction(
                 captured_at=captured_at,
                 reset_settlement=True,
             )
+            # Bug #43 — register so subsequent capture_prediction
+            # invocations against the same (market, coverage) bucket
+            # hit O(1) cache instead of repeating the DB fallthrough.
+            _record_session_prediction(db, updated)
+            return updated
 
     prediction = _apply_prediction_capture(
         Prediction(),
@@ -311,6 +335,7 @@ def capture_prediction(
         reset_settlement=capture_scope == "coverage",
     )
     db.add(prediction)
+    _record_session_prediction(db, prediction)
     return prediction
 
 
