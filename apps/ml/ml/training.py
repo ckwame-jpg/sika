@@ -52,6 +52,11 @@ ADVANCED_COMPLETENESS_MARKERS = (
     # advanced_stats.py
     "advanced_data_complete",         # NBA player advanced
     "opponent_team_data_complete",    # NBA opponent recent form
+    "workload_data_complete",         # Smarter #11 — NBA workload (gamelog-derived).
+                                      # NB: this is gamelog-derived, not NBA-Stats-
+                                      # cache-derived; it will fire for ~every NBA
+                                      # prop row that has a gamelog. The next
+                                      # retrain absorbs the resulting up-weight.
     # nba_long_tail.py
     "hustle_data_complete",
     "drives_data_complete",
@@ -62,6 +67,10 @@ ADVANCED_COMPLETENESS_MARKERS = (
     "pitcher_data_complete",          # opposing-starter advanced
     "park_data_complete",             # park factors
     "weather_data_complete",          # weather (non-dome)
+    "bullpen_rest_data_complete",     # Smarter #6 — opposing-bullpen rest index.
+                                      # Backfilled here: PR #78 shipped the
+                                      # emitter without an entry, so the symmetry
+                                      # test has been failing on main since.
     "lineup_data_complete",           # lineup data present (post-Smarter-#16:
                                       # also fires for scratch rows; in
                                       # practice those rows are suppressed

@@ -1616,6 +1616,7 @@ def _score_player_prop(
         from app.services.advanced_stats import (
             emit_nba_opponent_team_features,
             emit_nba_player_features,
+            emit_nba_workload_features,
             find_nba_team_id_by_name,
             load_nba_team_gamelog,
         )
@@ -1630,6 +1631,11 @@ def _score_player_prop(
 
         if resolved.advanced_payload:
             features.update(emit_nba_player_features(resolved.advanced_payload))
+
+        # Smarter #11: workload features from the ESPN game log. Pure
+        # function read against ``resolved.game_logs`` (already in scope
+        # and sorted reverse-chrono) — no network or cache reads.
+        features.update(emit_nba_workload_features(resolved.game_logs))
 
         if opponent_entry is not None:
             opponent_name = opponent_entry.participant.display_name or ""
@@ -2088,6 +2094,18 @@ def _single_scoring_adjustments(
                 missing_context.append("lineup_confirmation")
             elif not player_in_starting_lineup:
                 lineup_scratch_suppression = True
+            elif family_key == "nba_props":
+                # Smarter #11: NBA load-management uncertainty. Even when
+                # lineup is confirmed, a top-quartile workload player has a
+                # higher latent "manager pulls them at the half" risk. The
+                # workload factor handles the magnitude; this just records
+                # the uncertainty so confidence reflects it (0.025 penalty
+                # via missing_context). Gated to NBA so an MLB prop with a
+                # stray ``recent_workload_minutes_per_game`` (shouldn't
+                # exist) can't trip the check — codex Pattern 9.
+                mpg = features.get("recent_workload_minutes_per_game")
+                if isinstance(mpg, (int, float)) and mpg >= 34.0:
+                    missing_context.append("workload_top_quartile_uncertainty")
 
     if snapshot is None:
         missing_context.append("market_snapshot")
