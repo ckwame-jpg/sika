@@ -692,6 +692,18 @@ class ModelFamilyReadinessRead(BaseModel):
     last_fallback_event_at: UTCDateTime | None = None
 
 
+class SettlementAgingRead(BaseModel):
+    """Smarter #26 — counts of predictions stuck in ``pending`` past
+    their market close, bucketed by how long ago the close was. Surfaces
+    on the readiness panel as an ops badge."""
+
+    bucket_0_to_1h: int = 0
+    bucket_1_to_6h: int = 0
+    bucket_6_to_24h: int = 0
+    bucket_beyond_24h: int = 0
+    total_pending_past_close: int = 0
+
+
 class ModelReadinessSummaryRead(BaseModel):
     generated_at: UTCDateTime
     ml_serving_mode: Literal["heuristic", "shadow", "ml"] = "heuristic"
@@ -711,6 +723,11 @@ class ModelReadinessSummaryRead(BaseModel):
     # Per-pick toggles override at runtime; this is the initial value.
     pick_history_default_n: int = 5
     families: list[ModelFamilyReadinessRead] = Field(default_factory=list)
+    # Smarter #26 — predictions stuck in ``pending`` past their market
+    # close, bucketed by hours-since-close (0-1h / 1-6h / 6-24h / 24h+).
+    # Defaults to all-zeros so existing callers that don't surface the
+    # field render cleanly.
+    settlement_aging: SettlementAgingRead = Field(default_factory=SettlementAgingRead)
 
 
 class ModelReadinessSettingsUpdate(BaseModel):
