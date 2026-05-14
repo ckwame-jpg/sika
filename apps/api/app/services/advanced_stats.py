@@ -806,6 +806,117 @@ def emit_nba_interaction_term(
 
 
 # -----------------------------------------------------------------------------
+# Smarter #17 — late-breaking injury news.
+#
+# ESPN's injury report updates faster than the gamelog: a star ruled
+# OUT 60 minutes before tip should auto-suppress every prop on them,
+# not penalize with the usual 0.025 missing-context nudge. This module
+# ships the CONSUMER-SIDE mechanism — the emitter that turns an injury
+# payload into scoring features, plus the suppression gate in the
+# scoring kernel. The actual NBA-injury-report LOADER (HTTP fetch
+# from espn.com/injuries, cache write to ``NbaInjuryReportCache``)
+# is a separate follow-up PR — the model + config knob + TTL helper
+# already exist from Smarter #29.
+#
+# Expected ``injury_payload`` shape (contract for the future loader):
+# ::
+#     {
+#         "report_updated_at": "2026-05-14T18:00:00+00:00",
+#         "players": {
+#             "<player_name>": {
+#                 "status": "out" | "doubtful" | "questionable" | ...,
+#                 "designation": "left knee soreness",
+#             },
+#         },
+#     }
+
+
+_INJURY_FRESHNESS_WINDOW = timedelta(hours=12)
+
+
+def _normalize_injury_status(raw: Any) -> str:
+    """Map ESPN-style status strings to a small canonical vocabulary.
+
+    ESPN sends variants like ``"Out"`` / ``"Out (illness)"`` / ``"Out
+    for season"`` — match by leading-word so the policy holds across
+    those formats. Substring matches were tried first but had a
+    false-positive risk: ``"workout status"`` would have collided
+    with ``out``. Leading-word matching catches the canonical set and
+    rejects unrelated strings.
+    """
+    if not isinstance(raw, str):
+        return ""
+    normalized = raw.strip().lower().replace("-", " ")
+    if normalized.startswith("out"):
+        return "out"
+    if normalized.startswith("doubtful"):
+        return "doubtful"
+    if normalized.startswith("questionable"):
+        return "questionable"
+    if normalized.startswith("probable"):
+        return "probable"
+    if "day to day" in normalized:
+        # ESPN sometimes reports "day-to-day" — treat as questionable.
+        return "questionable"
+    return ""
+
+
+def emit_nba_injury_features(
+    injury_payload: dict[str, Any] | None,
+    *,
+    player_name: str | None,
+    now: datetime | None = None,
+) -> dict[str, float]:
+    """Emit injury-status + freshness features for a single NBA player.
+
+    The scoring kernel suppresses NBA props when the report is FRESH
+    (updated inside ``_INJURY_FRESHNESS_WINDOW``) AND the status is
+    ``out`` or ``doubtful``. A stale report still emits the status flag
+    but the suppression gate requires freshness — operators decide
+    whether to act on stale signals via the usual missing-context path.
+
+    Returns ``{}`` when payload is missing, the player has no entry,
+    or the status is unrecognized.
+    """
+    if not injury_payload or not isinstance(player_name, str) or not player_name.strip():
+        return {}
+    players = injury_payload.get("players") or {}
+    record = players.get(player_name) or players.get(player_name.strip())
+    if not isinstance(record, dict):
+        return {}
+    status = _normalize_injury_status(record.get("status"))
+    if not status:
+        return {}
+    out: dict[str, float] = {
+        "player_injury_status_out": 1.0 if status == "out" else 0.0,
+        "player_injury_status_doubtful": 1.0 if status == "doubtful" else 0.0,
+        "player_injury_status_questionable": 1.0 if status == "questionable" else 0.0,
+        "injury_data_complete": 1.0,
+    }
+    moment = now or utcnow()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    report_updated_at = injury_payload.get("report_updated_at")
+    if isinstance(report_updated_at, str):
+        try:
+            updated = datetime.fromisoformat(report_updated_at.replace("Z", "+00:00"))
+        except ValueError:
+            updated = None
+    elif isinstance(report_updated_at, datetime):
+        updated = report_updated_at
+    else:
+        updated = None
+    if updated is not None:
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        is_fresh = (moment - updated) <= _INJURY_FRESHNESS_WINDOW and (moment - updated).total_seconds() >= 0
+        out["injury_report_is_fresh"] = 1.0 if is_fresh else 0.0
+    else:
+        out["injury_report_is_fresh"] = 0.0
+    return out
+
+
+# -----------------------------------------------------------------------------
 # Lineup-level advanced (NEW) — 5-man combinations
 
 def load_nba_lineup_advanced(

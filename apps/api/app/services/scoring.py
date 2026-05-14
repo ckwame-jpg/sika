@@ -162,6 +162,10 @@ def _suppression_outcome_reason(scored: ScoredRecommendation, *, current_watchli
         return "missing_snapshot"
     if "player_not_in_starting_lineup" in suppression_reasons:
         return "suppressed_player_not_in_starting_lineup"
+    if "player_injury_out" in suppression_reasons:
+        return "suppressed_player_injury_out"
+    if "player_injury_doubtful" in suppression_reasons:
+        return "suppressed_player_injury_doubtful"
     if "no_side_not_actionable_on_kalshi" in suppression_reasons:
         return "suppressed_no_side_not_actionable"
     if "min_edge" in suppression_reasons or "yes_side_negative_edge" in suppression_reasons:
@@ -2127,6 +2131,12 @@ def _single_scoring_adjustments(
     # lineup. Threaded back via diagnostics so the scoring kernel can add a
     # ``player_not_in_starting_lineup`` entry to ``suppression_reasons``.
     lineup_scratch_suppression = False
+    # Smarter #17: set to ``"player_injury_out"`` or
+    # ``"player_injury_doubtful"`` when an NBA prop's player has a fresh
+    # injury report with that status. Threaded back via diagnostics
+    # alongside the lineup suppression hint so downstream code can
+    # translate to ``suppression_reasons``.
+    injury_suppression_reason: str | None = None
 
     if "has_schedule_context" in features:
         feature_flags["schedule_context"] = bool(features.get("has_schedule_context"))
@@ -2153,6 +2163,25 @@ def _single_scoring_adjustments(
             missing_context.append("opponent_context")
         if bool(features.get("uses_stale_prop_context")):
             missing_context.append("fresh_prop_context")
+        # Smarter #17 — NBA injury suppression. Fires only when:
+        #   * family is ``nba_props``
+        #   * an injury report has been observed for this player
+        #     (``injury_data_complete == 1.0``)
+        #   * the report is fresh enough to act on (within the last 12h)
+        #   * the player's status is ``out`` or ``doubtful``
+        # Stale reports DON'T suppress — the lineup-confirmation gate
+        # already handles the pre-game uncertainty; injury data adds
+        # value only when it's recent. Gated to NBA so a stray injury
+        # feature can't trip the MLB scoring path (codex Pattern 9).
+        if (
+            family_key == "nba_props"
+            and float(features.get("injury_data_complete") or 0.0) >= 1.0
+            and float(features.get("injury_report_is_fresh") or 0.0) >= 1.0
+        ):
+            if float(features.get("player_injury_status_out") or 0.0) >= 1.0:
+                injury_suppression_reason = "player_injury_out"
+            elif float(features.get("player_injury_status_doubtful") or 0.0) >= 1.0:
+                injury_suppression_reason = "player_injury_doubtful"
         if metadata.get("copilot_requires_lineup"):
             # Smarter #16 — three states, each gets a distinct response:
             #
@@ -2256,6 +2285,8 @@ def _single_scoring_adjustments(
     }
     if lineup_scratch_suppression:
         diagnostics["lineup_suppression_reason"] = "player_not_in_starting_lineup"
+    if injury_suppression_reason is not None:
+        diagnostics["injury_suppression_reason"] = injury_suppression_reason
     return adjusted_confidence, diagnostics
 
 
@@ -2622,6 +2653,14 @@ def _build_scored_recommendation(
     # for a clear scratch/DNP signal — suppress entirely rather than nudge.
     if str(scoring_diagnostics.get("lineup_suppression_reason") or "") == "player_not_in_starting_lineup":
         suppression_reasons.append("player_not_in_starting_lineup")
+    # Smarter #17: ESPN-style "player ruled out/doubtful" with a fresh
+    # report. The lineup-confirmation pathway covers the pre-tip window
+    # but doesn't cover late-breaking injury news that lands after
+    # lineups are posted. Treat as a hard suppression — the prop is a
+    # near-zero either way.
+    injury_reason = str(scoring_diagnostics.get("injury_suppression_reason") or "")
+    if injury_reason in {"player_injury_out", "player_injury_doubtful"}:
+        suppression_reasons.append(injury_reason)
     signal_diagnostics = {
         **signal_diagnostics,
         "suppression_reasons": suppression_reasons,
