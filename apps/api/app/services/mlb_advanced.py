@@ -1084,6 +1084,114 @@ def emit_mlb_pitcher_features(payload: dict[str, Any] | None, statcast: dict[str
     return out
 
 
+def extract_pitch_hand_from_lineup(
+    lineup_payload: dict[str, Any] | None,
+    mlb_pitcher_id: str | int | None,
+) -> str | None:
+    """Walk a cached lineup payload (schedule shape with ``hydrate=probablePitcher``)
+    and return the ``"L"`` / ``"R"`` pitchHand code for ``mlb_pitcher_id``.
+
+    Returns ``None`` when the payload, the pitcher id, or the pitchHand
+    field is missing — the platoon factor is a no-op in that case.
+    """
+
+    if not lineup_payload or mlb_pitcher_id is None:
+        return None
+    target = str(mlb_pitcher_id)
+    raw = lineup_payload.get("raw") or {}
+    for date_block in raw.get("dates") or []:
+        for game in date_block.get("games") or []:
+            teams = game.get("teams") or {}
+            for side_key in ("home", "away"):
+                pitcher = (teams.get(side_key) or {}).get("probablePitcher") or {}
+                if str(pitcher.get("id") or "") != target:
+                    continue
+                hand_block = pitcher.get("pitchHand") or {}
+                return _normalize_pitch_hand(hand_block.get("code"))
+    return None
+
+
+def _normalize_pitch_hand(value: Any) -> str | None:
+    """Coerce MLB Stats API's ``pitchHand.code`` (or any nearby variant)
+    to a single uppercase ``"L"`` / ``"R"`` character. Returns ``None`` for
+    switch-pitchers / unknown / missing values — the platoon factor stays
+    a no-op rather than guessing."""
+
+    if value is None:
+        return None
+    code = str(value).strip().upper()
+    if code in ("L", "R"):
+        return code
+    if code in ("LEFT", "LHP"):
+        return "L"
+    if code in ("RIGHT", "RHP"):
+        return "R"
+    return None
+
+
+def _split_row_for_hand(splits_payload: dict[str, Any] | None, vs_hand: str) -> dict[str, Any] | None:
+    """Find the ``vs Left`` / ``vs Right`` row inside a cached splits
+    payload. ``vs_hand`` is the OPPOSING pitcher's hand, so this returns
+    the batter's stats against that hand. Returns ``None`` when no
+    matching row exists or the payload shape is unexpected."""
+
+    if vs_hand not in ("L", "R") or not splits_payload:
+        return None
+    splits = list(splits_payload.get("splits") or [])
+    target_code = f"v{vs_hand.lower()}"
+    target_desc = f"vs {'left' if vs_hand == 'L' else 'right'}"
+    for row in splits:
+        meta = row.get("_split_meta") or {}
+        split = meta.get("split") or {}
+        code = str(split.get("code") or "").strip().lower()
+        desc = str(split.get("description") or "").strip().lower()
+        if code == target_code or desc == target_desc:
+            return row
+    return None
+
+
+def emit_mlb_platoon_features(
+    starter_pitch_hand: str | None,
+    splits_payload: dict[str, Any] | None,
+    season_ops: float | None,
+) -> dict[str, float]:
+    """Smarter #5 — emit batter-vs-starter-platoon features.
+
+    Returns ``{}`` when any input is missing (no pitcher hand, no splits,
+    no overall OPS baseline). When data is present, emits:
+
+    - ``batter_vs_starter_ops`` — batter's OPS in the vs-hand split.
+    - ``batter_vs_starter_platoon_factor`` — ratio of vs-hand OPS to
+      season OPS, clamped to ``[0.80, 1.20]`` so a single noisy split
+      can't move the prediction more than ~20%.
+
+    The factor is consumed by ``_mlb_batter_platoon_factor`` in
+    ``heuristic_factors.py`` and gated to the batter offense stats
+    (``hits``, ``home_runs``, ``total_bases``, ``rbis``, ``runs``).
+    """
+
+    hand = _normalize_pitch_hand(starter_pitch_hand)
+    if hand is None:
+        return {}
+    if season_ops is None or season_ops <= 0:
+        return {}
+    row = _split_row_for_hand(splits_payload, hand)
+    if row is None:
+        return {}
+    vs_ops_raw = row.get("ops")
+    vs_ops = _safe_pct(vs_ops_raw)
+    if vs_ops is None or vs_ops <= 0:
+        return {}
+    raw_ratio = vs_ops / float(season_ops)
+    # Clamp to the same ±20% envelope ``_clamp`` uses elsewhere so a
+    # tiny-sample split (e.g. 12 PA vs LHP) can't dominate the prediction.
+    clamped = max(0.80, min(1.20, raw_ratio))
+    return {
+        "batter_vs_starter_ops": round(vs_ops, 4),
+        "batter_vs_starter_platoon_factor": round(clamped, 4),
+    }
+
+
 def emit_park_features(park: dict[str, float] | None) -> dict[str, float]:
     if not park:
         return {}
