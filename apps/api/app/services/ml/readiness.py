@@ -24,6 +24,7 @@ from app.services.ml.study_progress import (
 )
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition, parlay_family_key, single_family_key
 from app.services.operator_settings import effective_ml_serving_mode, effective_pick_history_default_n
+from app.services.predictions import compute_settlement_aging
 
 # Sample size for diagnostic aggregations (buckets, rates, recent-row averages).
 # Headline counts come from SQL aggregation and are unaffected by this limit.
@@ -816,6 +817,10 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
             )
         )
 
+    # Smarter #26 — settlement aging buckets. Aggregated here once per
+    # readiness build so the operator UI doesn't need a separate fetch.
+    aging = compute_settlement_aging(db)
+
     return {
         "generated_at": _now_utc(),
         "ml_serving_mode": serving_mode,
@@ -828,6 +833,13 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
         "promotion_stability_days_required": STABILITY_DAYS_REQUIRED,
         "pick_history_default_n": effective_pick_history_default_n(db),
         "families": families,
+        "settlement_aging": {
+            "bucket_0_to_1h": aging.bucket_0_to_1h,
+            "bucket_1_to_6h": aging.bucket_1_to_6h,
+            "bucket_6_to_24h": aging.bucket_6_to_24h,
+            "bucket_beyond_24h": aging.bucket_beyond_24h,
+            "total_pending_past_close": aging.total_pending_past_close,
+        },
     }
 
 

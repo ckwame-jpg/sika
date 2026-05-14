@@ -23,6 +23,82 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Smarter #26 — settlement-aging bucket boundaries (hours past market
+# close_time without a settled prediction). Ops badge on the readiness
+# panel surfaces these counts so operators see when Kalshi settlement
+# is lagging.
+SETTLEMENT_AGING_BUCKET_BOUNDARIES_HOURS: tuple[float, ...] = (1.0, 6.0, 24.0)
+
+
+@dataclass(frozen=True, slots=True)
+class SettlementAging:
+    """Counts of predictions stuck in ``pending`` past their market close.
+
+    Each bucket is the number of predictions whose ``market.close_time``
+    is in the past by the specified window. Buckets are non-overlapping —
+    a prediction at 8h past close lands in ``bucket_6_to_24h`` and NOT
+    in the earlier buckets.
+
+    ``total_pending_past_close`` is the sum across all buckets and
+    matches the count operators see as the badge.
+    """
+    bucket_0_to_1h: int
+    bucket_1_to_6h: int
+    bucket_6_to_24h: int
+    bucket_beyond_24h: int
+    total_pending_past_close: int
+
+
+def compute_settlement_aging(db: Session, *, now: datetime | None = None) -> SettlementAging:
+    """Count predictions stuck in ``settlement_status='pending'`` past
+    their market's ``close_time``, bucketed by how long ago the close
+    was.
+
+    Predictions whose market has no ``close_time`` (early market state
+    or non-Kalshi sources) are skipped — we don't know when they
+    SHOULD have settled. Cancelled / resolved predictions are skipped
+    because their ``settlement_status`` is not ``pending`` anymore.
+    """
+    moment = now or _now_utc()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+
+    bucket_1h, bucket_6h, bucket_24h = SETTLEMENT_AGING_BUCKET_BOUNDARIES_HOURS
+    rows = db.execute(
+        select(Market.close_time)
+        .join(Prediction, Prediction.market_id == Market.id)
+        .where(
+            Prediction.settlement_status == "pending",
+            Market.close_time.is_not(None),
+            Market.close_time < moment,
+        )
+    ).all()
+
+    counts = {"0_to_1h": 0, "1_to_6h": 0, "6_to_24h": 0, "beyond_24h": 0}
+    for (close_time,) in rows:
+        if close_time is None:
+            continue
+        # SQLite drops tz info on read; coerce to UTC for the subtraction.
+        anchor = close_time if close_time.tzinfo is not None else close_time.replace(tzinfo=timezone.utc)
+        hours_past_close = (moment - anchor).total_seconds() / 3600.0
+        if hours_past_close < bucket_1h:
+            counts["0_to_1h"] += 1
+        elif hours_past_close < bucket_6h:
+            counts["1_to_6h"] += 1
+        elif hours_past_close < bucket_24h:
+            counts["6_to_24h"] += 1
+        else:
+            counts["beyond_24h"] += 1
+
+    return SettlementAging(
+        bucket_0_to_1h=counts["0_to_1h"],
+        bucket_1_to_6h=counts["1_to_6h"],
+        bucket_6_to_24h=counts["6_to_24h"],
+        bucket_beyond_24h=counts["beyond_24h"],
+        total_pending_past_close=sum(counts.values()),
+    )
+
+
 def _normalized_text(value: Any) -> str | None:
     if value is None:
         return None
