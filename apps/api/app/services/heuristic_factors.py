@@ -77,8 +77,9 @@ _MLB_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
                    "park_factor_hr_mult", "weather_factor",
                    "pitcher_dominance_factor", "batter_platoon_factor"),
     "rbis": ("lineup_factor", "park_factor_runs_mult", "starter_factor_advanced",
-             "batter_platoon_factor"),
-    "runs": ("lineup_factor", "park_factor_runs_mult", "batter_platoon_factor"),
+             "batter_platoon_factor", "opposing_bullpen_rest_factor"),
+    "runs": ("lineup_factor", "park_factor_runs_mult", "batter_platoon_factor",
+             "opposing_bullpen_rest_factor"),
     "total_bases": ("quality_of_contact_factor", "starter_factor_advanced",
                      "park_factor_singles", "weather_factor",
                      "batter_platoon_factor"),
@@ -268,6 +269,36 @@ def _mlb_weather_factor(features: dict[str, Any]) -> float:
     return _clamp(factor)
 
 
+def _mlb_opposing_bullpen_rest_factor(features: dict[str, Any]) -> float:
+    """Smarter #6 — bullpen rest multiplier for batter offense stats.
+
+    The signal that matters for a hitter is the OPPOSING bullpen's rest:
+    a tired opposing pen surrenders more runs / RBIs in late innings.
+    Caller writes ``opposing_bullpen_rest_index_3d`` to features when the
+    matchup data is available; this function reads it and returns a
+    bounded multiplier:
+
+    - Fully rested opp pen (index = 1.0) → 0.95 (slight suppression — fresh
+      arms keep run production down).
+    - Saturated opp pen (index = 0.0) → 1.05 (5% boost — tired arms allow
+      more late-inning runs).
+    - No data → 1.0 (no-op).
+
+    The ±5% envelope is intentionally conservative; the punch list's
+    "Make Sika Smarter" framing pairs this feature with a more
+    sophisticated bullpen-state ingestion as a follow-up. Until then a
+    modest, well-documented multiplier is better than a bigger swing
+    that's wrong half the time.
+    """
+
+    raw = features.get("opposing_bullpen_rest_index_3d")
+    if not isinstance(raw, (int, float)):
+        return 1.0
+    rest = max(0.0, min(1.0, float(raw)))
+    # Linear: rest=1.0 → 0.95, rest=0.5 → 1.0, rest=0.0 → 1.05.
+    return _clamp(1.0 + (0.5 - rest) * 0.10)
+
+
 def _mlb_batter_platoon_factor(features: dict[str, Any]) -> float:
     """Smarter #5 — apply the batter-vs-starter platoon multiplier.
 
@@ -315,6 +346,10 @@ _MLB_FACTOR_FNS = {
     # Strikeouts/walks have their own pitcher-side factors that already
     # capture handedness implicitly via FIP/xFIP.
     "batter_platoon_factor": _mlb_batter_platoon_factor,
+    # Smarter #6 — opposing bullpen rest (3-day window) gated on the most
+    # bullpen-sensitive batter offense stats (rbis, runs). Conservative
+    # ±5% envelope; pairs with a future per-game reliever-IP ingestion.
+    "opposing_bullpen_rest_factor": _mlb_opposing_bullpen_rest_factor,
 }
 
 
