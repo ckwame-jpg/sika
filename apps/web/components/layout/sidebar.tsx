@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -21,7 +21,7 @@ import {
 } from "@/lib/health-status";
 
 type SyncState = "queued" | "refreshing" | "worker_offline" | "stalled" | "failed" | "stale" | "synced";
-import { triggerRefreshAndRevalidate } from "@/lib/refresh";
+import { RefreshAbortError, triggerRefreshAndRevalidate } from "@/lib/refresh";
 import { SPORT_OPTIONS, cn } from "@/lib/utils";
 import { useSportQueryParam } from "@/components/filters/sport-filter-select";
 import { OrbitMark } from "./orbit-mark";
@@ -143,6 +143,10 @@ function syncLabel(state: SyncState | null): string {
 
 function SyncFoot() {
   const [refreshing, setRefreshing] = useState(false);
+  // Bug #35 — refresh poll runs for up to 40 minutes. Without an
+  // AbortController, unmount or navigation left the loop running.
+  // Track the in-flight controller and abort it on unmount.
+  const refreshControllerRef = useRef<AbortController | null>(null);
   const { data: health } = useHealthStatus();
   const syncState = getSyncState(health);
   const marketBadge = getMarketSyncBadge(health);
@@ -151,13 +155,28 @@ function SyncFoot() {
   const sub = marketBadge?.text ?? "markets";
   const title = marketBadge?.title ?? "";
 
+  useEffect(() => {
+    return () => {
+      refreshControllerRef.current?.abort();
+    };
+  }, []);
+
   async function handleRefresh() {
+    refreshControllerRef.current?.abort();  // cancel any previous in-flight poll
+    const controller = new AbortController();
+    refreshControllerRef.current = controller;
     setRefreshing(true);
     try {
-      await triggerRefreshAndRevalidate();
-    } catch {
-      /* ignore */
+      await triggerRefreshAndRevalidate({ signal: controller.signal });
+    } catch (err) {
+      // Aborts are expected on unmount / re-click; swallow quietly.
+      if (!(err instanceof RefreshAbortError)) {
+        /* other errors already surface via toast / health badge */
+      }
     } finally {
+      if (refreshControllerRef.current === controller) {
+        refreshControllerRef.current = null;
+      }
       setRefreshing(false);
     }
   }
