@@ -17,6 +17,7 @@ function threshold(overrides: Partial<TradeDeskThreshold>): TradeDeskThreshold {
     confidence: overrides.confidence ?? 0.7,
     is_best: overrides.is_best ?? false,
     kalshi_url: overrides.kalshi_url ?? null,
+    time_to_close_minutes: overrides.time_to_close_minutes ?? null,
   };
 }
 
@@ -109,6 +110,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
           numeric_line: null,
       total_direction: null,
           price_history: [],
+          time_to_close_minutes: null,
         },
         {
           ticker: "KXNBASPREAD-RAPTORS-3_5",
@@ -126,6 +128,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
           numeric_line: -3.5,
       total_direction: null,
           price_history: [],
+          time_to_close_minutes: null,
         },
         {
           ticker: "KXNBATOTAL-219_5",
@@ -143,6 +146,7 @@ export const tradeDeskFixture: TradeDeskResponse = {
           numeric_line: 219.5,
       total_direction: null,
           price_history: [],
+          time_to_close_minutes: null,
         },
       ],
       player_props: [davionMitchellProp],

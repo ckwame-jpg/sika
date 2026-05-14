@@ -391,6 +391,21 @@ def _thresholds_are_monotonic(thresholds: list[TradeDeskThresholdRead]) -> bool:
     return True
 
 
+def _time_to_close_minutes(market: Market, *, now: datetime | None = None) -> int | None:
+    """Smarter #24 — minutes until ``market.close_time``. ``None`` when the
+    market has no scheduled close time. Clamped at 0 if close_time is in the
+    past so the UI never sees a negative."""
+
+    close_time = market.close_time if market is not None else None
+    if close_time is None:
+        return None
+    current = now or datetime.now(timezone.utc)
+    delta_seconds = (close_time - current).total_seconds()
+    if delta_seconds <= 0:
+        return 0
+    return int(delta_seconds // 60)
+
+
 def _serialize_recommendation(
     item: Recommendation,
     market: Market,
@@ -399,6 +414,7 @@ def _serialize_recommendation(
     diagnostics = dict(item.scoring_diagnostics or {})
     event = item.event
     return RecommendationRead(
+        time_to_close_minutes=_time_to_close_minutes(market),
         id=item.id,
         ticker=market.ticker,
         sport_key=market.sport_key,

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import type { TradeDeskPlayerProp, TradeDeskThreshold } from "@/lib/types";
 import { cn, fmtEdge, fmtPercent, fmtPrice } from "@/lib/utils";
+import { TimeToCloseBadge } from "@/components/trade/time-to-close-badge";
 
 interface PlayerPropGroupProps {
   player: TradeDeskPlayerProp;
@@ -125,6 +126,9 @@ export function PlayerPropGroup({
             >
               {fmtEdge(summary.threshold.edge)}
             </span>
+            {/* Smarter #24 — surface time-to-close on the best ladder so a
+                T-15m prop pick is just as visible as a T-15m game-line pick. */}
+            <TimeToCloseBadge minutes={summary.threshold.time_to_close_minutes} />
           </div>
         )}
       </button>
@@ -155,7 +159,17 @@ export function PlayerPropGroup({
                         data-testid="trade-threshold-chip"
                         aria-pressed={isSelected}
                         aria-label={thresholdLabel}
-                        title={`${formatStatLabel(group.stat_key)} ${thresholdLabel} · ${fmtPercent(winProb)} win · ${fmtPrice(threshold.entry_price)} entry · ${fmtEdge(threshold.edge)} edge`}
+                        title={`${formatStatLabel(group.stat_key)} ${thresholdLabel} · ${fmtPercent(winProb)} win · ${fmtPrice(threshold.entry_price)} entry · ${fmtEdge(threshold.edge)} edge${
+                          threshold.time_to_close_minutes !== null
+                            ? threshold.time_to_close_minutes <= 0
+                              ? " · closing"
+                              : threshold.time_to_close_minutes < 60
+                                ? ` · T-${threshold.time_to_close_minutes}m`
+                                : threshold.time_to_close_minutes < 24 * 60
+                                  ? ` · T-${Math.floor(threshold.time_to_close_minutes / 60)}h`
+                                  : ` · T-${Math.floor(threshold.time_to_close_minutes / (24 * 60))}d`
+                            : ""
+                        }`}
                         onClick={() =>
                           onSelectThreshold(
                             player.subject_name,

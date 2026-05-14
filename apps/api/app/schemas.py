@@ -119,6 +119,13 @@ class RecommendationRead(BaseModel):
     invalidation: str
     rationale: str
     captured_at: UTCDateTime
+    # Smarter #24 — minutes until ``market.close_time``. ``None`` when the
+    # market has no scheduled close. Clamped at 0 when close_time is in
+    # the past (a closed market shouldn't appear on the watchlist, but we
+    # don't want to surface negative values if one slips through).
+    # Operators sort/highlight by this to triage T-minus-15min picks
+    # ahead of T-minus-4h ones with the same edge.
+    time_to_close_minutes: int | None = None
 
 
 class ParlayRecommendationLegRead(BaseModel):
@@ -334,6 +341,10 @@ class TradeDeskGameLineRead(BaseModel):
     # so the frontend doesn't have to re-derive it. ``"over"`` /
     # ``"under"`` for total markets, ``None`` for everything else.
     total_direction: Literal["over", "under"] | None = None
+    # Smarter #24 — minutes until ``market.close_time``. ``None`` when no
+    # close time; clamped at 0 if close_time is in the past. Operators
+    # triage T-15min picks ahead of T-4h ones with the same edge.
+    time_to_close_minutes: int | None = None
 
 
 class TradeDeskThresholdRead(BaseModel):
@@ -347,6 +358,8 @@ class TradeDeskThresholdRead(BaseModel):
     confidence: float
     is_best: bool = False
     kalshi_url: str | None = None
+    # Smarter #24 — see ``TradeDeskGameLineRead.time_to_close_minutes``.
+    time_to_close_minutes: int | None = None
 
 
 class TradeDeskStatGroupRead(BaseModel):

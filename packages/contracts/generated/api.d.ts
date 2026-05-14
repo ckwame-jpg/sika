@@ -1911,6 +1911,8 @@ export interface components {
             threshold?: number | null;
             /** Ticker */
             ticker: string;
+            /** Time To Close Minutes */
+            time_to_close_minutes?: number | null;
         };
         /** RefreshJobRead */
         RefreshJobRead: {
@@ -2503,6 +2505,8 @@ export interface components {
             sport_key?: string | null;
             /** Ticker */
             ticker: string;
+            /** Time To Close Minutes */
+            time_to_close_minutes?: number | null;
             /** Total Direction */
             total_direction?: ("over" | "under") | null;
         };
@@ -2596,6 +2600,8 @@ export interface components {
             threshold: number;
             /** Ticker */
             ticker: string;
+            /** Time To Close Minutes */
+            time_to_close_minutes?: number | null;
         };
         /** ValidationError */
         ValidationError: {

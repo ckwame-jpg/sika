@@ -282,7 +282,7 @@ Ordered by what would move the needle most given fixed engineering time. Each it
 
 23. **Stale-data detection per upstream source (`/health` integration)** — **WHY:** ESPN scoreboard fails silently, Kalshi 429s, basketball-reference cache expires. Surface per-source freshness in `/health` + operator settings. **EFFORT:** M. **SPORT:** both.
 
-24. **Time-to-close metrics in the watchlist** — **WHY:** operators can't tell which recs are aging out. A T-4h recommendation @ 0.05 edge ≠ T-15min @ 0.05 edge. **WHERE:** add `time_to_close_minutes` to recommendation read schemas; sort/highlight in `apps/web/app/(product)/watchlist/page.tsx`. **EFFORT:** S. **SPORT:** both.
+24. **[shipped]** **Time-to-close metrics in the watchlist** — **WHY:** operators can't tell which recs are aging out. A T-4h recommendation @ 0.05 edge ≠ T-15min @ 0.05 edge. **WHERE:** add `time_to_close_minutes` to recommendation read schemas; sort/highlight in `apps/web/app/(product)/watchlist/page.tsx`. **EFFORT:** S. **SPORT:** both. **Shipped:** Smarter #24 — `time_to_close_minutes: int | None` field on `RecommendationRead`, `TradeDeskGameLineRead`, and `TradeDeskThresholdRead`. Shared `TimeToCloseBadge` component on game-line rows + on the player-prop card header. Red-bold when ≤30 min, muted under 24h, day-count when ≥24h, "closing" when ≤0, hidden when null. Codex Pattern 7 catch: initial version omitted the badge from prop rows — fix added it to the prop card summary so props get equal-weight urgency. Pattern 2 noted: helper duplicated between `routes.py` and `trade_desk.py` with an explicit agreement test until next refactor consolidates them.
 
 25. **Market mapping confidence + ambiguous-match logging + manual override** — addresses bug #17. **WHERE:** `market_mapping.py` (store score, candidate list, evidence); `/ops/market-mapping/overrides` PATCH endpoint; operator panel in `apps/web/app/(ops)/`. **EFFORT:** M. **SPORT:** both.
 
@@ -406,4 +406,5 @@ Three single-agent findings were verified against actual source before inclusion
 | [#27](https://github.com/ckwame-jpg/sika/pull/27) | #3 | MLB | Strikeout pitcher_dominance direction + Statcast-only fallback |
 | [#28](https://github.com/ckwame-jpg/sika/pull/28) | #49 | both | NO-side recommendations suppressed as not actionable on Kalshi |
 | [#71](https://github.com/ckwame-jpg/sika/pull/71) | Smarter #1 | both | Per-family reliability-curve buckets on the readiness panel (avg_predicted vs. actual_yes_rate per 10% band) |
-| (pending PR) | Smarter #3 | both | Closing-line value: signed delta between entry and close price; surfaced as "Avg CLV" tile on the readiness panel |
+| [#72](https://github.com/ckwame-jpg/sika/pull/72) | Smarter #3 | both | Closing-line value: signed delta between entry and close price; surfaced as "Avg CLV" tile on the readiness panel |
+| (pending PR) | Smarter #24 | both | Time-to-close badge ("T-Xm") on game-line + prop rows; red-bold under 30 min |

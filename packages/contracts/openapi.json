@@ -4273,6 +4273,17 @@
           "ticker": {
             "title": "Ticker",
             "type": "string"
+          },
+          "time_to_close_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time To Close Minutes"
           }
         },
         "required": [
@@ -5651,6 +5662,17 @@
             "title": "Ticker",
             "type": "string"
           },
+          "time_to_close_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time To Close Minutes"
+          },
           "total_direction": {
             "anyOf": [
               {
@@ -5908,6 +5930,17 @@
           "ticker": {
             "title": "Ticker",
             "type": "string"
+          },
+          "time_to_close_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time To Close Minutes"
           }
         },
         "required": [

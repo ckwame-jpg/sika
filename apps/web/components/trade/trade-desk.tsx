@@ -13,6 +13,7 @@ import type {
 } from "@/lib/types";
 import { cn, fmtDatetime, fmtEdge, fmtPercent, fmtPrice, fmtRelative, fmtStartsAt, sportLabel } from "@/lib/utils";
 import { PlayerPropGroup } from "@/components/trade/player-prop-group";
+import { TimeToCloseBadge } from "@/components/trade/time-to-close-badge";
 import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
 import { ProbabilitySurfaceHero } from "@/components/trade/probability-surface-hero";
 import { Sparkline } from "@/components/ui/sparkline";
@@ -155,6 +156,7 @@ function GameLineRow({
           {line.projected_side_label
             ? `Model leans ${line.projected_side_label}`
             : `Selected side ${line.selected_side.toUpperCase()}`}
+          <TimeToCloseBadge minutes={line.time_to_close_minutes} />
         </div>
       </div>
       <div className="line-row-price">{fmtPrice(line.entry_price)}</div>
@@ -166,6 +168,7 @@ function GameLineRow({
     </button>
   );
 }
+
 
 function computeTradeKpis(data: TradeDeskResponse): TradeKpis {
   const events = data.events;

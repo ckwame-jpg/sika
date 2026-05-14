@@ -101,6 +101,9 @@ export interface RecommendationRead {
   invalidation: string;
   rationale: string;
   captured_at: string;
+  // Smarter #24 — minutes until the market closes. ``null`` when no
+  // close_time is set on the market; clamped at 0 for past close.
+  time_to_close_minutes: number | null;
 }
 
 interface MarketSnapshotRead {
@@ -183,6 +186,9 @@ export interface TradeDeskGameLine {
    *  when no captured snapshots exist; the row sparkline falls back to
    *  a deterministic synthetic walk. */
   price_history: number[];
+  /** Smarter #24 — minutes until close. ``null`` for markets without a
+   *  scheduled close; clamped at 0 for past close. */
+  time_to_close_minutes: number | null;
 }
 
 export interface TradeDeskThreshold {
@@ -196,6 +202,9 @@ export interface TradeDeskThreshold {
   confidence: number;
   is_best: boolean;
   kalshi_url: string | null;
+  /** Smarter #24 — minutes until close. ``null`` for markets without a
+   *  scheduled close; clamped at 0 for past close. */
+  time_to_close_minutes: number | null;
 }
 
 interface TradeDeskStatGroup {
