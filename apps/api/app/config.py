@@ -123,6 +123,13 @@ class Settings(BaseSettings):
     openweather_api_key: str = ""
     nws_user_agent: str = "sika-sports-copilot"
 
+    # Smarter #18 — The Odds API (sportsbook implied-probability prior).
+    # Free tier with 500 monthly requests; empty key disables fetching
+    # gracefully (no error, all consumer paths skip the prior).
+    the_odds_api_key: str = ""
+    the_odds_api_base_url: str = "https://api.the-odds-api.com/v4"
+    the_odds_api_request_timeout_seconds: float = 15.0
+
 
 @lru_cache
 def get_settings() -> Settings:
