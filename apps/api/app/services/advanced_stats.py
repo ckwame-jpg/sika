@@ -738,6 +738,59 @@ def emit_nba_workload_features(
 
 
 # -----------------------------------------------------------------------------
+# Smarter #12 — usage × pace × (1 / opponent_DRtg) interaction term.
+#
+# The point of this emitter is that the heuristic scoring already applies
+# each component independently (capped at ±15%) — that understates the
+# extreme combinations (top-quartile usage AGAINST a fast bad-defense
+# opponent). The product is emitted UNCAPPED so the ML model captures the
+# shape; the heuristic factors continue to apply their per-component caps.
+
+
+def emit_nba_interaction_term(
+    *,
+    usage_pct: float | None,
+    opponent_pace: float | None,
+    opponent_drtg: float | None,
+) -> dict[str, float]:
+    """Emit the NBA offense × pace × defense interaction term.
+
+    Centered so league-average inputs produce ~1.0:
+      * usage_pct ~0.25 (rotation regular, decimal scale)
+      * opponent_pace ~100
+      * opponent_drtg ~110 (lower = better defense, suppresses output)
+
+    Formula:
+        (usage / 0.25) * (pace / 100) * (drtg / 110)
+
+    Direction matches the existing ``_nba_opp_def_factor`` convention:
+    a low DRtg (e.g. 100) yields ``drtg / 110 ≈ 0.91``, suppressing the
+    term against an elite defense; a high DRtg (e.g. 120) yields
+    ``drtg / 110 ≈ 1.09``, boosting the term against a weak defense.
+    Note: the original handoff pseudocode for Smarter #12 had this
+    inverted (``110 / drtg``) — corrected here so the interaction term
+    moves the same direction as the heuristic component factors.
+
+    The product is emitted UNCAPPED — the existing heuristic factors
+    already cap each component independently; the interaction term feeds
+    the ML model so it can learn the multiplicative shape directly. No
+    heuristic factor consumes this key.
+
+    Returns ``{}`` when any input is missing or ``opponent_drtg <= 0``.
+    """
+    if not all(isinstance(v, (int, float)) for v in (usage_pct, opponent_pace, opponent_drtg)):
+        return {}
+    if opponent_drtg <= 0:
+        return {}
+    return {
+        "nba_offense_interaction_term": round(
+            (usage_pct / 0.25) * (opponent_pace / 100.0) * (opponent_drtg / 110.0),
+            4,
+        ),
+    }
+
+
+# -----------------------------------------------------------------------------
 # Lineup-level advanced (NEW) — 5-man combinations
 
 def load_nba_lineup_advanced(
