@@ -361,6 +361,19 @@ export interface ReadinessBucketRead {
   average_realized_pnl: number | null;
 }
 
+// Smarter #1: reliability-curve point. ``avg_predicted`` is the model's mean
+// P(YES) for rows in this bucket, ``actual_yes_rate`` is the observed rate,
+// and ``miscalibration = avg_predicted - actual_yes_rate`` (positive = the
+// model was over-confident in YES inside this band). All numeric fields are
+// nullable when the bucket has no settled rows yet.
+export interface CalibrationBucketRead {
+  label: string;
+  settled_count: number;
+  avg_predicted: number | null;
+  actual_yes_rate: number | null;
+  miscalibration: number | null;
+}
+
 export interface ModelFamilyRuntimeHealthRead {
   family_key: string;
   desired_mode: "heuristic" | "shadow" | "ml";
@@ -416,6 +429,7 @@ export interface ModelFamilyReadinessRead {
   last_settled_at: string | null;
   confidence_buckets: ReadinessBucketRead[];
   edge_buckets: ReadinessBucketRead[];
+  calibration_buckets: CalibrationBucketRead[];
   feature_coverage_rates: Record<string, number>;
   missing_context_rates: Record<string, number>;
   top_failure_reasons: Record<string, number>;

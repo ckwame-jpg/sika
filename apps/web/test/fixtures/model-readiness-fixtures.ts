@@ -1,4 +1,5 @@
 import type {
+  CalibrationBucketRead,
   ModelFamilyReadinessRead,
   ModelFamilyRuntimeHealthRead,
   ModelReadinessSummaryRead,
@@ -14,6 +15,14 @@ const emptyBucket = (label: string): ReadinessBucketRead => ({
   cancelled_count: 0,
   win_rate: null,
   average_realized_pnl: null,
+});
+
+const emptyCalibrationBucket = (label: string): CalibrationBucketRead => ({
+  label,
+  settled_count: 0,
+  avg_predicted: null,
+  actual_yes_rate: null,
+  miscalibration: null,
 });
 
 function runtime(overrides: Partial<ModelFamilyRuntimeHealthRead>): ModelFamilyRuntimeHealthRead {
@@ -74,6 +83,11 @@ function family(overrides: Partial<ModelFamilyReadinessRead>): ModelFamilyReadin
     last_settled_at: overrides.last_settled_at ?? "2026-04-07T18:00:00Z",
     confidence_buckets: overrides.confidence_buckets ?? [emptyBucket("0-20%"), emptyBucket("20-40%")],
     edge_buckets: overrides.edge_buckets ?? [emptyBucket("<0"), emptyBucket("0-5%")],
+    calibration_buckets:
+      overrides.calibration_buckets ?? [
+        emptyCalibrationBucket("0-10%"),
+        emptyCalibrationBucket("10-20%"),
+      ],
     feature_coverage_rates: overrides.feature_coverage_rates ?? {},
     missing_context_rates: overrides.missing_context_rates ?? {},
     top_failure_reasons: overrides.top_failure_reasons ?? {},

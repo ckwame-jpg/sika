@@ -579,6 +579,19 @@ class ReadinessBucketRead(BaseModel):
     average_realized_pnl: float | None = None
 
 
+class CalibrationBucketRead(BaseModel):
+    """Reliability-curve point. ``avg_predicted`` is the model's mean P(YES)
+    for rows in this bucket; ``actual_yes_rate`` is the observed YES rate;
+    ``miscalibration = avg_predicted - actual_yes_rate`` (positive = the model
+    was over-confident in YES). ``None`` fields signal an empty bucket."""
+
+    label: str
+    settled_count: int
+    avg_predicted: float | None = None
+    actual_yes_rate: float | None = None
+    miscalibration: float | None = None
+
+
 class ModelFamilyRuntimeHealthRead(BaseModel):
     family_key: str
     desired_mode: Literal["heuristic", "shadow", "ml"]
@@ -634,6 +647,11 @@ class ModelFamilyReadinessRead(BaseModel):
     last_settled_at: UTCDateTime | None = None
     confidence_buckets: list[ReadinessBucketRead] = Field(default_factory=list)
     edge_buckets: list[ReadinessBucketRead] = Field(default_factory=list)
+    # Smarter #1: per-family reliability-curve buckets. Empty list pre-shadow
+    # (no settled rows in this family yet). Each bucket carries the bucket's
+    # mean predicted P(YES) and the observed YES rate so the UI can render a
+    # reliability curve without recomputing.
+    calibration_buckets: list[CalibrationBucketRead] = Field(default_factory=list)
     feature_coverage_rates: dict[str, float] = Field(default_factory=dict)
     missing_context_rates: dict[str, float] = Field(default_factory=dict)
     top_failure_reasons: dict[str, int] = Field(default_factory=dict)

@@ -184,6 +184,125 @@ function BucketTable({
   );
 }
 
+// Smarter #1: per-family reliability curve. Diagonal y=x is perfect
+// calibration; dots above the diagonal mean the model was under-confident in
+// YES (predicted lower than reality), dots below mean over-confident. Dot
+// radius scales with settled-row count so sparse buckets don't dominate the
+// visual signal.
+const CURVE_VIEW_SIZE = 160;
+const CURVE_PADDING = 18;
+const CURVE_PLOT_SIZE = CURVE_VIEW_SIZE - CURVE_PADDING * 2;
+const MAX_DOT_RADIUS = 6;
+const MIN_DOT_RADIUS = 1.8;
+
+function CalibrationCurve({
+  rows,
+}: {
+  rows: ModelFamilyReadinessRead["calibration_buckets"];
+}) {
+  const populated = rows.filter(
+    (row) => row.settled_count > 0 && row.avg_predicted !== null && row.actual_yes_rate !== null,
+  );
+  const totalSettled = populated.reduce((acc, row) => acc + row.settled_count, 0);
+  const maxBucketCount = populated.reduce((acc, row) => Math.max(acc, row.settled_count), 0);
+
+  const toX = (proba: number): number => CURVE_PADDING + proba * CURVE_PLOT_SIZE;
+  // SVG y grows downward; invert so 0% is at the bottom edge like a standard chart.
+  const toY = (proba: number): number => CURVE_PADDING + (1 - proba) * CURVE_PLOT_SIZE;
+  const dotRadius = (count: number): number => {
+    if (maxBucketCount <= 0) return MIN_DOT_RADIUS;
+    const ratio = count / maxBucketCount;
+    return MIN_DOT_RADIUS + ratio * (MAX_DOT_RADIUS - MIN_DOT_RADIUS);
+  };
+
+  return (
+    <div className="overflow-hidden rounded-[10px] border border-white/[0.06] bg-white/[0.03]">
+      <div className="border-b border-white/[0.06] px-3 py-2">
+        <p className="stats-tile-label">Reliability curve</p>
+        <p className="mt-0.5 text-[10px] text-muted-foreground">
+          Diagonal = perfect calibration. Above = under-confident, below = over-confident. Dot
+          size = settled rows.
+        </p>
+      </div>
+      <div className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center">
+        <svg
+          viewBox={`0 0 ${CURVE_VIEW_SIZE} ${CURVE_VIEW_SIZE}`}
+          width={CURVE_VIEW_SIZE}
+          height={CURVE_VIEW_SIZE}
+          role="img"
+          aria-label={`Reliability curve with ${populated.length} populated buckets over ${totalSettled} settled rows`}
+          className="shrink-0"
+        >
+          <rect
+            x={CURVE_PADDING}
+            y={CURVE_PADDING}
+            width={CURVE_PLOT_SIZE}
+            height={CURVE_PLOT_SIZE}
+            fill="none"
+            stroke="rgba(255,255,255,0.08)"
+            strokeWidth={1}
+          />
+          <line
+            x1={toX(0)}
+            y1={toY(0)}
+            x2={toX(1)}
+            y2={toY(1)}
+            stroke="rgba(255,255,255,0.18)"
+            strokeWidth={1}
+            strokeDasharray="3 3"
+          />
+          {populated.map((row) => {
+            // ``null`` already filtered out above, but TS doesn't know that.
+            const predicted = row.avg_predicted ?? 0;
+            const actual = row.actual_yes_rate ?? 0;
+            return (
+              <circle
+                key={row.label}
+                cx={toX(predicted)}
+                cy={toY(actual)}
+                r={dotRadius(row.settled_count)}
+                fill="rgb(34 197 94 / 0.85)"
+                stroke="rgb(34 197 94)"
+                strokeWidth={1}
+              >
+                <title>
+                  {`${row.label} · n=${row.settled_count} · predicted ${fmtPercent(predicted)} · actual ${fmtPercent(actual)} · miscal ${row.miscalibration === null ? "n/a" : (row.miscalibration > 0 ? "+" : "") + row.miscalibration.toFixed(3)}`}
+                </title>
+              </circle>
+            );
+          })}
+        </svg>
+        <div className="flex-1 text-[11px] text-muted-foreground">
+          {populated.length === 0 ? (
+            <p>No settled rows yet. Curve populates as predictions resolve.</p>
+          ) : (
+            <ul className="space-y-0.5">
+              {populated.map((row) => (
+                <li key={row.label} className="grid grid-cols-[3.5rem_2.5rem_3rem_3rem] gap-1 font-mono">
+                  <span className="text-foreground">{row.label}</span>
+                  <span>n={row.settled_count}</span>
+                  <span>{fmtPercent(row.avg_predicted)}</span>
+                  <span
+                    className={cn(
+                      row.miscalibration !== null && Math.abs(row.miscalibration) > 0.08
+                        ? "text-destructive"
+                        : "",
+                    )}
+                  >
+                    {row.miscalibration === null
+                      ? "—"
+                      : `${row.miscalibration > 0 ? "+" : ""}${row.miscalibration.toFixed(3)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProgressStep({
   label,
   value,
@@ -610,6 +729,7 @@ export function ModelReadinessPanel() {
             <div className="grid gap-4 xl:grid-cols-2">
               <BucketTable title="Confidence Buckets" rows={selected.confidence_buckets} />
               <BucketTable title="Edge Buckets" rows={selected.edge_buckets} />
+              <CalibrationCurve rows={selected.calibration_buckets} />
             </div>
 
             <div className="grid gap-4 xl:grid-cols-3">
