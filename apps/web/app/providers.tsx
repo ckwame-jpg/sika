@@ -1,16 +1,21 @@
 "use client";
 
 import { ThemeProvider } from "next-themes";
-import { PriceDisplayProvider } from "@/lib/price-display";
+import { PriceDisplayMode, PriceDisplayProvider } from "@/lib/price-display";
 
-export function Providers({ children }: { children: React.ReactNode }) {
+interface ProvidersProps {
+  children: React.ReactNode;
+  initialPriceMode?: PriceDisplayMode;
+}
+
+export function Providers({ children, initialPriceMode }: ProvidersProps) {
   return (
     <ThemeProvider
       attribute="class"
       defaultTheme="dark"
       disableTransitionOnChange
     >
-      <PriceDisplayProvider>{children}</PriceDisplayProvider>
+      <PriceDisplayProvider initialMode={initialPriceMode}>{children}</PriceDisplayProvider>
     </ThemeProvider>
   );
 }
