@@ -104,7 +104,7 @@ def _cache_or_fetch(
         _increment_daily_count(db)
         _record_nba_success(db)
     except Exception as exc:  # noqa: BLE001
-        _record_nba_failure(db)
+        _record_nba_failure(db, error=str(exc))
         logger.warning("NBA long-tail fetch failed: %s", exc)
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)

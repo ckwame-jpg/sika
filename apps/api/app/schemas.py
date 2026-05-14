@@ -33,6 +33,16 @@ class RefreshJobRead(BaseModel):
     finished_at: UTCDateTime | None = None
 
 
+class UpstreamSourceHealthRead(BaseModel):
+    """Smarter #23 — per-upstream-source freshness for the /health surface."""
+
+    source: str
+    last_success_at: UTCDateTime | None = None
+    last_failure_at: UTCDateTime | None = None
+    last_error: str | None = None
+    is_stale: bool
+
+
 class HealthResponse(BaseModel):
     status: str
     environment: str
@@ -53,6 +63,10 @@ class HealthResponse(BaseModel):
     latest_prop_refresh_job: RefreshJobRead | None = None
     active_settlement_job: RefreshJobRead | None = None
     latest_settlement_job: RefreshJobRead | None = None
+    # Smarter #23 — per-upstream-source freshness. Sources that have
+    # never been recorded show ``last_success_at = None`` / ``is_stale =
+    # True`` so operators see the explicit "never reported in" signal.
+    upstream_sources: list[UpstreamSourceHealthRead] = []
 
 
 class SportRead(BaseModel):
