@@ -224,11 +224,21 @@ def _extract_probable_pitcher_ids(schedule_payload: dict[str, Any]) -> list[str]
     ``game.teams.{home,away}.probablePitcher``. We deduplicate across the
     whole slate and return them as strings ready for
     ``warm_mlb_advanced_for_athletes(pitcher_ids=...)``.
+
+    Bug #44 — if MLB Stats stops honoring ``hydrate=probablePitcher``
+    (param rename, deprecation, response-shape change), the function
+    returns ``[]`` silently and downstream feature emitters get the
+    "no signal" default for every pitcher. Counting games seen vs
+    pitchers extracted gives us a breadcrumb to spot the regression
+    in ops logs rather than discovering it via degraded model
+    performance days later.
     """
     seen: set[str] = set()
     out: list[str] = []
+    games_seen = 0
     for date_block in (schedule_payload or {}).get("dates") or []:
         for game in date_block.get("games") or []:
+            games_seen += 1
             teams = game.get("teams") or {}
             for side_key in ("home", "away"):
                 side = teams.get(side_key) or {}
@@ -241,6 +251,13 @@ def _extract_probable_pitcher_ids(schedule_payload: dict[str, Any]) -> list[str]
                     continue
                 seen.add(pid_str)
                 out.append(pid_str)
+    if games_seen > 0 and not out:
+        logger.warning(
+            "MLB schedule payload has %d game(s) but zero probable-pitcher IDs extracted. "
+            "Likely the hydrate=probablePitcher contract regressed upstream; verify the "
+            "schedule call and the response shape.",
+            games_seen,
+        )
     return out
 
 
