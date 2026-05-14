@@ -124,7 +124,7 @@ def nba_circuit_breaker_open(db: Session, *, now: datetime | None = None) -> boo
     return moment < until
 
 
-def _record_nba_failure(db: Session) -> None:
+def _record_nba_failure(db: Session, *, error: str | None = None) -> None:
     payload = _operator_get(db, _NBA_CONSECUTIVE_FAIL_KEY) or {}
     count = int(payload.get("count", 0)) + 1
     _operator_set(db, _NBA_CONSECUTIVE_FAIL_KEY, {"count": count})
@@ -132,6 +132,12 @@ def _record_nba_failure(db: Session) -> None:
         until = utcnow() + timedelta(hours=_NBA_DISABLE_HOURS)
         _operator_set(db, _NBA_CIRCUIT_KEY, {"until": until.isoformat(), "tripped_at": utcnow().isoformat()})
         logger.warning("NBA Stats circuit breaker tripped until %s", until.isoformat())
+    # Smarter #23 — surface the failure on the per-upstream health
+    # board. The circuit-breaker counter above tells us whether to skip
+    # network on the NEXT call; this tells operators whether the source
+    # is currently fresh.
+    from app.services.upstream_health import record_upstream_failure  # noqa: PLC0415 — avoid circular import
+    record_upstream_failure(db, "nba_stats", error or "unknown error")
 
 
 def _record_nba_success(db: Session) -> None:
@@ -139,6 +145,9 @@ def _record_nba_success(db: Session) -> None:
         _operator_set(db, _NBA_CONSECUTIVE_FAIL_KEY, {"count": 0})
     if _operator_get(db, _NBA_CIRCUIT_KEY):
         _operator_set(db, _NBA_CIRCUIT_KEY, {})
+    # Smarter #23 — clear the last_error and stamp last_success_at.
+    from app.services.upstream_health import record_upstream_success  # noqa: PLC0415
+    record_upstream_success(db, "nba_stats")
 
 
 # -----------------------------------------------------------------------------
@@ -274,7 +283,7 @@ def load_nba_advanced(
         _increment_daily_count(db)
         _record_nba_success(db)
     except Exception as exc:  # noqa: BLE001 — broad on purpose, network is unpredictable
-        _record_nba_failure(db)
+        _record_nba_failure(db, error=str(exc))
         logger.warning(
             "NBA Stats advanced gamelog fetch failed for player %s season %d: %s",
             nba_stats_player_id,
@@ -388,7 +397,7 @@ def load_nba_team_advanced(
         _increment_daily_count(db)
         _record_nba_success(db)
     except Exception as exc:  # noqa: BLE001
-        _record_nba_failure(db)
+        _record_nba_failure(db, error=str(exc))
         logger.warning("NBA Stats team advanced fetch failed for season %d: %s", season, exc)
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
@@ -461,7 +470,7 @@ def load_nba_league_percentiles(
         _increment_daily_count(db)
         _record_nba_success(db)
     except Exception as exc:  # noqa: BLE001
-        _record_nba_failure(db)
+        _record_nba_failure(db, error=str(exc))
         logger.warning("NBA Stats league percentiles fetch failed for season %d: %s", season, exc)
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
@@ -556,7 +565,7 @@ def load_nba_team_gamelog(
         _increment_daily_count(db)
         _record_nba_success(db)
     except Exception as exc:  # noqa: BLE001
-        _record_nba_failure(db)
+        _record_nba_failure(db, error=str(exc))
         logger.warning("NBA team gamelog fetch failed for team %s season %d: %s", team_id, season, exc)
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
@@ -839,7 +848,7 @@ def load_nba_lineup_advanced(
         _increment_daily_count(db)
         _record_nba_success(db)
     except Exception as exc:  # noqa: BLE001
-        _record_nba_failure(db)
+        _record_nba_failure(db, error=str(exc))
         logger.warning("NBA lineup advanced fetch failed for season %d: %s", season, exc)
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
@@ -925,7 +934,7 @@ def load_nba_player_roster(
         _increment_daily_count(db)
         _record_nba_success(db)
     except Exception as exc:  # noqa: BLE001
-        _record_nba_failure(db)
+        _record_nba_failure(db, error=str(exc))
         logger.warning("NBA commonallplayers fetch failed for season %d: %s", season, exc)
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)

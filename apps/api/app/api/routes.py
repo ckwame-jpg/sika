@@ -66,6 +66,7 @@ from app.schemas import (
     ProductSportsResponse,
     TradeDeskResponse,
     TradeDeskThresholdRead,
+    UpstreamSourceHealthRead,
     WatchlistDiagnosticsRead,
     WatchlistCoverageRowRead,
 )
@@ -84,6 +85,7 @@ from app.services.predictions import settle_predictions
 from app.services.refresh_jobs import enqueue_refresh_job, enqueue_shadow_capture_job, get_refresh_job, reconcile_stale_jobs as reconcile_stale_refresh_jobs
 from app.services.scheduler import get_refresh_runtime_state
 from app.services.stats_query import StatsQueryService
+from app.services.upstream_health import get_upstream_health
 from app.services.trade_desk import (
     SNAPSHOT_SCOPE_ALL,
     build_trade_desk_response as build_trade_desk_response_live,
@@ -920,9 +922,20 @@ def _merge_settlement_summaries(*summaries: dict[str, int]) -> dict[str, int]:
 
 
 @router.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
+def health(db: Session = Depends(get_db)) -> HealthResponse:
     settings = get_settings()
     runtime = get_refresh_runtime_state()
+    upstream_rows = get_upstream_health(db)
+    upstream_sources = [
+        UpstreamSourceHealthRead(
+            source=row.source,
+            last_success_at=row.last_success_at,
+            last_failure_at=row.last_failure_at,
+            last_error=row.last_error,
+            is_stale=row.is_stale(),
+        )
+        for row in upstream_rows
+    ]
     return HealthResponse(
         status="ok",
         environment=settings.environment,
@@ -943,6 +956,7 @@ def health() -> HealthResponse:
         latest_prop_refresh_job=RefreshJobRead.model_validate(runtime["latest_prop_refresh_job"]) if runtime["latest_prop_refresh_job"] else None,
         active_settlement_job=RefreshJobRead.model_validate(runtime.get("active_settlement_job")) if runtime.get("active_settlement_job") else None,
         latest_settlement_job=RefreshJobRead.model_validate(runtime.get("latest_settlement_job")) if runtime.get("latest_settlement_job") else None,
+        upstream_sources=upstream_sources,
     )
 
 
