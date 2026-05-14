@@ -1076,6 +1076,8 @@ export interface components {
         };
         /** ModelFamilyReadinessRead */
         ModelFamilyReadinessRead: {
+            /** Average Clv */
+            average_clv?: number | null;
             /** Average Confidence */
             average_confidence?: number | null;
             /** Average Edge */

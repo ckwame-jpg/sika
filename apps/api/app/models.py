@@ -222,6 +222,16 @@ class Prediction(Base):
     settlement_source = Column(String, nullable=True)
     settlement_notes = Column(Text, nullable=True)
     captured_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    # Smarter #3 (closing-line value): captured at settlement.
+    # ``closing_yes_price`` is the YES mid-price (or last traded price) from
+    # the latest ``MarketSnapshot`` before ``market.close_time``.
+    # ``closing_line_value`` is the signed move in the pick's favor:
+    # YES → ``closing_yes_price - suggested_price``;
+    # NO → ``(1 - closing_yes_price) - suggested_price``.
+    # Positive CLV is the standard sharpness signal — the line moved toward
+    # sika's recommendation between capture and close.
+    closing_yes_price = Column(Float, nullable=True)
+    closing_line_value = Column(Float, nullable=True)
 
     run = relationship("Run")
     event = relationship("Event")

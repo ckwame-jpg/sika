@@ -51,6 +51,11 @@ SCHEMA_PATCHES: dict[str, dict[str, str]] = {
         "selection_score": "FLOAT",
         "scoring_diagnostics": "JSON",
         "capture_scope": "VARCHAR",
+        # Smarter #3 — closing-line value snapshot + signed delta. Backfilled
+        # at settlement time; old rows stay NULL until the next settlement
+        # pass picks them up.
+        "closing_yes_price": "FLOAT",
+        "closing_line_value": "FLOAT",
     },
     "parlay_recommendations": {
         "model_name": "VARCHAR",

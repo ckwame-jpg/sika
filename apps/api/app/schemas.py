@@ -644,6 +644,12 @@ class ModelFamilyReadinessRead(BaseModel):
     average_edge: float | None = None
     average_confidence: float | None = None
     average_realized_pnl: float | None = None
+    # Smarter #3 — signed mean closing-line value over settled predictions
+    # in this family's sample. Positive = the model is sharp (line moved
+    # toward the picks between capture and close). Null when no settled
+    # rows carry a CLV yet, or for parlay families (no per-row close
+    # price for multi-leg combinations).
+    average_clv: float | None = None
     last_settled_at: UTCDateTime | None = None
     confidence_buckets: list[ReadinessBucketRead] = Field(default_factory=list)
     edge_buckets: list[ReadinessBucketRead] = Field(default_factory=list)

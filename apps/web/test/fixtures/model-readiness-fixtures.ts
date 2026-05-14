@@ -80,6 +80,7 @@ function family(overrides: Partial<ModelFamilyReadinessRead>): ModelFamilyReadin
     average_edge: overrides.average_edge ?? 0.11,
     average_confidence: overrides.average_confidence ?? 0.72,
     average_realized_pnl: overrides.average_realized_pnl ?? 0.06,
+    average_clv: overrides.average_clv ?? 0.02,
     last_settled_at: overrides.last_settled_at ?? "2026-04-07T18:00:00Z",
     confidence_buckets: overrides.confidence_buckets ?? [emptyBucket("0-20%"), emptyBucket("20-40%")],
     edge_buckets: overrides.edge_buckets ?? [emptyBucket("<0"), emptyBucket("0-5%")],
