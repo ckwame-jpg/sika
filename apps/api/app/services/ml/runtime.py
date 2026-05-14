@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from math import isfinite
@@ -20,11 +22,75 @@ from app.services.ml.study_progress import history_ready_for_shadow, is_active_s
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition
 from app.services.operator_settings import effective_ml_serving_mode
 
+
+logger = logging.getLogger(__name__)
+
+
 RuntimeMode = Literal["heuristic", "shadow", "ml"]
 RuntimeHealth = Literal["healthy", "degraded", "unavailable"]
 
 FAILURE_THRESHOLD = 3
 COOLDOWN_MINUTES = 15
+
+
+# Smarter #27 — train/serve feature dictionary drift detection.
+#
+# ``vectorize`` silently substitutes a default for any key in
+# ``feature_spec.ordered_keys`` that's missing from the serving features
+# dict, and silently drops any serving key that wasn't in the trained
+# spec. Both directions misalign the feature vector if they happen
+# unintentionally — but some misses ARE intentional: ``dataset.py`` adds
+# row-derived keys at training-time normalization that scoring never
+# emits, and ``vectorize`` reads ``family_key`` from a separate slot
+# instead of ``ordered_keys``.
+#
+# These two sets enumerate the known-legitimate cases so the drift
+# detector only WARNs on unexpected drift.
+_TRAINING_ONLY_FEATURE_KEYS: frozenset[str] = frozenset({
+    # Added by ``apps/ml/ml/dataset.py:normalize_features`` from row
+    # metadata. They appear in trained feature specs but the scoring
+    # path's features dict will never contain them.
+    "sport_is_nba",
+    "sport_is_mlb",
+    "suggested_price",
+    "heuristic_fair_yes_price",
+    "heuristic_edge",
+    "heuristic_confidence",
+    "heuristic_selection_score",
+})
+
+_VECTORIZE_NON_ORDERED_KEYS: frozenset[str] = frozenset({
+    # ``vectorize`` reads ``family_key`` separately to drive the
+    # family-one-hot append; it's intentionally absent from ordered_keys.
+    "family_key",
+})
+
+
+def _detect_feature_drift(
+    features: dict[str, Any],
+    ordered_keys: Sequence[str],
+) -> tuple[set[str], set[str]]:
+    """Return ``(serving_extra, serving_missing_unexpected)``.
+
+    ``serving_extra`` — keys present in the serving features dict but
+    NOT in the trained feature spec. ``vectorize`` silently drops these,
+    which means a newly-emitted scoring feature is invisible to the
+    model until the next retrain ingests it.
+
+    ``serving_missing_unexpected`` — keys in the trained spec that are
+    missing from serving features AND are not in the known training-only
+    set. The vector falls back to ``default_values`` for these, biasing
+    inference.
+
+    Known-legitimate misses (``sport_is_*``, ``heuristic_*``,
+    ``family_key``, etc.) are filtered out before the comparison so the
+    detector only WARNs on unexpected drift.
+    """
+    serve_keys = set(features.keys()) - _VECTORIZE_NON_ORDERED_KEYS
+    spec_keys = set(ordered_keys)
+    serving_extra = serve_keys - spec_keys
+    serving_missing = (spec_keys - serve_keys) - _TRAINING_ONLY_FEATURE_KEYS
+    return serving_extra, serving_missing
 
 
 def _now_utc() -> datetime:
@@ -509,7 +575,29 @@ def _run_artifact_inference(payload: dict[str, Any], *, features: dict[str, Any]
         if not artifact_dir:
             raise RuntimeError("Sklearn artifact directory missing from payload.")
         artifact = load_sklearn_artifact(artifact_dir)
-        vector = vectorize(dict(features or {}), artifact.feature_spec).reshape(1, -1)
+        features_view = dict(features or {})
+        # Smarter #27: surface train/serve schema drift before it
+        # silently misaligns the feature vector. Log-only — never alter
+        # the inference path.
+        serving_extra, serving_missing = _detect_feature_drift(
+            features_view, artifact.feature_spec.ordered_keys
+        )
+        if serving_extra or serving_missing:
+            logger.warning(
+                "ml.feature_drift detected: extra=%s missing=%s "
+                "(feature_spec_version=%s, artifact_dir=%s)",
+                sorted(serving_extra),
+                sorted(serving_missing),
+                artifact.feature_spec.version,
+                str(artifact.artifact_dir),
+                extra={
+                    "feature_spec_version": artifact.feature_spec.version,
+                    "artifact_dir": str(artifact.artifact_dir),
+                    "serving_extra": sorted(serving_extra),
+                    "serving_missing": sorted(serving_missing),
+                },
+            )
+        vector = vectorize(features_view, artifact.feature_spec).reshape(1, -1)
         probability = float(artifact.pipeline.predict_proba(vector)[0][1])
         confidence = probability
         metadata = {
