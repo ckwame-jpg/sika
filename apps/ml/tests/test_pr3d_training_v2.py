@@ -171,6 +171,13 @@ def test_advanced_completeness_markers_match_api_emitters():
     # exposes it as ``park_data_complete`` which is what we actually track.
     discovered.discard("_data_complete")
 
+    # Smarter #16 — ``player_in_starting_lineup`` is the explicit
+    # batting-order-confirmation marker but doesn't follow the
+    # ``*_data_complete`` naming convention. Add it to the discovered set
+    # if its emitter is present so the symmetry check still holds.
+    if "player_in_starting_lineup" in (api_services_root / "mlb_advanced.py").read_text(encoding="utf-8"):
+        discovered.add("player_in_starting_lineup")
+
     declared = set(ADVANCED_COMPLETENESS_MARKERS)
     missing = discovered - declared
     extra = declared - discovered

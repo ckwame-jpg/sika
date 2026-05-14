@@ -1056,7 +1056,19 @@ def emit_weather_features(weather: dict[str, Any] | None) -> dict[str, float]:
 
 
 def emit_lineup_features(lineup_payload: dict[str, Any] | None, mlb_player_id: str | None) -> dict[str, float]:
-    """Batting-order position + protection (next batter wOBA) + setup (prior batter OBP).
+    """Batting-order position + lineup-confirmation signal.
+
+    Three output shapes:
+
+    1. ``{}`` — no lineup data in the payload at all (pre-lineup window).
+    2. ``{"lineup_data_complete": 1.0, "player_in_starting_lineup": 0.0}`` —
+       lineup data IS present for at least one game in the payload, but the
+       target player is NOT in any starting lineup. That's the scratch/DNP
+       signal Smarter #16 uses to suppress (not penalize) the
+       recommendation.
+    3. ``{"batting_order_position": N, "lineup_data_complete": 1.0,
+       "player_in_starting_lineup": 1.0}`` — player IS confirmed in the
+       starting lineup at batting-order position ``N``.
 
     Schema note (per CODEX_REVIEW_NOTES.md item 1): MLB Stats API's
     schedule hydrate puts confirmed lineups under
@@ -1066,6 +1078,7 @@ def emit_lineup_features(lineup_payload: dict[str, Any] | None, mlb_player_id: s
     empty dict for every real schedule response. We accept either shape
     here so existing fixtures keep working.
     """
+
     if not lineup_payload or not mlb_player_id:
         return {}
     raw = lineup_payload.get("raw") or {}
@@ -1074,9 +1087,14 @@ def emit_lineup_features(lineup_payload: dict[str, Any] | None, mlb_player_id: s
         return {}
 
     target_id = str(mlb_player_id)
+    lineup_has_data = False
 
-    def _emit(order: int) -> dict[str, float]:
-        return {"batting_order_position": float(order), "lineup_data_complete": 1.0}
+    def _emit_starting(order: int) -> dict[str, float]:
+        return {
+            "batting_order_position": float(order),
+            "lineup_data_complete": 1.0,
+            "player_in_starting_lineup": 1.0,
+        }
 
     for date_block in games:
         for game in date_block.get("games") or []:
@@ -1084,6 +1102,8 @@ def emit_lineup_features(lineup_payload: dict[str, Any] | None, mlb_player_id: s
             game_lineups = game.get("lineups") or {}
             for side_key in ("homePlayers", "awayPlayers"):
                 side_lineup = game_lineups.get(side_key) or []
+                if side_lineup:
+                    lineup_has_data = True
                 for idx, slot in enumerate(side_lineup, start=1):
                     slot_id = ""
                     if isinstance(slot, dict):
@@ -1091,12 +1111,14 @@ def emit_lineup_features(lineup_payload: dict[str, Any] | None, mlb_player_id: s
                     else:
                         slot_id = str(slot)
                     if slot_id == target_id:
-                        return _emit(idx)
+                        return _emit_starting(idx)
 
             # Fallback — older fixture shape some tests / mocks rely on.
             for side in ("home", "away"):
                 team_block = ((game.get("teams") or {}).get(side) or {})
                 lineup = team_block.get("probableLineup") or team_block.get("battingOrder") or []
+                if lineup:
+                    lineup_has_data = True
                 for idx, slot in enumerate(lineup, start=1):
                     if isinstance(slot, dict):
                         slot_id = str(slot.get("id") or slot.get("personId") or "")
@@ -1105,7 +1127,17 @@ def emit_lineup_features(lineup_payload: dict[str, Any] | None, mlb_player_id: s
                         slot_id = str(slot)
                         order = idx
                     if slot_id == target_id:
-                        return _emit(order)
+                        return _emit_starting(order)
+
+    if lineup_has_data:
+        # Smarter #16: lineup data is in the payload AND the player is NOT
+        # in any starting lineup. This is the scratch / DNP signal — far
+        # stronger than a generic "context missing" penalty. Scoring uses
+        # this to suppress the recommendation entirely.
+        return {
+            "lineup_data_complete": 1.0,
+            "player_in_starting_lineup": 0.0,
+        }
     return {}
 
 
