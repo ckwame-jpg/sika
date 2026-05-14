@@ -199,6 +199,21 @@ def kalshi_market_url(market: Market) -> str:
     return category_root
 
 
+def _time_to_close_minutes(market: Market, *, now: datetime | None = None) -> int | None:
+    """Smarter #24 — minutes until ``market.close_time``. ``None`` when the
+    market has no scheduled close. Clamped at 0 if close_time is in the
+    past so the UI never sees a negative."""
+
+    close_time = market.close_time if market is not None else None
+    if close_time is None:
+        return None
+    current = now or datetime.now(timezone.utc)
+    delta_seconds = (close_time - current).total_seconds()
+    if delta_seconds <= 0:
+        return 0
+    return int(delta_seconds // 60)
+
+
 def _signed_numeric_line(market_kind: str, raw_data: dict, selected_side: str) -> float | None:
     """Return the threshold value for a game-line market, pre-signed from
     the picked side's perspective.
@@ -699,6 +714,7 @@ def build_trade_desk_response(
                     edge=recommendation.edge,
                     confidence=recommendation.confidence,
                     kalshi_url=kalshi_market_url(market),
+                    time_to_close_minutes=_time_to_close_minutes(market),
                 )
             )
             continue
@@ -730,6 +746,7 @@ def build_trade_desk_response(
                 kalshi_url=kalshi_market_url(market),
                 numeric_line=numeric_line,
                 total_direction=total_direction,
+                time_to_close_minutes=_time_to_close_minutes(market),
             )
         )
         game_line_market_id_by_ticker[market.ticker] = market.id
