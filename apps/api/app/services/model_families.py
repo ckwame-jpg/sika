@@ -136,6 +136,17 @@ def quality_tier_thresholds_for(family_key: str) -> QualityTierThresholds:
     return QUALITY_TIER_THRESHOLDS_BY_FAMILY.get(family_key, DEFAULT_QUALITY_TIER_THRESHOLDS)
 
 
+# Smarter #19 — per-family monotonic constraints for HGBC training.
+# The actual registry lives in ``ml_features.monotonic`` (shared
+# package) because ``apps/ml/ml/training.py`` can't import from
+# ``apps/api``. Re-export here so operators see the per-family
+# mechanism alongside the other per-family knobs.
+from ml_features.monotonic import (  # noqa: E402 — re-export at module bottom
+    MONOTONIC_CONSTRAINTS_BY_FAMILY,
+    monotonic_constraints_for,
+)
+
+
 def single_family_key(sport_key: str | None, market_family: str | None) -> str:
     sport = (sport_key or "").upper()
     family = (market_family or "").lower()

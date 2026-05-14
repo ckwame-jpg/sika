@@ -21,7 +21,12 @@ from sklearn.preprocessing import StandardScaler
 
 from ml.dataset import load_settled_predictions
 from ml.manifest import ModelArtifact, ModelManifest
-from ml_features import FeatureSpec, vectorize
+from ml_features import (
+    FeatureSpec,
+    build_monotonic_cst,
+    has_any_constraint,
+    vectorize,
+)
 
 
 HEURISTIC_DERIVED_KEYS = {
@@ -57,6 +62,10 @@ ADVANCED_COMPLETENESS_MARKERS = (
                                       # cache-derived; it will fire for ~every NBA
                                       # prop row that has a gamelog. The next
                                       # retrain absorbs the resulting up-weight.
+    "injury_data_complete",           # Smarter #17 — NBA injury report parsed for
+                                      # the prop subject. Backfilled here: the
+                                      # consumer-side PR shipped the emitter without
+                                      # adding the marker; symmetry test caught it.
     # nba_long_tail.py
     "hustle_data_complete",
     "drives_data_complete",
@@ -528,7 +537,19 @@ def walk_forward_evaluation(
             payload["per_family"][family_key] = family_payload
             continue
 
-        for name, template in candidate_set.items():
+        # Smarter #19: per-family monotonic constraints. The registry
+        # is empty by default so this is a no-op unless an operator
+        # has populated ``MONOTONIC_CONSTRAINTS_BY_FAMILY``. When
+        # populated, the HGBC candidate trains with monotonicity
+        # enforced; the LR candidate ignores the array.
+        family_monotonic_cst = build_monotonic_cst(feature_spec, family_key)
+        family_candidate_set = (
+            _candidate_estimators(len(frame), monotonic_cst=family_monotonic_cst)
+            if has_any_constraint(family_monotonic_cst)
+            else candidate_set
+        )
+
+        for name, template in family_candidate_set.items():
             fold_briers_family: list[float] = []
             for train_idx, test_idx in family_folds:
                 train_frame = frame.iloc[train_idx]
@@ -599,21 +620,36 @@ def _metrics_for_predictions(frame: pd.DataFrame, indices: np.ndarray, probabili
     }
 
 
-def _candidate_estimators(sample_count: int):
+def _candidate_estimators(
+    sample_count: int,
+    *,
+    monotonic_cst: list[int] | None = None,
+):
+    """Build the candidate-estimator dict for training.
+
+    ``monotonic_cst`` (Smarter #19): when supplied, pass directly to
+    ``HistGradientBoostingClassifier(monotonic_cst=...)``. The
+    Logistic-Regression candidate doesn't accept monotonic constraints
+    — it ignores the array entirely. Pass ``None`` (default) for the
+    pre-Smarter-#19 behavior.
+    """
     min_leaf = max(10, min(50, sample_count // 20 or 10))
+    hgb_kwargs: dict[str, Any] = {
+        "learning_rate": 0.05,
+        "max_iter": 150,
+        "max_leaf_nodes": 15,
+        "min_samples_leaf": min_leaf,
+        "l2_regularization": 1.0,
+        "random_state": 42,
+    }
+    if monotonic_cst is not None and has_any_constraint(monotonic_cst):
+        hgb_kwargs["monotonic_cst"] = list(monotonic_cst)
     return {
         "logistic_regression": make_pipeline(
             StandardScaler(),
             LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42),
         ),
-        "hist_gradient_boosting": HistGradientBoostingClassifier(
-            learning_rate=0.05,
-            max_iter=150,
-            max_leaf_nodes=15,
-            min_samples_leaf=min_leaf,
-            l2_regularization=1.0,
-            random_state=42,
-        ),
+        "hist_gradient_boosting": HistGradientBoostingClassifier(**hgb_kwargs),
     }
 
 
