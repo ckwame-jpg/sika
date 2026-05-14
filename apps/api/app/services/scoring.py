@@ -839,17 +839,53 @@ def _latest_home_state(db: Session, participant_id: int, before: datetime | None
 
 def _schedule_context(db: Session, participant_id: int, before: datetime | None) -> dict[str, Any]:
     if before is None:
-        return {"days_rest": None, "games_last_4": 0, "games_last_7": 0, "back_to_back": False, "last_home_state": None}
+        return {
+            "days_rest": None,
+            "games_last_3": 0,
+            "games_last_4": 0,
+            "games_last_5": 0,
+            "games_last_7": 0,
+            "back_to_back": False,
+            "is_third_in_four": False,
+            "is_fourth_in_six": False,
+            "last_home_state": None,
+            "last_game_away": None,
+        }
     days_rest = _days_since_participant_game(db, participant_id, before)
+    games_last_3 = _games_in_recent_window(db, participant_id, before, days=3)
     games_last_4 = _games_in_recent_window(db, participant_id, before, days=4)
+    games_last_5 = _games_in_recent_window(db, participant_id, before, days=5)
     games_last_7 = _games_in_recent_window(db, participant_id, before, days=7)
     last_home_state = _latest_home_state(db, participant_id, before)
+    # Smarter #10 derived flags:
+    # - 3rd-in-4: tonight is the 3rd game over a 4-night window. That is,
+    #   2 prior games sat inside the last 3 days before tonight.
+    # - 4th-in-6: tonight is the 4th game over a 6-night window. That is,
+    #   3 prior games sat inside the last 5 days before tonight.
+    # Both checks use ``>=`` rather than ``==`` so that supersets (e.g.
+    # corrupted or rescheduled-doubleheader data showing 3+ games in 3
+    # nights) still trip the suppressor — the more games in the window,
+    # the more fatigue. ``_nba_rest_factor`` then picks the strongest
+    # suppression case.
+    is_third_in_four = games_last_3 >= 2
+    is_fourth_in_six = games_last_5 >= 3
+    # Smarter #10 travel proxy (Phase 1): expose only whether the prior
+    # game was away. The travel factor consults this alongside today's
+    # home/away (sourced from EventParticipant.is_home) to decide whether
+    # a continuous road-trip suppression applies. Phase 2 will replace
+    # with mileage from venue lat/lons (Smarter #15 pattern).
+    last_game_away = None if last_home_state is None else (not last_home_state)
     return {
         "days_rest": round(days_rest, 3) if days_rest is not None else None,
+        "games_last_3": games_last_3,
         "games_last_4": games_last_4,
+        "games_last_5": games_last_5,
         "games_last_7": games_last_7,
         "back_to_back": bool(days_rest is not None and days_rest < 1.5),
+        "is_third_in_four": is_third_in_four,
+        "is_fourth_in_six": is_fourth_in_six,
         "last_home_state": last_home_state,
+        "last_game_away": last_game_away,
     }
 
 
@@ -1580,8 +1616,15 @@ def _score_player_prop(
                 )
         team_schedule = _schedule_context(db, team_entry.participant_id, event.starts_at)
         features["team_days_rest"] = team_schedule.get("days_rest")
+        features["team_games_last_3"] = team_schedule.get("games_last_3")
         features["team_games_last_4"] = team_schedule.get("games_last_4")
         features["team_back_to_back"] = team_schedule.get("back_to_back")
+        # Smarter #10 — finer-grained NBA schedule density features consumed
+        # by ``_nba_rest_factor`` and ``_nba_travel_factor`` (heuristic_factors).
+        features["team_is_third_in_four"] = team_schedule.get("is_third_in_four")
+        features["team_is_fourth_in_six"] = team_schedule.get("is_fourth_in_six")
+        features["team_last_game_away"] = team_schedule.get("last_game_away")
+        features["team_is_home"] = bool(team_entry.is_home)
         if opponent_entry:
             opponent_schedule = _schedule_context(db, opponent_entry.participant_id, event.starts_at)
             features["opponent_days_rest"] = opponent_schedule.get("days_rest")

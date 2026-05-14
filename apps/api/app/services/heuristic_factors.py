@@ -41,38 +41,52 @@ def _safe_ratio(numerator: Any, denominator: Any, *, default: float = 1.0) -> fl
 # -----------------------------------------------------------------------------
 # Stat-keyed factor gating
 
-# Smarter #11: ``workload_factor`` is gated on the stat keys where
-# fatigue measurably suppresses output. Defensive stats (steals, blocks)
-# and ball-control negatives (turnovers) are intentionally excluded — a
+# Smarter #11 ``workload_factor`` is gated on the stat keys where fatigue
+# measurably suppresses output. Defensive stats (steals, blocks) and
+# ball-control negatives (turnovers) are intentionally excluded — a
 # fatigued rotation regular is no less likely to commit a turnover.
+#
+# Smarter #10 ``nba_rest_factor`` and ``nba_travel_factor`` follow the
+# same gating rationale — fatigue/travel meaningfully drags scoring
+# output but not defensive counting stats. Both stack with the workload
+# factor; the envelopes are conservative (±5% / ±6% / ±2%) so the
+# combined worst-case suppression stays bounded.
 _NBA_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
     "points": ("efficiency_factor", "opp_def_factor", "opp_recent_form_factor",
-               "pace_factor_advanced", "usage_factor_advanced", "workload_factor"),
+               "pace_factor_advanced", "usage_factor_advanced", "workload_factor",
+               "nba_rest_factor", "nba_travel_factor"),
     # ``made_threes`` is the canonical stat_key produced by market_support's
     # alias normalization; ``three_points_made`` is the raw_metrics column
     # name. Both must map to the same gating tuple so props arriving as
     # either key receive the advanced factors.
     "made_threes": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                     "usage_factor_advanced", "workload_factor"),
+                     "usage_factor_advanced", "workload_factor",
+                     "nba_rest_factor", "nba_travel_factor"),
     "three_points_made": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                           "usage_factor_advanced", "workload_factor"),
+                           "usage_factor_advanced", "workload_factor",
+                           "nba_rest_factor", "nba_travel_factor"),
     "field_goals_made": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                          "usage_factor_advanced", "workload_factor"),
-    "rebounds": ("pace_factor_advanced", "opp_recent_form_factor", "workload_factor"),
+                          "usage_factor_advanced", "workload_factor",
+                          "nba_rest_factor", "nba_travel_factor"),
+    "rebounds": ("pace_factor_advanced", "opp_recent_form_factor", "workload_factor",
+                  "nba_rest_factor", "nba_travel_factor"),
     "assists": ("opp_def_factor", "pace_factor_advanced", "usage_factor_advanced",
-                 "workload_factor"),
+                 "workload_factor", "nba_rest_factor", "nba_travel_factor"),
     "steals": ("pace_factor_advanced",),
     "blocks": ("pace_factor_advanced",),
     "turnovers": ("usage_factor_advanced",),
     "points_assists": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                       "usage_factor_advanced", "workload_factor"),
+                       "usage_factor_advanced", "workload_factor",
+                       "nba_rest_factor", "nba_travel_factor"),
     "points_rebounds": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                         "usage_factor_advanced", "workload_factor"),
+                         "usage_factor_advanced", "workload_factor",
+                         "nba_rest_factor", "nba_travel_factor"),
     "rebounds_assists": ("opp_def_factor", "pace_factor_advanced", "opp_recent_form_factor",
-                          "workload_factor"),
+                          "workload_factor", "nba_rest_factor", "nba_travel_factor"),
     "points_rebounds_assists": ("efficiency_factor", "opp_def_factor",
                                   "pace_factor_advanced", "usage_factor_advanced",
-                                  "workload_factor"),
+                                  "workload_factor",
+                                  "nba_rest_factor", "nba_travel_factor"),
 }
 
 
@@ -159,6 +173,45 @@ def _nba_workload_factor(features: dict[str, Any]) -> float:
     return 1.0
 
 
+def _nba_rest_factor(features: dict[str, Any]) -> float:
+    """Smarter #10: granular NBA fatigue / rest factor.
+
+    Three mutually-exclusive cases (one fires, others can't by construction):
+      - 4th game in 6 nights: 0.94 (strongest suppression — accumulated
+        fatigue, common to draw a rested opponent).
+      - 3rd game in 4 nights: 0.96 (the classic NBA fatigue trigger).
+      - 3+ days rest: 1.02 (mild boost — rested rotation regular returns
+        to baseline output).
+
+    Suppressors win over the rest boost on the rare days where both could
+    theoretically apply (in practice 3+ days rest is incompatible with
+    3rd-in-four, which requires 2 games in the last 3 days). Envelope ±6%.
+    """
+    if bool(features.get("team_is_fourth_in_six")):
+        return 0.94
+    if bool(features.get("team_is_third_in_four")):
+        return 0.96
+    days_rest = features.get("team_days_rest")
+    if isinstance(days_rest, (int, float)) and days_rest >= 3.0:
+        return 1.02
+    return 1.0
+
+
+def _nba_travel_factor(features: dict[str, Any]) -> float:
+    """Smarter #10 travel proxy (Phase 1): continuous road trip.
+
+    Fires only when today is an away game AND the prior game was also
+    away — the handoff's explicit "still on the road" case. Returns 0.98
+    (mild suppression). All other home/away combinations return 1.0;
+    Phase 2 will replace this with mileage between venue lat/lons.
+    """
+    is_home_today = features.get("team_is_home")
+    last_game_away = features.get("team_last_game_away")
+    if is_home_today is False and last_game_away is True:
+        return 0.98
+    return 1.0
+
+
 _NBA_FACTOR_FNS = {
     "efficiency_factor": _nba_efficiency_factor,
     "opp_def_factor": _nba_opp_def_factor,
@@ -166,6 +219,8 @@ _NBA_FACTOR_FNS = {
     "pace_factor_advanced": _nba_pace_factor_advanced,
     "usage_factor_advanced": _nba_usage_factor_advanced,
     "workload_factor": _nba_workload_factor,
+    "nba_rest_factor": _nba_rest_factor,
+    "nba_travel_factor": _nba_travel_factor,
 }
 
 
