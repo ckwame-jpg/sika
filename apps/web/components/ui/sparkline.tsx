@@ -66,17 +66,3 @@ export function Sparkline({
     </svg>
   );
 }
-
-export function randomWalk(n: number, up: boolean, seed: number): number[] {
-  const out: number[] = [];
-  let v = 0.5;
-  let r = seed;
-  for (let i = 0; i < n; i++) {
-    r = (r * 9301 + 49297) % 233280;
-    const step = (r / 233280 - 0.5) * 0.18;
-    const bias = (up ? 1 : -1) * (0.02 + (i / n) * 0.04);
-    v = Math.max(0.05, Math.min(0.95, v + step + bias));
-    out.push(v);
-  }
-  return out;
-}

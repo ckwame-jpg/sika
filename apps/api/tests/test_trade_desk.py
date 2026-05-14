@@ -3,7 +3,17 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
-from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Participant, Prediction, Recommendation, Run
+from app.models import (
+    CurrentSlateSnapshot,
+    Event,
+    EventParticipant,
+    Market,
+    MarketSnapshot,
+    Participant,
+    Prediction,
+    Recommendation,
+    Run,
+)
 from app.schemas import TradeDeskThresholdRead
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.trade_desk import (
@@ -301,6 +311,172 @@ def test_build_trade_desk_includes_coverage_only_current_events(db_session):
 
     assert live_response.freshness_status == "empty"
     assert live_response.coverage_prediction_count == 1
+
+
+def _make_game_line_event_with_market(
+    db_session,
+    *,
+    external_id: str,
+    away_name: str,
+    home_name: str,
+    ticker: str,
+    edge: float = 0.05,
+) -> tuple[Event, Market]:
+    event = Event(
+        external_id=external_id,
+        sport_key="NBA",
+        name=f"{away_name} at {home_name}",
+        status="in_progress",
+        starts_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    db_session.add(event)
+    db_session.flush()
+    away = Participant(
+        external_id=f"{external_id}-away",
+        sport_key="NBA",
+        display_name=away_name,
+        short_name=away_name.split()[-1],
+        participant_type="team",
+    )
+    home = Participant(
+        external_id=f"{external_id}-home",
+        sport_key="NBA",
+        display_name=home_name,
+        short_name=home_name.split()[-1],
+        participant_type="team",
+    )
+    db_session.add_all([away, home])
+    db_session.flush()
+    db_session.add_all(
+        [
+            EventParticipant(event_id=event.id, participant_id=away.id, role="away", is_home=False),
+            EventParticipant(event_id=event.id, participant_id=home.id, role="home", is_home=True),
+        ]
+    )
+    market = Market(
+        ticker=ticker,
+        sport_key="NBA",
+        event_id=event.id,
+        # Title must contain participant tokens for
+        # ``trade_desk_market_matches_event`` to keep the row.
+        title=f"{home_name} to win vs. {away_name}",
+        status="active",
+        raw_data={
+            "copilot_market_family": "winner",
+            "copilot_market_kind": "game_winner",
+            "copilot_subject_name": home_name,
+        },
+    )
+    db_session.add(market)
+    db_session.flush()
+    db_session.add(
+        Recommendation(
+            event_id=event.id,
+            market_id=market.id,
+            side="yes",
+            action="buy",
+            status="active",
+            suggested_price=round(0.55 - edge, 4),
+            edge=edge,
+            confidence=0.7,
+            invalidation="test",
+            rationale="test",
+            scoring_diagnostics={"selected_side_probability": 0.55},
+        )
+    )
+    return event, market
+
+
+def test_build_trade_desk_attaches_real_price_history_to_game_lines(db_session):
+    """Bug #37: the GameLineRow sparkline used to render a synthetic
+    walk seeded from the ticker. ``price_history`` should now ship the
+    last N captured ``last_price`` values per market in chronological
+    order, ready for the frontend to plot directly."""
+    _, market = _make_game_line_event_with_market(
+        db_session,
+        external_id="hist-event",
+        away_name="Boston Celtics",
+        home_name="New York Knicks",
+        ticker="HIST-WIN-1",
+    )
+    base = datetime.now(timezone.utc) - timedelta(hours=1)
+    captured_prices = [0.50, 0.52, 0.49, 0.55, 0.58]
+    # Insert in shuffled order to verify the helper reorders by
+    # ``captured_at`` and not by row id.
+    for offset in [3, 0, 4, 1, 2]:
+        db_session.add(
+            MarketSnapshot(
+                market_id=market.id,
+                captured_at=base + timedelta(minutes=offset * 5),
+                yes_ask=captured_prices[offset],
+                no_ask=round(1 - captured_prices[offset], 4),
+                last_price=captured_prices[offset],
+            )
+        )
+    db_session.commit()
+
+    response = build_trade_desk_response(db_session, sport="NBA")
+
+    assert len(response.events) == 1
+    game_lines = response.events[0].game_lines
+    assert len(game_lines) == 1
+    assert game_lines[0].price_history == pytest.approx(captured_prices)
+
+
+def test_build_trade_desk_leaves_price_history_empty_when_no_snapshots(db_session):
+    """Cold-start markets (no captured snapshots yet) get an empty
+    list — the frontend then falls back to its synthetic walk so the
+    row doesn't collapse."""
+    _make_game_line_event_with_market(
+        db_session,
+        external_id="hist-empty-event",
+        away_name="Atlanta Hawks",
+        home_name="Brooklyn Nets",
+        ticker="HIST-EMPTY-1",
+    )
+    db_session.commit()
+
+    response = build_trade_desk_response(db_session, sport="NBA")
+
+    assert len(response.events) == 1
+    assert response.events[0].game_lines[0].price_history == []
+
+
+def test_build_trade_desk_caps_price_history_per_market(db_session):
+    """The server-side cap (GAME_LINE_PRICE_HISTORY_LIMIT) must trim the
+    snapshot list so the response stays small even for high-frequency
+    markets."""
+    from app.services.trade_desk import GAME_LINE_PRICE_HISTORY_LIMIT
+
+    _, market = _make_game_line_event_with_market(
+        db_session,
+        external_id="hist-cap-event",
+        away_name="Phoenix Suns",
+        home_name="Sacramento Kings",
+        ticker="HIST-CAP-1",
+    )
+    base = datetime.now(timezone.utc) - timedelta(hours=2)
+    over_cap = GAME_LINE_PRICE_HISTORY_LIMIT + 5
+    for idx in range(over_cap):
+        db_session.add(
+            MarketSnapshot(
+                market_id=market.id,
+                captured_at=base + timedelta(minutes=idx),
+                yes_ask=0.50 + idx * 0.001,
+                no_ask=0.50 - idx * 0.001,
+                last_price=0.50 + idx * 0.001,
+            )
+        )
+    db_session.commit()
+
+    response = build_trade_desk_response(db_session, sport="NBA")
+    history = response.events[0].game_lines[0].price_history
+    assert len(history) == GAME_LINE_PRICE_HISTORY_LIMIT
+    # The cap keeps the most recent N rows; first kept row should be
+    # offset (over_cap - GAME_LINE_PRICE_HISTORY_LIMIT) by construction.
+    expected_first = round(0.50 + (over_cap - GAME_LINE_PRICE_HISTORY_LIMIT) * 0.001, 4)
+    assert history[0] == pytest.approx(expected_first)
+    assert history[-1] == pytest.approx(round(0.50 + (over_cap - 1) * 0.001, 4))
 
 
 def test_load_trade_desk_snapshot_returns_stale_payload_with_flag_when_events_are_stale(db_session):

@@ -24,6 +24,7 @@ from app.services.watchlist_coverage import (
     current_watchlist_markets,
     is_current_watchlist_market,
     is_current_watchlist_status,
+    recent_snapshots_by_market_id,
 )
 from app.sports.base import alias_tokens
 
@@ -268,6 +269,59 @@ def _effective_total_direction(
     ):
         return "over"
     return "under"
+
+
+# Bug #37: server-side cap on the price-history window we ship to the
+# trade-desk sparkline. Twenty points keeps the SVG path readable at
+# the row's width without bloating the response.
+GAME_LINE_PRICE_HISTORY_LIMIT = 20
+
+
+def _attach_game_line_price_history(
+    db: Session,
+    events: list[TradeDeskEventRead],
+    market_id_by_ticker: dict[str, int],
+) -> None:
+    """Populate ``price_history`` on every game line in ``events``.
+
+    Bug #37: the GameLineRow sparkline previously rendered a synthetic
+    walk seeded from the ticker string, which both lied about the
+    actual price trajectory and inverted whenever the edge sign
+    flipped. Real ``last_price`` history per market is fetched here in
+    a single batched window query and threaded through to the
+    response. A market with no captured snapshots leaves
+    ``price_history`` empty so the frontend can fall back to its
+    deterministic synthetic walk.
+    """
+    if not events or not market_id_by_ticker:
+        return
+    market_ids = sorted(set(market_id_by_ticker.values()))
+    snapshots_by_market = recent_snapshots_by_market_id(
+        db,
+        market_ids,
+        limit_per_market=GAME_LINE_PRICE_HISTORY_LIMIT,
+    )
+    if not snapshots_by_market:
+        return
+    prices_by_market: dict[int, list[float]] = {}
+    for market_id, snapshots in snapshots_by_market.items():
+        series = [
+            float(snapshot.last_price)
+            for snapshot in snapshots
+            if snapshot.last_price is not None
+        ]
+        if series:
+            prices_by_market[market_id] = series
+    if not prices_by_market:
+        return
+    for event in events:
+        for line in event.game_lines:
+            market_id = market_id_by_ticker.get(line.ticker)
+            if market_id is None:
+                continue
+            series = prices_by_market.get(market_id)
+            if series:
+                line.price_history = series
 
 
 def game_line_projected_label(market: Market, recommendation: Recommendation) -> str | None:
@@ -583,6 +637,10 @@ def build_trade_desk_response(
     )
 
     event_buckets: dict[int, dict[str, object]] = {}
+    # Bug #37: track market_id alongside the line ticker so the
+    # post-build batch query for price_history can map snapshots back
+    # to the right line without a second name lookup.
+    game_line_market_id_by_ticker: dict[str, int] = {}
     for recommendation in recommendations:
         market = recommendation.market
         if market is None or market.event is None:
@@ -674,6 +732,7 @@ def build_trade_desk_response(
                 total_direction=total_direction,
             )
         )
+        game_line_market_id_by_ticker[market.ticker] = market.id
 
     for event_id, stats in event_market_stats.items():
         event = stats.get("event")
@@ -785,6 +844,7 @@ def build_trade_desk_response(
             item.event_name.lower(),
         )
     )
+    _attach_game_line_price_history(db, events, game_line_market_id_by_ticker)
     research_sports = [
         row
         for row in availability_rows

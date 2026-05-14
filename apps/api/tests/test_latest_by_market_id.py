@@ -30,6 +30,7 @@ from app.services.watchlist_coverage import (
     latest_prediction_by_market_id,
     latest_recommendation_by_market_id,
     latest_snapshot_by_market_id,
+    recent_snapshots_by_market_id,
 )
 
 
@@ -208,3 +209,60 @@ def test_latest_helpers_handle_multiple_markets_independently(db_session):
     result = latest_snapshot_by_market_id(db_session, [market_a.id, market_b.id])
     assert result[market_a.id].id == a_later.id
     assert result[market_b.id].id == b_later.id
+
+
+# ---------------------------------------------------------------------------
+# Bug #37 — recent_snapshots_by_market_id (windowed last-N per market)
+# ---------------------------------------------------------------------------
+
+
+def test_recent_snapshots_returns_chronological_order(db_session):
+    """The window-function helper must return rows oldest → newest so a
+    sparkline can plot them left-to-right without reversing on the
+    client."""
+    event = _make_event(db_session, key="recent-chrono")
+    market = _make_market(db_session, event, ticker="RECENT-CHRONO")
+    times = [datetime(2026, 4, 5, 18 + offset, 0, tzinfo=timezone.utc) for offset in range(5)]
+    # Insert in reverse-chronological order so the natural id order
+    # disagrees with captured_at — proves the window function is doing
+    # the work, not the row-id ordering.
+    for ts in reversed(times):
+        _make_snapshot(db_session, market, captured_at=ts, yes_ask=0.40 + (ts.hour - 18) * 0.05)
+    db_session.commit()
+
+    result = recent_snapshots_by_market_id(db_session, [market.id], limit_per_market=10)
+    captured = [row.captured_at.replace(tzinfo=None) for row in result[market.id]]
+    assert captured == [ts.replace(tzinfo=None) for ts in times]
+
+
+def test_recent_snapshots_respects_per_market_limit(db_session):
+    """Last-N cap must be applied per market, not across the whole
+    result set — otherwise a busy market would starve a quiet one."""
+    event = _make_event(db_session, key="recent-cap")
+    busy = _make_market(db_session, event, ticker="RECENT-BUSY")
+    quiet = _make_market(db_session, event, ticker="RECENT-QUIET")
+    base = datetime(2026, 4, 5, 0, 0, tzinfo=timezone.utc)
+    for offset in range(8):
+        _make_snapshot(db_session, busy, captured_at=base + timedelta(minutes=offset * 5), yes_ask=0.50)
+    for offset in range(2):
+        _make_snapshot(db_session, quiet, captured_at=base + timedelta(minutes=offset * 5), yes_ask=0.30)
+    db_session.commit()
+
+    result = recent_snapshots_by_market_id(db_session, [busy.id, quiet.id], limit_per_market=3)
+    assert len(result[busy.id]) == 3
+    assert len(result[quiet.id]) == 2  # fewer rows than the cap → all retained
+
+
+def test_recent_snapshots_empty_inputs_short_circuit(db_session):
+    assert recent_snapshots_by_market_id(db_session, [], limit_per_market=5) == {}
+
+
+def test_recent_snapshots_zero_limit_returns_empty(db_session):
+    """A non-positive cap is a degenerate input; return {} instead of
+    issuing a query that would surface every snapshot."""
+    event = _make_event(db_session, key="recent-zero")
+    market = _make_market(db_session, event, ticker="RECENT-ZERO")
+    _make_snapshot(db_session, market, captured_at=datetime(2026, 4, 5, 18, 0, tzinfo=timezone.utc), yes_ask=0.5)
+    db_session.commit()
+    assert recent_snapshots_by_market_id(db_session, [market.id], limit_per_market=0) == {}
+    assert recent_snapshots_by_market_id(db_session, [market.id], limit_per_market=-3) == {}
