@@ -778,7 +778,13 @@ def emit_nba_interaction_term(
 
     Returns ``{}`` when any input is missing or ``opponent_drtg <= 0``.
     """
-    if not all(isinstance(v, (int, float)) for v in (usage_pct, opponent_pace, opponent_drtg)):
+    # ``bool`` is a subclass of ``int`` in Python — reject explicitly so
+    # a stray ``True`` for usage doesn't expand to 1.0 (a 400% multiplier
+    # of league-average usage), producing a wildly wrong interaction term.
+    candidates = (usage_pct, opponent_pace, opponent_drtg)
+    if not all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) for v in candidates
+    ):
         return {}
     if opponent_drtg <= 0:
         return {}

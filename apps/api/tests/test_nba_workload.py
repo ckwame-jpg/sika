@@ -147,6 +147,14 @@ def test_nba_workload_factor_missing_feature_returns_unity() -> None:
     assert _nba_workload_factor({"recent_workload_minutes_per_game": "36"}) == 1.0
 
 
+def test_nba_workload_factor_rejects_bool_inputs() -> None:
+    # ``bool`` is a subclass of ``int`` in Python so a stray ``True`` would
+    # otherwise be coerced to MPG=1, falsely firing the ≤22 rest-boost
+    # branch. Reject explicitly.
+    assert _nba_workload_factor({"recent_workload_minutes_per_game": True}) == 1.0
+    assert _nba_workload_factor({"recent_workload_minutes_per_game": False}) == 1.0
+
+
 # -- per-stat gating + drift guard ---------------------------------------
 
 
