@@ -39,6 +39,41 @@ from app.services.advanced_stats import (
 logger = logging.getLogger(__name__)
 
 
+# Smarter #29: inside the final hour before tip-off, tighten the NBA
+# injury-report cache TTL so a freshly-published report does not sit
+# behind a stale 60-min lease. Operators tune the coarse default via
+# ``nba_injury_report_cache_minutes``; the near-tip tightening is a fixed
+# policy tied to NBA reporting cadence (lineup ~15min before, injury
+# report 30-90min before).
+_NBA_INJURY_TTL_NEAR_TIP_WINDOW_SECONDS = 3600
+_NBA_INJURY_TTL_NEAR_TIP_MINUTES = 15
+
+
+def _effective_injury_report_ttl_minutes(
+    *,
+    now: datetime | None,
+    event_start: datetime | None,
+) -> int:
+    """Return the cache TTL (minutes) to use for an NBA injury report row.
+
+    Callers consult this at WRITE time and persist ``expires_at = now + ttl``.
+    READ paths trust the persisted ``expires_at`` — recomputing on read would
+    flap the cache as the relative distance to tip-off ticks past 3600s.
+
+    Missing ``now`` / ``event_start`` and timezone-naive inputs both fall
+    back to the coarse default; naive datetimes are coerced to UTC first.
+    """
+    default = int(get_settings().nba_injury_report_cache_minutes)
+    if event_start is None or now is None:
+        return default
+    now_utc = _coerce_utc(now)
+    event_utc = _coerce_utc(event_start)
+    seconds_until_tip = (event_utc - now_utc).total_seconds()
+    if 0 <= seconds_until_tip <= _NBA_INJURY_TTL_NEAR_TIP_WINDOW_SECONDS:
+        return _NBA_INJURY_TTL_NEAR_TIP_MINUTES
+    return default
+
+
 def _cache_or_fetch(
     db: Session,
     *,
