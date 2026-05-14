@@ -129,6 +129,28 @@ def test_non_numeric_inputs_return_empty():
     ) == {}
 
 
+def test_bool_inputs_return_empty():
+    # ``bool`` is a subclass of ``int`` in Python — without the explicit
+    # rejection, ``True`` for usage would expand to ``True / 0.25 = 4.0``
+    # (a 400% multiplier of league-average usage), producing a wildly
+    # wrong interaction term. Reject on every input position.
+    assert emit_nba_interaction_term(
+        usage_pct=True,  # type: ignore[arg-type]
+        opponent_pace=100.0,
+        opponent_drtg=110.0,
+    ) == {}
+    assert emit_nba_interaction_term(
+        usage_pct=0.25,
+        opponent_pace=True,  # type: ignore[arg-type]
+        opponent_drtg=110.0,
+    ) == {}
+    assert emit_nba_interaction_term(
+        usage_pct=0.25,
+        opponent_pace=100.0,
+        opponent_drtg=True,  # type: ignore[arg-type]
+    ) == {}
+
+
 def test_zero_usage_emits_zero_interaction_term():
     # A player with effectively zero usage produces a zero-valued
     # interaction; this is NOT a missing-data case so we still emit.

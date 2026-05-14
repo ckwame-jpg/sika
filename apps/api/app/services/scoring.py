@@ -1701,11 +1701,24 @@ def _score_player_prop(
         # term once both source caches have contributed. The emitter returns
         # {} when any input is missing, so this is safe to run unconditionally
         # — the model handles absent keys via median imputation.
+        #
+        # ``is not None`` over ``or`` because ``recent_usage_pct == 0.0`` is a
+        # legitimate edge case (DNP-adjacent player) and ``or`` would silently
+        # skip to the season value. Pace is on the same pattern for
+        # consistency, even though ``opponent_pace == 0.0`` shouldn't occur in
+        # practice.
+        _recent_usage = features.get("recent_usage_pct")
+        _recent_pace = features.get("opponent_pace_recent_5")
         features.update(
             emit_nba_interaction_term(
-                usage_pct=features.get("recent_usage_pct") or features.get("season_usage_pct"),
-                opponent_pace=features.get("opponent_pace_recent_5")
-                    or features.get("opponent_pace_season"),
+                usage_pct=(
+                    _recent_usage if _recent_usage is not None
+                    else features.get("season_usage_pct")
+                ),
+                opponent_pace=(
+                    _recent_pace if _recent_pace is not None
+                    else features.get("opponent_pace_season")
+                ),
                 opponent_drtg=features.get("opponent_def_rating_recent_5"),
             )
         )

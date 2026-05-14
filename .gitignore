@@ -14,6 +14,7 @@ kalshi_sports_copilot.db
 *.db-wal
 apps/api/smoke.db
 apps/api/test.db
+apps/api/test_run.db
 packages/contracts/openapi.json
 node_modules/
 .next/

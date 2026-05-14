@@ -164,7 +164,10 @@ def _nba_workload_factor(features: dict[str, Any]) -> float:
     factor like ``usage_factor_advanced``.
     """
     mpg = features.get("recent_workload_minutes_per_game")
-    if not isinstance(mpg, (int, float)):
+    # ``bool`` is a subclass of ``int`` in Python — reject explicitly so
+    # a stray ``True`` doesn't get coerced to MPG=1 (which would falsely
+    # fire the ≤22 rest-boost branch).
+    if not isinstance(mpg, (int, float)) or isinstance(mpg, bool):
         return 1.0
     if mpg >= 34.0:
         return 0.96
@@ -192,7 +195,14 @@ def _nba_rest_factor(features: dict[str, Any]) -> float:
     if bool(features.get("team_is_third_in_four")):
         return 0.96
     days_rest = features.get("team_days_rest")
-    if isinstance(days_rest, (int, float)) and days_rest >= 3.0:
+    # ``bool`` is a subclass of ``int`` — reject so ``True`` isn't read as
+    # 1 day of rest (and below the ≥3 threshold either way, but the
+    # intent contract is "actual numeric days rest, not a flag").
+    if (
+        isinstance(days_rest, (int, float))
+        and not isinstance(days_rest, bool)
+        and days_rest >= 3.0
+    ):
         return 1.02
     return 1.0
 

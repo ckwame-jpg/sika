@@ -237,6 +237,15 @@ def test_rest_factor_missing_signals_returns_unity() -> None:
     assert _nba_rest_factor({}) == 1.0
 
 
+def test_rest_factor_rejects_bool_days_rest() -> None:
+    # ``bool`` is a subclass of ``int`` in Python — reject explicitly so
+    # a stray ``True`` isn't read as 1 day of rest (still in deadband by
+    # value, but the intent contract is "actual numeric days rest").
+    # ``False`` would similarly read as 0 days.
+    assert _nba_rest_factor({"team_days_rest": True}) == 1.0
+    assert _nba_rest_factor({"team_days_rest": False}) == 1.0
+
+
 def test_rest_factor_suppressor_wins_over_rest_boost() -> None:
     # In practice 3rd-in-4 and 3+ days rest can't co-occur (3rd-in-4
     # requires 2 games in last 3 days, so days_rest < 3). But if a caller
