@@ -41,31 +41,38 @@ def _safe_ratio(numerator: Any, denominator: Any, *, default: float = 1.0) -> fl
 # -----------------------------------------------------------------------------
 # Stat-keyed factor gating
 
+# Smarter #11: ``workload_factor`` is gated on the stat keys where
+# fatigue measurably suppresses output. Defensive stats (steals, blocks)
+# and ball-control negatives (turnovers) are intentionally excluded — a
+# fatigued rotation regular is no less likely to commit a turnover.
 _NBA_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
     "points": ("efficiency_factor", "opp_def_factor", "opp_recent_form_factor",
-               "pace_factor_advanced", "usage_factor_advanced"),
+               "pace_factor_advanced", "usage_factor_advanced", "workload_factor"),
     # ``made_threes`` is the canonical stat_key produced by market_support's
     # alias normalization; ``three_points_made`` is the raw_metrics column
     # name. Both must map to the same gating tuple so props arriving as
     # either key receive the advanced factors.
     "made_threes": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                     "usage_factor_advanced"),
+                     "usage_factor_advanced", "workload_factor"),
     "three_points_made": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                           "usage_factor_advanced"),
+                           "usage_factor_advanced", "workload_factor"),
     "field_goals_made": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                          "usage_factor_advanced"),
-    "rebounds": ("pace_factor_advanced", "opp_recent_form_factor"),
-    "assists": ("opp_def_factor", "pace_factor_advanced", "usage_factor_advanced"),
+                          "usage_factor_advanced", "workload_factor"),
+    "rebounds": ("pace_factor_advanced", "opp_recent_form_factor", "workload_factor"),
+    "assists": ("opp_def_factor", "pace_factor_advanced", "usage_factor_advanced",
+                 "workload_factor"),
     "steals": ("pace_factor_advanced",),
     "blocks": ("pace_factor_advanced",),
     "turnovers": ("usage_factor_advanced",),
     "points_assists": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                       "usage_factor_advanced"),
+                       "usage_factor_advanced", "workload_factor"),
     "points_rebounds": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
-                         "usage_factor_advanced"),
-    "rebounds_assists": ("opp_def_factor", "pace_factor_advanced", "opp_recent_form_factor"),
+                         "usage_factor_advanced", "workload_factor"),
+    "rebounds_assists": ("opp_def_factor", "pace_factor_advanced", "opp_recent_form_factor",
+                          "workload_factor"),
     "points_rebounds_assists": ("efficiency_factor", "opp_def_factor",
-                                  "pace_factor_advanced", "usage_factor_advanced"),
+                                  "pace_factor_advanced", "usage_factor_advanced",
+                                  "workload_factor"),
 }
 
 
@@ -132,12 +139,33 @@ def _nba_usage_factor_advanced(features: dict[str, Any]) -> float:
                                 features.get("season_usage_pct")))
 
 
+def _nba_workload_factor(features: dict[str, Any]) -> float:
+    """Smarter #11: top-quartile recent minutes drags a player's prop
+    slightly downward (fatigue suppresses output); below-median minutes
+    nudge slightly upward (rested rotation regular is dangerous).
+
+    League-wide rotation MPG averages around 28; top-quartile starts at
+    ~34; bottom-quartile sits around 22. The envelope is intentionally
+    narrow (±5%) — the heuristic should not dominate a real-stats-driven
+    factor like ``usage_factor_advanced``.
+    """
+    mpg = features.get("recent_workload_minutes_per_game")
+    if not isinstance(mpg, (int, float)):
+        return 1.0
+    if mpg >= 34.0:
+        return 0.96
+    if mpg <= 22.0:
+        return 1.03
+    return 1.0
+
+
 _NBA_FACTOR_FNS = {
     "efficiency_factor": _nba_efficiency_factor,
     "opp_def_factor": _nba_opp_def_factor,
     "opp_recent_form_factor": _nba_opp_recent_form_factor,
     "pace_factor_advanced": _nba_pace_factor_advanced,
     "usage_factor_advanced": _nba_usage_factor_advanced,
+    "workload_factor": _nba_workload_factor,
 }
 
 

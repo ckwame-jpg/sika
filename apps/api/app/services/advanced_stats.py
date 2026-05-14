@@ -677,6 +677,67 @@ def emit_nba_opponent_team_features(payload: dict[str, Any] | None) -> dict[str,
 
 
 # -----------------------------------------------------------------------------
+# Smarter #11 — per-player workload features from the ESPN game log
+
+
+def emit_nba_workload_features(
+    game_logs: list[dict[str, Any]] | None,
+    *,
+    window_games: int = 5,
+) -> dict[str, float]:
+    """Emit per-player workload features for Smarter #11.
+
+    Reads the most recent ``window_games`` from the in-memory NBA game-log
+    list (sorted reverse-chronologically by ``stats_query._build_nba_game_logs``)
+    and emits:
+
+    * ``recent_workload_minutes_per_game`` — mean MIN over the recent
+      window, restricted to games where the player actually saw the floor
+      (``minutes > 0``). DNP rows (``minutes == 0``) are intentionally
+      excluded so a rest day doesn't deflate the workload signal.
+    * ``consecutive_games_played`` — count of consecutive most-recent games
+      with positive minutes. DNP / DNP-CD breaks the streak. INACTIVE
+      games are absent from the ESPN payload entirely and therefore do
+      not appear here — one-night rest is the signal we want.
+    * ``workload_data_complete`` — 1.0 when at least one game in the
+      window has playable minutes; absent otherwise.
+
+    Returns ``{}`` on empty / missing input so callers can treat absent
+    keys as "no workload signal" without sentinel handling.
+    """
+    if not game_logs:
+        return {}
+
+    recent = game_logs[:window_games]
+    minutes_played: list[float] = []
+    for entry in recent:
+        metrics = entry.get("metrics") or {}
+        minutes = metrics.get("minutes")
+        if isinstance(minutes, (int, float)) and minutes > 0:
+            minutes_played.append(float(minutes))
+
+    if not minutes_played:
+        return {}
+
+    consecutive = 0
+    for entry in game_logs:
+        metrics = entry.get("metrics") or {}
+        minutes = metrics.get("minutes")
+        if isinstance(minutes, (int, float)) and minutes > 0:
+            consecutive += 1
+        else:
+            break
+
+    return {
+        "recent_workload_minutes_per_game": round(
+            sum(minutes_played) / len(minutes_played), 1
+        ),
+        "consecutive_games_played": float(consecutive),
+        "workload_data_complete": 1.0,
+    }
+
+
+# -----------------------------------------------------------------------------
 # Lineup-level advanced (NEW) — 5-man combinations
 
 def load_nba_lineup_advanced(
