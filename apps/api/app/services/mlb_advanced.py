@@ -1192,6 +1192,102 @@ def emit_mlb_platoon_features(
     }
 
 
+# -----------------------------------------------------------------------------
+# Smarter #6 — bullpen rest state.
+#
+# A team's bullpen workload over the last 3 days strongly predicts late-inning
+# offense (tired pen → more runs surrendered) and full-game totals. We don't
+# yet have per-game reliever IP from MLB Stats boxscores; the cheap proxy is
+# "how many games has the team played in the last N days?" — which the local
+# Event/EventParticipant tables already track.
+
+_BULLPEN_REST_WINDOW_DAYS: int = 3
+
+
+def count_team_games_in_window(
+    db: Session,
+    *,
+    participant_id: int,
+    end_at: datetime,
+    days: int = _BULLPEN_REST_WINDOW_DAYS,
+) -> int:
+    """Return the number of completed games the team played in the
+    ``[end_at - days, end_at)`` window. Used by the bullpen-rest feature.
+
+    Strictly less-than ``end_at`` so a same-day re-evaluation doesn't count
+    the game we're scoring as part of its own rest window.
+    """
+
+    from app.models import Event, EventParticipant  # local import — avoids cycle at module load
+
+    if participant_id is None or days <= 0:
+        return 0
+    if end_at.tzinfo is None:
+        end_at = end_at.replace(tzinfo=timezone.utc)
+    window_start = end_at - timedelta(days=days)
+    count = (
+        db.query(Event.id)
+        .join(EventParticipant, EventParticipant.event_id == Event.id)
+        .filter(
+            EventParticipant.participant_id == participant_id,
+            Event.starts_at >= window_start,
+            Event.starts_at < end_at,
+            Event.status == "completed",
+        )
+        .distinct()
+        .count()
+    )
+    return int(count)
+
+
+def bullpen_rest_index_from_games(
+    games_in_window: int,
+    *,
+    days: int = _BULLPEN_REST_WINDOW_DAYS,
+) -> float:
+    """Convert ``games_in_window`` to a rest-index in ``[0.0, 1.0]``.
+
+    ``1.0`` = fully rested (no games in the window). ``0.0`` = saturated
+    (one game per day). Values above ``days`` (e.g. a doubleheader pushing
+    the count to 4) still clamp at 0.0 — more tired than tired is still
+    tired.
+    """
+
+    if games_in_window <= 0 or days <= 0:
+        return 1.0
+    saturated = max(games_in_window / float(days), 0.0)
+    return max(0.0, 1.0 - min(saturated, 1.0))
+
+
+def emit_mlb_bullpen_features(
+    home_games_in_window: int | None,
+    away_games_in_window: int | None,
+    *,
+    days: int = _BULLPEN_REST_WINDOW_DAYS,
+) -> dict[str, float]:
+    """Smarter #6 — emit per-team bullpen rest indices.
+
+    Returns ``{}`` when neither side has a usable game count. Each side
+    contributes ``{side}_bullpen_rest_index_{days}d`` to the feature dict
+    along with a unified ``bullpen_rest_data_complete`` flag.
+    """
+
+    if home_games_in_window is None and away_games_in_window is None:
+        return {}
+    out: dict[str, float] = {}
+    if home_games_in_window is not None:
+        out[f"home_bullpen_rest_index_{days}d"] = round(
+            bullpen_rest_index_from_games(home_games_in_window, days=days), 4
+        )
+    if away_games_in_window is not None:
+        out[f"away_bullpen_rest_index_{days}d"] = round(
+            bullpen_rest_index_from_games(away_games_in_window, days=days), 4
+        )
+    if out:
+        out["bullpen_rest_data_complete"] = 1.0
+    return out
+
+
 def emit_park_features(park: dict[str, float] | None) -> dict[str, float]:
     if not park:
         return {}

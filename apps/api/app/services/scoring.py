@@ -1805,6 +1805,37 @@ def _score_player_prop(
                     )
                 )
 
+        # Smarter #6 — opposing-bullpen rest index. Counts the opposing
+        # team's completed games in the 3-day window before this event
+        # (so a tired opposing pen on day-4 of a road trip translates to
+        # a slight boost on the batter's runs/RBIs). The DB query hits
+        # already-indexed (participant_id, starts_at) so it's cheap;
+        # nothing here is network-bound. Producer is the local Event +
+        # EventParticipant tables maintained by the sports ingestion job.
+        if opponent_entry and event.starts_at is not None:
+            from app.services.mlb_advanced import (
+                count_team_games_in_window,
+                emit_mlb_bullpen_features,
+            )
+
+            opp_recent = count_team_games_in_window(
+                db,
+                participant_id=opponent_entry.participant_id,
+                end_at=event.starts_at,
+            )
+            bullpen_features = emit_mlb_bullpen_features(
+                home_games_in_window=None,
+                away_games_in_window=opp_recent,
+            )
+            if bullpen_features:
+                # The scoring kernel reads ``opposing_bullpen_rest_index_3d``
+                # — alias the away_* emission so the feature name matches
+                # the matchup framing (the batter's perspective).
+                rest_index = bullpen_features.get("away_bullpen_rest_index_3d")
+                if rest_index is not None:
+                    features["opposing_bullpen_rest_index_3d"] = rest_index
+                    features["bullpen_rest_data_complete"] = 1.0
+
     features["advanced_cache_status"] = resolved.advanced_cache_status
 
     # Sport-specific proxy block. Proxies that have a real advanced replacement
