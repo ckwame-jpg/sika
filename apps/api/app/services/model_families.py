@@ -85,6 +85,57 @@ def family_definition(key: str) -> ModelFamilyDefinition:
     )
 
 
+# Smarter #28 — per-family ``_quality_tier`` calibration.
+#
+# The kernel previously hardcoded one set of thresholds (selected-side
+# probability ≥ 0.36, context coverage ≥ 0.72, adjusted confidence ≥
+# 0.58, total penalty ≤ 0.09) for the "high" tier on the heuristic
+# path. Different families have meaningfully different settled-data
+# quality (NBA props are high-variance and rarely clear the 0.72 ctx
+# floor; MLB game lines fail to disambiguate at the 0.36 prob floor)
+# so a single set understates the calibration cost for one family and
+# overstates it for the other.
+#
+# This dataclass + override map provide the mechanism. The
+# initial overrides dict is intentionally empty so today's behavior is
+# preserved exactly; operators tune values per-family from backtest
+# results without changing the call site.
+@dataclass(frozen=True, slots=True)
+class QualityTierThresholds:
+    # Heuristic-path "high" tier — ALL conditions must hold.
+    high_selected_side_probability: float = 0.36
+    high_context_coverage: float = 0.72
+    high_adjusted_confidence: float = 0.58
+    high_total_penalty: float = 0.09
+    # Heuristic-path "low" tier — ANY condition triggers low.
+    low_selected_side_probability: float = 0.20
+    low_context_coverage: float = 0.45
+    low_adjusted_confidence: float = 0.40
+    low_total_penalty: float = 0.18
+    # ML-served path uses a coarser ladder (calibrated probability +
+    # context coverage; no penalty term because penalties don't
+    # accumulate on the ML branch).
+    ml_high_context_coverage: float = 0.75
+    ml_high_adjusted_confidence: float = 0.60
+    ml_medium_context_coverage: float = 0.50
+
+
+DEFAULT_QUALITY_TIER_THRESHOLDS = QualityTierThresholds()
+
+# Per-family overrides. Empty by design — adding an entry here tunes
+# that family's tier semantics without touching scoring code.
+QUALITY_TIER_THRESHOLDS_BY_FAMILY: dict[str, QualityTierThresholds] = {}
+
+
+def quality_tier_thresholds_for(family_key: str) -> QualityTierThresholds:
+    """Return per-family thresholds, falling back to the shared defaults.
+
+    Unknown family keys (e.g. one-off scopes that don't appear in
+    ``FAMILY_DEFINITIONS``) also get the defaults — no special case.
+    """
+    return QUALITY_TIER_THRESHOLDS_BY_FAMILY.get(family_key, DEFAULT_QUALITY_TIER_THRESHOLDS)
+
+
 def single_family_key(sport_key: str | None, market_family: str | None) -> str:
     sport = (sport_key or "").upper()
     family = (market_family or "").lower()

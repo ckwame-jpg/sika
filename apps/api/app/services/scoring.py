@@ -25,7 +25,7 @@ from app.models import (
 from app.services.ml.lineage import HEURISTIC_SINGLE_MODEL
 from app.services.ml.runtime import run_serving_inference
 from app.services.market_support import infer_yes_label, market_metadata
-from app.services.model_families import single_family_key
+from app.services.model_families import quality_tier_thresholds_for, single_family_key
 from app.services.parlays import ParlayCandidateInput, capture_parlay_artifacts, clear_active_parlay_watchlist
 from app.services.predictions import MODEL_NAME, OPEN_MARKET_STATUSES, capture_prediction
 from app.services.stats_query import _build_game_logs, default_season_for_sport
@@ -947,31 +947,46 @@ def _winner_thesis_key(
 
 def _quality_tier(
     *,
+    family_key: str,
     selected_side_probability: float,
     adjusted_confidence: float,
     context_coverage_score: float,
     total_penalty: float,
     served_mode: str,
 ) -> str:
+    """Smarter #28 — per-family quality tier classification.
+
+    Thresholds come from ``quality_tier_thresholds_for(family_key)``
+    which falls back to shared defaults for any family without an
+    explicit override in ``QUALITY_TIER_THRESHOLDS_BY_FAMILY``. The
+    default values match the constants the kernel hardcoded before
+    Smarter #28, so the registry-empty baseline preserves today's
+    behavior exactly.
+    """
+    thresholds = quality_tier_thresholds_for(family_key)
+
     if served_mode == "ml":
-        if context_coverage_score >= 0.75 and adjusted_confidence >= 0.6:
+        if (
+            context_coverage_score >= thresholds.ml_high_context_coverage
+            and adjusted_confidence >= thresholds.ml_high_adjusted_confidence
+        ):
             return "high"
-        if context_coverage_score >= 0.5:
+        if context_coverage_score >= thresholds.ml_medium_context_coverage:
             return "medium"
         return "low"
 
     if (
-        selected_side_probability < 0.2
-        or context_coverage_score < 0.45
-        or adjusted_confidence < 0.4
-        or total_penalty >= 0.18
+        selected_side_probability < thresholds.low_selected_side_probability
+        or context_coverage_score < thresholds.low_context_coverage
+        or adjusted_confidence < thresholds.low_adjusted_confidence
+        or total_penalty >= thresholds.low_total_penalty
     ):
         return "low"
     if (
-        selected_side_probability >= 0.36
-        and context_coverage_score >= 0.72
-        and adjusted_confidence >= 0.58
-        and total_penalty <= 0.09
+        selected_side_probability >= thresholds.high_selected_side_probability
+        and context_coverage_score >= thresholds.high_context_coverage
+        and adjusted_confidence >= thresholds.high_adjusted_confidence
+        and total_penalty <= thresholds.high_total_penalty
     ):
         return "high"
     return "medium"
@@ -2542,6 +2557,7 @@ def _build_scored_recommendation(
     available_context_flags = sum(1 for value in feature_flags.values() if value)
     context_coverage_score = round(available_context_flags / len(feature_flags), 4) if feature_flags else 1.0
     quality_tier = _quality_tier(
+        family_key=family_key,
         selected_side_probability=selected_side_probability,
         adjusted_confidence=confidence,
         context_coverage_score=context_coverage_score,
