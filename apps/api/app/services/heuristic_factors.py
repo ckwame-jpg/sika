@@ -71,13 +71,17 @@ _NBA_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
 
 _MLB_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
     "hits": ("xstats_anchor_factor", "starter_factor_advanced",
-             "pitcher_dominance_factor", "park_factor_singles"),
+             "pitcher_dominance_factor", "park_factor_singles",
+             "batter_platoon_factor"),
     "home_runs": ("quality_of_contact_factor", "starter_factor_advanced",
-                   "park_factor_hr_mult", "weather_factor", "pitcher_dominance_factor"),
-    "rbis": ("lineup_factor", "park_factor_runs_mult", "starter_factor_advanced"),
-    "runs": ("lineup_factor", "park_factor_runs_mult"),
+                   "park_factor_hr_mult", "weather_factor",
+                   "pitcher_dominance_factor", "batter_platoon_factor"),
+    "rbis": ("lineup_factor", "park_factor_runs_mult", "starter_factor_advanced",
+             "batter_platoon_factor"),
+    "runs": ("lineup_factor", "park_factor_runs_mult", "batter_platoon_factor"),
     "total_bases": ("quality_of_contact_factor", "starter_factor_advanced",
-                     "park_factor_singles", "weather_factor"),
+                     "park_factor_singles", "weather_factor",
+                     "batter_platoon_factor"),
     # Bug #3: pitcher_dominance_factor returns < 1.0 for dominant pitchers
     # (correct for batter hits/HR/walks where their output drops). For batter
     # strikeouts a dominant pitcher should AMPLIFY expected count.
@@ -264,6 +268,21 @@ def _mlb_weather_factor(features: dict[str, Any]) -> float:
     return _clamp(factor)
 
 
+def _mlb_batter_platoon_factor(features: dict[str, Any]) -> float:
+    """Smarter #5 — apply the batter-vs-starter platoon multiplier.
+
+    The producer (``emit_mlb_platoon_features``) emits this already-clamped
+    to ``[0.80, 1.20]`` so this function is just a straight read. Returns
+    1.0 when the feature is missing (no platoon data → no adjustment),
+    preserving the existing factor-applies semantics for stats where
+    other multipliers may still fire."""
+
+    raw = features.get("batter_vs_starter_platoon_factor")
+    if isinstance(raw, (int, float)) and raw > 0:
+        return _clamp(float(raw))
+    return 1.0
+
+
 def _mlb_lineup_factor(features: dict[str, Any]) -> float:
     """Batting-order position multiplier: leadoff/2-hole get ~5% PA boost."""
     order = features.get("batting_order_position")
@@ -291,6 +310,11 @@ _MLB_FACTOR_FNS = {
     "park_factor_singles": _mlb_park_factor_singles,
     "weather_factor": _mlb_weather_factor,
     "lineup_factor": _mlb_lineup_factor,
+    # Smarter #5 — batter-vs-starter platoon (vsLHP / vsRHP). Gated on
+    # offense stats only (hits, home_runs, total_bases, rbis, runs).
+    # Strikeouts/walks have their own pitcher-side factors that already
+    # capture handedness implicitly via FIP/xFIP.
+    "batter_platoon_factor": _mlb_batter_platoon_factor,
 }
 
 

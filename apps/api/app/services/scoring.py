@@ -1672,6 +1672,9 @@ def _score_player_prop(
             emit_lineup_features,
             emit_mlb_batter_features,
             emit_mlb_pitcher_features,
+            emit_mlb_platoon_features,
+            extract_pitch_hand_from_lineup,
+            load_mlb_player_splits,
             emit_park_features,
             emit_weather_features,
             load_lineup_for_event,
@@ -1731,6 +1734,11 @@ def _score_player_prop(
             if opponent_entry
             else (None, None)
         )
+        # Smarter #5: initialize to None so the downstream platoon-features
+        # block can safely read it even when no starter resolves (codex
+        # caught this — previously the variable was only defined inside the
+        # ``if starter_name`` branch).
+        starter_id: int | None = None
         if starter_name:
             starter_team = opponent_entry.participant.short_name if opponent_entry else None
             # Codex round 3: pass the ESPN athlete ID so a successful resolve
@@ -1770,6 +1778,32 @@ def _score_player_prop(
         lineup_result = load_lineup_for_event(db, event_id=str(event.id))
         if lineup_result.payload and resolved.mlb_stats_id:
             features.update(emit_lineup_features(lineup_result.payload, str(resolved.mlb_stats_id)))
+
+        # Smarter #5 — batter-vs-starter platoon factor. Resolved starter id
+        # + cached splits payload + cached season OPS combine into a single
+        # multiplier gated on offense stats. Each lookup is allow_network=False
+        # so the synchronous scoring path stays off the wire; the cron warm
+        # path is responsible for keeping the splits cache fresh.
+        if starter_id and resolved.mlb_stats_id:
+            starter_pitch_hand = extract_pitch_hand_from_lineup(
+                lineup_result.payload if lineup_result else None,
+                str(starter_id),
+            )
+            if starter_pitch_hand is not None:
+                splits_result = load_mlb_player_splits(
+                    db,
+                    mlb_player_id=str(resolved.mlb_stats_id),
+                    season=resolved.season,
+                    split_kind="vsLeftRight",
+                    allow_network=False,
+                )
+                features.update(
+                    emit_mlb_platoon_features(
+                        starter_pitch_hand,
+                        splits_result.payload,
+                        features.get("season_ops"),
+                    )
+                )
 
     features["advanced_cache_status"] = resolved.advanced_cache_status
 
