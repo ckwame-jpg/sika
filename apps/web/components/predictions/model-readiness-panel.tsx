@@ -707,6 +707,26 @@ export function ModelReadinessPanel() {
                   {fmtContractPnl(selected.average_realized_pnl)}
                 </p>
               </div>
+              <div className="stats-tile">
+                <p className="stats-tile-label">Avg CLV</p>
+                <p
+                  className={cn(
+                    "stats-tile-value font-mono",
+                    selected.average_clv != null && selected.average_clv < 0 ? "text-negative" : "text-positive",
+                  )}
+                >
+                  {selected.average_clv != null
+                    ? `${selected.average_clv > 0 ? "+" : ""}${selected.average_clv.toFixed(3)}`
+                    : "—"}
+                </p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                  {selected.average_clv != null
+                    ? "Closing-line value. Positive = line moved toward our picks (sharp)."
+                    : selected.scope === "parlay"
+                      ? "Per-leg closing prices not yet aggregated for parlays."
+                      : "Populates as new predictions settle (rows captured before this shipped stay blank)."}
+                </p>
+              </div>
             </div>
 
             <div className="stats-tile">

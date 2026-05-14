@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.clients.kalshi import KalshiPublicClient, parse_price_dollars
 from app.config import get_settings
 from app.models import Event, Market, Prediction, Recommendation, SignalSnapshot
+from app.services.clv import closing_yes_price_for_market, compute_clv
 from app.services.ml.lineage import HEURISTIC_SINGLE_MODEL
 from app.services.market_support import parse_market_datetime
 
@@ -555,6 +556,23 @@ def _settle_prediction_rows(
         prediction.realized_pnl = resolution.realized_pnl
         prediction.settlement_source = settlement_source
         prediction.settlement_notes = resolution.settlement_notes
+
+        # Smarter #3: capture closing YES price + signed CLV. The lookup
+        # tolerates missing snapshots (returns None), so any prediction whose
+        # market has no captured history just keeps its existing values.
+        # We only fill these once — if a re-settlement pass touches a row
+        # already carrying a CLV, leave it alone to preserve the original
+        # close.
+        if prediction.closing_yes_price is None and market is not None:
+            close_cutoff = market.close_time or prediction.settled_at
+            closing_yes = closing_yes_price_for_market(db, market.id, before=close_cutoff)
+            if closing_yes is not None:
+                prediction.closing_yes_price = closing_yes
+                prediction.closing_line_value = compute_clv(
+                    side=prediction.side,
+                    suggested_price=prediction.suggested_price,
+                    closing_yes_price=closing_yes,
+                )
 
         if (previous_status, previous_outcome) != (prediction.settlement_status, prediction.prediction_outcome):
             summary["updated"] += 1

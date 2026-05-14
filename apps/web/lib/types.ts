@@ -426,6 +426,9 @@ export interface ModelFamilyReadinessRead {
   average_edge: number | null;
   average_confidence: number | null;
   average_realized_pnl: number | null;
+  // Smarter #3 — signed mean closing-line value over settled rows.
+  // Positive = sika beat the close (sharp); negative = drifted away.
+  average_clv: number | null;
   last_settled_at: string | null;
   confidence_buckets: ReadinessBucketRead[];
   edge_buckets: ReadinessBucketRead[];

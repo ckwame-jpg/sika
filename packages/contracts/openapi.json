@@ -1651,6 +1651,17 @@
       },
       "ModelFamilyReadinessRead": {
         "properties": {
+          "average_clv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Clv"
+          },
           "average_confidence": {
             "anyOf": [
               {

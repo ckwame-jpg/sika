@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, load_only, selectinload
 
 from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
+from app.services.clv import average_clv
 from app.services.ml.promotion import MIN_PROMOTION_SHADOW_SAMPLES, STABILITY_DAYS_REQUIRED
 from app.services.ml.runtime import read_family_runtime, shadow_capture_blocker
 from app.services.ml.study_progress import (
@@ -655,6 +656,13 @@ def _summary_for_family(
         "average_edge": _average_metric(edges),
         "average_confidence": _average_metric(confidences),
         "average_realized_pnl": _average_metric(pnls),
+        # Smarter #3 — signed mean closing-line value across settled
+        # predictions in this family's row sample. Singles only: parlays
+        # don't carry a per-row ``closing_line_value`` because closing
+        # prices are per-market and a parlay covers multiple. ``None``
+        # when no settled row has a CLV yet (fresh deploy or all rows
+        # captured before Smarter #3 shipped).
+        "average_clv": average_clv(predictions) if scope == "single" else None,
         "last_settled_at": last_settled_at,
         "confidence_buckets": _confidence_buckets(predictions),
         "edge_buckets": _edge_buckets(predictions),
@@ -694,6 +702,10 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
                 Prediction.scoring_diagnostics,
                 Prediction.prediction_outcome,
                 Prediction.realized_pnl,
+                # Smarter #3: consumed by ``average_clv``. Same lazy-load
+                # storm gotcha as the smarter-#1 ``fair_yes_price`` /
+                # ``side`` additions — must be in the projection.
+                Prediction.closing_line_value,
                 Prediction.settled_at,
                 Prediction.captured_at,
             )
@@ -839,11 +851,20 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
                         Prediction.sport_key,
                         Prediction.market_family,
                         Prediction.capture_scope,
+                        # Smarter #1 + #3 (codex pattern-2 catch on the
+                        # DETAIL path — same N+1 storm as the summary path
+                        # had pre-fix). ``side`` / ``fair_yes_price`` feed
+                        # calibration buckets; ``closing_line_value`` feeds
+                        # ``average_clv``. Missing them here lazy-loads
+                        # every row.
+                        Prediction.side,
+                        Prediction.fair_yes_price,
                         Prediction.edge,
                         Prediction.confidence,
                         Prediction.scoring_diagnostics,
                         Prediction.prediction_outcome,
                         Prediction.realized_pnl,
+                        Prediction.closing_line_value,
                         Prediction.settled_at,
                         Prediction.captured_at,
                     )
@@ -898,6 +919,10 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
                     ParlayPrediction.sport_scope,
                     ParlayPrediction.leg_count,
                     ParlayPrediction.participating_sports,
+                    # Smarter #1 (codex pattern-2 catch on the DETAIL path).
+                    # Joint probability feeds calibration buckets via
+                    # ``_predicted_yes_probability``.
+                    ParlayPrediction.combined_model_probability,
                     ParlayPrediction.edge,
                     ParlayPrediction.confidence,
                     ParlayPrediction.prediction_outcome,
