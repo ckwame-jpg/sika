@@ -189,6 +189,161 @@ def _edge_buckets(rows: list[Any]) -> list[dict[str, Any]]:
     )
 
 
+# -- Smarter #1: per-family reliability-curve buckets --------------------------
+#
+# Aggregate Brier hides bucket-level miscalibration (e.g. 8-point over-
+# confidence in the 60-70% band). The buckets below partition settled
+# predictions by the model's P(YES) and surface the gap between predicted
+# probability and observed YES rate, per bucket. Consumed by the readiness
+# panel's reliability curve.
+#
+# Note on scope: we recompute live from the per-family row sample
+# (``READINESS_ROW_LIMIT`` predictions max). A precomputed
+# ``prediction_calibration_buckets`` table would be needed only if the row
+# sample stops being representative — bug #19's retention archive now keeps
+# every settled prediction, so longer windows can be served on demand by
+# widening the readiness query rather than by adding a new table.
+
+CALIBRATION_BUCKETS_BOUNDARIES: list[tuple[str, float, float]] = [
+    ("0-10%", 0.0, 0.1),
+    ("10-20%", 0.1, 0.2),
+    ("20-30%", 0.2, 0.3),
+    ("30-40%", 0.3, 0.4),
+    ("40-50%", 0.4, 0.5),
+    ("50-60%", 0.5, 0.6),
+    ("60-70%", 0.6, 0.7),
+    ("70-80%", 0.7, 0.8),
+    ("80-90%", 0.8, 0.9),
+    ("90-100%", 0.9, 1.0),
+]
+
+
+def _did_yes_happen(row: Any) -> bool | None:
+    """Return whether the model's predicted outcome actually occurred for
+    ``row``.
+
+    For single predictions the predicted probability is P(YES), and the
+    picked side is a separate signal: a NO-side prediction that ``won``
+    means YES did NOT happen (we have to invert the outcome relative to the
+    probability). For parlay predictions there is no row-level ``side`` —
+    ``combined_model_probability`` is already the joint probability of the
+    chosen leg combination, so ``outcome == "won"`` means the predicted
+    joint event happened directly.
+
+    Returns ``None`` for push / cancelled / pending / rows whose ``side`` is
+    set to anything other than ``"yes"`` / ``"no"`` — those rows cannot
+    inform calibration.
+    """
+
+    outcome = str(getattr(row, "prediction_outcome", None) or "").lower()
+    if outcome not in ("won", "lost"):
+        return None
+    raw_side = getattr(row, "side", None)
+    if raw_side is None:
+        # Parlay rows have no per-row ``side`` column. ``combined_model_probability``
+        # already encodes the joint probability for the chosen combination, so
+        # ``outcome == "won"`` matches the YES axis directly.
+        return outcome == "won"
+    side = str(raw_side or "").lower()
+    if side == "yes":
+        return outcome == "won"
+    if side == "no":
+        return outcome == "lost"
+    return None
+
+
+def _predicted_yes_probability(row: Any) -> float | None:
+    """Return the model's predicted P(YES) for this prediction.
+
+    Single predictions store this in ``fair_yes_price``; parlay predictions
+    use ``combined_model_probability`` (the joint probability across all
+    legs). NaN / infinite / unparseable values yield ``None``. Finite but
+    out-of-range values (``< 0`` or ``> 1``) also yield ``None`` — they
+    cannot inform calibration and silently dropping them prevents a
+    malformed model output from corrupting bucket averages.
+    """
+
+    raw = _safe_float(getattr(row, "fair_yes_price", None))
+    if raw is None:
+        raw = _safe_float(getattr(row, "combined_model_probability", None))
+    if raw is None:
+        return None
+    if raw < 0.0 or raw > 1.0:
+        return None
+    return raw
+
+
+def _calibration_buckets(rows: list[Any]) -> list[dict[str, Any]]:
+    """Bucket rows by predicted P(YES) and report observed vs. predicted.
+
+    Each row contributes ``(predicted_yes_probability, did_yes_happen)``.
+    Rows without a decided yes/no outcome (push, cancelled, pending) or
+    without a parseable predicted probability are skipped — they cannot
+    inform calibration. Per bucket we report:
+
+    - ``label`` (e.g. ``"60-70%"``)
+    - ``settled_count`` — rows in the bucket with both a probability and a
+      decided outcome
+    - ``avg_predicted`` — mean of in-bucket predicted probabilities
+    - ``actual_yes_rate`` — fraction of in-bucket rows where YES actually
+      happened
+    - ``miscalibration`` — ``avg_predicted - actual_yes_rate``. Positive means
+      the model was over-confident in YES inside this band; negative means
+      under-confident. ``None`` when the bucket is empty.
+
+    The boundaries are lower-inclusive / upper-exclusive (``[lower, upper)``)
+    except the final bucket, which is fully inclusive so a perfect-confidence
+    row (``p == 1.0``) is still bucketed.
+    """
+
+    last_upper = CALIBRATION_BUCKETS_BOUNDARIES[-1][2]
+    results: list[dict[str, Any]] = []
+    for label, lower, upper in CALIBRATION_BUCKETS_BOUNDARIES:
+        is_last_bucket = upper == last_upper
+        in_bucket: list[tuple[float, bool]] = []
+        for row in rows:
+            proba = _predicted_yes_probability(row)
+            if proba is None:
+                continue
+            if proba < lower:
+                continue
+            if is_last_bucket:
+                if proba > upper:
+                    continue
+            else:
+                if proba >= upper:
+                    continue
+            yes = _did_yes_happen(row)
+            if yes is None:
+                continue
+            in_bucket.append((proba, yes))
+        count = len(in_bucket)
+        if count == 0:
+            results.append(
+                {
+                    "label": label,
+                    "settled_count": 0,
+                    "avg_predicted": None,
+                    "actual_yes_rate": None,
+                    "miscalibration": None,
+                }
+            )
+            continue
+        avg_predicted = sum(proba for proba, _ in in_bucket) / count
+        yes_count = sum(1 for _, yes in in_bucket if yes)
+        actual_rate = yes_count / count
+        results.append(
+            {
+                "label": label,
+                "settled_count": count,
+                "avg_predicted": round(avg_predicted, 4),
+                "actual_yes_rate": round(actual_rate, 4),
+                "miscalibration": round(avg_predicted - actual_rate, 4),
+            }
+        )
+    return results
+
+
 def _single_outcome_counts(db: Session, *, cutoff: datetime) -> dict[str, dict[str, dict[str, int]]]:
     """Per-family per-scope per-outcome counts of single predictions in the readiness window.
 
@@ -503,6 +658,7 @@ def _summary_for_family(
         "last_settled_at": last_settled_at,
         "confidence_buckets": _confidence_buckets(predictions),
         "edge_buckets": _edge_buckets(predictions),
+        "calibration_buckets": _calibration_buckets(predictions),
         "feature_coverage_rates": feature_rates,
         "missing_context_rates": missing_rates,
         "top_failure_reasons": top_failures,
@@ -525,6 +681,14 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
                 Prediction.sport_key,
                 Prediction.market_family,
                 Prediction.capture_scope,
+                # Smarter #1 (codex pattern-2 catch): ``side`` and
+                # ``fair_yes_price`` are consumed by ``_calibration_buckets``
+                # → ``_did_yes_happen`` / ``_predicted_yes_probability``.
+                # Without them in the projection SQLAlchemy lazy-loads each
+                # one per row — a query storm proportional to
+                # ``READINESS_ROW_LIMIT`` on every readiness fetch.
+                Prediction.side,
+                Prediction.fair_yes_price,
                 Prediction.edge,
                 Prediction.confidence,
                 Prediction.scoring_diagnostics,
@@ -547,6 +711,11 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
                 ParlayPrediction.sport_scope,
                 ParlayPrediction.leg_count,
                 ParlayPrediction.participating_sports,
+                # Smarter #1 (codex pattern-2 catch): joint probability is
+                # consumed by ``_calibration_buckets`` →
+                # ``_predicted_yes_probability`` for parlay rows. Not in the
+                # projection → SQLAlchemy lazy-loads per row.
+                ParlayPrediction.combined_model_probability,
                 ParlayPrediction.edge,
                 ParlayPrediction.confidence,
                 ParlayPrediction.prediction_outcome,

@@ -630,6 +630,25 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * CalibrationBucketRead
+         * @description Reliability-curve point. ``avg_predicted`` is the model's mean P(YES)
+         *     for rows in this bucket; ``actual_yes_rate`` is the observed YES rate;
+         *     ``miscalibration = avg_predicted - actual_yes_rate`` (positive = the model
+         *     was over-confident in YES). ``None`` fields signal an empty bucket.
+         */
+        CalibrationBucketRead: {
+            /** Actual Yes Rate */
+            actual_yes_rate?: number | null;
+            /** Avg Predicted */
+            avg_predicted?: number | null;
+            /** Label */
+            label: string;
+            /** Miscalibration */
+            miscalibration?: number | null;
+            /** Settled Count */
+            settled_count: number;
+        };
         /** DemoOrderCreate */
         DemoOrderCreate: {
             /**
@@ -1063,6 +1082,8 @@ export interface components {
             average_edge?: number | null;
             /** Average Realized Pnl */
             average_realized_pnl?: number | null;
+            /** Calibration Buckets */
+            calibration_buckets?: components["schemas"]["CalibrationBucketRead"][];
             /** Cancelled Predictions */
             cancelled_predictions: number;
             /** Confidence Buckets */
@@ -2468,6 +2489,8 @@ export interface components {
             market_title: string;
             /** Numeric Line */
             numeric_line?: number | null;
+            /** Price History */
+            price_history?: number[];
             /** Projected Side Label */
             projected_side_label?: string | null;
             /** Selected Side */

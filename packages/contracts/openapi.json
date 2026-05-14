@@ -1,6 +1,58 @@
 {
   "components": {
     "schemas": {
+      "CalibrationBucketRead": {
+        "description": "Reliability-curve point. ``avg_predicted`` is the model's mean P(YES)\nfor rows in this bucket; ``actual_yes_rate`` is the observed YES rate;\n``miscalibration = avg_predicted - actual_yes_rate`` (positive = the model\nwas over-confident in YES). ``None`` fields signal an empty bucket.",
+        "properties": {
+          "actual_yes_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Yes Rate"
+          },
+          "avg_predicted": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Predicted"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "miscalibration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Miscalibration"
+          },
+          "settled_count": {
+            "title": "Settled Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "settled_count"
+        ],
+        "title": "CalibrationBucketRead",
+        "type": "object"
+      },
       "DemoOrderCreate": {
         "properties": {
           "action": {
@@ -1631,6 +1683,13 @@
               }
             ],
             "title": "Average Realized Pnl"
+          },
+          "calibration_buckets": {
+            "items": {
+              "$ref": "#/components/schemas/CalibrationBucketRead"
+            },
+            "title": "Calibration Buckets",
+            "type": "array"
           },
           "cancelled_predictions": {
             "title": "Cancelled Predictions",
@@ -5532,6 +5591,13 @@
               }
             ],
             "title": "Numeric Line"
+          },
+          "price_history": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Price History",
+            "type": "array"
           },
           "projected_side_label": {
             "anyOf": [
