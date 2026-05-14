@@ -12,6 +12,7 @@ from app.models import (
     EventParticipant,
     Market,
     MarketSnapshot,
+    NarratorOutputCache,
     PaperPosition,
     ParlayPrediction,
     ParlayRecommendation,
@@ -78,7 +79,16 @@ from app.services.kalshi_account import (
 )
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
 from app.services.ml.study_progress import retained_study_cutoff
-from app.services.operator_settings import set_ml_serving_mode, set_pick_history_default_n
+from app.services.narrator import (
+    NarratorNotConfiguredError,
+    generate_narration,
+)
+from app.services.operator_settings import (
+    effective_narrator_enabled,
+    set_ml_serving_mode,
+    set_narrator_enabled,
+    set_pick_history_default_n,
+)
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
@@ -412,9 +422,14 @@ def _serialize_recommendation(
     item: Recommendation,
     market: Market,
     event_name: str | None = None,
+    *,
+    narrator_text_by_id: dict[int, str] | None = None,
 ) -> RecommendationRead:
     diagnostics = dict(item.scoring_diagnostics or {})
     event = item.event
+    narrator_text: str | None = None
+    if narrator_text_by_id is not None:
+        narrator_text = narrator_text_by_id.get(item.id)
     return RecommendationRead(
         time_to_close_minutes=_time_to_close_minutes(market),
         id=item.id,
@@ -443,8 +458,33 @@ def _serialize_recommendation(
         invalidation=item.invalidation,
         rationale=item.rationale,
         captured_at=item.captured_at,
+        narrator_text=narrator_text,
         **_market_metadata_fields(market),
     )
+
+
+def _fetch_narrator_text_for_recommendations(
+    db: Session,
+    recommendation_ids: list[int],
+) -> dict[int, str]:
+    """Smarter #31 — return cached narrator text for each recommendation,
+    keyed by recommendation_id. Only ``verifier_passed=True`` rows are
+    included; failed-verifier outputs stay in the cache for debugging
+    but don't surface on the operator UI.
+
+    Returns an empty dict when the narrator toggle is off or no cache
+    rows match — caller serializes recommendations with ``None``
+    narrator_text in that case.
+    """
+    if not recommendation_ids or not effective_narrator_enabled(db):
+        return {}
+    rows = db.scalars(
+        select(NarratorOutputCache).where(
+            NarratorOutputCache.recommendation_id.in_(recommendation_ids),
+            NarratorOutputCache.verifier_passed.is_(True),
+        )
+    ).all()
+    return {row.recommendation_id: row.text for row in rows}
 
 
 SETTLEMENT_OUTCOME_KEYS = ("won", "lost", "push", "cancelled", "pending", "unresolved", "errors")
@@ -1138,17 +1178,25 @@ def get_watchlist(
     if sport:
         stmt = stmt.join(Market, Recommendation.market_id == Market.id).where(Market.sport_key == sport.upper())
     recommendations = db.scalars(stmt).all()
-    matched: list[RecommendationRead] = []
+    matched: list[Recommendation] = []
     for item in recommendations:
         if (
             item.market is None
             or (item.market.sport_key or "").upper() not in CURRENT_WATCHLIST_SPORTS
             or is_current_watchlist_market(item.market)
         ):
-            matched.append(_serialize_recommendation(item, item.market))
+            matched.append(item)
             if len(matched) >= limit:
                 break
-    return matched
+    narrator_lookup = _fetch_narrator_text_for_recommendations(
+        db, [item.id for item in matched]
+    )
+    return [
+        _serialize_recommendation(
+            item, item.market, narrator_text_by_id=narrator_lookup
+        )
+        for item in matched
+    ]
 
 
 @router.get("/watchlist/coverage", response_model=list[WatchlistCoverageRowRead])
@@ -1209,6 +1257,8 @@ def update_model_readiness_settings(
             enqueue_shadow_capture_job(db, scope="backfill")
     if payload.pick_history_default_n is not None:
         set_pick_history_default_n(db, payload.pick_history_default_n)
+    if payload.narrator_enabled is not None:
+        set_narrator_enabled(db, payload.narrator_enabled)
     db.commit()
     return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
 
@@ -1219,6 +1269,94 @@ def model_readiness_detail(family_key: str, db: Session = Depends(get_db)) -> Mo
     if payload is None:
         raise HTTPException(status_code=404, detail="Unknown model family")
     return ModelFamilyReadinessRead.model_validate(payload)
+
+
+@ops_router.post(
+    "/recommendations/{recommendation_id}/narrator",
+    response_model=RecommendationRead,
+)
+def generate_recommendation_narration(
+    recommendation_id: int,
+    db: Session = Depends(get_db),
+) -> RecommendationRead:
+    """Smarter #31 — on-demand narrator generation for a single rec.
+
+    Idempotent — re-POSTing for a recommendation that already has a
+    cached verifier-passing narration returns the cached value
+    without re-calling OpenAI. Forcing a regen requires deleting the
+    cache row (Phase 2: add a query param + DELETE endpoint).
+
+    Returns the full recommendation read so the UI can update the
+    card in place. Raises 503 when ``OPENAI_API_KEY`` is unset or the
+    operator-side toggle is off — callers should surface a clear
+    "narrator not configured / disabled" hint rather than silently
+    showing the mechanical rationale.
+    """
+    if not effective_narrator_enabled(db):
+        raise HTTPException(
+            status_code=503,
+            detail="narrator toggle is OFF; flip it on via the readiness settings",
+        )
+    recommendation = db.get(Recommendation, recommendation_id)
+    if recommendation is None or recommendation.market is None:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+
+    # Return cached narration if a verifier-passing one already exists.
+    cached = db.scalar(
+        select(NarratorOutputCache).where(
+            NarratorOutputCache.recommendation_id == recommendation_id
+        )
+    )
+    if cached is not None and cached.verifier_passed:
+        return _serialize_recommendation(
+            recommendation,
+            recommendation.market,
+            narrator_text_by_id={recommendation_id: cached.text},
+        )
+
+    # Generate fresh. Pull features from the linked Prediction (sika
+    # captures features there at scoring time); fall back to the
+    # recommendation's own scoring_diagnostics if no prediction exists.
+    prediction = db.scalar(
+        select(Prediction).where(Prediction.market_id == recommendation.market_id).order_by(
+            Prediction.captured_at.desc()
+        ).limit(1)
+    )
+    features = dict((prediction.features if prediction else None) or {})
+    metadata = {
+        "subject_name": recommendation.subject_name,
+        "subject_team": recommendation.subject_team,
+        "market_title": recommendation.market.title,
+        "market_family": recommendation.market_family,
+        "event_name": recommendation.event.name if recommendation.event else recommendation.market.title,
+        "side": recommendation.side,
+        "threshold": recommendation.threshold,
+        "edge": recommendation.edge,
+        "confidence": recommendation.confidence,
+    }
+    try:
+        output = generate_narration(features=features, recommendation_metadata=metadata)
+    except NarratorNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    # Upsert the cache row regardless of verifier outcome — a
+    # failed-verifier output is still useful for debugging "why is
+    # the narrator off on this pick?" without re-calling OpenAI.
+    if cached is None:
+        cached = NarratorOutputCache(recommendation_id=recommendation_id)
+        db.add(cached)
+    cached.text = output.text
+    cached.verifier_passed = output.verifier_passed
+    cached.rejected_claims = output.rejected_claims
+    cached.model_name = output.model_name
+    db.commit()
+
+    narrator_text = output.text if output.verifier_passed else None
+    return _serialize_recommendation(
+        recommendation,
+        recommendation.market,
+        narrator_text_by_id={recommendation_id: narrator_text} if narrator_text else {},
+    )
 
 
 @router.get("/predictions", response_model=list[PredictionRead])

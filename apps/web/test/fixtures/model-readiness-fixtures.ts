@@ -142,4 +142,5 @@ export const modelReadinessSummaryFixture: ModelReadinessSummaryRead = {
   promotion_stability_days_required: 3,
   pick_history_default_n: 5,
   families: [activeStudyFamilyFixture, heuristicLaneFamilyFixture],
+  narrator_enabled: false,
 };

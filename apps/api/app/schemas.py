@@ -140,6 +140,11 @@ class RecommendationRead(BaseModel):
     # Operators sort/highlight by this to triage T-minus-15min picks
     # ahead of T-minus-4h ones with the same edge.
     time_to_close_minutes: int | None = None
+    # Smarter #31 — operator-facing LLM narration grounded in the
+    # feature dict. ``None`` when narrator is disabled, no cache exists,
+    # or the verifier rejected the output. Always renders alongside (not
+    # instead of) the mechanical ``rationale`` so operators can compare.
+    narrator_text: str | None = None
 
 
 class ParlayRecommendationLegRead(BaseModel):
@@ -728,6 +733,9 @@ class ModelReadinessSummaryRead(BaseModel):
     # Defaults to all-zeros so existing callers that don't surface the
     # field render cleanly.
     settlement_aging: SettlementAgingRead = Field(default_factory=SettlementAgingRead)
+    # Smarter #31 — LLM narrator toggle. False by default so operators
+    # don't burn tokens until they've eyeballed quality on a few picks.
+    narrator_enabled: bool = False
 
 
 class ModelReadinessSettingsUpdate(BaseModel):
@@ -744,6 +752,10 @@ class ModelReadinessSettingsUpdate(BaseModel):
     # readiness summary echo it back while the strip silently
     # coerced it to 5.
     pick_history_default_n: Literal[5, 10, 20] | None = None
+    # Smarter #31 — operator toggle for the LLM narrator. Optional
+    # (partial-PATCH idiom) so changing only this knob doesn't
+    # require resending the other settings.
+    narrator_enabled: bool | None = None
 
 
 class MarketHistoryPointRead(BaseModel):

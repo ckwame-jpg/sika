@@ -40,6 +40,7 @@ function summaryFixture(n = 5): ModelReadinessSummaryRead {
     promotion_stability_days_required: 3,
     pick_history_default_n: n,
     families: [],
+    narrator_enabled: false,
   };
 }
 
