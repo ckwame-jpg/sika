@@ -2,16 +2,57 @@ from __future__ import annotations
 
 import threading
 import unittest.mock
+from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import func, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.database import Base
 from app.models import RefreshJob, Run
 from app.services import refresh_jobs
+
+
+@pytest.fixture()
+def db_session(tmp_path) -> Generator[Session, None, None]:
+    """Override the global ``db_session`` fixture for this file.
+
+    Bug #10's cancellation hook only correctly rolls back a worker's flushed
+    writes when the worker's commit attempt runs against its OWN connection
+    — otherwise a parallel main-thread commit on a *shared* connection will
+    have already absorbed the worker's uncommitted writes into the
+    connection's transaction and committed them, so the worker's later
+    ``before_commit`` cancellation has nothing to roll back.
+
+    The global ``db_session`` fixture uses an in-memory SQLite with
+    ``StaticPool`` — every session shares one connection. That's fine for
+    99% of the suite but invalid for these threaded bug-#10 scenarios.
+    Here we use a per-test temp-file SQLite so each SQLAlchemy session (one
+    per thread, since the threaded factory creates its own) checks out its
+    own real connection — matching production semantics where the
+    cancellation hook actually works.
+    """
+
+    db_path = tmp_path / "bug10_refresh_jobs.sqlite"
+    url = f"sqlite+pysqlite:///{db_path}"
+    engine = create_engine(
+        url,
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
+    Base.metadata.create_all(bind=engine)
+    TestingSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=engine, future=True
+    )
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
 
 
 def _install_threaded_session_factory(db_session, monkeypatch, seen_sessions=None):
