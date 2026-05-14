@@ -709,6 +709,67 @@ def load_park_factors_for_event(
 
 
 # -----------------------------------------------------------------------------
+# Venue coordinates — used by the Smarter #15 weather pre-warm job to look up
+# (lat, lon, is_dome) for each scheduled game. Keyed by the same three-letter
+# team abbreviation that ``_PARK_FACTORS_BY_TEAM`` uses (so ESPN aliases via
+# ``_ESPN_TO_PARK_FACTORS_TEAM_ALIAS`` map onto these entries too).
+#
+# Dome policy: ``is_dome=True`` ONLY for parks whose roof stays closed during
+# essentially every regular-season game (currently only TBR Tropicana Field).
+# Retractable-roof parks (TEX, MIA, MIL, TOR, ARI, HOU, SEA, MIN) are still
+# treated as open-air for forecasting purposes — when the roof closes for a
+# specific game the forecast doesn't matter (cached payload sits unused).
+# We'd rather have a stale forecast than a wrong-dome misclassification.
+
+_MLB_PARK_COORDS: dict[str, tuple[float, float, bool]] = {
+    "ARI": (33.4453, -112.0667, False),  # Chase Field (retractable)
+    "ATL": (33.8908, -84.4678, False),   # Truist Park
+    "BAL": (39.2839, -76.6217, False),   # Camden Yards
+    "BOS": (42.3467, -71.0972, False),   # Fenway Park
+    "CHC": (41.9484, -87.6553, False),   # Wrigley Field
+    "CHW": (41.8300, -87.6339, False),   # Guaranteed Rate / Rate Field
+    "CIN": (39.0975, -84.5069, False),   # Great American Ball Park
+    "CLE": (41.4962, -81.6852, False),   # Progressive Field
+    "COL": (39.7559, -104.9942, False),  # Coors Field
+    "DET": (42.3390, -83.0485, False),   # Comerica Park
+    "HOU": (29.7572, -95.3554, False),   # Daikin / Minute Maid (retractable)
+    "KCR": (39.0517, -94.4803, False),   # Kauffman Stadium
+    "LAA": (33.8003, -117.8827, False),  # Angel Stadium
+    "LAD": (34.0739, -118.2400, False),  # Dodger Stadium
+    "MIA": (25.7781, -80.2197, False),   # loanDepot Park (retractable)
+    "MIL": (43.0280, -87.9712, False),   # American Family Field (retractable)
+    "MIN": (44.9817, -93.2776, False),   # Target Field
+    "NYM": (40.7571, -73.8458, False),   # Citi Field
+    "NYY": (40.8296, -73.9262, False),   # Yankee Stadium
+    "OAK": (37.7516, -122.2005, False),  # Oakland Coliseum
+    "PHI": (39.9061, -75.1665, False),   # Citizens Bank Park
+    "PIT": (40.4469, -80.0058, False),   # PNC Park
+    "SDP": (32.7073, -117.1566, False),  # Petco Park
+    "SEA": (47.5914, -122.3325, False),  # T-Mobile Park (retractable)
+    "SFG": (37.7786, -122.3893, False),  # Oracle Park
+    "STL": (38.6226, -90.1928, False),   # Busch Stadium
+    "TBR": (27.7682, -82.6534, True),    # Tropicana Field (always closed)
+    "TEX": (32.7473, -97.0817, False),   # Globe Life Field (retractable)
+    "TOR": (43.6414, -79.3894, False),   # Rogers Centre (retractable)
+    "WSN": (38.8730, -77.0074, False),   # Nationals Park
+}
+
+
+def mlb_park_coords(team_abbreviation: str | None) -> tuple[float, float, bool] | None:
+    """Return ``(lat, lon, is_dome)`` for the home team's park, or ``None``
+    when the abbreviation doesn't resolve. Accepts ESPN's two-letter aliases
+    (SF, SD, etc.) by routing through ``_ESPN_TO_PARK_FACTORS_TEAM_ALIAS``."""
+
+    if not team_abbreviation:
+        return None
+    normalized = str(team_abbreviation).strip().upper()
+    if not normalized:
+        return None
+    resolved = _ESPN_TO_PARK_FACTORS_TEAM_ALIAS.get(normalized, normalized)
+    return _MLB_PARK_COORDS.get(resolved)
+
+
+# -----------------------------------------------------------------------------
 # Weather
 
 def load_weather(

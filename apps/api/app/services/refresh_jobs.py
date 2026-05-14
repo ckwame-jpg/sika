@@ -1215,11 +1215,94 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     "pitchers_only": pitchers_only,
                 }
             elif job.kind == "weather_refresh":
-                # Placeholder: per-event weather is loaded lazily via the resolver
-                # path. This kind exists so a scheduled cron can pre-warm caches
-                # for upcoming events; the implementation walks the current slate
-                # in a follow-up PR.
-                job.details = {**(job.details or {}), "events_warmed": 0}
+                # Smarter #15 — game-day morning weather pre-warm.
+                #
+                # Walks today's MLB slate, matches each MLB Stats game to a
+                # sika ``Event``, looks up the home park's coordinates +
+                # dome flag, and calls ``load_weather(allow_network=True)``
+                # to populate ``MlbWeatherCache``. The synchronous scoring
+                # path (``load_weather(allow_network=False)``) then serves
+                # the cached payload without paying the upstream latency
+                # on the first scored prop of the day.
+                from datetime import date as _date
+
+                from app.clients.mlb_stats import MlbStatsClient
+                from app.services.mlb_advanced import load_weather, mlb_park_coords
+
+                target = _date.today()
+                events_warmed = 0
+                events_dome = 0
+                events_missing_coords = 0
+                games_unmatched = 0
+                games_failed = 0
+                schedule_failed = False
+                try:
+                    mlb_client = MlbStatsClient()
+                    schedule = mlb_client.fetch_schedule(target)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("weather_refresh schedule fetch failed: %s", exc)
+                    schedule = None
+                    schedule_failed = True
+
+                if schedule is not None:
+                    event_index = _build_mlb_event_index(db)
+                    for date_block in schedule.get("dates") or []:
+                        for game in date_block.get("games") or []:
+                            game_pk = game.get("gamePk") or game.get("game_pk")
+                            if not game_pk:
+                                continue
+                            try:
+                                event = _match_mlb_event(event_index, game)
+                                if event is None:
+                                    games_unmatched += 1
+                                    continue
+                                home_team = (
+                                    ((game.get("teams") or {}).get("home") or {}).get("team")
+                                    or {}
+                                )
+                                home_abbr = home_team.get("abbreviation")
+                                coords = mlb_park_coords(home_abbr)
+                                if coords is None:
+                                    events_missing_coords += 1
+                                    continue
+                                lat, lon, is_dome = coords
+                                starts_at = event.starts_at
+                                if starts_at is not None and starts_at.tzinfo is None:
+                                    starts_at = starts_at.replace(tzinfo=timezone.utc)
+                                game_time_utc = (
+                                    starts_at.astimezone(timezone.utc) if starts_at else None
+                                )
+                                result = load_weather(
+                                    db,
+                                    event_id=str(event.id),
+                                    lat=lat,
+                                    lon=lon,
+                                    game_time_utc=game_time_utc,
+                                    is_dome=is_dome,
+                                    allow_network=True,
+                                )
+                                if is_dome and result.cache_status == "dome":
+                                    events_dome += 1
+                                elif result.complete:
+                                    events_warmed += 1
+                            except Exception as exc:  # noqa: BLE001
+                                # One bad game must not poison the slate.
+                                games_failed += 1
+                                logger.warning(
+                                    "weather_refresh per-game failure (gamePk=%s): %s",
+                                    game_pk,
+                                    exc,
+                                )
+
+                job.details = {
+                    **(job.details or {}),
+                    "events_warmed": events_warmed,
+                    "events_dome": events_dome,
+                    "events_missing_coords": events_missing_coords,
+                    "games_unmatched": games_unmatched,
+                    "games_failed": games_failed,
+                    "schedule_failed": schedule_failed,
+                }
             elif job.kind == "lineup_refresh":
                 # Fetch today's MLB schedule with lineups + probablePitcher
                 # hydration and persist the per-event payload via
