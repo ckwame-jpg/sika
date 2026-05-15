@@ -20,6 +20,7 @@ import type {
   PredictionRead,
   PredictionSettlementResponse,
   PredictionSummaryRead,
+  RecommendationRead,
   RefreshJobRead,
   RunDetailRead,
   RunRead,
@@ -231,6 +232,18 @@ export const updateModelReadinessSettings = (body: ModelReadinessSettingsUpdate)
     method: "PATCH",
     body: JSON.stringify(body),
   });
+
+// Smarter #31 — request a verifier-checked LLM narration for a single
+// recommendation. The endpoint is idempotent: re-POSTing for a
+// recommendation that already has a cached verifier-passing narration
+// returns the cached value without re-calling OpenAI. The endpoint
+// returns 503 when the operator toggle is off; callers should surface
+// that as "narrator disabled" rather than a hard error.
+export const generateRecommendationNarration = (recommendationId: number) =>
+  request<RecommendationRead>(
+    `/ops/recommendations/${recommendationId}/narrator`,
+    { method: "POST" },
+  );
 
 export const fetchParlayPredictions = (sportScope = "all", legCount?: number, limit = 100) => {
   const params = new URLSearchParams({ sport_scope: sportScope, limit: String(limit) });

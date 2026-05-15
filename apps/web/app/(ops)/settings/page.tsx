@@ -43,6 +43,7 @@ export default function SettingsPage() {
     { revalidateOnFocus: false, revalidateOnReconnect: false },
   );
   const currentDepth = settings?.pick_history_default_n ?? 5;
+  const narratorEnabled = settings?.narrator_enabled ?? false;
 
   async function selectDepth(next: PickHistoryDepth) {
     // Codex round-4 P2 on PR #24: previously this PATCH echoed back
@@ -53,6 +54,15 @@ export default function SettingsPage() {
     // it untouched when omitted.
     await updateModelReadinessSettings({
       pick_history_default_n: next,
+    });
+    await refreshSettings();
+  }
+
+  async function toggleNarrator(next: boolean): Promise<void> {
+    // Smarter #31 — partial-PATCH idiom (same as depth above) so
+    // flipping the narrator doesn't clobber other operator settings.
+    await updateModelReadinessSettings({
+      narrator_enabled: next,
     });
     await refreshSettings();
   }
@@ -137,6 +147,53 @@ export default function SettingsPage() {
                     </button>
                   );
                 })}
+              </div>
+            </div>
+          </section>
+
+          <section className="cosmos-panel" data-testid="narrator-toggle-section">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">AI Narrator</h2>
+                <p className="cosmos-panel-desc">
+                  Adds a plain-English explanation under each recommendation, grounded in
+                  the same features the model uses. A verifier rejects any output that
+                  references injuries, refs, weather, trades, or numbers that aren't in
+                  the feature set. The mechanical rationale is always shown alongside, so
+                  flipping this off has no impact on what data you see.
+                </p>
+              </div>
+            </div>
+            <div className="cosmos-panel-body">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void toggleNarrator(true)}
+                  className={cn(
+                    "rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
+                    narratorEnabled
+                      ? "border-accent bg-accent/10 text-foreground"
+                      : "border-border bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+                  )}
+                  data-testid="narrator-toggle-on"
+                  aria-pressed={narratorEnabled}
+                >
+                  On
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void toggleNarrator(false)}
+                  className={cn(
+                    "rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
+                    !narratorEnabled
+                      ? "border-accent bg-accent/10 text-foreground"
+                      : "border-border bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+                  )}
+                  data-testid="narrator-toggle-off"
+                  aria-pressed={!narratorEnabled}
+                >
+                  Off
+                </button>
               </div>
             </div>
           </section>

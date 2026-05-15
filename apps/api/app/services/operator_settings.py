@@ -113,3 +113,32 @@ def set_pick_history_default_n(db: Session, n: int) -> OperatorSetting:
     row.updated_at = _now_utc()
     db.flush()
     return row
+
+
+# Smarter #31 — LLM narrator toggle. Off by default so operators don't
+# burn tokens until they've eyeballed the output quality on a few
+# recommendations. Toggleable at runtime via the model-readiness
+# settings endpoint.
+NARRATOR_ENABLED_KEY = "narrator_enabled"
+
+
+def effective_narrator_enabled(db: Session | None = None) -> bool:
+    if db is None:
+        return False
+    row = db.scalar(select(OperatorSetting).where(OperatorSetting.key == NARRATOR_ENABLED_KEY))
+    if row is None:
+        return False
+    return bool(dict(row.value or {}).get("enabled", False))
+
+
+def set_narrator_enabled(db: Session, enabled: bool) -> OperatorSetting:
+    """Persist the operator-side toggle. Idempotent — re-applying the
+    same value just refreshes ``updated_at``."""
+    row = db.scalar(select(OperatorSetting).where(OperatorSetting.key == NARRATOR_ENABLED_KEY))
+    if row is None:
+        row = OperatorSetting(key=NARRATOR_ENABLED_KEY)
+        db.add(row)
+    row.value = {"enabled": bool(enabled), "source": "operator"}
+    row.updated_at = _now_utc()
+    db.flush()
+    return row

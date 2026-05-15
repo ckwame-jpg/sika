@@ -2,8 +2,17 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { fetchMarket, keys } from "@/lib/api";
-import type { MarketDetailRead, RecommendationRead } from "@/lib/types";
+import {
+  fetchMarket,
+  fetchModelReadinessSummary,
+  generateRecommendationNarration,
+  keys,
+} from "@/lib/api";
+import type {
+  MarketDetailRead,
+  ModelReadinessSummaryRead,
+  RecommendationRead,
+} from "@/lib/types";
 import {
   Sheet,
   SheetContent,
@@ -54,11 +63,48 @@ interface MarketDetailSheetProps {
 function MarketDetailContent({ ticker }: { ticker: string }) {
   const { formatPrice } = usePriceDisplay();
   const [tradeRec, setTradeRec] = useState<RecommendationRead | null>(null);
+  // Smarter #31 — per-recommendation narration cache and in-flight
+  // tracker so the "Generate" button can show a busy state and the
+  // generated text appears in place without a full sheet refetch.
+  const [narratorOverride, setNarratorOverride] = useState<
+    Record<number, string | null>
+  >({});
+  const [narratorBusy, setNarratorBusy] = useState<Record<number, boolean>>({});
+  const [narratorError, setNarratorError] = useState<
+    Record<number, string | null>
+  >({});
   const { data, isLoading, error } = useSWR<MarketDetailRead>(
     keys.market(ticker),
     () => fetchMarket(ticker),
     { refreshInterval: 15_000 },
   );
+  // Smarter #31 — operator toggle. When OFF we don't show the
+  // "Generate explanation" button at all; the narrator section just
+  // doesn't render. When ON we surface cached narrations and offer
+  // the button for missing ones.
+  const { data: readinessSettings } = useSWR<ModelReadinessSummaryRead>(
+    keys.modelReadinessSummary,
+    fetchModelReadinessSummary,
+    { revalidateOnFocus: false, revalidateOnReconnect: false },
+  );
+  const narratorEnabled = readinessSettings?.narrator_enabled ?? false;
+
+  async function handleGenerateNarration(recommendationId: number): Promise<void> {
+    setNarratorBusy((prev) => ({ ...prev, [recommendationId]: true }));
+    setNarratorError((prev) => ({ ...prev, [recommendationId]: null }));
+    try {
+      const updated = await generateRecommendationNarration(recommendationId);
+      setNarratorOverride((prev) => ({
+        ...prev,
+        [recommendationId]: updated.narrator_text,
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to generate";
+      setNarratorError((prev) => ({ ...prev, [recommendationId]: message }));
+    } finally {
+      setNarratorBusy((prev) => ({ ...prev, [recommendationId]: false }));
+    }
+  }
 
   if (isLoading) {
     return (
@@ -236,6 +282,56 @@ function MarketDetailContent({ ticker }: { ticker: string }) {
                     {WIN_PROB_LABEL} {fmtPercent(rec.selected_side_probability)} · {RELIABILITY_LABEL} {fmtPercent(rec.confidence)}
                   </p>
                   <p className="text-muted-foreground leading-relaxed">{rec.rationale}</p>
+                  {/* Smarter #31 — narrator panel. Renders the cached
+                      verifier-passing narration when present, or a
+                      "Generate" button when the operator toggle is on
+                      but no cache exists. Always sits BELOW the
+                      mechanical rationale so operators can compare
+                      against the structured features. */}
+                  {narratorEnabled && (
+                    <div className="rounded border border-dashed border-accent/40 bg-accent/5 p-2 text-[11px] text-muted-foreground">
+                      {(() => {
+                        const overrideText = narratorOverride[rec.id];
+                        const text =
+                          overrideText !== undefined
+                            ? overrideText
+                            : rec.narrator_text;
+                        const isBusy = narratorBusy[rec.id] ?? false;
+                        const errorText = narratorError[rec.id];
+                        if (text) {
+                          return (
+                            <p
+                              className="leading-relaxed text-foreground/90"
+                              data-testid={`narrator-text-${rec.id}`}
+                            >
+                              <span className="mr-1 font-medium uppercase tracking-wider text-[10px] text-accent">
+                                AI
+                              </span>
+                              {text}
+                            </p>
+                          );
+                        }
+                        return (
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="leading-relaxed">
+                              {errorText
+                                ? errorText
+                                : "No AI explanation generated yet."}
+                            </p>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              disabled={isBusy}
+                              onClick={() => void handleGenerateNarration(rec.id)}
+                              data-testid={`narrator-generate-${rec.id}`}
+                            >
+                              {isBusy ? "Generating…" : "Generate"}
+                            </Button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs text-muted-foreground/60">
                       {fmtDatetime(rec.captured_at)}

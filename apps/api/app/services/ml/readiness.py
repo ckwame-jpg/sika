@@ -23,7 +23,11 @@ from app.services.ml.study_progress import (
     walk_forward_history_ready,
 )
 from app.services.model_families import FAMILY_DEFINITIONS, family_definition, parlay_family_key, single_family_key
-from app.services.operator_settings import effective_ml_serving_mode, effective_pick_history_default_n
+from app.services.operator_settings import (
+    effective_ml_serving_mode,
+    effective_narrator_enabled,
+    effective_pick_history_default_n,
+)
 from app.services.predictions import compute_settlement_aging
 
 # Sample size for diagnostic aggregations (buckets, rates, recent-row averages).
@@ -840,6 +844,7 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
             "bucket_beyond_24h": aging.bucket_beyond_24h,
             "total_pending_past_close": aging.total_pending_past_close,
         },
+        "narrator_enabled": effective_narrator_enabled(db),
     }
 
 

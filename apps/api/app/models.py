@@ -798,6 +798,31 @@ class OperatorSetting(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
+class NarratorOutputCache(Base):
+    """Smarter #31 — cached LLM narration per recommendation.
+
+    Keyed by ``recommendation_id`` so a single recommendation gets at
+    most one narration. ``verifier_passed`` indicates whether the
+    grounding-verifier accepted the output; consumers should only
+    surface narrations where this is True (the operator-facing rationale
+    falls back to the mechanical version otherwise).
+    """
+    __tablename__ = "narrator_output_cache"
+    __table_args__ = (
+        UniqueConstraint("recommendation_id", name="uq_narrator_output_recommendation"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    recommendation_id = Column(
+        Integer, ForeignKey("recommendations.id"), nullable=False, index=True
+    )
+    text = Column(Text, nullable=False)
+    verifier_passed = Column(Boolean, nullable=False, default=True)
+    rejected_claims = Column(JSON, default=list)
+    model_name = Column(String, nullable=False)
+    generated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+
+
 class PaperPosition(Base):
     __tablename__ = "paper_positions"
 

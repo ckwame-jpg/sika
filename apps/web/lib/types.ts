@@ -104,6 +104,11 @@ export interface RecommendationRead {
   // Smarter #24 — minutes until the market closes. ``null`` when no
   // close_time is set on the market; clamped at 0 for past close.
   time_to_close_minutes: number | null;
+  // Smarter #31 — verifier-checked LLM explanation. ``null`` when the
+  // narrator toggle is off, no cache exists, or the verifier rejected
+  // the output. The card renders this in addition to (not instead of)
+  // the mechanical rationale.
+  narrator_text: string | null;
 }
 
 interface MarketSnapshotRead {
@@ -468,6 +473,12 @@ export interface ModelReadinessSummaryRead {
    *  The strip's per-pick toggle still overrides this at runtime. */
   pick_history_default_n: number;
   families: ModelFamilyReadinessRead[];
+  /** Smarter #31 — LLM narrator toggle. When ``true`` the recommendation
+   *  cards surface a verifier-checked plain-English explanation
+   *  alongside the mechanical rationale. Defaults to ``false`` so
+   *  operators don't burn OpenAI tokens until they've eyeballed quality
+   *  on a few picks. */
+  narrator_enabled: boolean;
 }
 
 export interface ModelReadinessSettingsUpdate {
@@ -477,6 +488,8 @@ export interface ModelReadinessSettingsUpdate {
   // strip's HISTORY_OPTIONS renders, so a non-canonical write can't
   // round-trip back as a silent fallback to 5.
   pick_history_default_n?: 5 | 10 | 20;
+  /** Smarter #31 — operator toggle for the LLM narrator. */
+  narrator_enabled?: boolean;
 }
 
 export interface PaperPositionRead {

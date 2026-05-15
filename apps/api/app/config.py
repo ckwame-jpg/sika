@@ -130,6 +130,18 @@ class Settings(BaseSettings):
     the_odds_api_base_url: str = "https://api.the-odds-api.com/v4"
     the_odds_api_request_timeout_seconds: float = 15.0
 
+    # Smarter #31 — LLM narrator (OpenAI).
+    # Off by default. Operators toggle via the model-readiness settings
+    # endpoint (persisted in ``OperatorSetting``) so flipping the
+    # feature on/off doesn't require a redeploy. The OpenAI key is
+    # read from ``OPENAI_API_KEY`` env; empty key → narrator service
+    # short-circuits with a clean "not configured" status.
+    openai_api_key: str = ""
+    narrator_openai_model: str = "gpt-4o-mini"
+    narrator_openai_base_url: str = "https://api.openai.com/v1"
+    narrator_request_timeout_seconds: float = 25.0
+    narrator_max_output_tokens: int = 220
+
 
 @lru_cache
 def get_settings() -> Settings:
