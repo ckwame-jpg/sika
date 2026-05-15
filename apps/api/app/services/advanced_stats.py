@@ -124,6 +124,25 @@ def nba_circuit_breaker_open(db: Session, *, now: datetime | None = None) -> boo
     return moment < until
 
 
+def _active_nba_stats_source(settings_override: Any | None = None) -> str:
+    """Smarter #23 phase 2 — pick the upstream_health source label
+    matching the currently-configured NBA stats client.
+
+    ``make_nba_client()`` returns either ``BasketballReferenceClient``
+    (default — stats.nba.com is unreachable from many home / cloud
+    egresses) or ``NbaStatsClient``, gated by ``settings.nba_stats_source``.
+    The upstream-health board needs to attribute failures to whichever
+    client is actually running; recording everything under ``nba_stats``
+    misled operators about which source had gone dark.
+    """
+    settings = settings_override or get_settings()
+    return (
+        "basketball_reference"
+        if settings.nba_stats_source == "basketball_reference"
+        else "nba_stats"
+    )
+
+
 def _record_nba_failure(db: Session, *, error: str | None = None) -> None:
     payload = _operator_get(db, _NBA_CONSECUTIVE_FAIL_KEY) or {}
     count = int(payload.get("count", 0)) + 1
@@ -135,9 +154,10 @@ def _record_nba_failure(db: Session, *, error: str | None = None) -> None:
     # Smarter #23 — surface the failure on the per-upstream health
     # board. The circuit-breaker counter above tells us whether to skip
     # network on the NEXT call; this tells operators whether the source
-    # is currently fresh.
+    # is currently fresh. The source label tracks whichever client is
+    # actually configured (basketball_reference by default).
     from app.services.upstream_health import record_upstream_failure  # noqa: PLC0415 — avoid circular import
-    record_upstream_failure(db, "nba_stats", error or "unknown error")
+    record_upstream_failure(db, _active_nba_stats_source(), error or "unknown error")
 
 
 def _record_nba_success(db: Session) -> None:
@@ -147,7 +167,7 @@ def _record_nba_success(db: Session) -> None:
         _operator_set(db, _NBA_CIRCUIT_KEY, {})
     # Smarter #23 — clear the last_error and stamp last_success_at.
     from app.services.upstream_health import record_upstream_success  # noqa: PLC0415
-    record_upstream_success(db, "nba_stats")
+    record_upstream_success(db, _active_nba_stats_source())
 
 
 # -----------------------------------------------------------------------------

@@ -440,6 +440,11 @@ def refresh_sports_data(
     processed_by_sport: dict[str, int] = {sport_key: 0 for sport_key in sports}
     fetch_errors: dict[str, list[str]] = {}
     touched_event_ids: set[int] = set()
+    # Smarter #23 phase 2 — track ESPN scoreboard reach across the
+    # sports loop so the upstream-health board records one aggregate
+    # entry per refresh tick instead of one-per-sport.
+    espn_scoreboard_invoked = False
+    espn_scoreboard_errors: list[str] = []
     for sport_key in sports:
         adapter = ADAPTERS[sport_key]
         if provider is not None:
@@ -450,12 +455,15 @@ def refresh_sports_data(
                 major_end_day,
             )
         elif sport_key in PUBLIC_MAJOR_SPORTS:
+            espn_scoreboard_invoked = True
             raw_events, sport_errors = _fetch_events_window_with_diagnostics(
                 major_provider,
                 sport_key,
                 major_start_day,
                 major_end_day,
             )
+            if sport_errors:
+                espn_scoreboard_errors.extend(sport_errors)
         else:
             raw_events, sport_errors = _fetch_events_window_with_diagnostics(
                 niche_provider,
@@ -473,6 +481,24 @@ def refresh_sports_data(
             touched_event_ids.add(event.id)
             processed += 1
             processed_by_sport[sport_key] = processed_by_sport.get(sport_key, 0) + 1
+    if espn_scoreboard_invoked:
+        # Smarter #23 phase 2 — emit aggregate ESPN scoreboard health.
+        # Partial failures (some sport_keys failed) record as FAILURE
+        # because operators want to know about any error, not just
+        # all-or-nothing outages. Truncate the message to keep the
+        # operator surface readable.
+        from app.services.upstream_health import (  # noqa: PLC0415 — avoid circular import
+            record_upstream_failure,
+            record_upstream_success,
+        )
+        if espn_scoreboard_errors:
+            record_upstream_failure(
+                db,
+                "espn_scoreboard",
+                "; ".join(espn_scoreboard_errors[:3]),
+            )
+        else:
+            record_upstream_success(db, "espn_scoreboard")
     db.flush()
     return {
         "processed": processed,
@@ -483,6 +509,37 @@ def refresh_sports_data(
 
 
 def refresh_kalshi_markets(
+    db: Session,
+    client: KalshiPublicClient | None = None,
+    *,
+    include_standalone: bool = True,
+    refresh_combo_prop_tickers: bool = True,
+    discover_combo_props: bool = True,
+) -> dict[str, object]:
+    # Smarter #23 phase 2 — record kalshi_markets reachability on the
+    # upstream-health board. Wrap the function body so any unhandled
+    # exception is recorded as a failure (with the operator-visible
+    # error message) AND re-raised to the caller so the refresh-job
+    # row still surfaces the failure in its own details.
+    try:
+        result = _refresh_kalshi_markets_inner(
+            db,
+            client=client,
+            include_standalone=include_standalone,
+            refresh_combo_prop_tickers=refresh_combo_prop_tickers,
+            discover_combo_props=discover_combo_props,
+        )
+    except Exception as exc:
+        from app.services.upstream_health import record_upstream_failure  # noqa: PLC0415
+        record_upstream_failure(db, "kalshi_markets", str(exc) or exc.__class__.__name__)
+        raise
+    else:
+        from app.services.upstream_health import record_upstream_success  # noqa: PLC0415
+        record_upstream_success(db, "kalshi_markets")
+        return result
+
+
+def _refresh_kalshi_markets_inner(
     db: Session,
     client: KalshiPublicClient | None = None,
     *,
@@ -657,6 +714,14 @@ def refresh_current_slate_kalshi_markets(
         fallback["current_slate_targeted_markets_refreshed"] = 0
         fallback["broad_market_fallback_used"] = True
         return fallback
+
+    # Smarter #23 phase 2 — the primary path reached `_persist_market_payload_records`
+    # with non-empty payload_records, meaning at least one `client.get_market`
+    # responded successfully. Record `kalshi_markets` health here too — the
+    # fallback path is the only branch that goes through `refresh_kalshi_markets`'s
+    # wrapper, so without this call the primary path never updates the board.
+    from app.services.upstream_health import record_upstream_success  # noqa: PLC0415
+    record_upstream_success(db, "kalshi_markets")
 
     persisted = _persist_market_payload_records(db, payload_records)
     return {
