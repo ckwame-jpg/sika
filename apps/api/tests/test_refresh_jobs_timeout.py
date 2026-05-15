@@ -553,6 +553,32 @@ def test_market_discovery_gets_longer_worker_timeout(monkeypatch):
     assert refresh_jobs._worker_timeout_seconds(job) == 0.8
 
 
+def test_nba_injury_refresh_gets_dedicated_worker_timeout(monkeypatch):
+    _fast_timeout_settings(monkeypatch)
+    monkeypatch.setattr(refresh_jobs, "NBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS", 0.8)
+    job = RefreshJob(
+        kind="nba_injury_refresh",
+        scope="nba",
+        reason="interval",
+        status="running",
+    )
+
+    assert refresh_jobs._worker_timeout_seconds(job) == 0.8
+
+
+def test_nba_referee_refresh_gets_dedicated_worker_timeout(monkeypatch):
+    _fast_timeout_settings(monkeypatch)
+    monkeypatch.setattr(refresh_jobs, "NBA_REFEREE_REFRESH_WORKER_TIMEOUT_SECONDS", 0.8)
+    job = RefreshJob(
+        kind="nba_referee_refresh",
+        scope="nba",
+        reason="interval",
+        status="running",
+    )
+
+    assert refresh_jobs._worker_timeout_seconds(job) == 0.8
+
+
 def test_lineup_refresh_gets_longer_worker_timeout(monkeypatch):
     _fast_timeout_settings(monkeypatch)
     monkeypatch.setattr(refresh_jobs, "LINEUP_REFRESH_WORKER_TIMEOUT_SECONDS", 0.8)
