@@ -97,14 +97,15 @@ _MLB_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
              "batter_platoon_factor"),
     "home_runs": ("quality_of_contact_factor", "starter_factor_advanced",
                    "park_factor_hr_mult", "weather_factor",
-                   "pitcher_dominance_factor", "batter_platoon_factor"),
+                   "pitcher_dominance_factor", "batter_platoon_factor",
+                   "park_weather_hr_interaction"),
     "rbis": ("lineup_factor", "park_factor_runs_mult", "starter_factor_advanced",
              "batter_platoon_factor", "opposing_bullpen_rest_factor"),
     "runs": ("lineup_factor", "park_factor_runs_mult", "batter_platoon_factor",
              "opposing_bullpen_rest_factor"),
     "total_bases": ("quality_of_contact_factor", "starter_factor_advanced",
                      "park_factor_singles", "weather_factor",
-                     "batter_platoon_factor"),
+                     "batter_platoon_factor", "park_weather_hr_interaction"),
     # Bug #3: pitcher_dominance_factor returns < 1.0 for dominant pitchers
     # (correct for batter hits/HR/walks where their output drops). For batter
     # strikeouts a dominant pitcher should AMPLIFY expected count.
@@ -405,6 +406,65 @@ def _mlb_weather_factor(features: dict[str, Any]) -> float:
     return _clamp(factor)
 
 
+# Smarter #7 — park × weather interaction term for HR / total bases.
+#
+# Park HR factors and the weather factor are independent multipliers
+# today; their MULTIPLICATIVE combination already captures the basic
+# case (Coors at 1.27 × warm weather at 1.05 → 1.33 base bonus). The
+# interaction term adds a small NON-LINEAR bonus when both align in
+# the SAME direction:
+#
+#  - HR-favorable park (>1.0) + warm temp (>70°F) → extra boost
+#    (thin air + warm air + HR-friendly dimensions compound non-linearly).
+#  - HR-suppressing park (<1.0) + cold temp (<70°F) → extra suppression.
+#  - Mixed (favorable park + cold, or pitcher park + warm) → no extra
+#    effect (the independent multipliers handle the basic case fine;
+#    no theoretical reason for them to compound non-linearly).
+#
+# Envelope ±5% — same shape as the other heuristic factors so the
+# interaction can't dominate the base park or weather signals it
+# rides on top of. Dome games skip entirely (weather doesn't matter).
+_PARK_WEATHER_TEMP_BASELINE: float = 70.0
+_PARK_WEATHER_TEMP_RANGE: float = 30.0
+_PARK_WEATHER_INTERACTION_SCALE: float = 0.10
+
+
+def _mlb_park_weather_hr_interaction(features: dict[str, Any]) -> float:
+    """Smarter #7 — park × weather interaction term.
+
+    Returns 1.0 (no-op, filtered out) when:
+    - Either ``park_data_complete`` or ``weather_data_complete`` is < 1.0.
+    - Game is in a dome (``weather_is_dome == 1.0``).
+    - Either signal is at neutral (park=1.0 or temp=70°F) — no
+      interaction magnitude.
+    - Signals point in OPPOSITE directions (one favorable, one not) —
+      the independent multipliers already handle this case.
+
+    Otherwise returns ``1.0 + (park_signal * temp_signal * scale)``,
+    clamped at ±5%.
+    """
+    if float(features.get("park_data_complete") or 0.0) < 1.0:
+        return 1.0
+    if float(features.get("weather_data_complete") or 0.0) < 1.0:
+        return 1.0
+    if float(features.get("weather_is_dome") or 0.0) >= 1.0:
+        return 1.0
+    park_hr = features.get("park_factor_hr")
+    temp_f = features.get("weather_temp_f")
+    if not isinstance(park_hr, (int, float)) or isinstance(park_hr, bool):
+        return 1.0
+    if not isinstance(temp_f, (int, float)) or isinstance(temp_f, bool):
+        return 1.0
+    park_signal = float(park_hr) - 1.0
+    temp_signal = (float(temp_f) - _PARK_WEATHER_TEMP_BASELINE) / _PARK_WEATHER_TEMP_RANGE
+    # Same-sign requirement: only interact when both push the same way.
+    if park_signal * temp_signal <= 0:
+        return 1.0
+    interaction = abs(park_signal) * abs(temp_signal) * _PARK_WEATHER_INTERACTION_SCALE
+    sign = 1.0 if park_signal > 0 else -1.0
+    return _clamp(1.0 + interaction * sign, lo=0.95, hi=1.05)
+
+
 def _mlb_opposing_bullpen_rest_factor(features: dict[str, Any]) -> float:
     """Smarter #6 — bullpen rest multiplier for batter offense stats.
 
@@ -486,6 +546,11 @@ _MLB_FACTOR_FNS = {
     # bullpen-sensitive batter offense stats (rbis, runs). Conservative
     # ±5% envelope; pairs with a future per-game reliever-IP ingestion.
     "opposing_bullpen_rest_factor": _mlb_opposing_bullpen_rest_factor,
+    # Smarter #7 — park × weather interaction term for HR / total bases.
+    # Same-sign non-linear bonus when park HR factor and temperature
+    # both push the same way (Coors + warm = extra boost; Petco + cold
+    # = extra suppression). ±5% envelope.
+    "park_weather_hr_interaction": _mlb_park_weather_hr_interaction,
 }
 
 
