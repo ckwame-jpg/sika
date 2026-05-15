@@ -32,6 +32,13 @@ REFRESH_JOB_KINDS = frozenset({
     "lineup_refresh",
     "advanced_stats_audit",
     "market_discovery",
+    # Smarter #17 phase 2-2 — populate ``NbaInjuryReportCache`` so the
+    # consumer-side ``emit_nba_injury_features`` (Smarter #17 phase 1)
+    # has data to read.
+    "nba_injury_refresh",
+    # Smarter #13 phase 2a-2 — populate ``NbaRefereeAssignmentCache``
+    # ahead of the same-day consumer-side wiring (phase 2b/c/d).
+    "nba_referee_refresh",
 })
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
@@ -48,6 +55,11 @@ WEATHER_REFRESH_WORKER_TIMEOUT_SECONDS = 120.0
 CLEANUP_WORKER_TIMEOUT_SECONDS = 120.0
 SHADOW_CAPTURE_WORKER_TIMEOUT_SECONDS = 180.0
 ADVANCED_STATS_AUDIT_WORKER_TIMEOUT_SECONDS = 120.0
+# Smarter #17 / #13 phase 2 — both cache refreshes are single HTTP
+# GETs (ESPN injuries / official.nba.com referees) plus a single
+# upsert. Generous-enough budget for a slow upstream.
+NBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
+NBA_REFEREE_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
 PREDICTION_SETTLEMENT_BATCH_SIZE = 100
 PARLAY_SETTLEMENT_BATCH_SIZE = 50
 # Bug #22: cap the transient-error requeue loop so one persistent
@@ -284,6 +296,10 @@ def _worker_timeout_seconds(job: RefreshJob) -> float:
         return max(default_timeout, SHADOW_CAPTURE_WORKER_TIMEOUT_SECONDS)
     if job.kind == "advanced_stats_audit":
         return max(default_timeout, ADVANCED_STATS_AUDIT_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "nba_injury_refresh":
+        return max(default_timeout, NBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "nba_referee_refresh":
+        return max(default_timeout, NBA_REFEREE_REFRESH_WORKER_TIMEOUT_SECONDS)
     return default_timeout
 
 
@@ -1450,6 +1466,36 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     "supported_mlb_props_seen": int(summary.get("supported_mlb_props_seen") or 0),
                     "market_snapshots_written": int(summary.get("market_snapshots_written") or 0),
                     "newly_mapped_to_events": int(mapped),
+                }
+            elif job.kind == "nba_injury_refresh":
+                # Smarter #17 phase 2-2 — populates ``NbaInjuryReportCache``
+                # so the scoring-side ``emit_nba_injury_features`` gate
+                # (Smarter #17 phase 1) has data to suppress on. The
+                # loader is its own cache-or-fetch shape (handles upstream-
+                # health recording + the savepoint+IntegrityError race
+                # retry) so the job-kind handler is a one-liner.
+                from app.services.nba_injury_report import load_nba_injury_report
+
+                payload = load_nba_injury_report(db, allow_network=True)
+                job.details = {
+                    **(job.details or {}),
+                    "players": len((payload or {}).get("players") or {}),
+                    "report_updated_at": (payload or {}).get("report_updated_at"),
+                }
+            elif job.kind == "nba_referee_refresh":
+                # Smarter #13 phase 2a-2 — populates ``NbaRefereeAssignmentCache``
+                # so the consumer-side referee feature emission
+                # (phase 2b/c/d, deferred) has assignments to join
+                # against per-referee tendency stats.
+                from app.services.nba_referee_assignments import (
+                    load_nba_referee_assignments,
+                )
+
+                payload = load_nba_referee_assignments(db, allow_network=True)
+                job.details = {
+                    **(job.details or {}),
+                    "assignments": len((payload or {}).get("assignments") or []),
+                    "page_date": (payload or {}).get("page_date"),
                 }
             else:  # pragma: no cover - guarded above
                 raise ValueError(f"Unsupported refresh job kind: {job.kind}")

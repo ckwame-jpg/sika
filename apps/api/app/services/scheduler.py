@@ -283,6 +283,32 @@ def _queue_lineup_refresh_job() -> bool:
     return _queue_job(kind="lineup_refresh", scope="mlb", reason="interval")
 
 
+def _queue_nba_injury_refresh_job() -> bool:
+    """Smarter #17 phase 2-2 — queue an NBA injury-report refresh.
+
+    Hits ESPN's ``/basketball/nba/injuries`` and persists the parsed
+    payload into ``NbaInjuryReportCache``. The cache TTL self-tightens
+    to 15 min when an NBA tip-off is inside the final hour
+    (Smarter #29), so the scheduler's coarser cadence is enough —
+    the near-tip near-zero-staleness happens via the
+    ``_effective_injury_report_ttl_minutes`` helper on read.
+    """
+    return _queue_job(kind="nba_injury_refresh", scope="nba", reason="interval")
+
+
+def _queue_nba_referee_refresh_job() -> bool:
+    """Smarter #13 phase 2a-2 — queue an NBA referee-assignments refresh.
+
+    Scrapes ``official.nba.com/referee-assignments`` and persists the
+    parsed dataclass into ``NbaRefereeAssignmentCache``. NBA posts
+    assignments the afternoon-of (typically around 5pm ET), so the
+    scheduler ticks twice — once around 13:00 UTC (~9am ET, catches
+    yesterday's stale data + an early publication) and once at
+    21:30 UTC (~5:30pm ET, catches the same-day publication).
+    """
+    return _queue_job(kind="nba_referee_refresh", scope="nba", reason="interval")
+
+
 def queue_startup_refresh_if_stale() -> bool:
     if not startup_refresh_needed():
         return False
@@ -605,6 +631,34 @@ def start_scheduler() -> None:
         _queue_lineup_refresh_job,
         trigger=CronTrigger(hour="11,15", minute=0),
         id="mlb_lineup_refresh_twice_daily",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Smarter #17 phase 2-2 — NBA injury refresh. ESPN publishes injury
+    # updates throughout the day; we hit hourly while the slate is
+    # potentially live (12:00–05:00 UTC ≈ 8am–1am ET) so a player ruled
+    # out late afternoon is captured within an hour. The cache TTL
+    # tightens to 15 min near tip-off (Smarter #29) so the on-read
+    # path stays fresh; this scheduler cadence is the write-side floor.
+    scheduler.add_job(
+        _queue_nba_injury_refresh_job,
+        trigger=CronTrigger(hour="12-23,0-5", minute=15),
+        id="nba_injury_refresh_hourly",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Smarter #13 phase 2a-2 — NBA referee refresh. official.nba.com
+    # posts assignments the afternoon-of for that night's games,
+    # typically around 5pm ET (= 21:00–22:00 UTC). Two daily ticks
+    # at HH:30 — 13:30 catches the (rare) early publication; 21:30
+    # sits right after the main publication window so the cache is
+    # warm before evening tip-offs.
+    scheduler.add_job(
+        _queue_nba_referee_refresh_job,
+        trigger=CronTrigger(hour="13,21", minute=30),
+        id="nba_referee_refresh_twice_daily",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
