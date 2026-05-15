@@ -761,6 +761,32 @@ class NbaInjuryReportCache(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
 
+class NbaRefereeAssignmentCache(Base):
+    """Smarter #13 phase 2a — cached NBA referee assignments per day.
+
+    Keyed by ``fetched_date`` (UTC YYYY-MM-DD), mirroring
+    ``NbaInjuryReportCache``. NBA posts referee assignments the
+    afternoon-of (typically around 5pm ET) for that night's games;
+    a 4-hour TTL refreshes ~6x per day so the publication window
+    is caught without hammering official.nba.com.
+
+    ``payload`` stores the serialized ``NbaRefereeAssignmentDay``
+    (page_date + per-game crew slots). The consumer side (Phase
+    2b/c/d) joins this with per-referee tendency stats to produce
+    scoring features.
+    """
+    __tablename__ = "nba_referee_assignment_cache"
+    __table_args__ = (
+        UniqueConstraint("fetched_date", name="uq_nba_referee_assignment_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    fetched_date = Column(String, nullable=False, index=True)  # YYYY-MM-DD
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class ModelFamilyRuntimeHealth(Base):
     __tablename__ = "model_family_runtime_health"
 

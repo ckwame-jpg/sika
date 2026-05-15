@@ -49,6 +49,7 @@ UPSTREAM_SOURCES: tuple[str, ...] = (
     "basketball_reference",
     "mlb_stats",
     "the_odds_api",
+    "nba_referee_assignments",
 )
 
 
