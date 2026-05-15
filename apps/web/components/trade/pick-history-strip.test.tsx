@@ -40,6 +40,13 @@ function summaryFixture(n = 5): ModelReadinessSummaryRead {
     promotion_stability_days_required: 3,
     pick_history_default_n: n,
     families: [],
+    settlement_aging: {
+      bucket_0_to_1h: 0,
+      bucket_1_to_6h: 0,
+      bucket_6_to_24h: 0,
+      bucket_beyond_24h: 0,
+      total_pending_past_close: 0,
+    },
     narrator_enabled: false,
   };
 }

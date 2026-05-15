@@ -454,6 +454,18 @@ export interface ModelFamilyReadinessRead {
   last_fallback_event_at: string | null;
 }
 
+/** Smarter #26 — settled-outcome SLA aging buckets.
+ *  Counts of predictions stuck in ``pending`` past their market close,
+ *  bucketed by how long ago the close was. Default zeros keep callers
+ *  rendering cleanly when the backend hasn't populated the field yet. */
+export interface SettlementAgingRead {
+  bucket_0_to_1h: number;
+  bucket_1_to_6h: number;
+  bucket_6_to_24h: number;
+  bucket_beyond_24h: number;
+  total_pending_past_close: number;
+}
+
 export interface ModelReadinessSummaryRead {
   generated_at: string;
   ml_serving_mode: "heuristic" | "shadow" | "ml";
@@ -473,6 +485,9 @@ export interface ModelReadinessSummaryRead {
    *  The strip's per-pick toggle still overrides this at runtime. */
   pick_history_default_n: number;
   families: ModelFamilyReadinessRead[];
+  /** Smarter #26 — predictions stuck past close, bucketed by hours-since
+   *  the market closed. Surfaces as a badge on the readiness panel. */
+  settlement_aging: SettlementAgingRead;
   /** Smarter #31 — LLM narrator toggle. When ``true`` the recommendation
    *  cards surface a verifier-checked plain-English explanation
    *  alongside the mechanical rationale. Defaults to ``false`` so
