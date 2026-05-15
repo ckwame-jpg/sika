@@ -140,6 +140,12 @@ class Settings(BaseSettings):
     the_odds_api_key: str = ""
     the_odds_api_base_url: str = "https://api.the-odds-api.com/v4"
     the_odds_api_request_timeout_seconds: float = 15.0
+    # Smarter #18 phase 2 — H2H quote cache TTL. Free-tier monthly cap
+    # (500 reqs) is the binding constraint; with NBA + MLB simultaneously
+    # active, ~30 minutes between fetches gives headroom for ~2 fetches
+    # per sport per hour over a 12-hour active window (~48/day,
+    # ~1500/month — well under the cap with 2+ sports).
+    the_odds_api_cache_ttl_minutes: int = 30
 
     # Smarter #31 — LLM narrator (OpenAI).
     # Off by default. Operators toggle via the model-readiness settings
