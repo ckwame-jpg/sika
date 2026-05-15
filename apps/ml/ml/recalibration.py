@@ -53,13 +53,29 @@ before turning on automated recalibration.
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Sequence
 
+import joblib
 import numpy as np
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import brier_score_loss
+
+
+logger = logging.getLogger(__name__)
+
+
+# Canonical filenames inside an artifact directory. Both the CLI
+# command (Phase 2b) and the serve-time loader (Phase 2c) read /
+# write through these constants so the on-disk contract is one
+# place. Kept module-level so callers can compose paths without
+# importing the helpers.
+SIDECAR_RECALIBRATOR_FILENAME: str = "isotonic_recalibrator.joblib"
+SIDECAR_METADATA_FILENAME: str = "isotonic_recalibration_metadata.json"
 
 
 # Default rolling-window width. 30 days is the punch-list spec — long
@@ -370,3 +386,134 @@ def recalibrate_with_rolling_window(
         sample_size=sample_size,
         insufficient_samples=False,
     )
+
+
+# -----------------------------------------------------------------------------
+# Smarter #20 phase 2a — sidecar file I/O
+#
+# Phase 1 (PR #96) shipped the math. This section defines the
+# on-disk contract so the future CLI command (phase 2b — fits a
+# recalibrator from settled DB predictions and persists alongside an
+# existing artifact) and the serve-time loader (phase 2c — reads
+# the sidecar at inference and post-processes raw probabilities)
+# can both depend on a single canonical format.
+#
+# Sidecar files live INSIDE the per-family artifact directory next
+# to ``model.joblib`` / ``feature_spec.json`` / ``training_metadata.json``,
+# so the artifact directory remains the unit of deployment:
+#
+# ::
+#
+#     artifacts/<model-name>-<version>/
+#       ├── model.joblib                       (existing — Phase 1 of training)
+#       ├── feature_spec.json                  (existing)
+#       ├── training_metadata.json             (existing)
+#       ├── isotonic_recalibrator.joblib       (NEW — joblib-pickled IsotonicRegression)
+#       └── isotonic_recalibration_metadata.json (NEW — JSON sidecar manifest)
+#
+# The JSON sidecar carries the fit-time provenance (window dates,
+# sample size, before / after metrics) so an operator can read it
+# at the filesystem level without un-pickling. The joblib payload
+# is the IsotonicRegression instance itself.
+
+
+def write_sidecar_recalibrator(
+    artifact_dir: Path | str,
+    result: RecalibrationResult,
+) -> tuple[Path, Path]:
+    """Persist a successful recalibration result into ``artifact_dir``.
+
+    Writes two files atomically (per-file, not as a transaction):
+    - ``isotonic_recalibrator.joblib`` — the sklearn estimator.
+    - ``isotonic_recalibration_metadata.json`` — provenance.
+
+    Raises ``ValueError`` when ``result.calibrator`` is ``None``
+    (e.g. ``insufficient_samples=True``) — there's nothing to write.
+    The caller should gate on ``result.calibrator is not None`` and
+    ideally on ``result.brier_improvement > 0`` so a noisier
+    recalibrator doesn't replace a quieter one.
+
+    Returns the two written paths so callers can reference them in
+    log lines or manifest entries.
+    """
+    if result.calibrator is None:
+        raise ValueError(
+            "Cannot write sidecar for a RecalibrationResult with calibrator=None "
+            "(insufficient_samples or empty window)"
+        )
+    target = Path(artifact_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    joblib_path = target / SIDECAR_RECALIBRATOR_FILENAME
+    metadata_path = target / SIDECAR_METADATA_FILENAME
+
+    joblib.dump(result.calibrator, joblib_path)
+    metadata = {
+        "schema_version": 1,
+        "window_start": result.window_start.isoformat(),
+        "window_end": result.window_end.isoformat(),
+        "sample_size": int(result.sample_size),
+        "metrics_before": {
+            "brier": result.metrics_before.brier,
+            "expected_calibration_error": result.metrics_before.expected_calibration_error,
+            "sample_size": result.metrics_before.sample_size,
+        },
+        "metrics_after": {
+            "brier": result.metrics_after.brier,
+            "expected_calibration_error": result.metrics_after.expected_calibration_error,
+            "sample_size": result.metrics_after.sample_size,
+        },
+        "brier_improvement": result.brier_improvement,
+        "ece_improvement": result.ece_improvement,
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+    return joblib_path, metadata_path
+
+
+def load_sidecar_recalibrator(
+    artifact_dir: Path | str,
+) -> IsotonicRegression | None:
+    """Load a previously-written sidecar recalibrator from
+    ``artifact_dir``, or ``None`` when the sidecar isn't present.
+
+    Returning ``None`` for the missing-file case is deliberate — the
+    serve-time path can call this unconditionally and skip the
+    post-process when the sidecar doesn't exist. No exception, no
+    log spam.
+
+    Raises ``FileNotFoundError`` only when ``artifact_dir`` itself
+    doesn't exist — that's a deployment configuration error worth
+    surfacing rather than silently swallowing.
+    """
+    target = Path(artifact_dir)
+    if not target.exists():
+        raise FileNotFoundError(f"artifact directory not found: {target}")
+    joblib_path = target / SIDECAR_RECALIBRATOR_FILENAME
+    if not joblib_path.exists():
+        return None
+    return joblib.load(joblib_path)
+
+
+def load_sidecar_metadata(artifact_dir: Path | str) -> dict | None:
+    """Load the sidecar's JSON metadata for operator inspection.
+
+    Returns ``None`` when the metadata file doesn't exist (no sidecar
+    was ever written). Returns the parsed dict otherwise. Operators
+    use this to see when the last recalibration ran and what the
+    fit-time improvement looked like.
+    """
+    target = Path(artifact_dir)
+    if not target.exists():
+        raise FileNotFoundError(f"artifact directory not found: {target}")
+    metadata_path = target / SIDECAR_METADATA_FILENAME
+    if not metadata_path.exists():
+        return None
+    return json.loads(metadata_path.read_text(encoding="utf-8"))
+
+
+def sidecar_is_present(artifact_dir: Path | str) -> bool:
+    """Cheap existence-check for the sidecar joblib. Doesn't open
+    the file or load the estimator — for use in hot paths where the
+    serve-time loader wants to short-circuit before any pickle I/O.
+    """
+    target = Path(artifact_dir)
+    return (target / SIDECAR_RECALIBRATOR_FILENAME).exists()
