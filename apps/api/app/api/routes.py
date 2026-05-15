@@ -88,6 +88,8 @@ from app.services.operator_settings import (
     set_ml_serving_mode,
     set_narrator_enabled,
     set_pick_history_default_n,
+    set_sportsbook_disagreement_min_book_count,
+    set_sportsbook_disagreement_threshold,
 )
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.parlays import settle_parlay_predictions
@@ -1259,6 +1261,13 @@ def update_model_readiness_settings(
         set_pick_history_default_n(db, payload.pick_history_default_n)
     if payload.narrator_enabled is not None:
         set_narrator_enabled(db, payload.narrator_enabled)
+    # Smarter #18 — sportsbook disagreement knobs (PR #106 deferred-by-
+    # design item). Each independently optional so a partial PATCH that
+    # touches only one knob doesn't clobber the other.
+    if payload.sportsbook_disagreement_threshold is not None:
+        set_sportsbook_disagreement_threshold(db, payload.sportsbook_disagreement_threshold)
+    if payload.sportsbook_disagreement_min_book_count is not None:
+        set_sportsbook_disagreement_min_book_count(db, payload.sportsbook_disagreement_min_book_count)
     db.commit()
     return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
 

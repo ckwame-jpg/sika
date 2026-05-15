@@ -736,6 +736,13 @@ class ModelReadinessSummaryRead(BaseModel):
     # Smarter #31 — LLM narrator toggle. False by default so operators
     # don't burn tokens until they've eyeballed quality on a few picks.
     narrator_enabled: bool = False
+    # Smarter #18 — sportsbook disagreement suppression knobs. The
+    # toggle is exposed at a separate operator surface (REPL today);
+    # the threshold + min_book_count expose here so operators can
+    # tune the rule's sensitivity from the readiness panel.
+    # Defaults: 0.15 (15-pp gap) AND ≥3 books before the rule fires.
+    sportsbook_disagreement_threshold: float = 0.15
+    sportsbook_disagreement_min_book_count: int = 3
 
 
 class ModelReadinessSettingsUpdate(BaseModel):
@@ -756,6 +763,14 @@ class ModelReadinessSettingsUpdate(BaseModel):
     # (partial-PATCH idiom) so changing only this knob doesn't
     # require resending the other settings.
     narrator_enabled: bool | None = None
+    # Smarter #18 — sportsbook disagreement suppression knobs. The
+    # writers in operator_settings.py are permissive (accept any
+    # numeric, clamp at read time) so operators see typo-induced
+    # clamping on the next read; we still validate at the API
+    # boundary to catch obvious typos (1.5 / -0.1 / 0 books) before
+    # the writer is called.
+    sportsbook_disagreement_threshold: float | None = Field(default=None, gt=0.0, lt=1.0)
+    sportsbook_disagreement_min_book_count: int | None = Field(default=None, ge=1)
 
 
 class MarketHistoryPointRead(BaseModel):
