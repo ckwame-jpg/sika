@@ -142,3 +142,150 @@ def set_narrator_enabled(db: Session, enabled: bool) -> OperatorSetting:
     row.updated_at = _now_utc()
     db.flush()
     return row
+
+
+# Smarter #18 phase 2d — sportsbook disagreement suppression. Off by
+# default so operators can eyeball the diagnostic emission (phase 2c)
+# on real picks before letting the rule actually filter recommendations.
+# Defaults aim for "thick consensus, large gap" → ≥3 books AND
+# ≥15-pp disagreement.
+SPORTSBOOK_DISAGREEMENT_SUPPRESSION_ENABLED_KEY = "sportsbook_disagreement_suppression_enabled"
+SPORTSBOOK_DISAGREEMENT_THRESHOLD_KEY = "sportsbook_disagreement_threshold_pp"
+SPORTSBOOK_DISAGREEMENT_MIN_BOOK_COUNT_KEY = "sportsbook_disagreement_min_book_count"
+
+DEFAULT_SPORTSBOOK_DISAGREEMENT_THRESHOLD = 0.15
+DEFAULT_SPORTSBOOK_DISAGREEMENT_MIN_BOOK_COUNT = 3
+
+
+def effective_sportsbook_disagreement_suppression_enabled(db: Session | None = None) -> bool:
+    if db is None:
+        return False
+    row = db.scalar(
+        select(OperatorSetting).where(
+            OperatorSetting.key == SPORTSBOOK_DISAGREEMENT_SUPPRESSION_ENABLED_KEY
+        )
+    )
+    if row is None:
+        return False
+    return bool(dict(row.value or {}).get("enabled", False))
+
+
+def set_sportsbook_disagreement_suppression_enabled(
+    db: Session, enabled: bool
+) -> OperatorSetting:
+    """Persist the operator-side toggle for the sportsbook
+    disagreement suppression rule. Idempotent."""
+    row = db.scalar(
+        select(OperatorSetting).where(
+            OperatorSetting.key == SPORTSBOOK_DISAGREEMENT_SUPPRESSION_ENABLED_KEY
+        )
+    )
+    if row is None:
+        row = OperatorSetting(key=SPORTSBOOK_DISAGREEMENT_SUPPRESSION_ENABLED_KEY)
+        db.add(row)
+    row.value = {"enabled": bool(enabled), "source": "operator"}
+    row.updated_at = _now_utc()
+    db.flush()
+    return row
+
+
+def effective_sportsbook_disagreement_threshold(db: Session | None = None) -> float:
+    """Return the configured pp-disagreement threshold. Default 0.15
+    (15 percentage points) when no row exists.
+
+    PATCH-endpoint wiring + readiness-summary surfacing is
+    intentionally deferred to a follow-up: the initial rollout
+    leaves the default in place while operators eyeball the
+    suppression behavior. Tuning happens via
+    ``set_sportsbook_disagreement_threshold`` (operator-only call)
+    until the UI surface lands.
+    """
+    if db is None:
+        return DEFAULT_SPORTSBOOK_DISAGREEMENT_THRESHOLD
+    row = db.scalar(
+        select(OperatorSetting).where(
+            OperatorSetting.key == SPORTSBOOK_DISAGREEMENT_THRESHOLD_KEY
+        )
+    )
+    if row is None:
+        return DEFAULT_SPORTSBOOK_DISAGREEMENT_THRESHOLD
+    raw = dict(row.value or {}).get("threshold")
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+        return DEFAULT_SPORTSBOOK_DISAGREEMENT_THRESHOLD
+    # Clamp to (0, 1) — anything outside that is meaningless for a
+    # probability gap and likely an operator typo.
+    if not 0.0 < float(raw) < 1.0:
+        return DEFAULT_SPORTSBOOK_DISAGREEMENT_THRESHOLD
+    return float(raw)
+
+
+def set_sportsbook_disagreement_threshold(db: Session, threshold: float) -> OperatorSetting:
+    """Persist the operator-side suppression threshold. Idempotent.
+
+    Values outside ``(0.0, 1.0)`` get the default at read time —
+    this writer accepts any numeric so operators can see (via the
+    next ``effective_*`` read) when their value got clamped.
+    """
+    row = db.scalar(
+        select(OperatorSetting).where(
+            OperatorSetting.key == SPORTSBOOK_DISAGREEMENT_THRESHOLD_KEY
+        )
+    )
+    if row is None:
+        row = OperatorSetting(key=SPORTSBOOK_DISAGREEMENT_THRESHOLD_KEY)
+        db.add(row)
+    row.value = {"threshold": float(threshold), "source": "operator"}
+    row.updated_at = _now_utc()
+    db.flush()
+    return row
+
+
+def effective_sportsbook_disagreement_min_book_count(db: Session | None = None) -> int:
+    """Return the minimum book count required before the
+    disagreement rule will fire. Default 3.
+
+    PATCH-endpoint wiring + readiness-summary surfacing deferred to a
+    follow-up (see ``effective_sportsbook_disagreement_threshold``
+    docstring for the rationale).
+    """
+    if db is None:
+        return DEFAULT_SPORTSBOOK_DISAGREEMENT_MIN_BOOK_COUNT
+    row = db.scalar(
+        select(OperatorSetting).where(
+            OperatorSetting.key == SPORTSBOOK_DISAGREEMENT_MIN_BOOK_COUNT_KEY
+        )
+    )
+    if row is None:
+        return DEFAULT_SPORTSBOOK_DISAGREEMENT_MIN_BOOK_COUNT
+    raw = dict(row.value or {}).get("min_book_count")
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
+        return DEFAULT_SPORTSBOOK_DISAGREEMENT_MIN_BOOK_COUNT
+    # Reviewer LOW catch: an unreasonably high value (operator typo
+    # like ``300`` for "thirty") would silently disable the rule. The
+    # Odds API free tier reports up to ~15 books per market in
+    # practice; cap at 100 so values past that fall back to the
+    # default rather than silently no-op.
+    if raw > 100:
+        return DEFAULT_SPORTSBOOK_DISAGREEMENT_MIN_BOOK_COUNT
+    return int(raw)
+
+
+def set_sportsbook_disagreement_min_book_count(db: Session, min_book_count: int) -> OperatorSetting:
+    """Persist the operator-side minimum book count. Idempotent.
+
+    Values outside ``[1, 100]`` get the default at read time —
+    see ``effective_sportsbook_disagreement_min_book_count`` for
+    the clamping rationale.
+    """
+    row = db.scalar(
+        select(OperatorSetting).where(
+            OperatorSetting.key == SPORTSBOOK_DISAGREEMENT_MIN_BOOK_COUNT_KEY
+        )
+    )
+    if row is None:
+        row = OperatorSetting(key=SPORTSBOOK_DISAGREEMENT_MIN_BOOK_COUNT_KEY)
+        db.add(row)
+    row.value = {"min_book_count": int(min_book_count), "source": "operator"}
+    row.updated_at = _now_utc()
+    db.flush()
+    return row

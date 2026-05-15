@@ -170,6 +170,8 @@ def _suppression_outcome_reason(scored: ScoredRecommendation, *, current_watchli
         return "suppressed_player_injury_out"
     if "player_injury_doubtful" in suppression_reasons:
         return "suppressed_player_injury_doubtful"
+    if "model_book_disagreement" in suppression_reasons:
+        return "suppressed_model_book_disagreement"
     if "no_side_not_actionable_on_kalshi" in suppression_reasons:
         return "suppressed_no_side_not_actionable"
     if "min_edge" in suppression_reasons or "yes_side_negative_edge" in suppression_reasons:
@@ -2313,6 +2315,65 @@ def _single_scoring_adjustments(
         sportsbook_diagnostics = {}
     if sportsbook_diagnostics:
         diagnostics.update(sportsbook_diagnostics)
+        # Smarter #18 phase 2d — when the consensus disagrees with
+        # the model by more than ``threshold_pp`` AND the consensus
+        # is averaged from at least ``min_book_count`` books, flag
+        # the recommendation for suppression. ``_build_scored_recommendation``
+        # reads ``sportsbook_disagreement_suppression`` from the
+        # diagnostics dict and appends it to ``suppression_reasons``.
+        # OFF by default — operators eyeball the diagnostic in phase 2c
+        # first, then flip the toggle when confident.
+        from app.services.operator_settings import (  # noqa: PLC0415 — avoid cycle
+            effective_sportsbook_disagreement_min_book_count,
+            effective_sportsbook_disagreement_suppression_enabled,
+            effective_sportsbook_disagreement_threshold,
+        )
+        try:
+            suppression_enabled = effective_sportsbook_disagreement_suppression_enabled(db)
+        except Exception as exc:  # noqa: BLE001 — settings read must never break scoring
+            logger.warning("sportsbook disagreement toggle read failed: %s", exc)
+            suppression_enabled = False
+        if suppression_enabled:
+            try:
+                threshold = effective_sportsbook_disagreement_threshold(db)
+                min_book_count = effective_sportsbook_disagreement_min_book_count(db)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("sportsbook disagreement settings read failed: %s", exc)
+                threshold = 0.15
+                min_book_count = 3
+            consensus_prob = sportsbook_diagnostics.get("sportsbook_consensus_prob")
+            book_count = sportsbook_diagnostics.get("sportsbook_book_count")
+            # Round the gap to 4 decimals (same precision the consensus
+            # prob is reported at) so the boundary check isn't fooled
+            # by float representation — ``0.60 - 0.45`` = 0.14999...97
+            # in IEEE-754, which would silently miss the threshold.
+            gap = (
+                round(abs(float(probability_yes) - float(consensus_prob)), 4)
+                if isinstance(consensus_prob, (int, float))
+                else None
+            )
+            if (
+                gap is not None
+                and isinstance(book_count, int)
+                and book_count >= min_book_count
+                and gap >= threshold
+            ):
+                # Emit a structured diagnostic so the suppression-reason
+                # mapper can produce the right outcome label and so
+                # operators can see what the gap was on each pick.
+                # ``sportsbook_disagreement_gap`` is SIGNED (probability_yes
+                # − consensus_prob): positive means sika thinks the
+                # selected side is MORE likely than the book consensus;
+                # negative means sika thinks it's LESS likely. The
+                # absolute-value threshold check above suppresses on
+                # either direction, but operators see the sign to
+                # quickly know "are we more bullish or more bearish
+                # than the book?"
+                diagnostics["sportsbook_disagreement_suppression"] = "model_book_disagreement"
+                diagnostics["sportsbook_disagreement_gap"] = round(
+                    float(probability_yes) - float(consensus_prob), 4
+                )
+                diagnostics["sportsbook_disagreement_threshold"] = round(float(threshold), 4)
     return adjusted_confidence, diagnostics
 
 
@@ -2687,6 +2748,14 @@ def _build_scored_recommendation(
     injury_reason = str(scoring_diagnostics.get("injury_suppression_reason") or "")
     if injury_reason in {"player_injury_out", "player_injury_doubtful"}:
         suppression_reasons.append(injury_reason)
+    # Smarter #18 phase 2d: sportsbook consensus disagrees with the
+    # model by more than the operator-configured pp threshold (and
+    # the consensus has enough books to be authoritative). Flag set
+    # inside ``_single_scoring_adjustments``; this just appends to
+    # the suppression list so the recommendation gets dropped from
+    # the watchlist with a clear outcome reason.
+    if str(scoring_diagnostics.get("sportsbook_disagreement_suppression") or "") == "model_book_disagreement":
+        suppression_reasons.append("model_book_disagreement")
     signal_diagnostics = {
         **signal_diagnostics,
         "suppression_reasons": suppression_reasons,
