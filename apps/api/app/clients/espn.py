@@ -126,6 +126,23 @@ class EspnPublicClient:
             return self._http_client.get(url, **kwargs)
         return httpx.get(url, **kwargs)
 
+    def fetch_nba_injury_report(self) -> dict[str, Any]:
+        """Smarter #17 phase 2 — fetch ESPN's current NBA injury report.
+
+        Returns the raw JSON. ESPN's response wraps the per-team blocks
+        under ``injuries`` (a list of ``{team, injuries: [...]}`` entries);
+        the loader in ``services/nba_injury_report.py`` flattens that to
+        a player-keyed dict for the Smarter #17 consumer side.
+
+        Raises ``httpx.HTTPStatusError`` on 4xx/5xx so the loader's
+        exception path can fall back to the cached payload (and record
+        the failure once Smarter #23 wires ESPN into upstream-health).
+        """
+        url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
+        response = self._get(url, timeout=20)
+        response.raise_for_status()
+        return response.json()
+
     def search_player(
         self,
         query: str,
