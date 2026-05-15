@@ -137,7 +137,8 @@ def normalize_team_name(name: str) -> str:
     3. Lowercase.
     4. Remove punctuation (keep alphanumeric + spaces).
     5. Expand city abbreviations ("LA Lakers" → "los angeles lakers").
-    6. Drop generic words (``the``, ``fc``, ``city``).
+    6. Drop generic words (``the``, ``fc``, ``ii``). ``city`` is
+       intentionally kept — see ``_DROP_WORDS`` for the rationale.
     7. Collapse consecutive whitespace.
 
     Returns the empty string for non-string / empty input — the
@@ -324,6 +325,70 @@ def match_odds_api_event(
         if best is None or similarity > best.similarity:
             best = EventMatchResult(
                 event_id=event.id, similarity=similarity, orientation=orientation,
+            )
+    return best
+
+
+def find_matching_odds_event(
+    sika_event: Event,
+    odds_events: Iterable[dict[str, Any]],
+    *,
+    time_window_hours: float = 2.0,
+    min_similarity: float = 0.7,
+) -> tuple[dict[str, Any], EventMatchResult] | None:
+    """Reverse-direction matcher: given a sika ``Event``, find the
+    best-matching Odds API event from the supplied list.
+
+    Useful in the scoring path, where the caller already has a sika
+    event in hand and wants to look up the corresponding upstream
+    quote. Returns ``(odds_event, EventMatchResult)`` on a clearing
+    match, or ``None`` when no odds event clears ``min_similarity``.
+
+    Performs the same sport-filter + time-window + pair-score logic
+    as ``match_odds_api_event`` but without the SQL candidate query
+    (the sika event is fixed).
+    """
+    sika_home, sika_away = _sika_event_home_away_names(sika_event)
+    if not sika_home or not sika_away:
+        return None
+    sika_starts_at = _coerce_utc(sika_event.starts_at)
+    if sika_starts_at is None:
+        return None
+    window_seconds = time_window_hours * 3600
+
+    best: tuple[dict[str, Any], EventMatchResult] | None = None
+    for odds_event in odds_events:
+        if not isinstance(odds_event, dict):
+            continue
+        # Sport filter — only consider odds events whose slug maps to
+        # this sika event's sport_key.
+        slug = odds_event.get("sport_key")
+        if not isinstance(slug, str):
+            continue
+        if odds_api_slug_to_sika_sport(slug) != sika_event.sport_key:
+            continue
+        # Time window.
+        commence_at = _parse_odds_api_timestamp(odds_event.get("commence_time"))
+        if commence_at is None:
+            continue
+        if abs((commence_at - sika_starts_at).total_seconds()) > window_seconds:
+            continue
+        # Team-name pair score.
+        odds_home = odds_event.get("home_team")
+        odds_away = odds_event.get("away_team")
+        if not isinstance(odds_home, str) or not isinstance(odds_away, str):
+            continue
+        similarity, orientation = _score_pair(odds_home, odds_away, sika_home, sika_away)
+        if similarity < min_similarity:
+            continue
+        if best is None or similarity > best[1].similarity:
+            best = (
+                odds_event,
+                EventMatchResult(
+                    event_id=sika_event.id,
+                    similarity=similarity,
+                    orientation=orientation,
+                ),
             )
     return best
 
