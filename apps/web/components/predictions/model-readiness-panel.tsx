@@ -14,6 +14,7 @@ import type {
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SettlementAgingBadge } from "@/components/predictions/settlement-aging-badge";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
 
 type RuntimeMode = ModelReadinessSummaryRead["ml_serving_mode"];
@@ -519,6 +520,9 @@ export function ModelReadinessPanel() {
               </p>
             </div>
           ) : null}
+          <div className="mb-4">
+            <SettlementAgingBadge aging={summary.settlement_aging} />
+          </div>
           <div className="mb-4 grid gap-3 md:grid-cols-3">
             <div className="stats-tile">
               <p className="stats-tile-label">Global Mode</p>
