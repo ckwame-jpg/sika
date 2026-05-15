@@ -126,6 +126,63 @@ class WatchlistGenerationSummary:
     quality_tier_counts: dict[str, int] = field(default_factory=dict)
 
 
+def _mlb_bullpen_total_factor(
+    db: Session, *, event: Event, left: EventParticipant, right: EventParticipant,
+) -> tuple[float, dict[str, float]]:
+    """Smarter #6 phase 2 — combined bullpen rest factor for MLB
+    game-line totals.
+
+    Phase 1 (PR #78) shipped the bullpen rest infrastructure
+    (``count_team_games_in_window`` + ``bullpen_rest_index_from_games``)
+    and wired the per-team factor into batter offense props (runs,
+    RBIs). This helper extends the same signal to game-line totals
+    by averaging the two teams' opposing-bullpen factors.
+
+    Each team's bullpen rest index → factor:
+      - rest=1.0 (fully rested) → 0.95 (suppress opposing offense)
+      - rest=0.0 (saturated)    → 1.05 (amplify opposing offense)
+      - rest=0.5                → 1.0 (no-op)
+
+    Combined factor for the total = mean of the two team factors.
+    Both rested → ~0.95 (mild suppression). Both tired → ~1.05
+    (mild amplification). Balanced → ~1.0 (no shift).
+
+    Returns ``(combined_factor, features_dict)``. The features dict
+    carries the per-side rest indices + the combined factor so
+    operators can audit the multiplier in scoring diagnostics.
+    """
+    from app.services.mlb_advanced import (  # noqa: PLC0415 — local import
+        bullpen_rest_index_from_games,
+        count_team_games_in_window,
+    )
+
+    if event.starts_at is None:
+        return 1.0, {}
+    end_at = event.starts_at
+    if end_at.tzinfo is None:
+        end_at = end_at.replace(tzinfo=timezone.utc)
+    home_ep = left if left.is_home else right
+    away_ep = right if left.is_home else left
+    home_games = count_team_games_in_window(
+        db, participant_id=home_ep.participant_id, end_at=end_at,
+    )
+    away_games = count_team_games_in_window(
+        db, participant_id=away_ep.participant_id, end_at=end_at,
+    )
+    home_rest_index = bullpen_rest_index_from_games(home_games)
+    away_rest_index = bullpen_rest_index_from_games(away_games)
+    # Per-team factor: linear from rest=1.0 → 0.95 to rest=0.0 → 1.05
+    # (matches the batter-prop factor in heuristic_factors.py).
+    home_factor = clamp(1.0 + (0.5 - home_rest_index) * 0.10, 0.95, 1.05)
+    away_factor = clamp(1.0 + (0.5 - away_rest_index) * 0.10, 0.95, 1.05)
+    combined = round((home_factor + away_factor) / 2, 4)
+    return combined, {
+        "home_bullpen_rest_index_3d": round(home_rest_index, 4),
+        "away_bullpen_rest_index_3d": round(away_rest_index, 4),
+        "bullpen_combined_factor": combined,
+    }
+
+
 def _unavailable_referee_fetcher(season: int) -> list[dict[str, Any]]:
     """Sentinel fetcher for ``load_nba_referee_tendencies`` from the
     scoring path. Smarter #13 phase 2b shipped the loader with a
@@ -1425,7 +1482,21 @@ def _score_game_line(
         return probability_yes, confidence, reasons, features
 
     if market_kind == "total":
-        expected_total = (_avg_total_from_pairs(left_pairs) + _avg_total_from_pairs(right_pairs)) / 2
+        baseline_expected_total = (
+            _avg_total_from_pairs(left_pairs) + _avg_total_from_pairs(right_pairs)
+        ) / 2
+        # Smarter #6 phase 2: combined bullpen rest factor on MLB
+        # totals. Phase 1 wired the same signal into batter-offense
+        # props (runs / RBIs); this extends it to game-line totals
+        # by averaging both teams' opposing-bullpen factors. ±5%
+        # envelope; non-MLB events skip the helper entirely.
+        bullpen_features: dict[str, float] = {}
+        bullpen_factor: float = 1.0
+        if (event.sport_key or "").upper() == "MLB":
+            bullpen_factor, bullpen_features = _mlb_bullpen_total_factor(
+                db, event=event, left=left, right=right,
+            )
+        expected_total = baseline_expected_total * bullpen_factor
         sigma = max(7.5, 15.0 - min(sample_size, 10) * 0.35)
         over_probability = clamp(1 - NormalDist(mu=expected_total, sigma=sigma).cdf(threshold), 0.05, 0.95)
         probability_yes = over_probability if direction == "over" else round(1 - over_probability, 4)
@@ -1434,8 +1505,15 @@ def _score_game_line(
             f"Projected combined total: {expected_total:.1f}",
             f"Market line: {direction.title()} {threshold:.1f}",
         ]
+        if bullpen_features and bullpen_factor != 1.0:
+            reasons.append(
+                "Bullpen-rest factor: "
+                f"{bullpen_factor:.3f} (baseline {baseline_expected_total:.1f} → "
+                f"adjusted {expected_total:.1f})"
+            )
         features = {
             "expected_total": round(expected_total, 4),
+            "baseline_expected_total": round(baseline_expected_total, 4),
             "line_threshold": threshold,
             "distribution_sigma": round(sigma, 4),
             "left_average_total": round(_avg_total_from_pairs(left_pairs), 4),
@@ -1443,6 +1521,7 @@ def _score_game_line(
             "sample_size": sample_size,
             "left_sample_size": len(left_pairs),
             "right_sample_size": len(right_pairs),
+            **bullpen_features,
         }
         return probability_yes, confidence, reasons, features
 
