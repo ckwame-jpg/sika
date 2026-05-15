@@ -147,6 +147,12 @@ class Settings(BaseSettings):
     # ~1500/month — well under the cap with 2+ sports).
     the_odds_api_cache_ttl_minutes: int = 30
 
+    # Smarter #13 phase 2 — NBA referee-assignments cache TTL. NBA
+    # posts assignments the afternoon-of for that night's games
+    # (typically around 5pm ET); 4 hours refreshes ~6x/day so the
+    # publication window is captured without hammering the upstream.
+    nba_referee_assignments_cache_minutes: int = 240
+
     # Smarter #31 — LLM narrator (OpenAI).
     # Off by default. Operators toggle via the model-readiness settings
     # endpoint (persisted in ``OperatorSetting``) so flipping the
