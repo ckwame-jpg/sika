@@ -305,23 +305,81 @@ def _current_slate_job_pending() -> bool:
         ) > 0
 
 
-def current_slate_refresh_due(now: datetime | None = None) -> bool:
+def _event_in_burst_window(now: datetime) -> bool:
+    """Smarter #14 — return True iff at least one non-terminal event
+    has a tip-off inside the burst window.
+
+    The contiguous time window is ``[now - live_game_window_hours,
+    now + near_tip_off_window_minutes]`` — pre-tip events ramp burst
+    up as a game approaches; events whose ``starts_at`` is in the
+    look-back keep burst engaged while they're still live (the
+    look-back is the "generous upper bound on game duration" knob;
+    4h covers MLB extras).
+
+    **Status filter:** Events with ``status in {completed, cancelled,
+    postponed}`` are excluded. Without this filter, a game that
+    finished at 22:00 would keep burst engaged until 02:00 next
+    morning purely because ``starts_at`` sits in the look-back —
+    sika never deletes ``Event`` rows. ``in_progress`` and
+    ``scheduled`` are both kept (``scheduled`` covers the brief lag
+    between game start and the ingestion cycle flipping the status).
+
+    Single COUNT against an indexed ``starts_at`` column, so this
+    runs cheaply on the every-30-seconds ``live_refresh_due_check``
+    tick.
+    """
     settings = get_settings()
+    window_start = now - timedelta(hours=settings.live_game_window_hours)
+    window_end = now + timedelta(minutes=settings.near_tip_off_window_minutes)
+    with SessionLocal() as db:
+        count = (
+            db.scalar(
+                select(func.count())
+                .select_from(Event)
+                .where(
+                    Event.starts_at >= window_start,
+                    Event.starts_at <= window_end,
+                    Event.status.notin_(("completed", "cancelled", "postponed")),
+                )
+            )
+            or 0
+        )
+    return count > 0
+
+
+def _effective_refresh_interval_minutes(now: datetime) -> float:
+    """Smarter #14 — compute the effective refresh interval at ``now``.
+
+    Defaults to ``settings.refresh_interval_minutes`` (5min) and
+    shortens to ``settings.near_tip_off_refresh_interval_minutes``
+    (1min) when an event is inside the burst window. ``min(base,
+    burst)`` so an operator who sets the base shorter than the burst
+    gets the base (already as fast or faster).
+    """
+    settings = get_settings()
+    base_interval = float(settings.refresh_interval_minutes)
+    if _event_in_burst_window(now):
+        return min(base_interval, float(settings.near_tip_off_refresh_interval_minutes))
+    return base_interval
+
+
+def current_slate_refresh_due(now: datetime | None = None) -> bool:
     latest_finished_at = _latest_successful_refresh_finished_at()
     reference_now = _as_utc(now) or datetime.now(timezone.utc)
     if latest_finished_at is None:
         return True
-    due_at = latest_finished_at + timedelta(minutes=settings.refresh_interval_minutes)
+    interval_minutes = _effective_refresh_interval_minutes(reference_now)
+    due_at = latest_finished_at + timedelta(minutes=interval_minutes)
     return due_at <= reference_now
 
 
 def _current_slate_due_within(seconds: int, *, now: datetime | None = None) -> bool:
-    settings = get_settings()
     latest_finished_at = _latest_successful_refresh_finished_at()
     reference_now = _as_utc(now) or datetime.now(timezone.utc)
     if latest_finished_at is None:
         return True
-    due_at = latest_finished_at + timedelta(minutes=settings.refresh_interval_minutes)
+    interval_minutes = _effective_refresh_interval_minutes(reference_now)
+    due_at = latest_finished_at + timedelta(minutes=interval_minutes)
     return due_at <= reference_now + timedelta(seconds=seconds)
 
 

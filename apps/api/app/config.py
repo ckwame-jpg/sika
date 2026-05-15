@@ -34,6 +34,17 @@ class Settings(BaseSettings):
     maintenance_claim_budget_seconds: int = 25
     cleanup_interval_hours: int = 6
     startup_refresh_stale_after_minutes: int = 15
+    # Smarter #14 — event-aware scheduler bursts. When ANY event has a
+    # tip-off within ``near_tip_off_window_minutes`` in the future, OR
+    # started within ``live_game_window_hours`` in the past (i.e. is
+    # likely still in progress), the current-slate refresh cadence
+    # shortens from ``refresh_interval_minutes`` to
+    # ``near_tip_off_refresh_interval_minutes``. Defaults: 30min
+    # pre-tip / 4h post-tip / 1min burst cadence. 4h is generous for
+    # MLB extras; tighten if it costs too many DB reads.
+    near_tip_off_window_minutes: int = 30
+    live_game_window_hours: int = 4
+    near_tip_off_refresh_interval_minutes: int = 1
     espn_player_search_cache_hours: int = 168
     nba_prop_gamelog_cache_minutes: int = 30
     mlb_prop_gamelog_cache_minutes: int = 60
