@@ -229,15 +229,29 @@ def load_nba_injury_report(
         raw = espn.fetch_nba_injury_report()
     except Exception as exc:  # noqa: BLE001 — surface upstream-error fallback
         logger.warning("NBA injury report fetch failed: %s", exc)
+        # Smarter #23 phase 2 — surface the failure on the
+        # upstream-health board so operators can see which ESPN
+        # endpoint is dark. ``espn_injuries`` is its own bucket
+        # (distinct from ``espn_scoreboard``) — the two endpoints
+        # fail independently in practice.
+        from app.services.upstream_health import record_upstream_failure  # noqa: PLC0415
+        record_upstream_failure(db, "espn_injuries", str(exc) or exc.__class__.__name__)
         if cached is not None:
             return dict(cached.payload or {})
         return {"report_updated_at": None, "players": {}}
 
     if not isinstance(raw, dict):
         logger.warning("NBA injury report fetch returned non-dict payload: %r", type(raw))
+        from app.services.upstream_health import record_upstream_failure  # noqa: PLC0415
+        record_upstream_failure(
+            db, "espn_injuries", f"non-dict payload: {type(raw).__name__}"
+        )
         if cached is not None:
             return dict(cached.payload or {})
         return {"report_updated_at": None, "players": {}}
+    # Smarter #23 phase 2 — fresh fetch succeeded.
+    from app.services.upstream_health import record_upstream_success  # noqa: PLC0415
+    record_upstream_success(db, "espn_injuries")
 
     payload = parse_espn_injury_report(raw, fetched_at=moment)
 

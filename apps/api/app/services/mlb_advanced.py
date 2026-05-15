@@ -49,6 +49,26 @@ logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
+# Smarter #23 phase 2 — upstream-health wiring for statsapi.mlb.com.
+#
+# Mirror the NBA pattern in :mod:`app.services.advanced_stats`. Each
+# loader that hits ``MlbStatsClient`` calls ``_record_mlb_stats_success``
+# on a clean fetch and ``_record_mlb_stats_failure`` in the exception
+# branch. Baseball Savant has its own source bucket — added in a
+# follow-up to keep this PR focused on the punch-list-noted sources.
+
+
+def _record_mlb_stats_success(db: Session) -> None:
+    from app.services.upstream_health import record_upstream_success  # noqa: PLC0415 — avoid circular import
+    record_upstream_success(db, "mlb_stats")
+
+
+def _record_mlb_stats_failure(db: Session, *, error: str) -> None:
+    from app.services.upstream_health import record_upstream_failure  # noqa: PLC0415
+    record_upstream_failure(db, "mlb_stats", error or "unknown error")
+
+
+# -----------------------------------------------------------------------------
 # Helpers shared across MLB loaders
 
 def _normalize_name(name: str | None) -> str:
@@ -130,9 +150,11 @@ def load_mlb_batter_advanced(
         season_stats = mlb_client.fetch_player_hitting_advanced(mlb_player_id, season)
     except Exception as exc:  # noqa: BLE001
         logger.warning("MLB Stats batter fetch failed for player %s season %d: %s", mlb_player_id, season, exc)
+        _record_mlb_stats_failure(db, error=str(exc))
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
+    _record_mlb_stats_success(db)
 
     saber_rows = _flatten_stat_splits(sabermetrics)
     season_rows = _flatten_stat_splits(season_stats, group="hitting")
@@ -219,9 +241,11 @@ def load_mlb_pitcher_advanced(
         payload = mlb_client.fetch_pitcher_sabermetrics(mlb_player_id, season)
     except Exception as exc:  # noqa: BLE001
         logger.warning("MLB Stats pitcher fetch failed for player %s season %d: %s", mlb_player_id, season, exc)
+        _record_mlb_stats_failure(db, error=str(exc))
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
+    _record_mlb_stats_success(db)
 
     season_avg: dict[str, float | None] = {
         "fip": None, "xfip": None, "xera": None, "era": None,
@@ -527,9 +551,11 @@ def load_mlb_player_splits(
             "MLB Stats splits fetch failed for player %s season %d split %s: %s",
             mlb_player_id, season, split_kind, exc,
         )
+        _record_mlb_stats_failure(db, error=str(exc))
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
+    _record_mlb_stats_success(db)
 
     splits_rows = _flatten_stat_splits(payload, group=group)
     structured = {"splits": splits_rows, "fetched_at": moment.isoformat()}
@@ -927,9 +953,11 @@ def load_mlb_player_roster(
                 )
     except Exception as exc:  # noqa: BLE001
         logger.warning("MLB Stats roster fetch failed for season %d: %s", season, exc)
+        _record_mlb_stats_failure(db, error=str(exc))
         if cached is not None:
             return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
+    _record_mlb_stats_success(db)
 
     structured = {"players": all_players, "fetched_at": moment.isoformat()}
 
