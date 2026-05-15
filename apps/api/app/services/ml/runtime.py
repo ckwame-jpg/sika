@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -31,6 +32,24 @@ RuntimeHealth = Literal["healthy", "degraded", "unavailable"]
 
 FAILURE_THRESHOLD = 3
 COOLDOWN_MINUTES = 15
+
+# Smarter #20 phase 2c — recalibration activation marker.
+#
+# The CLI bumps a manifest entry's ``calibration_version`` to
+# ``<existing>+iso30d-<YYYY-MM-DD>`` only after writing a sidecar.
+# The serve-time loader gates application on this tag so the
+# manifest remains the operator-controlled activation switch:
+# even if a sidecar is on disk for a family whose manifest entry
+# still reads bare ``calibrated_v1``, we DON'T apply it. Catches
+# the partial-deploy / failed-bump / rolled-back-manifest cases
+# (codex review round 5 P2).
+#
+# We require the FULL ``+iso30d-YYYY-MM-DD`` shape (subagent review
+# follow-up): a bare ``+iso30d-`` substring, e.g. from a partial
+# write, a copy-paste error, or a manual edit, must NOT activate
+# recalibration. Using a strict regex match lets the gate fail open
+# (serve raw) on any malformed tag.
+_RECALIBRATION_ACTIVATION_PATTERN = re.compile(r"\+iso30d-\d{4}-\d{2}-\d{2}")
 
 
 # Smarter #27 — train/serve feature dictionary drift detection.
@@ -298,6 +317,7 @@ def _validate_artifact_payload(
     behavior: str | None = None,
     target_type: str | None = None,
     feature_set_version: str | None = None,
+    calibration_version: str | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if not artifact_path:
         return None, "No artifact_path configured for this family."
@@ -342,6 +362,7 @@ def _validate_artifact_payload(
             "scope": scope,
             "behavior": normalized_behavior,
             "artifact_dir": str(path.resolve()),
+            "calibration_version": calibration_version,
             "metadata": {"feature_spec_version": spec_version},
         }, None
 
@@ -560,6 +581,7 @@ def _artifact_payload_for_decision(decision: FamilyRuntimeDecision, scope: str) 
         behavior=str(metadata.get("behavior") or "static_probability"),
         target_type=metadata.get("target_type"),
         feature_set_version=decision.lineage.feature_set_version,
+        calibration_version=decision.lineage.calibration_version,
     )
     if error is not None or payload is None:
         raise RuntimeError(error or "Artifact payload unavailable.")
@@ -598,13 +620,81 @@ def _run_artifact_inference(payload: dict[str, Any], *, features: dict[str, Any]
                 },
             )
         vector = vectorize(features_view, artifact.feature_spec).reshape(1, -1)
-        probability = float(artifact.pipeline.predict_proba(vector)[0][1])
+        raw_probability = float(artifact.pipeline.predict_proba(vector)[0][1])
+        # Smarter #20 phase 2c — post-process raw probability through
+        # the per-family isotonic recalibrator when the artifact ships
+        # a sidecar for the family being served. Phase 2b's CLI writes
+        # one sidecar per served family; the loader (artifact_loader.py)
+        # already verified the metadata's family_key matches the
+        # subdirectory name, so we can apply unconditionally here.
+        # Falls through to the raw probability when no sidecar exists.
+        #
+        # Codex round 3 P2: validate the RAW output is finite + in
+        # [0, 1] BEFORE applying the recalibrator. The CLI-fitted
+        # isotonic uses ``out_of_bounds='clip'``, so an invalid
+        # ``predict_proba`` output (e.g. ``1.2`` from a corrupted
+        # artifact) would be silently clamped and served instead of
+        # tripping the existing finite/[0,1] guard in
+        # ``run_serving_inference``. Raise here so the runtime fails
+        # the inference and the operator sees the broken artifact.
+        if not isfinite(raw_probability) or raw_probability < 0.0 or raw_probability > 1.0:
+            raise RuntimeError(
+                f"Model raw probability {raw_probability!r} is invalid (NaN, inf, or outside [0, 1]) "
+                f"— refusing to recalibrate. Underlying artifact at {artifact.artifact_dir} "
+                f"is broken."
+            )
+        serves_family_key = str(payload.get("serves_family_key") or "").strip()
+        # Codex round 5 P2: gate sidecar application on the manifest's
+        # ``calibration_version`` carrying the iso30d tag. The CLI
+        # writes the sidecar BEFORE bumping the version; during that
+        # window — or after a failed / rolled-back manifest update —
+        # the file might be on disk while the manifest still reads
+        # the bare ``calibrated_v1``. Treating the bare manifest as
+        # authoritative keeps the activation contract single-sourced
+        # at the manifest.
+        calibration_version = str(payload.get("calibration_version") or "")
+        recalibration_active = bool(_RECALIBRATION_ACTIVATION_PATTERN.search(calibration_version))
+        recalibrator = (
+            artifact.recalibrators.get(serves_family_key)
+            if serves_family_key and recalibration_active
+            else None
+        )
+        if recalibrator is not None:
+            probability = float(recalibrator.predict([raw_probability])[0])
+            recalibration_applied = True
+        else:
+            probability = raw_probability
+            recalibration_applied = False
         confidence = probability
-        metadata = {
+        metadata: dict[str, Any] = {
             "feature_spec_version": artifact.feature_spec.version,
             "artifact_dir": str(artifact.artifact_dir),
             "training_metadata": dict(artifact.training_metadata or {}),
+            "recalibration_applied": recalibration_applied,
         }
+        if recalibration_applied:
+            # Operator-facing provenance: the raw output BEFORE recalibration
+            # is preserved alongside the post-process result so audit logs and
+            # the readiness diagnostic can show the model's drift correction
+            # in flight. ``recalibration_metadata`` mirrors the sidecar JSON
+            # so phase 2b's window dates / sample size / Brier improvement
+            # are visible at serve time without a filesystem round-trip.
+            metadata["raw_probability"] = raw_probability
+            sidecar_metadata_path = (
+                artifact.artifact_dir
+                / "recalibrators"
+                / serves_family_key
+                / "isotonic_recalibration_metadata.json"
+            )
+            if sidecar_metadata_path.exists():
+                try:
+                    metadata["recalibration_metadata"] = json.loads(
+                        sidecar_metadata_path.read_text(encoding="utf-8")
+                    )
+                except Exception:  # pragma: no cover - defensive
+                    metadata["recalibration_metadata"] = {}
+            else:
+                metadata["recalibration_metadata"] = {}
         return probability, confidence, metadata
     probability = float(payload.get("probability") if payload.get("probability") is not None else payload.get("yes_probability"))
     confidence = float(payload.get("confidence") if payload.get("confidence") is not None else probability)

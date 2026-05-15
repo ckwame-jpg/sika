@@ -91,6 +91,19 @@ def _shadow_metadata(result, decision, *, family_key: str) -> dict[str, object]:
             "runtime_health": decision.runtime_health,
         }
     )
+    # Smarter #20 phase 2c: persist the raw (pre-recalibration) model
+    # output so the apps/ml ``recalibrate`` CLI can fit the next
+    # rolling sidecar on the model's actual distribution rather than
+    # on already-recalibrated values. ShadowInference.fair_yes_price
+    # carries the post-recalibration value (consistent with the live
+    # path); ``raw_probability`` here lets the CLI prefer raw when
+    # available and fall back to fair_yes_price for legacy rows.
+    inference_metadata = dict(result.metadata or {})
+    if inference_metadata.get("recalibration_applied"):
+        model_metadata["recalibration_applied"] = True
+        raw_probability = inference_metadata.get("raw_probability")
+        if raw_probability is not None:
+            model_metadata["raw_probability"] = round(float(raw_probability), 4)
     return model_metadata
 
 

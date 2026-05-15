@@ -346,7 +346,8 @@ def _load_settled_for_family(
         f"""
         SELECT id AS source_id,
                fair_yes_price, side, prediction_outcome, captured_at,
-               sport_key, market_family
+               sport_key, market_family,
+               scoring_diagnostics
         FROM predictions
         WHERE prediction_outcome IN ('won', 'lost')
           AND model_name = :model_name
@@ -362,7 +363,8 @@ def _load_settled_for_family(
                p.prediction_outcome AS prediction_outcome,
                si.captured_at AS captured_at,
                si.sport_key AS sport_key,
-               si.market_family AS market_family
+               si.market_family AS market_family,
+               si.model_metadata AS model_metadata
         FROM shadow_inferences si
         JOIN predictions p ON si.source_prediction_id = p.id
         WHERE p.prediction_outcome IN ('won', 'lost')
@@ -403,10 +405,53 @@ def _load_settled_for_family(
         # side == YES and outcome == won  →  YES won
         # side == NO  and outcome == lost →  YES won
         target = 1 if (side == "yes") == (outcome == "won") else 0
-        raw_probs.append(float(row["fair_yes_price"]))
+        # Phase 2c: prefer the persisted raw probability when present
+        # (live rows after recalibration started carry it in
+        # ``scoring_diagnostics.raw_probability``; shadow rows carry
+        # it in ``model_metadata.raw_probability``). Falls back to
+        # ``fair_yes_price`` for legacy rows captured before phase 2c
+        # OR for rows where no recalibrator was applied (fair_yes_price
+        # IS the raw value in that case).
+        raw_probability = _resolve_raw_probability(row)
+        raw_probs.append(raw_probability)
         outcomes.append(float(target))
         timestamps.append(_coerce_captured_at(row["captured_at"]))
     return np.asarray(raw_probs, dtype=float), np.asarray(outcomes, dtype=float), timestamps
+
+
+def _resolve_raw_probability(row: dict) -> float:
+    """Return the model's RAW (pre-recalibration) probability for a row.
+
+    Phase 2c persists the raw value into a JSON column when the
+    recalibrator post-processed the model's output:
+    - Live mode: ``predictions.scoring_diagnostics.raw_probability``.
+    - Shadow mode: ``shadow_inferences.model_metadata.raw_probability``.
+
+    For rows where no recalibration ran, ``fair_yes_price`` IS the raw
+    value (the runtime stores the post-recalibration value as
+    ``fair_yes_price`` only when a sidecar fired; otherwise it's
+    pass-through). Same fallback works for legacy rows captured before
+    phase 2c shipped.
+
+    Codex round 2 P1: without this, repeated CLI runs would chain
+    isotonic fits against post-process output (a different input
+    scale than the model's raw output), drifting the calibration
+    toward a moving target.
+    """
+    blob = row.get("scoring_diagnostics") or row.get("model_metadata")
+    if isinstance(blob, str):
+        try:
+            blob = json.loads(blob)
+        except json.JSONDecodeError:
+            blob = None
+    if isinstance(blob, dict):
+        raw_value = blob.get("raw_probability")
+        if raw_value is not None:
+            try:
+                return float(raw_value)
+            except (TypeError, ValueError):
+                pass
+    return float(row["fair_yes_price"])
 
 
 def _annotate_sidecar_metadata_with_family(metadata_path: Path, family_key: str) -> None:

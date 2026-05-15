@@ -2481,6 +2481,15 @@ def _build_scored_recommendation(
             confidence = round(ml_result.confidence, 4)
             active_lineage = ml_result.lineage
             served_mode = "ml"
+            # Smarter #20 phase 2c: persist the raw model output (pre-
+            # recalibration) into scoring_diagnostics so the apps/ml
+            # ``recalibrate`` CLI can fit the next rolling sidecar on
+            # the model's actual distribution rather than on already-
+            # recalibrated values. Without this, repeated CLI runs
+            # would chain isotonic fits against the post-process output,
+            # which is a different input scale (codex round 2 P1).
+            recalibration_applied = bool(ml_result.metadata.get("recalibration_applied"))
+            raw_probability = ml_result.metadata.get("raw_probability")
             scoring_diagnostics = {
                 **scoring_diagnostics,
                 "confidence_semantics": "calibrated_probability",
@@ -2495,6 +2504,12 @@ def _build_scored_recommendation(
                 },
                 "serving_mode": "ml",
                 "artifact_path": ml_result.artifact_path,
+                "recalibration_applied": recalibration_applied,
+                **(
+                    {"raw_probability": round(float(raw_probability), 4)}
+                    if recalibration_applied and raw_probability is not None
+                    else {}
+                ),
             }
             reasons = [*reasons, f"Served by {ml_result.lineage.model_name}."]
         else:
