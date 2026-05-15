@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from math import exp, tanh
@@ -36,6 +37,9 @@ from app.services.watchlist_coverage import (
     latest_snapshot_by_market_id,
 )
 from app.sports.base import alias_tokens
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -2287,6 +2291,28 @@ def _single_scoring_adjustments(
         diagnostics["lineup_suppression_reason"] = "player_not_in_starting_lineup"
     if injury_suppression_reason is not None:
         diagnostics["injury_suppression_reason"] = injury_suppression_reason
+    # Smarter #18 phase 2c — surface the sportsbook H2H consensus as a
+    # scoring diagnostic. Pure information for now; the suppression
+    # rule (phase 2d, deferred) is what will gate on disagreement.
+    # Reads from cache only — never invokes the network here. The
+    # cache is empty by default (Odds API key required) so this is a
+    # no-op until operators wire the key + refresh job.
+    #
+    # Reviewer HIGH catch: the emitter calls into the cache loader
+    # (DB query) and the de-vig math (arithmetic on bookmaker prices).
+    # An unexpected failure here would drop an unrelated recommendation
+    # — a correctness regression for a feature billed as "diagnostic
+    # only". Wrap defensively so any exception degrades to "no
+    # sportsbook signal for this pick" with a log line.
+    from app.services.sportsbook_consensus import emit_sportsbook_consensus_diagnostics  # noqa: PLC0415 — avoid module-import cycle through services/
+
+    try:
+        sportsbook_diagnostics = emit_sportsbook_consensus_diagnostics(db, event)
+    except Exception as exc:  # noqa: BLE001 — diagnostic must never break scoring
+        logger.warning("sportsbook consensus diagnostic failed: %s", exc)
+        sportsbook_diagnostics = {}
+    if sportsbook_diagnostics:
+        diagnostics.update(sportsbook_diagnostics)
     return adjusted_confidence, diagnostics
 
 
