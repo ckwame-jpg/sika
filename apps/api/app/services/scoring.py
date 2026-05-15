@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from math import exp, tanh
 from statistics import NormalDist, pstdev
 from typing import Any, Literal
@@ -124,6 +124,22 @@ class WatchlistGenerationSummary:
     candidate_filter_reason_counts: dict[str, int] = field(default_factory=dict)
     outcome_reason_counts: dict[str, int] = field(default_factory=dict)
     quality_tier_counts: dict[str, int] = field(default_factory=dict)
+
+
+def _unavailable_referee_fetcher(season: int) -> list[dict[str, Any]]:
+    """Sentinel fetcher for ``load_nba_referee_tendencies`` from the
+    scoring path. Smarter #13 phase 2b shipped the loader with a
+    required ``fetcher`` callable; phase 2b-2 (deferred) wires the
+    real basketball-reference scraper. Until then, scoring calls
+    the loader with ``allow_network=False`` so the fetcher is never
+    invoked — but the kwarg is required, so this raises if a code
+    path ever drops the network gate. Fail loud rather than
+    accidentally hammer BR from the scoring kernel."""
+    raise RuntimeError(
+        "Scoring path must not invoke the referee tendency fetcher. "
+        "If allow_network=True is needed here, route through the "
+        "refresh job instead (Smarter #13 phase 2b-2)."
+    )
 
 
 def _record_scorer_outcome(summary: WatchlistGenerationSummary, reason: str) -> None:
@@ -1699,6 +1715,9 @@ def _score_player_prop(
             load_nba_hustle_player,
             load_nba_tracking,
         )
+        from app.services.nba_referee_assignments import load_nba_referee_assignments
+        from app.services.nba_referee_emit import emit_nba_referee_features
+        from app.services.nba_referee_tendencies import load_nba_referee_tendencies
 
         if resolved.advanced_payload:
             features.update(emit_nba_player_features(resolved.advanced_payload))
@@ -1785,6 +1804,59 @@ def _score_player_prop(
 
             clutch_result = load_nba_clutch_player(db, season=resolved.season, allow_network=False)
             features.update(emit_nba_clutch_features(clutch_result.payload, str(nba_stats_id)))
+
+        # Smarter #13 phase 2d — referee tendency factor.
+        # Phases 2a/2b shipped the daily assignments + per-season
+        # tendency caches; phase 2c shipped the emitter that joins
+        # them for one event. This call is the consumer-side wiring
+        # that surfaces ``referee_avg_fouls_per_game`` etc. into the
+        # features dict so ``heuristic_factors._nba_referee_factor``
+        # actually fires on real games.
+        #
+        # ``allow_network=False`` keeps scoring off the network: the
+        # daily refresh job populates the assignments cache; the BR
+        # tendency cache is populated by the (deferred) phase 2b-2
+        # CLI / job. Either cache being empty yields an empty
+        # emitter return → the factor's ``data_complete`` gate keeps
+        # it at 1.0 (no-op, filtered out).
+        if team_entry is not None and opponent_entry is not None:
+            # Codex review P2: the assignments cache is keyed by the
+            # NBA game date (US/Eastern), not UTC-today. A 10pm PT
+            # game starts at 05:00 UTC the next day; without
+            # ET-conversion, scoring would read the wrong daily
+            # assignment row and the factor would silently no-op or
+            # apply a different day's crew for the same matchup.
+            from zoneinfo import ZoneInfo  # noqa: PLC0415 — local import
+            assignment_date: date | None = None
+            if event.starts_at is not None:
+                # SQLite returns ``DateTime(timezone=True)`` as naive
+                # UTC. ``astimezone`` on a naive datetime treats it as
+                # the host's local time — wrong for SQLite deployments
+                # near the UTC date boundary (codex review round 2 P2).
+                # Coerce to UTC first.
+                starts_at_utc = event.starts_at
+                if starts_at_utc.tzinfo is None:
+                    starts_at_utc = starts_at_utc.replace(tzinfo=timezone.utc)
+                assignment_date = starts_at_utc.astimezone(
+                    ZoneInfo("America/New_York")
+                ).date()
+            assignments_payload = load_nba_referee_assignments(
+                db, allow_network=False, target_date=assignment_date,
+            )
+            tendencies_payload = load_nba_referee_tendencies(
+                db, season=resolved.season, fetcher=_unavailable_referee_fetcher,
+                allow_network=False,
+            )
+            home_entry = team_entry if team_entry.is_home else opponent_entry
+            away_entry = opponent_entry if team_entry.is_home else team_entry
+            features.update(
+                emit_nba_referee_features(
+                    assignments_payload=assignments_payload,
+                    tendencies_payload=tendencies_payload,
+                    away_team_name=away_entry.participant.display_name,
+                    home_team_name=home_entry.participant.display_name,
+                )
+            )
 
     elif resolved.sport_key.upper() == "MLB":
         from app.models import EspnPlayerSearchCache, MlbLineupCache, MlbWeatherCache  # noqa: F401

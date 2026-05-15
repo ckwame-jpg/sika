@@ -54,7 +54,7 @@ def _safe_ratio(numerator: Any, denominator: Any, *, default: float = 1.0) -> fl
 _NBA_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
     "points": ("efficiency_factor", "opp_def_factor", "opp_recent_form_factor",
                "pace_factor_advanced", "usage_factor_advanced", "workload_factor",
-               "nba_rest_factor", "nba_travel_factor"),
+               "nba_rest_factor", "nba_travel_factor", "nba_referee_factor"),
     # ``made_threes`` is the canonical stat_key produced by market_support's
     # alias normalization; ``three_points_made`` is the raw_metrics column
     # name. Both must map to the same gating tuple so props arriving as
@@ -77,16 +77,17 @@ _NBA_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
     "turnovers": ("usage_factor_advanced",),
     "points_assists": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
                        "usage_factor_advanced", "workload_factor",
-                       "nba_rest_factor", "nba_travel_factor"),
+                       "nba_rest_factor", "nba_travel_factor", "nba_referee_factor"),
     "points_rebounds": ("efficiency_factor", "opp_def_factor", "pace_factor_advanced",
                          "usage_factor_advanced", "workload_factor",
-                         "nba_rest_factor", "nba_travel_factor"),
+                         "nba_rest_factor", "nba_travel_factor", "nba_referee_factor"),
     "rebounds_assists": ("opp_def_factor", "pace_factor_advanced", "opp_recent_form_factor",
                           "workload_factor", "nba_rest_factor", "nba_travel_factor"),
     "points_rebounds_assists": ("efficiency_factor", "opp_def_factor",
                                   "pace_factor_advanced", "usage_factor_advanced",
                                   "workload_factor",
-                                  "nba_rest_factor", "nba_travel_factor"),
+                                  "nba_rest_factor", "nba_travel_factor",
+                                  "nba_referee_factor"),
 }
 
 
@@ -222,6 +223,47 @@ def _nba_travel_factor(features: dict[str, Any]) -> float:
     return 1.0
 
 
+# Smarter #13 phase 2d — referee tendency factor.
+#
+# League-average personal fouls per game is ~42 across both teams.
+# A tight-calling crew (>42) means more FT trips, which boost total
+# points. A loose crew (<42) suppresses. The envelope mirrors the
+# existing workload / rest factors at ±5% so the heuristic doesn't
+# dominate stronger signals like opp_def_factor.
+#
+# Each whole-foul deviation from league average shifts the factor by
+# 0.5% (0.005). 42 → 1.0; 47 → 1.025; 37 → 0.975; clamped at ±5%.
+#
+# Gated on ``referee_data_complete == 1.0`` (≥2 of 3 crew matched in
+# the tendency cache; see ``nba_referee_emit._MIN_CREW_FOR_DATA_COMPLETE``)
+# so single-ref matches with high tendency-variance can't drive a
+# factor.
+_REFEREE_LEAGUE_AVG_FOULS_PER_GAME: float = 42.0
+_REFEREE_FOUL_FACTOR_PER_FOUL: float = 0.005
+_REFEREE_FACTOR_CLAMP_LOW: float = 0.95
+_REFEREE_FACTOR_CLAMP_HIGH: float = 1.05
+
+
+def _nba_referee_factor(features: dict[str, Any]) -> float:
+    """Heuristic factor on the points-class stats from referee
+    tendencies. See module-level constants for the math; gated on
+    data-complete flag so partial / unverified crew matches return
+    1.0 (no-op, filtered out). Clamp at ±5% (tighter than the
+    default ±15% factor clamp) so the heuristic doesn't dominate
+    stronger advanced-stats signals like ``opp_def_factor``."""
+    if float(features.get("referee_data_complete") or 0.0) < 1.0:
+        return 1.0
+    avg_fouls = features.get("referee_avg_fouls_per_game")
+    if not isinstance(avg_fouls, (int, float)) or isinstance(avg_fouls, bool):
+        return 1.0
+    delta = float(avg_fouls) - _REFEREE_LEAGUE_AVG_FOULS_PER_GAME
+    return _clamp(
+        1.0 + delta * _REFEREE_FOUL_FACTOR_PER_FOUL,
+        lo=_REFEREE_FACTOR_CLAMP_LOW,
+        hi=_REFEREE_FACTOR_CLAMP_HIGH,
+    )
+
+
 _NBA_FACTOR_FNS = {
     "efficiency_factor": _nba_efficiency_factor,
     "opp_def_factor": _nba_opp_def_factor,
@@ -231,6 +273,7 @@ _NBA_FACTOR_FNS = {
     "workload_factor": _nba_workload_factor,
     "nba_rest_factor": _nba_rest_factor,
     "nba_travel_factor": _nba_travel_factor,
+    "nba_referee_factor": _nba_referee_factor,
 }
 
 
