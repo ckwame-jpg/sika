@@ -217,7 +217,11 @@ def test_readiness_summary_includes_settlement_aging_zero_when_empty(db_session)
 def test_readiness_summary_surfaces_stuck_predictions(db_session) -> None:
     _seed_pending_prediction(db_session, close_offset_hours=8.0)
     _seed_pending_prediction(db_session, close_offset_hours=48.0)
-    summary = build_model_readiness_summary(db_session)
+    # Pass ``now=_NOW`` so bucket boundaries are computed against the
+    # same clock the seed data was constructed under — without this,
+    # the test's "8h past close" row drifts into the >24h bucket once
+    # real wall-clock time passes ``_NOW + 24h``.
+    summary = build_model_readiness_summary(db_session, now=_NOW)
     aging = summary["settlement_aging"]
     assert aging["bucket_6_to_24h"] == 1
     assert aging["bucket_beyond_24h"] == 1
@@ -225,8 +229,27 @@ def test_readiness_summary_surfaces_stuck_predictions(db_session) -> None:
 
 
 def test_readiness_endpoint_surfaces_settlement_aging(
-    client: TestClient, db_session
+    client: TestClient, db_session, monkeypatch
 ) -> None:
+    # The endpoint can't take a ``now`` kwarg, so freeze wall-clock by
+    # patching the bucket-computer's default. Same intent as the
+    # direct-call test above: keep bucket boundaries deterministic
+    # against the seed data's close_times.
+    from app.services.ml import readiness as readiness_module
+
+    real_compute = readiness_module.compute_settlement_aging
+
+    def _compute_with_fixed_now(db, **kwargs):
+        # Override even when the caller explicitly passed ``now=None``
+        # (which build_model_readiness_summary does on its no-kwarg
+        # path through the /ops/models/readiness endpoint).
+        kwargs["now"] = _NOW
+        return real_compute(db, **kwargs)
+
+    monkeypatch.setattr(
+        readiness_module, "compute_settlement_aging", _compute_with_fixed_now,
+    )
+
     _seed_pending_prediction(db_session, close_offset_hours=8.0)
     db_session.commit()
     response = client.get("/ops/models/readiness")

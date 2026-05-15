@@ -680,7 +680,11 @@ def _summary_for_family(
     }
 
 
-def build_model_readiness_summary(db: Session) -> dict[str, Any]:
+def build_model_readiness_summary(
+    db: Session,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     serving_mode = effective_ml_serving_mode(db)
     cutoff = retained_study_cutoff()
     single_predictions = db.scalars(
@@ -823,7 +827,10 @@ def build_model_readiness_summary(db: Session) -> dict[str, Any]:
 
     # Smarter #26 — settlement aging buckets. Aggregated here once per
     # readiness build so the operator UI doesn't need a separate fetch.
-    aging = compute_settlement_aging(db)
+    # ``now`` is plumbed through for tests that need a fixed clock —
+    # the bucket boundaries depend on hours-past-close, so a real-wall-
+    # clock comparison against pre-seeded close_times drifts over time.
+    aging = compute_settlement_aging(db, now=now)
 
     return {
         "generated_at": _now_utc(),
