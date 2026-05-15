@@ -1682,6 +1682,7 @@ def _score_player_prop(
     # multiply both a proxy and its advanced replacement for the same concept.
     if resolved.sport_key.upper() == "NBA":
         from app.services.advanced_stats import (
+            emit_nba_injury_features,
             emit_nba_interaction_term,
             emit_nba_opponent_team_features,
             emit_nba_player_features,
@@ -1689,6 +1690,7 @@ def _score_player_prop(
             find_nba_team_id_by_name,
             load_nba_team_gamelog,
         )
+        from app.services.nba_injury_report import load_nba_injury_report
         from app.services.nba_long_tail import (
             emit_nba_clutch_features,
             emit_nba_drives_features,
@@ -1700,6 +1702,23 @@ def _score_player_prop(
 
         if resolved.advanced_payload:
             features.update(emit_nba_player_features(resolved.advanced_payload))
+
+        # Smarter #17 phase 3 — wire the late-breaking-injury features
+        # into the scoring path. Phase 1 shipped the emitter + the
+        # ``_single_scoring_adjustments`` suppression gate; phase 2
+        # shipped the cache loader + the daily refresh-job entry that
+        # populates it. This call is the consumer-side wiring that
+        # actually fires the suppression on real games.
+        #
+        # ``allow_network=False`` keeps scoring off the network: the
+        # daily refresh-job populates the cache out-of-band, and a
+        # cache miss here yields an empty payload (the emitter
+        # returns ``{}`` when the player has no entry, so the
+        # downstream suppression gate never fires on missing data).
+        injury_payload = load_nba_injury_report(db, allow_network=False)
+        features.update(
+            emit_nba_injury_features(injury_payload, player_name=resolved.display_name)
+        )
 
         # Smarter #11: workload features from the ESPN game log. Pure
         # function read against ``resolved.game_logs`` (already in scope
