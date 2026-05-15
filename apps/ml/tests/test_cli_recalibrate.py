@@ -71,7 +71,8 @@ def _seed_predictions_db(
                 sport_key TEXT,
                 market_family TEXT,
                 model_name TEXT NOT NULL,
-                model_version TEXT
+                model_version TEXT,
+                scoring_diagnostics TEXT
             )
             """
         )
@@ -86,34 +87,48 @@ def _seed_predictions_db(
                 market_family TEXT,
                 model_name TEXT NOT NULL,
                 model_version TEXT,
+                model_metadata TEXT,
                 inference_scope TEXT NOT NULL DEFAULT 'single'
             )
             """
         )
+        # Default scoring_diagnostics / model_metadata to NULL when not
+        # provided so the CLI's _resolve_raw_probability falls back to
+        # fair_yes_price (matches legacy / no-recalibration rows).
+        normalized_predictions = [
+            {**row, "scoring_diagnostics": row.get("scoring_diagnostics")}
+            for row in rows
+        ]
         conn.executemany(
             """
             INSERT INTO predictions
                 (fair_yes_price, side, prediction_outcome, captured_at,
-                 sport_key, market_family, model_name, model_version)
+                 sport_key, market_family, model_name, model_version,
+                 scoring_diagnostics)
             VALUES
                 (:fair_yes_price, :side, :prediction_outcome, :captured_at,
-                 :sport_key, :market_family, :model_name, :model_version)
+                 :sport_key, :market_family, :model_name, :model_version,
+                 :scoring_diagnostics)
             """,
-            rows,
+            normalized_predictions,
         )
         if shadow_rows:
+            normalized_shadow = [
+                {**row, "model_metadata": row.get("model_metadata")}
+                for row in shadow_rows
+            ]
             conn.executemany(
                 """
                 INSERT INTO shadow_inferences
                     (source_prediction_id, fair_yes_price, captured_at,
                      sport_key, market_family, model_name, model_version,
-                     inference_scope)
+                     model_metadata, inference_scope)
                 VALUES
                     (:source_prediction_id, :fair_yes_price, :captured_at,
                      :sport_key, :market_family, :model_name, :model_version,
-                     :inference_scope)
+                     :model_metadata, :inference_scope)
                 """,
-                shadow_rows,
+                normalized_shadow,
             )
         conn.commit()
     finally:
@@ -1023,6 +1038,58 @@ def test_recalibrate_resolves_family_key_from_top_level_when_serves_missing(
 
     assert rc == 0
     assert summary["applied"] is True
+
+
+def test_recalibrate_prefers_raw_probability_from_scoring_diagnostics(
+    tmp_path: Path, frozen_clock: datetime,
+) -> None:
+    """Phase 2c persists the model's RAW probability into
+    ``scoring_diagnostics.raw_probability`` whenever a recalibrator
+    fired at serve time. Subsequent CLI runs MUST fit on the raw
+    distribution, not on the post-recalibration ``fair_yes_price``
+    (which is a different input scale). Codex round 2 P1 on phase 2c.
+    """
+    now = frozen_clock
+    db_path = tmp_path / "test.db"
+    rows = []
+    # 150 rows where fair_yes_price (post-recalibration) differs from
+    # the raw value preserved in scoring_diagnostics. The CLI should
+    # train on the raw values, so summary's metrics_before should
+    # reflect the raw distribution (constant ~0.7), not fair_yes_price.
+    for i in range(150):
+        rows.append({
+            "fair_yes_price": 0.55,  # post-recalibration (irrelevant for refit)
+            "side": "yes",
+            "prediction_outcome": "won" if i % 2 == 0 else "lost",
+            "captured_at": (now - timedelta(days=20 * i / 150)).isoformat(),
+            "sport_key": "NBA",
+            "market_family": "player_prop",
+            "model_name": _MODEL_NAME,
+            "model_version": _MODEL_VERSION,
+            "scoring_diagnostics": json.dumps({
+                "recalibration_applied": True,
+                "raw_probability": 0.70,
+            }),
+        })
+    _seed_predictions_db(db_path, rows=rows)
+    artifact_dir = tmp_path / "artifacts" / "global_v1_20260515"
+    _seed_artifact_dir(artifact_dir)
+    manifest_path = tmp_path / "manifests" / "current.json"
+    _build_manifest(manifest_path, artifact_dir=artifact_dir)
+
+    _, summary = _run_cli([
+        "recalibrate",
+        "--family-key", "nba_props",
+        "--manifest-path", str(manifest_path),
+        "--database-url", f"sqlite:///{db_path}",
+    ])
+
+    assert summary["sample_size"] == 150
+    # The recalibrator was fit on raw=0.70 inputs against 50/50 outcomes.
+    # Brier_before = mean((0.70 - outcome)^2). For 75 wins / 75 losses:
+    # (75 * (0.70-1)^2 + 75 * (0.70-0)^2) / 150 = (75 * 0.09 + 75 * 0.49) / 150 = 0.29
+    # Brier_before reflects the raw distribution, not fair_yes_price=0.55.
+    assert 0.27 < summary["metrics_before"]["brier"] < 0.31
 
 
 def test_recalibrate_does_not_dedupe_distinct_predictions_with_same_probability(
