@@ -27,6 +27,8 @@ from app.services.operator_settings import (
     effective_ml_serving_mode,
     effective_narrator_enabled,
     effective_pick_history_default_n,
+    effective_sportsbook_disagreement_min_book_count,
+    effective_sportsbook_disagreement_threshold,
 )
 from app.services.predictions import compute_settlement_aging
 
@@ -852,6 +854,13 @@ def build_model_readiness_summary(
             "total_pending_past_close": aging.total_pending_past_close,
         },
         "narrator_enabled": effective_narrator_enabled(db),
+        # Smarter #18 — sportsbook disagreement knobs. Surfaced here so
+        # the readiness-panel UI can show the current effective values
+        # alongside the existing thresholds. The PATCH endpoint at
+        # ``/ops/models/readiness/settings`` writes these via
+        # ``set_sportsbook_disagreement_*``.
+        "sportsbook_disagreement_threshold": effective_sportsbook_disagreement_threshold(db),
+        "sportsbook_disagreement_min_book_count": effective_sportsbook_disagreement_min_book_count(db),
     }
 
 
