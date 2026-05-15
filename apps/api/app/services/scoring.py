@@ -814,7 +814,13 @@ def _competition_from_event(event: Event) -> dict[str, Any]:
 def _event_venue_context(event: Event) -> dict[str, Any]:
     venue = _competition_from_event(event).get("venue") or {}
     address = venue.get("address") or {}
+    venue_id = venue.get("id")
     return {
+        # Bug #4 fix: surface ESPN venue.id alongside name/city/state/
+        # indoor. The park-factor lookup currently uses venue NAME for
+        # disambiguation (Tropicana vs. Steinbrenner), but having the ID
+        # available means non-name-keyed callers can fall back to it.
+        "venue_id": str(venue_id) if venue_id is not None else None,
         "venue_name": venue.get("fullName"),
         "venue_city": address.get("city"),
         "venue_state": address.get("state"),
@@ -1953,6 +1959,7 @@ def _score_player_prop(
             load_mlb_statcast_pitcher,
             load_park_factors_for_event,
             load_weather,
+            mlb_park_coords,
             resolve_mlb_stats_player_id,
         )
 
@@ -1971,11 +1978,20 @@ def _score_player_prop(
         features.update(emit_park_features(park))
 
         venue_indoor_flag = bool(features.get("venue_indoor"))
-        # Bug #4: game_time_utc enables the weather cache lookup to filter
-        # by expiration. lat/lon are not provided by ESPN's venue payload
-        # so weather still requires a separately-warmed cache (smarter #15
-        # — weather_refresh job); allow_network stays False to keep the
-        # synchronous scoring path off the network.
+        # Bug #4 fix: weather lookup needs lat/lon to actually return
+        # data for a specific game. ESPN's venue payload doesn't
+        # include coordinates, but ``mlb_park_coords`` carries the
+        # canonical (lat, lon, is_dome) tuple per home team — same
+        # source of truth Smarter #15's weather pre-warm job will use,
+        # so the read path and the warm path stay aligned. Falls back
+        # to (None, None) for non-MLB or unmapped teams; in that case
+        # ``load_weather`` continues to no-op as before.
+        park_coords = mlb_park_coords(home_team_abbr)
+        weather_lat = park_coords[0] if park_coords else None
+        weather_lon = park_coords[1] if park_coords else None
+        # Per-game ESPN ``venue.indoor`` is more authoritative than the
+        # coords-table is_dome flag (catches retractable-roof openings/
+        # closings) — keep ESPN's signal as the dome source of truth.
         starts_at = event.starts_at
         if starts_at is not None and starts_at.tzinfo is None:
             starts_at = starts_at.replace(tzinfo=timezone.utc)
@@ -1983,8 +1999,8 @@ def _score_player_prop(
         weather_result = load_weather(
             db,
             event_id=str(event.id),
-            lat=None,
-            lon=None,
+            lat=weather_lat,
+            lon=weather_lon,
             game_time_utc=game_time_utc,
             is_dome=venue_indoor_flag,
             allow_network=False,
