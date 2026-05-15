@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import httpx
 
 from app.api import routes
-from app.models import RefreshJob, Run
+from app.models import Event, RefreshJob, Run
 from app.services import refresh_jobs, scheduler
 
 
@@ -946,3 +946,211 @@ def test_scheduler_does_not_register_weekly_model_retrain_job(monkeypatch):
     assert not hasattr(scheduler, "_weekly_model_retrain_job"), (
         "Remove ``_weekly_model_retrain_job`` along with its scheduler entry."
     )
+
+
+# -- Smarter #14: event-aware scheduler bursts ------------------------
+
+
+_BURST_NOW = datetime(2026, 5, 14, 19, 0, tzinfo=timezone.utc)
+_event_burst_counter = {"n": 0}
+
+
+def _seed_event_at(db_session, offset: timedelta, *, status: str = "scheduled") -> Event:
+    """Insert a single event at ``_BURST_NOW + offset`` with the given
+    status (default ``scheduled``)."""
+    _event_burst_counter["n"] += 1
+    event = Event(
+        sport_key="NBA",
+        external_id=f"burst-evt-{_event_burst_counter['n']}",
+        name=f"Test Event {_event_burst_counter['n']}",
+        starts_at=_BURST_NOW + offset,
+        status=status,
+    )
+    db_session.add(event)
+    db_session.flush()
+    return event
+
+
+def test_event_in_burst_window_false_when_no_events(db_session, monkeypatch) -> None:
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is False
+
+
+def test_event_in_burst_window_true_for_event_25_minutes_out(db_session, monkeypatch) -> None:
+    _seed_event_at(db_session, timedelta(minutes=25))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is True
+
+
+def test_event_in_burst_window_true_for_event_in_progress_1h_ago(db_session, monkeypatch) -> None:
+    _seed_event_at(db_session, timedelta(hours=-1))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is True
+
+
+def test_event_in_burst_window_false_for_event_2h_in_future(db_session, monkeypatch) -> None:
+    _seed_event_at(db_session, timedelta(hours=2))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is False
+
+
+def test_event_in_burst_window_false_for_event_ended_5h_ago(db_session, monkeypatch) -> None:
+    _seed_event_at(db_session, timedelta(hours=-5))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is False
+
+
+def test_event_in_burst_window_true_at_exact_30_min_boundary(db_session, monkeypatch) -> None:
+    # starts_at = now + 30min should be inside the burst window (inclusive
+    # at the boundary), so the burst engages exactly at T-30min.
+    _seed_event_at(db_session, timedelta(minutes=30))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is True
+
+
+def test_event_in_burst_window_true_at_exact_4h_post_tip_boundary(db_session, monkeypatch) -> None:
+    # starts_at = now - 4h should still be considered "in progress" at
+    # the inclusive boundary; one second later it drops out.
+    _seed_event_at(db_session, timedelta(hours=-4))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is True
+
+
+def test_event_in_burst_window_picks_up_any_qualifying_row(db_session, monkeypatch) -> None:
+    # Two events: one outside the window, one inside. Burst should fire
+    # because the COUNT > 0 (we only need ONE event in window).
+    _seed_event_at(db_session, timedelta(hours=10))
+    _seed_event_at(db_session, timedelta(minutes=15))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is True
+
+
+def test_effective_refresh_interval_returns_base_outside_burst(db_session, monkeypatch) -> None:
+    _seed_event_at(db_session, timedelta(hours=10))  # well outside window
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    interval = scheduler._effective_refresh_interval_minutes(_BURST_NOW)
+    # Default base is 5 min from Settings.
+    assert interval == 5.0
+
+
+def test_effective_refresh_interval_returns_burst_inside_window(db_session, monkeypatch) -> None:
+    _seed_event_at(db_session, timedelta(minutes=10))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    interval = scheduler._effective_refresh_interval_minutes(_BURST_NOW)
+    # Default burst is 1 min from Settings.
+    assert interval == 1.0
+
+
+def test_effective_refresh_interval_floors_at_base_when_base_shorter(db_session, monkeypatch) -> None:
+    # Operator override: refresh_interval_minutes=0.5 (passed as int 0,
+    # via burst path). Actually Settings is int, so use a non-default
+    # by monkey-patching get_settings inside the helper. Simpler: assert
+    # the min() semantics by patching settings.
+    _seed_event_at(db_session, timedelta(minutes=10))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+
+    # Make the base interval shorter than the burst override.
+    monkeypatch.setattr(
+        scheduler,
+        "get_settings",
+        lambda: SimpleNamespace(
+            refresh_interval_minutes=1,
+            live_game_window_hours=4,
+            near_tip_off_window_minutes=30,
+            near_tip_off_refresh_interval_minutes=2,
+        ),
+    )
+    interval = scheduler._effective_refresh_interval_minutes(_BURST_NOW)
+    assert interval == 1.0  # min(1, 2) = 1
+
+
+def test_current_slate_refresh_due_respects_burst_interval(db_session, monkeypatch) -> None:
+    # Event 15min from tip-off → burst window active. Last refresh
+    # finished 2 minutes ago. Default base=5min, burst=1min.
+    # In base-only world: 2min < 5min → NOT due.
+    # In burst world: 2min > 1min → DUE.
+    _seed_event_at(db_session, timedelta(minutes=15))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    monkeypatch.setattr(
+        scheduler,
+        "_latest_successful_refresh_finished_at",
+        lambda: _BURST_NOW - timedelta(minutes=2),
+    )
+    assert scheduler.current_slate_refresh_due(_BURST_NOW) is True
+
+
+def test_current_slate_refresh_due_uses_base_interval_outside_burst(db_session, monkeypatch) -> None:
+    # No events in window. Last refresh 2 min ago. Base=5min → NOT due.
+    _seed_event_at(db_session, timedelta(hours=10))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    monkeypatch.setattr(
+        scheduler,
+        "_latest_successful_refresh_finished_at",
+        lambda: _BURST_NOW - timedelta(minutes=2),
+    )
+    assert scheduler.current_slate_refresh_due(_BURST_NOW) is False
+
+
+def test_current_slate_due_within_picks_up_burst_window(db_session, monkeypatch) -> None:
+    # Last refresh 30 seconds ago, burst=1min → due_at = +30s from now.
+    # _current_slate_due_within(60) should return True (within 60s).
+    # Without burst (base=5min): due_at = +4m30s → _within(60) → False.
+    _seed_event_at(db_session, timedelta(minutes=15))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    monkeypatch.setattr(
+        scheduler,
+        "_latest_successful_refresh_finished_at",
+        lambda: _BURST_NOW - timedelta(seconds=30),
+    )
+    assert scheduler._current_slate_due_within(60, now=_BURST_NOW) is True
+
+
+def test_current_slate_refresh_due_returns_true_when_no_prior_run(db_session, monkeypatch) -> None:
+    # Sanity: existing "never-refreshed" behavior still short-circuits
+    # before the burst calculation.
+    _seed_event_at(db_session, timedelta(hours=10))
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    monkeypatch.setattr(scheduler, "_latest_successful_refresh_finished_at", lambda: None)
+    assert scheduler.current_slate_refresh_due(_BURST_NOW) is True
+
+
+# Regression coverage from code-reviewer: completed games keep burst
+# engaged unless their status is filtered out.
+
+
+def test_event_in_burst_window_excludes_completed_status(db_session, monkeypatch) -> None:
+    # Game ended 2h ago, status=completed. Should NOT trigger burst.
+    _seed_event_at(db_session, timedelta(hours=-2), status="completed")
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is False
+
+
+def test_event_in_burst_window_excludes_cancelled_status(db_session, monkeypatch) -> None:
+    # Game pre-tip but cancelled. No burst.
+    _seed_event_at(db_session, timedelta(minutes=15), status="cancelled")
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is False
+
+
+def test_event_in_burst_window_excludes_postponed_status(db_session, monkeypatch) -> None:
+    # Game was supposed to tip in 10min but got postponed. No burst.
+    _seed_event_at(db_session, timedelta(minutes=10), status="postponed")
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is False
+
+
+def test_event_in_burst_window_includes_in_progress_status(db_session, monkeypatch) -> None:
+    # Game tipped 1h ago, currently in_progress. Burst should be active.
+    _seed_event_at(db_session, timedelta(hours=-1), status="in_progress")
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is True
+
+
+def test_event_in_burst_window_mixed_statuses_picks_up_non_terminal(db_session, monkeypatch) -> None:
+    # Two events: one in_progress (live), one completed (done). Burst
+    # should fire because of the live one, even though the completed
+    # one is also inside the time window.
+    _seed_event_at(db_session, timedelta(hours=-2), status="completed")
+    _seed_event_at(db_session, timedelta(hours=-1), status="in_progress")
+    monkeypatch.setattr(scheduler, "SessionLocal", lambda: _DbSessionContext(db_session))
+    assert scheduler._event_in_burst_window(_BURST_NOW) is True
