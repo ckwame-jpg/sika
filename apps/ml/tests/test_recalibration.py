@@ -390,3 +390,141 @@ def test_recalibration_result_improvement_properties() -> None:
     )
     assert result.brier_improvement == 0.07
     assert result.ece_improvement == 0.10
+
+
+# -- Smarter #20 phase 2a: sidecar I/O --------------------------------
+
+
+def test_write_sidecar_persists_joblib_and_metadata(tmp_path) -> None:
+    from ml.recalibration import (
+        SIDECAR_METADATA_FILENAME,
+        SIDECAR_RECALIBRATOR_FILENAME,
+        write_sidecar_recalibrator,
+    )
+    import json as _json
+
+    now = datetime(2026, 5, 14, tzinfo=timezone.utc)
+    raw_probs, outcomes, timestamps = _synthetic_rolling_input(150, bias=0.2, now=now, seed=2)
+    result = recalibrate_with_rolling_window(
+        raw_probs, outcomes, timestamps, window_days=30, now=now,
+    )
+    joblib_path, metadata_path = write_sidecar_recalibrator(tmp_path, result)
+    assert joblib_path == tmp_path / SIDECAR_RECALIBRATOR_FILENAME
+    assert metadata_path == tmp_path / SIDECAR_METADATA_FILENAME
+    assert joblib_path.exists()
+    assert metadata_path.exists()
+
+    parsed = _json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert parsed["schema_version"] == 1
+    assert parsed["sample_size"] == result.sample_size
+    assert parsed["metrics_before"]["brier"] == result.metrics_before.brier
+    assert parsed["metrics_after"]["brier"] == result.metrics_after.brier
+    assert parsed["brier_improvement"] == result.brier_improvement
+
+
+def test_write_sidecar_raises_when_calibrator_is_none(tmp_path) -> None:
+    from ml.recalibration import write_sidecar_recalibrator
+
+    now = datetime(2026, 5, 14, tzinfo=timezone.utc)
+    # Tiny sample → insufficient_samples=True → calibrator=None.
+    timestamps = [now - timedelta(days=i) for i in range(5)]
+    probs = np.full(5, 0.5)
+    outcomes = np.zeros(5)
+    result = recalibrate_with_rolling_window(
+        probs, outcomes, timestamps, window_days=30, now=now, min_samples=100,
+    )
+    assert result.calibrator is None
+    with pytest.raises(ValueError):
+        write_sidecar_recalibrator(tmp_path, result)
+
+
+def test_write_sidecar_creates_parent_directory(tmp_path) -> None:
+    from ml.recalibration import write_sidecar_recalibrator
+
+    now = datetime(2026, 5, 14, tzinfo=timezone.utc)
+    raw_probs, outcomes, timestamps = _synthetic_rolling_input(150, bias=0.2, now=now, seed=1)
+    result = recalibrate_with_rolling_window(
+        raw_probs, outcomes, timestamps, window_days=30, now=now,
+    )
+    target = tmp_path / "new" / "nested" / "artifact"
+    joblib_path, metadata_path = write_sidecar_recalibrator(target, result)
+    assert joblib_path.exists()
+    assert metadata_path.exists()
+
+
+def test_load_sidecar_round_trips_predictions(tmp_path) -> None:
+    from ml.recalibration import (
+        load_sidecar_recalibrator,
+        write_sidecar_recalibrator,
+    )
+
+    now = datetime(2026, 5, 14, tzinfo=timezone.utc)
+    raw_probs, outcomes, timestamps = _synthetic_rolling_input(200, bias=0.2, now=now, seed=4)
+    result = recalibrate_with_rolling_window(
+        raw_probs, outcomes, timestamps, window_days=30, now=now,
+    )
+    write_sidecar_recalibrator(tmp_path, result)
+
+    loaded = load_sidecar_recalibrator(tmp_path)
+    assert loaded is not None
+    # Predictions from the loaded recalibrator match the originals on
+    # a fresh probe set.
+    probe = np.linspace(0.05, 0.95, 20)
+    original_preds = result.calibrator.predict(probe)
+    loaded_preds = loaded.predict(probe)
+    np.testing.assert_allclose(loaded_preds, original_preds)
+
+
+def test_load_sidecar_returns_none_when_file_missing(tmp_path) -> None:
+    from ml.recalibration import load_sidecar_recalibrator
+
+    assert load_sidecar_recalibrator(tmp_path) is None
+
+
+def test_load_sidecar_raises_when_artifact_dir_missing(tmp_path) -> None:
+    from ml.recalibration import load_sidecar_recalibrator
+
+    missing = tmp_path / "nope"
+    with pytest.raises(FileNotFoundError):
+        load_sidecar_recalibrator(missing)
+
+
+def test_load_sidecar_metadata_returns_parsed_dict(tmp_path) -> None:
+    from ml.recalibration import (
+        load_sidecar_metadata,
+        write_sidecar_recalibrator,
+    )
+
+    now = datetime(2026, 5, 14, tzinfo=timezone.utc)
+    raw_probs, outcomes, timestamps = _synthetic_rolling_input(150, bias=0.2, now=now, seed=6)
+    result = recalibrate_with_rolling_window(
+        raw_probs, outcomes, timestamps, window_days=30, now=now,
+    )
+    write_sidecar_recalibrator(tmp_path, result)
+    metadata = load_sidecar_metadata(tmp_path)
+    assert metadata is not None
+    assert metadata["schema_version"] == 1
+    assert "metrics_before" in metadata
+    assert "metrics_after" in metadata
+
+
+def test_load_sidecar_metadata_returns_none_when_missing(tmp_path) -> None:
+    from ml.recalibration import load_sidecar_metadata
+
+    assert load_sidecar_metadata(tmp_path) is None
+
+
+def test_sidecar_is_present_reflects_joblib_existence(tmp_path) -> None:
+    from ml.recalibration import (
+        sidecar_is_present,
+        write_sidecar_recalibrator,
+    )
+
+    assert sidecar_is_present(tmp_path) is False
+    now = datetime(2026, 5, 14, tzinfo=timezone.utc)
+    raw_probs, outcomes, timestamps = _synthetic_rolling_input(150, bias=0.2, now=now, seed=8)
+    result = recalibrate_with_rolling_window(
+        raw_probs, outcomes, timestamps, window_days=30, now=now,
+    )
+    write_sidecar_recalibrator(tmp_path, result)
+    assert sidecar_is_present(tmp_path) is True
