@@ -1442,7 +1442,13 @@ def test_stage_current_slate_watchlist_batch_advances_past_empty_filtered_batch(
         scored_market_ids.extend(market.id for market in markets)
         return WatchlistGenerationSummary(scored_market_count=len(markets), outcome_reason_counts={"scoring_returned_none": len(markets)}), []
 
-    monkeypatch.setattr(scoring_module, "_score_watchlist_markets_batch", fake_score_batch)
+    # R1 phase 4: ``_score_watchlist_markets_batch`` moved to
+    # ``scoring.orchestration``. ``stage_current_slate_watchlist_batch``
+    # (also in orchestration.py) calls it via the module-internal
+    # reference, so the patch has to land there — patching the
+    # re-export on ``scoring_module`` would not be picked up.
+    from app.services.scoring import orchestration as orchestration_module
+    monkeypatch.setattr(orchestration_module, "_score_watchlist_markets_batch", fake_score_batch)
 
     first_summary, next_index, complete = stage_current_slate_watchlist_batch(
         db_session,
