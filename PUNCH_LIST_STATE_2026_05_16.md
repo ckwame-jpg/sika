@@ -78,11 +78,11 @@ That's the **only** truly open Section 1 item.
 |---|---|---|
 | #2 (walk-forward backtest) | shipped | `apps/ml/ml/backtest.py` |
 | #4 (MLB venue → weather pipeline) | shipped | via Bug #4 fix |
-| #7 (MLB park × weather HR interaction) | **OPEN** | depends on #4 + bug #4 (both shipped) → now unblocked |
+| #7 (MLB park × weather HR interaction) | shipped | `apps/api/app/services/heuristic_factors.py:432` — `_mlb_park_weather_hr_interaction` wired into `home_runs` + `total_bases` via `_MLB_FACTORS_BY_STAT` (12 tests in `test_mlb_park_weather_interaction.py`) |
 | #8 (correlation-aware parlay engine) | shipped | [sika#141](https://github.com/ckwame-jpg/sika/pull/141) phase 3 |
 | #22 (feature freshness SLAs) | blocked | depends on Architecture #5 (open) |
 | #25 (market mapping confidence + override) | shipped | [sika#134](https://github.com/ckwame-jpg/sika/pull/134) |
-| #30 (per-family `watchlist_min_edge` tuning) | **OPEN** | depends on Smarter #2 (shipped) → now unblocked. Mechanism-only ship pattern (like #28) is the natural shape. |
+| #30 (per-family `watchlist_min_edge` tuning) | shipped | [sika#146](https://github.com/ckwame-jpg/sika/pull/146) — mechanism-only ship (empty `WATCHLIST_MIN_EDGE_OVERRIDES` registry, default fallback to `settings.watchlist_min_edge`) |
 | #32 (drawdown brake on demo trading) | shipped | [sika#144](https://github.com/ckwame-jpg/sika/pull/144) — drawdown brake snapshot on `GET /positions` |
 | #31 (LLM narrator) | shipped, **pending operator UI eyeball** | branch `claude/smarter-31-llm-narrator` pushed but PR unmerged — operator needs to spot-check the toggle + rendered narration |
 | #21 phase 2b/d (quantile-regression intervals — training pipeline + UI band) | handed off | see [SMARTER_21_PHASE_2B_HANDOFF.md](SMARTER_21_PHASE_2B_HANDOFF.md) + [SMARTER_21_PHASE_2B_PROMPT.md](SMARTER_21_PHASE_2B_PROMPT.md) |
@@ -109,10 +109,13 @@ That's the **only** truly open Section 1 item.
 
 ## Recommended next bets
 
-1. **Smarter #7** — MLB park × weather HR interaction term. Unblocked, M effort, additive heuristic factor. Natural follow-on to bug #4 + Smarter #4.
-2. **Smarter #30** — Per-family `watchlist_min_edge` tuning. Unblocked, mechanism-only ship pattern (mirror Smarter #28). Empty registry by design; operators populate from backtest analysis once Smarter #2's walk-forward harness has produced enough data.
-3. **Bug #40 / Architecture #6** — Web contracts migration. Larger effort, one endpoint family at a time.
-4. **Smarter #21 phase 2b/d** — Handed off; needs its own session (see handoff doc).
+The clean small-effort items are all shipped. What remains needs either a strategy decision or a fresh session:
+
+1. **Bug #40 / Architecture #6** — Web contracts migration. `apps/web/lib/types.ts` is 881 lines of hand-written types that mirror `packages/contracts/generated/api.d.ts` (the OpenAPI-generated 126KB source). The migration is one endpoint family at a time, and each migration needs verification that every consumer surface (components, hooks, page handlers) still type-checks against the generated `Schema[…]` references. Recommend tackling read-only endpoint families first (`/health`, `/predictions/summary`) before mutating ones.
+2. **Smarter #21 phase 2b/d** — Already handed off in [SMARTER_21_PHASE_2B_PROMPT.md](SMARTER_21_PHASE_2B_PROMPT.md); needs its own session.
+3. **Architecture #5 — Feature freshness layer** — Prerequisite for Smarter #22. Not started; needs a design pass to define the `FeatureGroupSnapshot` shape and a migration order (MLB weather/park/starter + NBA injury/rest first, then sportsbook/referee features). L effort across multiple PRs.
+4. **Smarter #13 phase 2b-2** — BR referee tendency fetcher wiring is deferred pending operator manual validation of the basketball-reference URL + table layout (the public BR site returns 403 to anonymous fetches; operators need to supply the working URL pattern from their environment).
+5. **Smarter #31** — LLM narrator branch is shipped but unmerged; needs operator UI eyeball.
 
 ## Recently shipped PRs (since last roll-up)
 
@@ -129,3 +132,5 @@ That's the **only** truly open Section 1 item.
 | [#142](https://github.com/ckwame-jpg/sika/pull/142) | Smarter #9 phase 3 | Kelly sizing diagnostics on scored recommendations |
 | [#143](https://github.com/ckwame-jpg/sika/pull/143) | Smarter #21 phase 2b/d | Session handoff + spawn prompt |
 | [#144](https://github.com/ckwame-jpg/sika/pull/144) | Smarter #32 | Drawdown brake snapshot on `/positions` |
+| [#145](https://github.com/ckwame-jpg/sika/pull/145) | docs | This punch list state snapshot |
+| [#146](https://github.com/ckwame-jpg/sika/pull/146) | Smarter #30 | Per-family `watchlist_min_edge` tuning mechanism |
