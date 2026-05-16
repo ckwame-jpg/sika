@@ -115,6 +115,12 @@ export type TradeDeskEvent = Wire<Schema<"TradeDeskEventRead">>;
 export type TradeDeskArchivedSlate = Wire<Schema<"TradeDeskArchivedSlateRead">>;
 export type TradeDeskResponse = Wire<Schema<"TradeDeskResponse">>;
 
+// ── /runs + /jobs endpoint family ──
+export type RunSummaryCounts = Wire<Schema<"RunSummaryCounts">>;
+export type RunRead = Wire<Schema<"RunRead">>;
+export type RunDetailRead = Wire<Schema<"RunDetailRead">>;
+export type JobRefreshResponse = Wire<Schema<"JobRefreshResponse">>;
+
 // Hand-written EventParticipantRead / EventRead / RecommendationRead /
 // MarketSnapshotRead / SignalSnapshotRead / MarketDetailRead replaced by
 // the shim re-exports near the top of this file (Bug #40 phase 4).
@@ -135,73 +141,8 @@ interface SportAvailabilityRead {
 // Hand-written MarketHistoryPointRead / MarketHistoryRead replaced by the
 // shim re-exports near the top of this file (Bug #40 phase 4).
 
-export interface RunSummaryCounts {
-  sports_records_ingested: Record<string, number>;
-  total_kalshi_markets_seen: number;
-  supported_markets_kept: number;
-  supported_nba_props_seen: number;
-  supported_mlb_props_seen: number;
-  mapped_markets: number;
-  mapped_prop_markets: number;
-  current_slate_event_count: number;
-  current_slate_candidate_market_count: number;
-  current_slate_loaded_candidate_market_count: number;
-  current_slate_filtered_candidate_market_count: number;
-  current_slate_candidate_filter_reason_counts: Record<string, number>;
-  current_slate_scored_market_count: number;
-  current_slate_coverage_prediction_count: number;
-  current_slate_blocking_reason: string | null;
-  scorer_outcome_counts: Record<string, number>;
-  recommendations_emitted: number;
-  predictions_captured: number;
-  parlay_recommendations_emitted: number;
-  parlay_predictions_captured: number;
-  prediction_settlement_updated: number;
-  parlay_prediction_settlement_updated: number;
-  prediction_outcomes: Record<string, number>;
-  parlay_prediction_outcomes: Record<string, number>;
-  unsupported_prop_category_counts: Record<string, number>;
-  heuristic_longshots_suppressed: number;
-  inverse_winner_duplicates_collapsed: number;
-  combo_prop_candidates_emitted: number;
-  combo_prop_candidates_suppressed: number;
-  critical_context_suppressed: number;
-  quality_tier_counts: Record<string, number>;
-  prop_subjects_warmed: number;
-  player_search_cache_hits: number;
-  player_search_cache_misses: number;
-  gamelog_cache_hits: number;
-  gamelog_cache_misses: number;
-  stale_gamelog_fallbacks: number;
-  combo_prop_legs_discovered: number;
-  combo_prop_legs_refreshed: number;
-  watchlist_counts_by_sport: Record<string, number>;
-  watchlist_counts_by_prop_category: Record<string, number>;
-  parlay_watchlist_counts_by_scope: Record<string, number>;
-  parlay_watchlist_counts_by_leg_count: Record<string, number>;
-}
-
-export interface RunRead {
-  id: number;
-  kind: string;
-  status: string;
-  started_at: string;
-  finished_at: string | null;
-  records_processed: number;
-  error_message: string | null;
-  summary_counts: RunSummaryCounts;
-}
-
-export interface RunDetailRead extends RunRead {
-  details: Record<string, unknown>;
-}
-
-export interface JobRefreshResponse {
-  job_id: number;
-  kind: string;
-  scope: string;
-  status: "queued" | "running" | "completed" | "failed";
-}
+// Hand-written RunSummaryCounts / RunRead / RunDetailRead / JobRefreshResponse
+// replaced by the shim re-exports near the top of this file (Bug #40 phase 6).
 
 // Hand-written ReadinessStatus / RuntimeHealthStatus / StudyTrack /
 // ReadinessBucketRead / CalibrationBucketRead / ModelFamilyRuntimeHealthRead /
