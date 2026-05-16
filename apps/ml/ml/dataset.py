@@ -36,6 +36,47 @@ def _family_key(sport_key: str | None, market_family: str | None) -> str:
     return f"{sport.lower()}_singles" if sport else "unknown_singles"
 
 
+def _enrich_prediction_features(row: dict[str, Any], base_features: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``base_features`` enriched with the same per-row
+    additions ``_prepare_frame`` applies before training.
+
+    Extracted (Smarter #21 phase 2b) so the interval-training dataset
+    extractor can reuse the exact normalization the classifier sees.
+    Without sharing the helper, the regressor would silently train on
+    a different feature vector than the classifier ships.
+
+    Inputs:
+    - ``row``: the raw prediction row (DataFrame record OR SQLAlchemy
+      mapping) — must expose ``sport_key``, ``market_family``,
+      ``suggested_price``, ``fair_yes_price``, ``edge``, ``confidence``,
+      ``selection_score``, ``threshold``.
+    - ``base_features``: the dict already parsed from
+      ``predictions.features`` JSON.
+
+    Returns a fresh dict — does not mutate ``base_features``.
+    """
+    sport = str(row.get("sport_key") or "").upper()
+    family_key = str(
+        base_features.get("family_key")
+        or _family_key(row.get("sport_key"), row.get("market_family"))
+    )
+    enriched = dict(base_features)
+    enriched.update(
+        {
+            "family_key": family_key,
+            "sport_is_nba": 1.0 if sport == "NBA" else 0.0,
+            "sport_is_mlb": 1.0 if sport == "MLB" else 0.0,
+            "suggested_price": row.get("suggested_price"),
+            "heuristic_fair_yes_price": row.get("fair_yes_price"),
+            "heuristic_edge": row.get("edge"),
+            "heuristic_confidence": row.get("confidence"),
+            "heuristic_selection_score": row.get("selection_score"),
+            "threshold": row.get("threshold"),
+        }
+    )
+    return enriched
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
@@ -77,21 +118,7 @@ def _prepare_frame(rows: pd.DataFrame, *, drop_pushes: bool, dedupe_markets: boo
     normalized_features = []
     for row in frame.to_dict(orient="records"):
         features = _as_dict(row.get("features"))
-        family_key = str(features.get("family_key") or _family_key(row.get("sport_key"), row.get("market_family")))
-        features.update(
-            {
-                "family_key": family_key,
-                "sport_is_nba": 1.0 if str(row.get("sport_key") or "").upper() == "NBA" else 0.0,
-                "sport_is_mlb": 1.0 if str(row.get("sport_key") or "").upper() == "MLB" else 0.0,
-                "suggested_price": row.get("suggested_price"),
-                "heuristic_fair_yes_price": row.get("fair_yes_price"),
-                "heuristic_edge": row.get("edge"),
-                "heuristic_confidence": row.get("confidence"),
-                "heuristic_selection_score": row.get("selection_score"),
-                "threshold": row.get("threshold"),
-            }
-        )
-        normalized_features.append(features)
+        normalized_features.append(_enrich_prediction_features(row, features))
     frame["features"] = normalized_features
     frame["family_key"] = [features["family_key"] for features in normalized_features]
     # target = 1 iff YES wins. Without this, NO-side rows would be labeled by
