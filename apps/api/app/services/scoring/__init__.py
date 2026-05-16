@@ -64,15 +64,26 @@ def _events_ingestion_fresh_at(db: Session) -> datetime | None:
     we've never recorded a successful run; the freshness layer treats
     that as opt-out (no penalty) rather than treating "no signal" as
     "infinitely stale" — matches the conservative default behavior.
+
+    Perf note: this hits ``OperatorSetting`` once per scoring call
+    (i.e. once per market in a batch). Reviewer flagged the N+1; the
+    follow-up plumbs the value through ``_build_scored_recommendation``
+    from the batch-level entrypoint so it computes once per pass. For
+    now the per-call cost is one indexed read against a single row
+    (~1-2ms × N markets) — real but bounded; deferred.
     """
     # Lazy import: upstream_health uses OperatorSetting which pulls
     # in the wider ORM surface. Local import keeps the scoring module
     # import-time small.
     from app.services.upstream_health import get_upstream_health  # noqa: PLC0415
 
+    # ``get_upstream_health`` is documented to always return one row
+    # per source (None-filled when never recorded). With a single
+    # ``espn_scoreboard`` source the list is always length 1; access
+    # ``[0]`` directly. ``last_success_at`` IS None when the row has
+    # never been written, which is the conservative "no signal →
+    # opt-out" path documented above.
     snapshots = get_upstream_health(db, sources=["espn_scoreboard"])
-    if not snapshots:
-        return None
     return snapshots[0].last_success_at
 
 
@@ -2050,18 +2061,19 @@ def _build_scored_recommendation(
         right=right,
     )
 
-    # Architecture #5 — apply per-group freshness policy. Runs against
-    # the populated ``feature_groups`` from the scorer above (empty
-    # dict for non-prop scopes, which makes this a no-op there). The
-    # penalty applies BEFORE the ML branch below so that on the
-    # heuristic path the confidence reflects data-freshness reality;
-    # on the ML path, ml_result.confidence overrides whatever we
-    # compute here (ML's calibrated probability presumably already
-    # accounts for the freshness of the training rows).
+    # Architecture #5 — compute per-group freshness policy. Penalty
+    # application is DEFERRED until after the ML branch below so it
+    # applies to both the heuristic path AND the ML-served confidence.
+    # Reviewer round 1 caught the original ordering as a correctness
+    # bug: the ML model was trained on historical rows and doesn't
+    # know the staleness state at inference time, so its calibrated
+    # confidence doesn't encode the per-group freshness signal — the
+    # penalty has to ride on top of whatever confidence the ML branch
+    # produces, not be overwritten by it.
+    total_freshness_delta = 0.0
     if feature_groups:
         freshness_now = datetime.now(timezone.utc)
         freshness_assessments = check_freshness(feature_groups, now=freshness_now)
-        total_freshness_delta = 0.0
         stale_groups: list[dict[str, Any]] = []
         for assessment in freshness_assessments:
             if assessment.is_stale:
@@ -2077,13 +2089,9 @@ def _build_scored_recommendation(
                     }
                 )
                 total_freshness_delta += assessment.confidence_delta
-        if total_freshness_delta != 0.0:
-            # Penalty deltas are negative; bound the result so the
-            # multiplicative penalty stack downstream can't drive
-            # confidence past zero from one stale group.
-            confidence = max(0.0, confidence + total_freshness_delta)
-        # Always surface the serialized feature_groups + assessments so
-        # operators can audit freshness even when no penalty fires.
+        # Always surface the serialized feature_groups + stale-group
+        # diagnostics so operators can audit freshness even when no
+        # penalty fires.
         scoring_diagnostics["feature_groups"] = serialize_feature_groups(feature_groups)
         if stale_groups:
             scoring_diagnostics["freshness_stale_groups"] = stale_groups
@@ -2138,6 +2146,19 @@ def _build_scored_recommendation(
                 reasons = [*reasons, f"Served by heuristic fallback because ML was unavailable: {runtime_decision.last_error}"]
             else:
                 scoring_diagnostics["serving_mode"] = "heuristic"
+
+    # Architecture #5 — apply the per-group freshness penalty AFTER
+    # the ML branch overrides confidence. Reviewer round 1 caught
+    # the original ordering as a correctness bug: putting this
+    # before the ML branch meant ``ml_result.confidence`` silently
+    # discarded the penalty on the ML path, even though the model
+    # was trained on historical rows and doesn't know the staleness
+    # state of the current scoring call. Applying here means the
+    # penalty rides on top of whatever confidence the kernel chose
+    # (heuristic or ML), bounded so a deep penalty can't push below
+    # zero.
+    if total_freshness_delta != 0.0:
+        confidence = max(0.0, round(confidence + total_freshness_delta, 4))
 
     fair_yes_price = round(probability_yes, 4)
     fair_no_price = round(1 - probability_yes, 4)

@@ -222,6 +222,10 @@ class PropStatsResolver:
         expires_at = self._coerce_utc(row.expires_at) if row else None
         if row and expires_at and expires_at > now:
             self.stats.gamelog_cache_hits += 1
+            # ``_coerce_utc(None)`` returns ``None`` (matches the
+            # codebase convention); a pre-migration row with
+            # ``cached_at=NULL`` round-trips as fresh_at-None →
+            # freshness opt-out for that row (no penalty fires).
             return dict(row.payload or {}), "hit", self._coerce_utc(row.cached_at)
         if row and not self.allow_network:
             self.stats.gamelog_cache_hits += 1

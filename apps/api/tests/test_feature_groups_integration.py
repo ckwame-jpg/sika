@@ -338,6 +338,113 @@ def test_mlb_score_populates_feature_groups_for_park(db_session) -> None:
 # -- persistence round-trip ------------------------------------------
 
 
+def test_dome_weather_path_opts_out_of_freshness(db_session) -> None:
+    """Dome forecasts return ``cached_at=None`` from load_weather
+    (no refresh lifecycle — values are constant). The kernel must
+    register the mlb_weather group with ``fresh_at=None``, which
+    opts the PENALIZE policy out via the freshness layer's
+    ``fresh_at is None → not stale`` rule.
+    """
+    event, market, snapshot = _seed_mlb_event(db_session)
+    resolved = ResolvedPropSubject(
+        sport_key="MLB",
+        athlete_id="33944",
+        display_name="Bryce Harper",
+        team_name="Philadelphia Phillies",
+        season=2026,
+        game_logs=_mlb_game_logs(),
+        advanced_payload={},
+        advanced_cache_status="miss",
+    )
+    with patch(
+        "app.services.mlb_advanced.load_weather",
+        return_value=AdvancedLoadResult(
+            payload={
+                "temp_f": 72.0,
+                "wind_speed_mph": 0.0,
+                "wind_dir_deg": 0.0,
+                "precip_pct": 0.0,
+                "humidity_pct": 50.0,
+                "is_dome": True,
+                "source": "dome",
+            },
+            cache_status="dome",
+            complete=True,
+            cached_at=None,  # dome path — no refresh lifecycle
+        ),
+    ):
+        result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
+    assert result is not None
+    _, _, _, _, feature_groups = result
+    assert "mlb_weather" in feature_groups
+    # Critical: fresh_at None means the PENALIZE policy never fires
+    # for dome games. Without this guard a dome forecast would look
+    # eternally stale.
+    assert feature_groups["mlb_weather"].fresh_at is None
+
+
+def test_stale_penalize_group_lowers_confidence_end_to_end(db_session) -> None:
+    """End-to-end pin that the PENALIZE policy actually reduces
+    ``signal.confidence`` when a group is stale. Goes through
+    ``_build_scored_recommendation`` (where the kernel's freshness
+    block lives) — not just ``_score_player_prop`` (where the
+    feature_groups are populated).
+
+    A stale mlb_weather row (cached_at 12h ago, TTL 6h, delta -0.05)
+    should record the penalty in scoring_diagnostics AND apply it to
+    the signal's confidence. The HIGH issue from reviewer round 1
+    was that the penalty was applied BEFORE the ML branch, so
+    ml_result.confidence overwrote it. The fix moved the application
+    after the ML branch; this pin asserts both the diagnostic and
+    the confidence reduction land regardless of serving mode.
+    """
+    from app.services.scoring import _build_scored_recommendation
+
+    event, market, snapshot = _seed_mlb_event(db_session)
+    resolved = ResolvedPropSubject(
+        sport_key="MLB", athlete_id="33944", display_name="Bryce Harper",
+        team_name="Philadelphia Phillies", season=2026,
+        game_logs=_mlb_game_logs(),
+        advanced_payload={}, advanced_cache_status="miss",
+    )
+    with patch(
+        "app.services.mlb_advanced.load_weather",
+        return_value=AdvancedLoadResult(
+            payload={
+                "temp_f": 82.0, "wind_speed_mph": 10.0, "wind_dir_deg": 90.0,
+                "precip_pct": 0.0, "humidity_pct": 55.0, "is_dome": False,
+                "source": "openweather",
+            },
+            cache_status="stale", complete=True,
+            # cached_at 12h ago > 6h TTL → mlb_weather is stale →
+            # -0.05 PENALIZE fires.
+            cached_at=datetime.now(timezone.utc) - timedelta(hours=12),
+        ),
+    ):
+        stale_scored = _build_scored_recommendation(
+            db_session, event, market, snapshot,
+            resolver=_FakeResolver(resolved),
+        )
+    assert stale_scored is not None
+    stale_signal = stale_scored.signal
+    stale_diagnostics = stale_signal.scoring_diagnostics or {}
+
+    # The freshness diagnostic is populated.
+    assert "freshness_stale_groups" in stale_diagnostics
+    stale_groups = stale_diagnostics["freshness_stale_groups"]
+    weather_stale = next(
+        (g for g in stale_groups if g.get("group_key") == "mlb_weather"), None,
+    )
+    assert weather_stale is not None
+    assert weather_stale["confidence_delta"] == pytest.approx(-0.05)
+
+    # The penalty's signed total surfaces as a top-level diagnostic
+    # (the post-ML-branch application from the round-1 fix means
+    # this delta lands on the final confidence whether the kernel
+    # served heuristic or ML).
+    assert stale_diagnostics.get("freshness_confidence_delta") == pytest.approx(-0.05)
+
+
 def test_feature_groups_round_trip_through_serialize(db_session) -> None:
     """The ``serialize_feature_groups`` → JSON →
     ``deserialize_feature_groups`` round-trip must restore the exact
