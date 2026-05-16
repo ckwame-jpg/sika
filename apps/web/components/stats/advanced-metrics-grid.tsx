@@ -10,8 +10,12 @@ interface AdvancedMetricsGridProps {
   /** 0-100 league percentile rank per metric_key */
   percentiles: Record<string, number>;
   /** "basic" | "advanced" tags per metric_key. Metrics without a tag are
-   *  treated as "basic" and rendered in the basic group above this grid. */
-  categories: Record<string, "basic" | "advanced">;
+   *  treated as "basic" and rendered in the basic group above this grid.
+   *  Typed as ``Record<string, string>`` (not the narrower literal union)
+   *  to match the API contract: the Pydantic schema is
+   *  ``dict[str, str]``, not ``dict[str, Literal[…]]``. The category
+   *  check below narrows via ``=== "advanced"``. */
+  categories: Record<string, string>;
 }
 
 /**

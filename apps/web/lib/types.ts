@@ -141,6 +141,13 @@ export type PaperPositionCreate = Schema<"PaperPositionCreate">;
 export type PaperPositionExit = Schema<"PaperPositionExit">;
 export type DemoOrderCreate = Schema<"DemoOrderCreate">;
 
+// ── /stats-query + /team-history endpoint family ──
+export type StatsSummaryRead = Wire<Schema<"StatsSummaryRead">>;
+export type StatsGameLogRead = Wire<Schema<"StatsGameLogRead">>;
+export type StatsQueryRead = Wire<Schema<"StatsQueryRead">>;
+export type TeamGameResultRead = Wire<Schema<"TeamGameResultRead">>;
+export type TeamHistoryRead = Wire<Schema<"TeamHistoryRead">>;
+
 // Hand-written EventParticipantRead / EventRead / RecommendationRead /
 // MarketSnapshotRead / SignalSnapshotRead / MarketDetailRead replaced by
 // the shim re-exports near the top of this file (Bug #40 phase 4).
@@ -179,73 +186,9 @@ interface SportAvailabilityRead {
 // ParlayPredictionSummaryRead / ParlayPredictionLegRead replaced by the shim
 // re-exports near the top of this file (Bug #40 phase 2).
 
-interface StatsSummaryRead {
-  games: number;
-  wins: number | null;
-  losses: number | null;
-  draws: number | null;
-  metrics: Record<string, number | null>;
-  stat_line: string | null;
-  /** 0-100 league percentile rank per metric key. Optional — populated only
-   *  for advanced metrics that have a league-wide distribution cached. */
-  percentiles?: Record<string, number>;
-  /** Tags each metric key as "basic" or "advanced" so the UI can group them
-   *  into separate sections. Optional — UI falls back to single-section
-   *  rendering when absent. */
-  metric_categories?: Record<string, "basic" | "advanced">;
-}
-
-interface StatsGameLogRead {
-  game_id: string;
-  game_date: string;
-  competition: string | null;
-  team_name: string | null;
-  location: string;
-  opponent: string;
-  opponent_abbreviation: string | null;
-  result: string | null;
-  team_score: number;
-  opponent_score: number;
-  metrics: Record<string, number | null>;
-  stat_line: string | null;
-}
-
-export interface StatsQueryRead {
-  question: string;
-  sport_key: string;
-  entity_name: string;
-  entity_id: string;
-  team_name: string | null;
-  query_type: string;
-  season: number;
-  games_requested: number | null;
-  games_analyzed: number;
-  split: string | null;
-  opponent: string | null;
-  metric_labels: Record<string, string>;
-  summary: StatsSummaryRead;
-  game_logs: StatsGameLogRead[];
-  explanation: string;
-  coverage_note?: string | null;
-  source: string;
-}
-
-export interface TeamGameResultRead {
-  game_date: string;
-  opponent: string;
-  opponent_abbreviation: string | null;
-  location: "home" | "away";
-  team_score: number;
-  opp_score: number;
-  result: "W" | "L";
-}
-
-export interface TeamHistoryRead {
-  entity_id: string;
-  team_name: string;
-  sport_key: string;
-  results: TeamGameResultRead[];
-}
+// Hand-written StatsSummaryRead / StatsGameLogRead / StatsQueryRead /
+// TeamGameResultRead / TeamHistoryRead replaced by the shim re-exports
+// near the top of this file (Bug #40 phase 8).
 
 // PredictionSettlementResponse replaced by the shim re-export near the
 // top of this file (Bug #40 phase 2).
