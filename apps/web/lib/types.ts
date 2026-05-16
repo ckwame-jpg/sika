@@ -87,116 +87,24 @@ export type ModelReadinessSummaryRead = Wire<Schema<"ModelReadinessSummaryRead">
 // continue to type-check.
 export type ModelReadinessSettingsUpdate = Partial<Schema<"ModelReadinessSettingsUpdate">>;
 
-export interface EventParticipantRead {
-  participant_id: number;
-  display_name: string;
-  role: string;
-  is_home: boolean;
-  score: number | null;
-  result: string | null;
-}
+// ── /events + /markets endpoint family ──
+//
+// MarketDetailRead embeds RecommendationRead, EventRead,
+// SignalSnapshotRead, and MarketSnapshotRead through the generated
+// schema's component refs. Migrating MarketDetailRead alone would
+// keep those inner types as the *generated* version while the
+// hand-written exports stayed in place — TypeScript would treat
+// ``RecommendationRead[]`` consumers as receiving an incompatible
+// type. Migrate the whole transitive closure together.
+export type EventParticipantRead = Wire<Schema<"EventParticipantRead">>;
+export type EventRead = Wire<Schema<"EventRead">>;
+export type RecommendationRead = Wire<Schema<"RecommendationRead">>;
+export type MarketDetailRead = Wire<Schema<"MarketDetailRead">>;
+export type MarketHistoryRead = Wire<Schema<"MarketHistoryRead">>;
 
-export interface EventRead {
-  id: number;
-  external_id: string;
-  sport_key: string;
-  name: string;
-  status: string;
-  starts_at: string;
-  completed_at: string | null;
-  participants: EventParticipantRead[];
-  raw_data: Record<string, unknown>;
-}
-
-export interface RecommendationRead {
-  id: number;
-  ticker: string;
-  sport_key: string | null;
-  market_title: string;
-  event_name: string;
-  starts_at: string | null;
-  market_family: string | null;
-  market_kind: string | null;
-  stat_key: string | null;
-  threshold: number | null;
-  direction: string | null;
-  subject_name: string | null;
-  subject_team: string | null;
-  side: string;
-  action: string;
-  suggested_price: number;
-  edge: number;
-  confidence: number;
-  selected_side_probability: number | null;
-  source_type: string | null;
-  source_market_ticker: string | null;
-  source_market_title: string | null;
-  display_market_title: string | null;
-  source_badge_label: string | null;
-  context_coverage_score: number | null;
-  quality_tier: string | null;
-  model_name: string | null;
-  model_version: string | null;
-  calibration_version: string | null;
-  feature_set_version: string | null;
-  invalidation: string;
-  rationale: string;
-  captured_at: string;
-  // Smarter #24 — minutes until the market closes. ``null`` when no
-  // close_time is set on the market; clamped at 0 for past close.
-  time_to_close_minutes: number | null;
-  // Smarter #31 — verifier-checked LLM explanation. ``null`` when the
-  // narrator toggle is off, no cache exists, or the verifier rejected
-  // the output. The card renders this in addition to (not instead of)
-  // the mechanical rationale.
-  narrator_text: string | null;
-}
-
-interface MarketSnapshotRead {
-  captured_at: string;
-  yes_bid: number | null;
-  yes_ask: number | null;
-  no_bid: number | null;
-  no_ask: number | null;
-  last_price: number | null;
-  volume: number | null;
-  open_interest: number | null;
-}
-
-interface SignalSnapshotRead {
-  captured_at: string;
-  model_name: string;
-  model_version: string | null;
-  calibration_version: string | null;
-  feature_set_version: string | null;
-  confidence: number;
-  fair_yes_price: number;
-  fair_no_price: number;
-  edge: number;
-  reasons: string[];
-  features: Record<string, unknown>;
-  scoring_diagnostics: Record<string, unknown>;
-}
-
-export interface MarketDetailRead {
-  ticker: string;
-  title: string;
-  subtitle: string | null;
-  sport_key: string | null;
-  market_family: string | null;
-  market_kind: string | null;
-  stat_key: string | null;
-  threshold: number | null;
-  direction: string | null;
-  subject_name: string | null;
-  subject_team: string | null;
-  status: string;
-  close_time: string | null;
-  event: EventRead | null;
-  latest_snapshot: MarketSnapshotRead | null;
-  latest_signal: SignalSnapshotRead | null;
-  recommendations: RecommendationRead[];
-}
+// Hand-written EventParticipantRead / EventRead / RecommendationRead /
+// MarketSnapshotRead / SignalSnapshotRead / MarketDetailRead replaced by
+// the shim re-exports near the top of this file (Bug #40 phase 4).
 
 interface SportAvailabilityRead {
   sport_key: string;
@@ -307,23 +215,8 @@ export interface TradeDeskResponse {
   previous_slate: TradeDeskArchivedSlate | null;
 }
 
-interface MarketHistoryPointRead {
-  timestamp: string;
-  yes_bid: number | null;
-  yes_ask: number | null;
-  no_bid: number | null;
-  no_ask: number | null;
-  last_price: number | null;
-  mean_price: number | null;
-  volume: number | null;
-  source: string;
-}
-
-export interface MarketHistoryRead {
-  ticker: string;
-  range: string;
-  points: MarketHistoryPointRead[];
-}
+// Hand-written MarketHistoryPointRead / MarketHistoryRead replaced by the
+// shim re-exports near the top of this file (Bug #40 phase 4).
 
 export interface RunSummaryCounts {
   sports_records_ingested: Record<string, number>;
