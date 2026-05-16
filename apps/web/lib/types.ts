@@ -62,6 +62,31 @@ export type ParlayPredictionRead = Wire<Schema<"ParlayPredictionRead">>;
 export type ParlayPredictionSummaryRead = Wire<Schema<"ParlayPredictionSummaryRead">>;
 export type PredictionSettlementResponse = Wire<Schema<"PredictionSettlementResponse">>;
 
+// ── /ops/models/readiness endpoint family ──
+//
+// ``ReadinessStatus`` / ``RuntimeHealthStatus`` / ``StudyTrack`` are
+// inline literal unions in the generated schema (not standalone
+// component types). Pull them out via indexed-access so the source
+// of truth stays the OpenAPI generation — adding a new readiness
+// state on the API side flows through automatically.
+export type ReadinessStatus = Wire<Schema<"ModelFamilyReadinessRead">>["readiness_status"];
+export type RuntimeHealthStatus = Wire<Schema<"ModelFamilyRuntimeHealthRead">>["runtime_health"];
+export type ReadinessBucketRead = Wire<Schema<"ReadinessBucketRead">>;
+export type CalibrationBucketRead = Wire<Schema<"CalibrationBucketRead">>;
+export type ModelFamilyRuntimeHealthRead = Wire<Schema<"ModelFamilyRuntimeHealthRead">>;
+export type ModelFamilyReadinessRead = Wire<Schema<"ModelFamilyReadinessRead">>;
+export type SettlementAgingRead = Wire<Schema<"SettlementAgingRead">>;
+export type ModelReadinessSummaryRead = Wire<Schema<"ModelReadinessSummaryRead">>;
+// Update DTOs use ``Partial<Schema<…>>`` instead of ``Wire<Schema<…>>``
+// because the partial-PATCH idiom (caller sends only the fields they
+// want to change) requires every field to be optional. The generated
+// schema already marks fields with ``T | None = None`` Pydantic
+// defaults as ``?:``; ``Partial<>`` extends that to the few fields
+// that have non-None defaults (e.g. ``enqueue_shadow_backfill: bool
+// = True``) so call sites like ``{ pick_history_default_n: 5 }``
+// continue to type-check.
+export type ModelReadinessSettingsUpdate = Partial<Schema<"ModelReadinessSettingsUpdate">>;
+
 export interface EventParticipantRead {
   participant_id: number;
   display_name: string;
@@ -368,160 +393,11 @@ export interface JobRefreshResponse {
   status: "queued" | "running" | "completed" | "failed";
 }
 
-export type ReadinessStatus =
-  | "heuristic_only"
-  | "insufficient_history"
-  | "shadow_not_started"
-  | "shadowing"
-  | "history_accumulating"
-  | "ready_for_review"
-  | "serving";
-
-export type RuntimeHealthStatus = "healthy" | "degraded" | "unavailable";
-type StudyTrack = "active" | "heuristic_only";
-
-export interface ReadinessBucketRead {
-  label: string;
-  total_count: number;
-  won_count: number;
-  lost_count: number;
-  push_count: number;
-  cancelled_count: number;
-  win_rate: number | null;
-  average_realized_pnl: number | null;
-}
-
-// Smarter #1: reliability-curve point. ``avg_predicted`` is the model's mean
-// P(YES) for rows in this bucket, ``actual_yes_rate`` is the observed rate,
-// and ``miscalibration = avg_predicted - actual_yes_rate`` (positive = the
-// model was over-confident in YES inside this band). All numeric fields are
-// nullable when the bucket has no settled rows yet.
-export interface CalibrationBucketRead {
-  label: string;
-  settled_count: number;
-  avg_predicted: number | null;
-  actual_yes_rate: number | null;
-  miscalibration: number | null;
-}
-
-export interface ModelFamilyRuntimeHealthRead {
-  family_key: string;
-  desired_mode: "heuristic" | "shadow" | "ml";
-  effective_mode: "heuristic" | "shadow" | "ml";
-  runtime_health: RuntimeHealthStatus;
-  fallback_active: boolean;
-  consecutive_failures: number;
-  last_check_at: string | null;
-  last_success_at: string | null;
-  last_error: string | null;
-  last_error_at: string | null;
-  artifact_path: string | null;
-  model_name: string | null;
-  model_version: string | null;
-  calibration_version: string | null;
-  feature_set_version: string | null;
-  model_metadata: Record<string, unknown>;
-  promotion_mode: "shadow" | "ml" | null;
-  promotion_stability_days: number;
-  promotion_baseline_brier: number | null;
-  promotion_metrics: Record<string, unknown>;
-  promotion_updated_at: string | null;
-}
-
-export interface ModelFamilyReadinessRead {
-  family_key: string;
-  label: string;
-  scope: string;
-  sport_scope: string;
-  leg_count: number | null;
-  study_track: StudyTrack;
-  readiness_status: ReadinessStatus;
-  why_not_ready: string;
-  runtime: ModelFamilyRuntimeHealthRead;
-  total_predictions: number;
-  settled_predictions: number;
-  pending_predictions: number;
-  coverage_predictions: number;
-  coverage_settled_predictions: number;
-  coverage_pending_predictions: number;
-  shadow_predictions: number;
-  shadow_coverage_ratio: number;
-  shadow_backlog_predictions: number;
-  shadow_backlog_parlays: number;
-  last_shadow_capture_at: string | null;
-  won_predictions: number;
-  lost_predictions: number;
-  push_predictions: number;
-  cancelled_predictions: number;
-  average_edge: number | null;
-  average_confidence: number | null;
-  average_realized_pnl: number | null;
-  // Smarter #3 — signed mean closing-line value over settled rows.
-  // Positive = sika beat the close (sharp); negative = drifted away.
-  average_clv: number | null;
-  last_settled_at: string | null;
-  confidence_buckets: ReadinessBucketRead[];
-  edge_buckets: ReadinessBucketRead[];
-  calibration_buckets: CalibrationBucketRead[];
-  feature_coverage_rates: Record<string, number>;
-  missing_context_rates: Record<string, number>;
-  top_failure_reasons: Record<string, number>;
-  last_validation_failure: string | null;
-  last_fallback_event_at: string | null;
-}
-
-/** Smarter #26 — settled-outcome SLA aging buckets.
- *  Counts of predictions stuck in ``pending`` past their market close,
- *  bucketed by how long ago the close was. Default zeros keep callers
- *  rendering cleanly when the backend hasn't populated the field yet. */
-export interface SettlementAgingRead {
-  bucket_0_to_1h: number;
-  bucket_1_to_6h: number;
-  bucket_6_to_24h: number;
-  bucket_beyond_24h: number;
-  total_pending_past_close: number;
-}
-
-export interface ModelReadinessSummaryRead {
-  generated_at: string;
-  ml_serving_mode: "heuristic" | "shadow" | "ml";
-  shadow_enabled: boolean;
-  auto_promotion_enabled: boolean;
-  min_settled_for_review: number;
-  /** Bug #20 walk-forward floor — settled-rows needed before the
-   *  promotion gate can even evaluate (~200 rows across ≥8 weeks).
-   *  Distinct from ``min_settled_for_review`` (40), which only gates
-   *  shadow-mode entry. The readiness ladder holds at
-   *  ``history_accumulating`` between the two thresholds. */
-  min_settled_for_promotion_review: number;
-  min_shadow_coverage: number;
-  min_promotion_shadow_samples: number;
-  promotion_stability_days_required: number;
-  /** Operator-pinned initial value for the trade-ticket pick-history strip.
-   *  The strip's per-pick toggle still overrides this at runtime. */
-  pick_history_default_n: number;
-  families: ModelFamilyReadinessRead[];
-  /** Smarter #26 — predictions stuck past close, bucketed by hours-since
-   *  the market closed. Surfaces as a badge on the readiness panel. */
-  settlement_aging: SettlementAgingRead;
-  /** Smarter #31 — LLM narrator toggle. When ``true`` the recommendation
-   *  cards surface a verifier-checked plain-English explanation
-   *  alongside the mechanical rationale. Defaults to ``false`` so
-   *  operators don't burn OpenAI tokens until they've eyeballed quality
-   *  on a few picks. */
-  narrator_enabled: boolean;
-}
-
-export interface ModelReadinessSettingsUpdate {
-  ml_serving_mode?: "heuristic" | "shadow" | "ml";
-  enqueue_shadow_backfill?: boolean;
-  // Codex round-6 P2 on PR #24: restricted to the same options the
-  // strip's HISTORY_OPTIONS renders, so a non-canonical write can't
-  // round-trip back as a silent fallback to 5.
-  pick_history_default_n?: 5 | 10 | 20;
-  /** Smarter #31 — operator toggle for the LLM narrator. */
-  narrator_enabled?: boolean;
-}
+// Hand-written ReadinessStatus / RuntimeHealthStatus / StudyTrack /
+// ReadinessBucketRead / CalibrationBucketRead / ModelFamilyRuntimeHealthRead /
+// ModelFamilyReadinessRead / SettlementAgingRead / ModelReadinessSummaryRead /
+// ModelReadinessSettingsUpdate replaced by shim re-exports near the top
+// of this file (Bug #40 phase 3).
 
 export interface PaperPositionRead {
   id: number;

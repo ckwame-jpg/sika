@@ -150,4 +150,9 @@ export const modelReadinessSummaryFixture: ModelReadinessSummaryRead = {
     total_pending_past_close: 0,
   },
   narrator_enabled: false,
+  // Bug #40 phase 3 migration surfaced these — Smarter #18 phase 2d
+  // added the sportsbook-disagreement knobs to ModelReadinessSummaryRead
+  // server-side but the hand-written mirror never picked them up.
+  sportsbook_disagreement_min_book_count: 3,
+  sportsbook_disagreement_threshold: 0.15,
 };
