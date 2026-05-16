@@ -398,24 +398,25 @@ def _build_athlete_resolver(
     """Return a ``(sport_key, subject_bare, team_hint) → athlete_id``
     resolver function backed by ``espn_player_search_cache``.
 
-    Strict team-hint policy (codex round 1 P2 #1):
+    Hinted-preferred + team-verified-bare-fallback policy (codex
+    round 1 P2 #1, post-fix):
 
-    - **With team hint** — only the cache row keyed
-      ``"<bare>|<TEAM>"`` is accepted. A bare cache row could be a
-      DIFFERENT person of the same name (e.g. two ``"John Smith"``s on
-      separate teams); the live resolver disambiguates via the hint at
-      capture time, and refusing-on-miss here forces the operator to
-      warm the cache with the hinted lookup rather than risking
-      misattribution. Misses surface as ``skipped["no_athlete_id"]``.
+    - **With team hint** —
+        1. Prefer the cache row keyed ``"<bare>|<TEAM>"`` (the hinted
+           row the live resolver writes when capture supplied a hint).
+        2. If no hinted row exists, fall back to the bare cache row
+           ONLY when its payload's ``team_name`` matches the prediction's
+           ``subject_team`` per ``_team_hint_matches_subtitle`` (same
+           abbreviation map / substring fallback the live resolver uses).
+           Caches warmed without hints in prod read this way; without
+           the fallback, sika's existing 81 NBA + 80+ MLB bare rows all
+           fail strict matching and the extractor returns zero samples.
+        3. If neither resolves, skip → ``no_athlete_id``.
     - **Without team hint** — only the bare cache row is accepted,
       and only when **no** hinted variants exist for the same bare
-      subject. If hinted variants exist we don't know which team the
-      unhinted prediction referred to, so we refuse rather than guess
-      (also ``skipped["no_athlete_id"]``).
-
-    The strict policy may drop some legitimately-resolvable rows on
-    cold caches; operators see the count in the CLI summary and can
-    re-warm the player cache with team hints.
+      subject. Hinted variants present means we'd guess which team's
+      cache the unhinted prediction came from — refuse rather than
+      misattribute.
     """
     unique_subjects: set[tuple[str, str]] = {
         ((row["sport_key"] or "").upper(), _normalize_subject(row["subject_name"]))
@@ -438,6 +439,10 @@ def _build_athlete_resolver(
     )
     # Index keyed by (sport, bare, team_hint_or_None).
     index: dict[tuple[str, str, str | None], str] = {}
+    # Bare rows also need their team_name payload for the hinted
+    # team-match fallback; keep it side-by-side so the resolver can
+    # consult it without re-querying.
+    bare_team_names: dict[tuple[str, str], str] = {}
     # Per (sport, bare): number of hinted variants present in the cache.
     # >0 means an unhinted prediction is ambiguous and must be skipped.
     hinted_variants: dict[tuple[str, str], int] = {}
@@ -460,13 +465,29 @@ def _build_athlete_resolver(
                 hinted_variants[(sport_key, bare)] = (
                     hinted_variants.get((sport_key, bare), 0) + 1
                 )
+            else:
+                team_name = str(payload.get("team_name") or "").strip()
+                if team_name:
+                    bare_team_names.setdefault((sport_key, bare), team_name)
 
     def resolve(sport: str, bare: str, team_hint: str | None) -> str | None:
         if team_hint:
-            # Strict: only a hinted cache row for this exact team is acceptable.
-            return index.get((sport, bare, team_hint))
-        # Unhinted prediction — refuse if any hinted variant exists
-        # (we don't know which team the prediction referred to).
+            # 1. Prefer the exact hinted cache row.
+            hinted = index.get((sport, bare, team_hint))
+            if hinted is not None:
+                return hinted
+            # 2. Fall back to the bare row when its team_name matches the
+            #    hint per the live resolver's matcher. Refuse otherwise —
+            #    using a bare row whose team disagrees would be exactly
+            #    the misattribution the strict policy guards against.
+            bare_id = index.get((sport, bare, None))
+            if bare_id is None:
+                return None
+            cached_team = bare_team_names.get((sport, bare), "")
+            if _team_hint_matches_subtitle(team_hint, cached_team, sport):
+                return bare_id
+            return None
+        # Unhinted prediction — refuse if any hinted variant exists.
         if hinted_variants.get((sport, bare), 0) > 0:
             return None
         return index.get((sport, bare, None))
@@ -849,6 +870,76 @@ def _parse_made_attempted(value: Any) -> tuple[float | None, float | None]:
 
 def _normalize_subject(value: Any) -> str:
     return " ".join(str(value or "").strip().lower().split())
+
+
+# -- Team-hint matching (duplicated from apps/api/app/clients/espn.py)
+#
+# apps/ml doesn't sit on the API's import path, so we duplicate the
+# NBA + MLB abbreviation maps + the matcher. A drift-guard test reads
+# apps/api/app/clients/espn.py as text and parses the maps + asserts
+# the two copies agree; any roster update on the API side that adds /
+# changes an abbreviation will fail CI here until the duplicate is
+# synced. Documented canonical source: ``apps/api/app/clients/espn.py``
+# (PR #163 introduced the same pattern for the INTERVAL_COVERAGE_*
+# constants on the apps/api side).
+_ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME: dict[str, dict[str, str]] = {
+    "NBA": {
+        "ATL": "Atlanta Hawks", "BOS": "Boston Celtics", "BKN": "Brooklyn Nets",
+        "CHA": "Charlotte Hornets", "CHI": "Chicago Bulls", "CLE": "Cleveland Cavaliers",
+        "DAL": "Dallas Mavericks", "DEN": "Denver Nuggets", "DET": "Detroit Pistons",
+        "GSW": "Golden State Warriors", "HOU": "Houston Rockets", "IND": "Indiana Pacers",
+        "LAC": "LA Clippers", "LAL": "Los Angeles Lakers", "MEM": "Memphis Grizzlies",
+        "MIA": "Miami Heat", "MIL": "Milwaukee Bucks", "MIN": "Minnesota Timberwolves",
+        "NOP": "New Orleans Pelicans", "NYK": "New York Knicks", "OKC": "Oklahoma City Thunder",
+        "ORL": "Orlando Magic", "PHI": "Philadelphia 76ers", "PHX": "Phoenix Suns",
+        "POR": "Portland Trail Blazers", "SAC": "Sacramento Kings", "SAS": "San Antonio Spurs",
+        "TOR": "Toronto Raptors", "UTA": "Utah Jazz", "WAS": "Washington Wizards",
+    },
+    "MLB": {
+        "ARI": "Arizona Diamondbacks", "AZ": "Arizona Diamondbacks", "ATL": "Atlanta Braves", "BAL": "Baltimore Orioles",
+        "BOS": "Boston Red Sox", "CHC": "Chicago Cubs", "CHW": "Chicago White Sox", "CWS": "Chicago White Sox",
+        "CIN": "Cincinnati Reds", "CLE": "Cleveland Guardians", "COL": "Colorado Rockies",
+        "DET": "Detroit Tigers", "HOU": "Houston Astros", "KC": "Kansas City Royals",
+        "KCR": "Kansas City Royals", "LAA": "Los Angeles Angels", "LAD": "Los Angeles Dodgers",
+        "MIA": "Miami Marlins", "MIL": "Milwaukee Brewers", "MIN": "Minnesota Twins",
+        "NYM": "New York Mets", "NYY": "New York Yankees", "OAK": "Oakland Athletics",
+        "ATH": "Oakland Athletics", "PHI": "Philadelphia Phillies", "PIT": "Pittsburgh Pirates",
+        "SD": "San Diego Padres", "SDP": "San Diego Padres", "SF": "San Francisco Giants",
+        "SFG": "San Francisco Giants", "SEA": "Seattle Mariners", "STL": "St. Louis Cardinals",
+        "TB": "Tampa Bay Rays", "TBR": "Tampa Bay Rays", "TEX": "Texas Rangers",
+        "TOR": "Toronto Blue Jays", "WSH": "Washington Nationals", "WSN": "Washington Nationals",
+    },
+}
+
+
+def _team_hint_matches_subtitle(team_hint: str, subtitle: str, sport_key: str) -> bool:
+    """Return True when ``team_hint`` plausibly identifies the team
+    whose display name lives in ``subtitle``.
+
+    Mirrors ``apps/api/app/clients/espn.py:_team_hint_matches_subtitle``
+    — three-stage match:
+
+    1. Direct abbreviation lookup (``"NYK"`` → ``"New York Knicks"``).
+    2. Two-character prefix (Kalshi prop-ticker codes like ``"AZN"``
+       where the first two chars encode the team).
+    3. Substring fallback (``"Celtics"`` matches ``"Boston Celtics"``).
+    """
+    if not team_hint or not subtitle:
+        return False
+    normalized_hint = team_hint.strip().upper()
+    normalized_subtitle = subtitle.strip().lower()
+    abbreviation_map = _ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME.get(
+        sport_key.upper(), {},
+    )
+    full_name = abbreviation_map.get(normalized_hint)
+    if full_name and full_name.lower() in normalized_subtitle:
+        return True
+    if len(normalized_hint) >= 2:
+        prefix_name = abbreviation_map.get(normalized_hint[:2])
+        if prefix_name and prefix_name.lower() in normalized_subtitle:
+            return True
+    lowered_hint = normalized_hint.lower()
+    return lowered_hint in normalized_subtitle or normalized_subtitle in lowered_hint
 
 
 def _normalize_team_hint(value: Any) -> str | None:

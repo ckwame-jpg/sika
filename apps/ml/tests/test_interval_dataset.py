@@ -296,12 +296,15 @@ def _captured_at(year: int = 2026, month: int = 5, day: int = 1, hour: int = 17)
 
 
 def _player_search_row(
-    sport_key: str, subject: str, athlete_id: str,
+    sport_key: str, subject: str, athlete_id: str, *, team_name: str | None = None,
 ) -> dict:
+    payload = {"athlete_id": athlete_id, "display_name": subject}
+    if team_name is not None:
+        payload["team_name"] = team_name
     return {
         "sport_key": sport_key,
         "query_normalized": subject.lower(),
-        "payload": json.dumps({"athlete_id": athlete_id, "display_name": subject}),
+        "payload": json.dumps(payload),
     }
 
 
@@ -1052,6 +1055,52 @@ def test_skipped_count_when_features_blob_empty(tmp_path: Path) -> None:
     assert extract.skipped["no_features"] == 1
 
 
+def test_team_abbreviation_map_matches_apps_api_canonical_source() -> None:
+    """Drift guard — apps/ml duplicates
+    ``ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME`` from
+    apps/api/app/clients/espn.py (apps/ml can't import apps/api).
+    Read the canonical source as text, parse out the NBA + MLB maps,
+    and assert the apps/ml copy agrees. Without this, a roster update
+    on the API side (new abbreviation, renamed franchise) would
+    silently drift between the two surfaces."""
+    import ast
+    import re
+
+    repo_root = Path(__file__).resolve().parents[3]
+    canonical_path = repo_root / "apps" / "api" / "app" / "clients" / "espn.py"
+    assert canonical_path.exists(), f"canonical source missing at {canonical_path}"
+    source = canonical_path.read_text(encoding="utf-8")
+
+    # Extract the literal ``ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME =
+    # {...}`` block via the AST so this test isn't coupled to whitespace
+    # formatting.
+    module = ast.parse(source)
+    canonical_map: dict[str, dict[str, str]] = {}
+    for node in module.body:
+        # Handle both ``X = {...}`` (Assign) and
+        # ``X: dict[str, dict[str, str]] = {...}`` (AnnAssign).
+        target_name: str | None = None
+        value_node: ast.expr | None = None
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target_name = node.targets[0].id
+            value_node = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target_name = node.target.id
+            value_node = node.value
+        if target_name == "ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME" and value_node is not None:
+            canonical_map = ast.literal_eval(value_node)
+            break
+    assert canonical_map, "could not parse ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME"
+
+    from ml.interval_dataset import _ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME
+
+    assert _ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME == canonical_map
+
+
 def test_skip_taxonomy_keys_match_documented_constants(tmp_path: Path) -> None:
     """Every key in the skip dict must be one of the documented
     ``INTERVAL_DATASET_SKIP_REASONS`` — protects callers (operator UI,
@@ -1230,6 +1279,180 @@ def test_skips_unhinted_prediction_when_hinted_variant_exists(tmp_path: Path) ->
     assert extract is not None
     assert extract.sample_size == 0
     assert extract.skipped["no_athlete_id"] == 1
+
+
+# -- Bare cache fallback when team_name matches the hint --------------
+# Codex round 1 P2 #1 said: "only use a bare row when no hint exists OR
+# when the cached team matches." The initial PR implemented the first
+# clause only; the second clause was missing. This bites in production
+# because sika's existing cache was warmed without team hints, so every
+# bare-name row reads (e.g. "jaylen brunson") + a populated team_name
+# payload ("Boston Celtics") — and every prediction reads subject_team
+# = "BOS". Strict-mode rejection drops 100% of rows. Loosen to: prefer
+# hinted (still safest), then fall back to bare when team_name matches.
+
+
+def test_accepts_bare_cache_row_when_team_name_matches_hint(tmp_path: Path) -> None:
+    """Prediction has subject_team='BOS'; cache has only a bare
+    ``jaylen brown`` row whose payload's ``team_name`` is
+    ``Boston Celtics``. ESPN's abbreviation map resolves BOS →
+    Boston Celtics → substring match → accept."""
+    db_path = tmp_path / "bare_fallback_match.db"
+    _seed_db(
+        db_path,
+        predictions=[{
+            "sport_key": "NBA",
+            "market_family": "player_prop",
+            "subject_name": "Jaylen Brown",
+            "subject_team": "BOS",
+            "stat_key": "points",
+            "captured_at": _captured_at(),
+            "features": json.dumps({"expected_stat_output": 26.5}),
+        }],
+        player_search=[
+            _player_search_row(
+                "NBA", "Jaylen Brown", "3917376", team_name="Boston Celtics",
+            ),
+        ],
+        gamelogs=[_gamelog_row("NBA", "3917376", 2026, _NBA_GAMELOG_PAYLOAD)],
+    )
+    extract = build_interval_training_rows(
+        f"sqlite:///{db_path}",
+        family_key="nba_props",
+        stat_key="points",
+        feature_spec=_make_feature_spec(),
+        lookback_days=30,
+        min_samples=1,
+        now=datetime(2026, 5, 16, tzinfo=timezone.utc),
+    )
+    assert extract is not None
+    assert extract.sample_size == 1
+
+
+def test_rejects_bare_cache_row_when_team_name_does_not_match_hint(
+    tmp_path: Path,
+) -> None:
+    """Prediction has subject_team='NYK' but the bare cache row's
+    team_name is ``Boston Celtics`` — that's a DIFFERENT Jaylen Brown
+    (hypothetical). Refuse to misattribute."""
+    db_path = tmp_path / "bare_fallback_mismatch.db"
+    _seed_db(
+        db_path,
+        predictions=[{
+            "sport_key": "NBA",
+            "market_family": "player_prop",
+            "subject_name": "Jaylen Brown",
+            "subject_team": "NYK",
+            "stat_key": "points",
+            "captured_at": _captured_at(),
+            "features": json.dumps({"expected_stat_output": 26.5}),
+        }],
+        player_search=[
+            _player_search_row(
+                "NBA", "Jaylen Brown", "3917376", team_name="Boston Celtics",
+            ),
+        ],
+        gamelogs=[_gamelog_row("NBA", "3917376", 2026, _NBA_GAMELOG_PAYLOAD)],
+    )
+    extract = build_interval_training_rows(
+        f"sqlite:///{db_path}",
+        family_key="nba_props",
+        stat_key="points",
+        feature_spec=_make_feature_spec(),
+        lookback_days=30,
+        min_samples=0,
+        now=datetime(2026, 5, 16, tzinfo=timezone.utc),
+    )
+    assert extract is not None
+    assert extract.sample_size == 0
+    assert extract.skipped["no_athlete_id"] == 1
+
+
+def test_hinted_cache_row_still_wins_over_bare_when_both_present(
+    tmp_path: Path,
+) -> None:
+    """Hinted-preferred policy still holds when both rows exist: the
+    hinted ``jaylen brown|BOS`` row's athlete_id wins, even though the
+    bare row's team_name would have matched."""
+    db_path = tmp_path / "hinted_preferred.db"
+    _seed_db(
+        db_path,
+        predictions=[{
+            "sport_key": "NBA",
+            "market_family": "player_prop",
+            "subject_name": "Jaylen Brown",
+            "subject_team": "BOS",
+            "stat_key": "points",
+            "captured_at": _captured_at(),
+            "features": json.dumps({"expected_stat_output": 26.5}),
+        }],
+        player_search=[
+            # Bare row → "old" athlete_id.
+            _player_search_row(
+                "NBA", "Jaylen Brown", "old-bare-id", team_name="Boston Celtics",
+            ),
+            # Hinted row → new, canonical athlete_id.
+            _hinted_player_search_row(
+                "NBA", "Jaylen Brown", "BOS", "canonical-hinted-id",
+            ),
+        ],
+        gamelogs=[
+            _gamelog_row("NBA", "canonical-hinted-id", 2026, _NBA_GAMELOG_PAYLOAD),
+        ],
+    )
+    extract = build_interval_training_rows(
+        f"sqlite:///{db_path}",
+        family_key="nba_props",
+        stat_key="points",
+        feature_spec=_make_feature_spec(),
+        lookback_days=30,
+        min_samples=1,
+        now=datetime(2026, 5, 16, tzinfo=timezone.utc),
+    )
+    # Hinted row's athlete_id wins → its gamelog resolves. If the bare
+    # row had won we'd get no gamelog (only the hinted athlete_id is
+    # cached) and the extract would be empty.
+    assert extract is not None
+    assert extract.sample_size == 1
+
+
+def test_mlb_team_abbreviation_resolves_through_alternate_codes(
+    tmp_path: Path,
+) -> None:
+    """MLB Kalshi ticker codes sometimes use 3-char abbreviations
+    (``KCR`` for Kansas City Royals, ``AZ`` for Arizona Diamondbacks).
+    The matcher must look these up in the abbreviation map, not just
+    do substring contains."""
+    db_path = tmp_path / "mlb_alt_codes.db"
+    _seed_db(
+        db_path,
+        predictions=[{
+            "sport_key": "MLB",
+            "market_family": "player_prop",
+            "subject_name": "Aaron Judge",
+            "subject_team": "NYY",  # standard
+            "stat_key": "hits",
+            "captured_at": datetime(2026, 5, 1, 17, 0, tzinfo=timezone.utc).isoformat(),
+            "features": json.dumps({"expected_stat_output": 1.5}),
+        }],
+        player_search=[
+            _player_search_row(
+                "MLB", "Aaron Judge", "592450", team_name="New York Yankees",
+            ),
+        ],
+        gamelogs=[_gamelog_row("MLB", "592450", 2026, _MLB_GAMELOG_PAYLOAD)],
+    )
+    extract = build_interval_training_rows(
+        f"sqlite:///{db_path}",
+        family_key="mlb_props",
+        stat_key="hits",
+        feature_spec=_make_feature_spec(),
+        lookback_days=30,
+        min_samples=1,
+        now=datetime(2026, 5, 16, tzinfo=timezone.utc),
+    )
+    assert extract is not None
+    assert extract.sample_size == 1
 
 
 # -- Window filter (codex round 1 P2 #2) ------------------------------
