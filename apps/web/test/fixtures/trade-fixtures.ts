@@ -237,4 +237,7 @@ export const healthFixture: HealthResponse = {
   latest_prop_refresh_job: null,
   active_settlement_job: null,
   latest_settlement_job: null,
+  // Bug #40 migration surfaced this — Smarter #23 added upstream_sources
+  // to HealthResponse but the hand-written mirror never picked it up.
+  upstream_sources: [],
 };

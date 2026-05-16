@@ -1,5 +1,7 @@
 /* ─── Mapped directly from apps/api/app/schemas.py ─── */
 
+import type { Schema } from "@kalshi-sports-copilot/contracts";
+
 export type SportKey = "NBA" | "NFL" | "MLB" | "SOCCER" | "TENNIS";
 
 export const SPORT_LABELS: Record<SportKey, string> = {
@@ -10,41 +12,47 @@ export const SPORT_LABELS: Record<SportKey, string> = {
   TENNIS: "Tennis",
 };
 
-export interface HealthResponse {
-  status: string;
-  environment: string;
-  scheduler_enabled: boolean;
-  refresh_status: "idle" | "queued" | "running" | "failed";
-  refresh_reason: "none" | "startup" | "interval" | "manual" | "pregame";
-  last_successful_refresh_at: string | null;
-  data_stale: boolean;
-  refresh_error_message: string | null;
-  prop_refresh_status: "idle" | "queued" | "running" | "failed";
-  prop_refresh_reason: "none" | "startup" | "interval" | "manual";
-  last_prop_refresh_at: string | null;
-  prop_data_stale: boolean;
-  prop_refresh_error_message: string | null;
-  active_refresh_job: RefreshJobRead | null;
-  latest_refresh_job: RefreshJobRead | null;
-  active_prop_refresh_job: RefreshJobRead | null;
-  latest_prop_refresh_job: RefreshJobRead | null;
-  active_settlement_job: RefreshJobRead | null;
-  latest_settlement_job: RefreshJobRead | null;
-}
+/**
+ * Bug #40 / Architecture #6 — web contracts migration.
+ *
+ * The hand-written interfaces in this file mirror the Pydantic
+ * schemas in `apps/api/app/schemas.py`. The mirror has drifted —
+ * Smarter #23 added `upstream_sources` to `HealthResponse` server-side
+ * but the hand-written version never picked it up, so consumers had
+ * no type-level signal that the field exists.
+ *
+ * The migration replaces each hand-written interface with a shim
+ * re-export of the OpenAPI-generated `Schema<"…">` type. The
+ * `Wire<T>` utility strips the optional modifier from every field
+ * — recursively — because Pydantic always serializes
+ * `field | None = None` as `{"field": null}` (the key is present on
+ * the wire), even though openapi-typescript marks the field `?:`
+ * per the OpenAPI nullable spec. The runtime contract is "always
+ * present, maybe null"; this encodes that at the type level so
+ * consumers don't have to handle a spurious `undefined`.
+ *
+ * The recursion is required because a top-level `Required<T>`
+ * doesn't propagate into nested objects (e.g.
+ * `HealthResponse.active_refresh_job` is `RefreshJobRead | null`,
+ * and the nested `RefreshJobRead` keeps its optional fields unless
+ * we recurse). Without the deep variant, a consumer passing
+ * `health.active_settlement_job` into a function typed against
+ * the shim's `RefreshJobRead` fails to type-check.
+ *
+ * Migration order: read-only endpoint families first. Each family's
+ * types land in one PR so all consumers update together (no
+ * half-migrated state).
+ */
+type Wire<T> = T extends (infer U)[]
+  ? Wire<U>[]
+  : T extends object
+    ? { [K in keyof T]-?: Wire<T[K]> }
+    : T;
 
-export interface RefreshJobRead {
-  id: number;
-  kind: string;
-  scope: string;
-  reason: string;
-  status: "queued" | "running" | "completed" | "failed";
-  run_id: number | null;
-  error_message: string | null;
-  details: Record<string, unknown>;
-  queued_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-}
+// ── /health endpoint family (first migration) ──
+export type HealthResponse = Wire<Schema<"HealthResponse">>;
+export type RefreshJobRead = Wire<Schema<"RefreshJobRead">>;
+export type UpstreamSourceHealthRead = Wire<Schema<"UpstreamSourceHealthRead">>;
 
 export interface EventParticipantRead {
   participant_id: number;

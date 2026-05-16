@@ -89,6 +89,7 @@ const baseHealth: HealthResponse = {
   latest_prop_refresh_job: null,
   active_settlement_job: null,
   latest_settlement_job: null,
+  upstream_sources: [],
 };
 
 describe("RunsDesk", () => {
