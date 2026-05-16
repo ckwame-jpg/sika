@@ -1,5 +1,3 @@
-import type { Schema } from "@kalshi-sports-copilot/contracts";
-
 import type {
   DemoOrderCreate,
   DemoOrderRead,
@@ -23,6 +21,7 @@ import type {
   PredictionRead,
   PredictionSettlementResponse,
   PredictionSummaryRead,
+  ProductFreshnessResponse,
   RecommendationRead,
   RefreshJobRead,
   RunDetailRead,
@@ -31,14 +30,6 @@ import type {
   TeamHistoryRead,
   TradeDeskResponse,
 } from "./types";
-
-// Slice 4: new product metadata endpoints source their types directly
-// from the generated OpenAPI contract rather than the hand-written
-// ``apps/web/lib/types.ts``. Surfaces are migrated to generated types
-// one-by-one; ``lib/types.ts`` will be removed once every surface
-// has moved.
-export type ProductFreshnessResponse = Schema<"ProductFreshnessResponse">;
-export type ProductScopeFreshnessRead = Schema<"ProductScopeFreshnessRead">;
 
 const BASE = "/api";
 
