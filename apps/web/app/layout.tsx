@@ -4,7 +4,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { Providers } from "./providers";
 import { Shell } from "@/components/layout/shell";
-import { PRICE_DISPLAY_COOKIE, isPriceDisplayMode } from "@/lib/price-display";
+import { PRICE_DISPLAY_COOKIE, isPriceDisplayMode } from "@/lib/price-display-types";
 import "./globals.css";
 
 export const metadata: Metadata = {
