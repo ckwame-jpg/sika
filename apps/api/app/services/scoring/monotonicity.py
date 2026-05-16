@@ -26,6 +26,7 @@ from collections import defaultdict
 
 from app.config import get_settings
 from app.models import Market, Prediction, Recommendation
+from app.services.model_families import single_family_key, watchlist_min_edge_for
 from app.services.scoring.types import (
     ScoredRecommendation,
     WatchlistGenerationSummary,
@@ -108,7 +109,15 @@ def _enforce_prop_monotonicity(
             # out had the lowered probability been the original. Record the
             # suppression reason on the signal (so ops can explain it) and
             # clear the recommendation so downstream surfaces drop it.
-            if recommendation.edge < settings.watchlist_min_edge:
+            #
+            # Smarter #30 — consult the per-family floor (empty registry
+            # today resolves to ``settings.watchlist_min_edge`` for every
+            # family). The scope here is always ``player_prop`` per the
+            # outer filter, so ``single_family_key`` resolves to
+            # ``nba_props`` / ``mlb_props``.
+            family_key = single_family_key(market.sport_key, "player_prop")
+            family_min_edge = watchlist_min_edge_for(family_key, settings.watchlist_min_edge)
+            if recommendation.edge < family_min_edge:
                 signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
                 signal_diagnostics["monotonicity_edge_below_min"] = True
                 suppression_reasons = list(signal_diagnostics.get("suppression_reasons") or [])
@@ -228,7 +237,12 @@ def _apply_prediction_monotonicity(
             diagnostics = dict(current.scoring_diagnostics or {})
             diagnostics["selected_side_probability"] = clamped_probability
             diagnostics["monotonicity_adjusted"] = True
-            if current.edge < settings.watchlist_min_edge:
+            # Smarter #30 — per-family floor (same mechanism as the
+            # recommendation path above). ``Prediction.market_family``
+            # is always ``"player_prop"`` here per the outer filter.
+            family_key = single_family_key(current.sport_key, "player_prop")
+            family_min_edge = watchlist_min_edge_for(family_key, settings.watchlist_min_edge)
+            if current.edge < family_min_edge:
                 # Bug #9: the clamp dropped edge below the watchlist floor —
                 # mark the prediction suppressed so finalize_staged_watchlist
                 # excludes it from the dedup pass (and the operator never
