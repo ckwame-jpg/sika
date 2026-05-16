@@ -54,6 +54,14 @@ export type HealthResponse = Wire<Schema<"HealthResponse">>;
 export type RefreshJobRead = Wire<Schema<"RefreshJobRead">>;
 export type UpstreamSourceHealthRead = Wire<Schema<"UpstreamSourceHealthRead">>;
 
+// ── /predictions + /parlays/predictions endpoint family ──
+export type PredictionRead = Wire<Schema<"PredictionRead">>;
+export type PredictionSummaryRead = Wire<Schema<"PredictionSummaryRead">>;
+export type ParlayPredictionLegRead = Wire<Schema<"ParlayPredictionLegRead">>;
+export type ParlayPredictionRead = Wire<Schema<"ParlayPredictionRead">>;
+export type ParlayPredictionSummaryRead = Wire<Schema<"ParlayPredictionSummaryRead">>;
+export type PredictionSettlementResponse = Wire<Schema<"PredictionSettlementResponse">>;
+
 export interface EventParticipantRead {
   participant_id: number;
   display_name: string;
@@ -630,143 +638,9 @@ export interface DemoOrderCreate {
   time_in_force?: string;
 }
 
-export interface PredictionRead {
-  id: number;
-  run_id: number | null;
-  event_id: number | null;
-  market_id: number;
-  ticker: string;
-  sport_key: string | null;
-  event_name: string | null;
-  market_title: string;
-  market_family: string | null;
-  market_kind: string | null;
-  stat_key: string | null;
-  threshold: number | null;
-  subject_name: string | null;
-  subject_team: string | null;
-  capture_scope: string;
-  side: string;
-  action: string;
-  suggested_price: number;
-  fair_yes_price: number | null;
-  fair_no_price: number | null;
-  edge: number;
-  confidence: number;
-  selected_side_probability: number | null;
-  source_type: string | null;
-  source_market_ticker: string | null;
-  source_market_title: string | null;
-  display_market_title: string | null;
-  source_badge_label: string | null;
-  context_coverage_score: number | null;
-  quality_tier: string | null;
-  model_name: string;
-  model_version: string | null;
-  calibration_version: string | null;
-  feature_set_version: string | null;
-  invalidation: string | null;
-  rationale: string;
-  reasons: string[];
-  features: Record<string, unknown>;
-  market_status_at_capture: string | null;
-  settlement_status: string;
-  prediction_outcome: string;
-  market_result: string | null;
-  winning_side: string | null;
-  settlement_value: number | null;
-  settled_at: string | null;
-  realized_pnl: number | null;
-  settlement_source: string | null;
-  settlement_notes: string | null;
-  captured_at: string;
-}
-
-export interface PredictionSummaryRead {
-  total_predictions: number;
-  settled_predictions: number;
-  pending_predictions: number;
-  unresolved_predictions: number;
-  won_predictions: number;
-  lost_predictions: number;
-  push_predictions: number;
-  cancelled_predictions: number;
-  win_rate: number | null;
-  loss_rate: number | null;
-  average_edge: number | null;
-  average_confidence: number | null;
-  average_realized_pnl: number | null;
-  by_sport: Record<string, number>;
-  by_market_family: Record<string, number>;
-  by_outcome: Record<string, number>;
-}
-
-interface ParlayPredictionLegRead {
-  leg_index: number;
-  ticker: string;
-  sport_key: string | null;
-  event_name: string | null;
-  market_title: string;
-  market_family: string | null;
-  market_kind: string | null;
-  stat_key: string | null;
-  threshold: number | null;
-  subject_name: string | null;
-  subject_team: string | null;
-  side: string;
-  action: string;
-  suggested_price: number;
-  fair_yes_price: number | null;
-  fair_no_price: number | null;
-  edge: number;
-  confidence: number;
-}
-
-export interface ParlayPredictionRead {
-  id: number;
-  run_id: number | null;
-  leg_count: number;
-  sport_scope: string;
-  participating_sports: string[];
-  combined_market_price: number;
-  combined_model_probability: number;
-  american_odds: string;
-  edge: number;
-  confidence: number;
-  model_name: string | null;
-  model_version: string | null;
-  calibration_version: string | null;
-  feature_set_version: string | null;
-  rationale: string;
-  invalidation: string | null;
-  settlement_status: string;
-  prediction_outcome: string;
-  settlement_value: number | null;
-  settled_at: string | null;
-  realized_pnl: number | null;
-  settlement_notes: string | null;
-  captured_at: string;
-  legs: ParlayPredictionLegRead[];
-}
-
-export interface ParlayPredictionSummaryRead {
-  total_predictions: number;
-  settled_predictions: number;
-  pending_predictions: number;
-  unresolved_predictions: number;
-  won_predictions: number;
-  lost_predictions: number;
-  push_predictions: number;
-  cancelled_predictions: number;
-  win_rate: number | null;
-  loss_rate: number | null;
-  average_edge: number | null;
-  average_confidence: number | null;
-  average_realized_pnl: number | null;
-  by_sport_scope: Record<string, number>;
-  by_leg_count: Record<string, number>;
-  by_outcome: Record<string, number>;
-}
+// Hand-written PredictionRead / PredictionSummaryRead / ParlayPredictionRead /
+// ParlayPredictionSummaryRead / ParlayPredictionLegRead replaced by the shim
+// re-exports near the top of this file (Bug #40 phase 2).
 
 interface StatsSummaryRead {
   games: number;
@@ -836,17 +710,8 @@ export interface TeamHistoryRead {
   results: TeamGameResultRead[];
 }
 
-export interface PredictionSettlementResponse {
-  processed: number;
-  updated: number;
-  won: number;
-  lost: number;
-  push: number;
-  cancelled: number;
-  pending: number;
-  unresolved: number;
-  errors: number;
-}
+// PredictionSettlementResponse replaced by the shim re-export near the
+// top of this file (Bug #40 phase 2).
 
 /* ─── Smarter #25 — market-mapping review queue ─── */
 
