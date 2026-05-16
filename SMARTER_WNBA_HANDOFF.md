@@ -4,8 +4,9 @@ You are picking up sport expansion to WNBA for the sika sports trading copilot. 
 
 ## Read first, code second
 
-**Two docs:**
+**Three docs:**
 
+0. [`SIKA_SESSION_RULES.md`](SIKA_SESSION_RULES.md) — durable patterns that bit previous sessions. **Highest-leverage to read first** — it includes the "research, don't fabricate" rule, the BR 403 reality, codex review status, worktree/contracts quirk, and the punch-list status-truth pointer.
 1. [`SMARTER_WNBA_PREP.md`](SMARTER_WNBA_PREP.md) — the canonical research + execution doc. Contains:
    - Business context (season timing, volume expectations, star players)
    - WNBA team list with ESPN abbreviations
@@ -17,6 +18,7 @@ You are picking up sport expansion to WNBA for the sika sports trading copilot. 
    - Day-1 operator checklist
 
 2. [`PUNCH_LIST_STATE_2026_05_16.md`](PUNCH_LIST_STATE_2026_05_16.md) — confirms the punch list is current; no other work blocks WNBA.
+3. [`SMARTER_13_BR_REFEREE_NEXT.md`](SMARTER_13_BR_REFEREE_NEXT.md) — the operator-blocked URL is now verified (`/referees/{end_year}_register.html`). What's still needed from the operator + the small PR to ship the BR fetcher wiring is documented there.
 
 Skim them. They have every URL, every file:line touchpoint, every gotcha. Don't re-derive.
 
