@@ -6,6 +6,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from sqlalchemy import create_engine, text
@@ -72,6 +73,23 @@ _RECALIBRATION_TAG_PREFIX = "+iso30d-"
 #   pass in ``compute_prediction_interval``.
 DEFAULT_INTERVAL_LOOKBACK_DAYS = 30
 MIN_INTERVAL_SAMPLES = 50
+
+
+# Smarter #21 phase 2b operator UX — coverage classification bands used
+# by ``inspect-intervals``. A well-calibrated 80% interval (p10 to p90)
+# should empirically cover ~80% of held-out actuals. The bands let
+# operators eyeball whether a fit is safe to promote without re-reading
+# the metadata.json by hand.
+#
+#   coverage in [0.70, 0.90]  → "ok"     — safe to promote.
+#   coverage in [0.60, 0.70)
+#       or in (0.90, 0.95]    → "warn"   — investigate (drift / sample).
+#   coverage < 0.60 or > 0.95 → "bad"    — do NOT promote; fix upstream.
+#   coverage is None          → "unknown"— metadata missing / unparseable.
+INTERVAL_COVERAGE_OK_LOWER = 0.70
+INTERVAL_COVERAGE_OK_UPPER = 0.90
+INTERVAL_COVERAGE_WARN_LOWER = 0.60
+INTERVAL_COVERAGE_WARN_UPPER = 0.95
 
 
 def _parse_serve_family_keys(raw: str) -> tuple[str, ...]:
@@ -714,6 +732,159 @@ def _train_intervals(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- Smarter #21 phase 2b operator UX: ``inspect-intervals`` subcommand
+
+
+def _classify_coverage(coverage: float | None) -> str:
+    """Bucket a coverage value into the operator-facing band. None ↔
+    ``"unknown"`` (missing metadata)."""
+    if coverage is None:
+        return "unknown"
+    if INTERVAL_COVERAGE_OK_LOWER <= coverage <= INTERVAL_COVERAGE_OK_UPPER:
+        return "ok"
+    if INTERVAL_COVERAGE_WARN_LOWER <= coverage <= INTERVAL_COVERAGE_WARN_UPPER:
+        return "warn"
+    return "bad"
+
+
+def _read_interval_metadata(metadata_path: Path) -> dict[str, Any] | None:
+    """Read + parse ``metadata.json`` for one stat key. Returns ``None``
+    when the file is missing or unparseable — the caller treats both
+    as "unknown coverage" so a partial / corrupt write doesn't break
+    the inspection."""
+    if not metadata_path.exists():
+        return None
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _collect_interval_artifacts(
+    manifest_path: Path, *, family_filter: str | None = None,
+) -> list[dict[str, Any]]:
+    """Walk every manifest family entry and collect interval-model
+    metadata from its artifact_dir. Returns rows sorted by
+    ``(family_key, stat_key)`` for deterministic operator output.
+
+    Skips silently (with no row) when:
+    - The manifest entry's ``artifact_path`` resolves to a missing dir
+      (stale manifest; the operator will see the gap by absence).
+    - ``<artifact_dir>/interval_models/`` does not exist (no intervals
+      trained yet for this family).
+    """
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows: list[dict[str, Any]] = []
+    for entry in manifest.get("families", []):
+        family_key = _entry_serves_family_key(entry)
+        if family_key is None:
+            continue
+        if family_filter is not None and family_key != family_filter:
+            continue
+        relative = entry.get("artifact_path")
+        if not relative:
+            continue
+        artifact_dir = (manifest_path.parent / relative).resolve()
+        if not artifact_dir.exists() or not artifact_dir.is_dir():
+            continue
+        intervals_root = artifact_dir / "interval_models"
+        if not intervals_root.exists() or not intervals_root.is_dir():
+            continue
+        for stat_dir in sorted(intervals_root.iterdir()):
+            if not stat_dir.is_dir():
+                continue
+            stat_key = stat_dir.name
+            metadata = _read_interval_metadata(stat_dir / "metadata.json") or {}
+            coverage = metadata.get("empirical_coverage")
+            coverage_float: float | None
+            try:
+                coverage_float = float(coverage) if coverage is not None else None
+            except (TypeError, ValueError):
+                coverage_float = None
+            rows.append({
+                "family_key": family_key,
+                "stat_key": stat_key,
+                "artifact_dir": str(artifact_dir),
+                "sample_size": metadata.get("sample_size"),
+                "empirical_coverage": coverage_float,
+                "coverage_status": _classify_coverage(coverage_float),
+                "trained_at": metadata.get("trained_at"),
+                "window_start": metadata.get("window_start"),
+                "window_end": metadata.get("window_end"),
+            })
+    rows.sort(key=lambda r: (r["family_key"], r["stat_key"]))
+    return rows
+
+
+def _format_inspect_intervals_table(rows: list[dict[str, Any]]) -> str:
+    """ASCII table — wide enough that families + stat keys + coverage
+    line up at a glance. No external deps (tabulate / rich) — keeps
+    apps/ml's dependency surface minimal."""
+    if not rows:
+        return "No interval models found. Run `python -m ml.cli train-intervals` first."
+
+    headers = (
+        "FAMILY", "STAT", "SAMPLES", "COVERAGE", "STATUS", "TRAINED_AT",
+    )
+    table_rows = [
+        (
+            row["family_key"],
+            row["stat_key"],
+            str(row["sample_size"]) if row["sample_size"] is not None else "?",
+            f"{row['empirical_coverage']:.3f}" if row["empirical_coverage"] is not None else "?",
+            row["coverage_status"],
+            row["trained_at"] or "?",
+        )
+        for row in rows
+    ]
+    widths = [
+        max(len(headers[i]), *(len(row[i]) for row in table_rows))
+        for i in range(len(headers))
+    ]
+    sep = "  "
+    header_line = sep.join(headers[i].ljust(widths[i]) for i in range(len(headers)))
+    divider = sep.join("-" * widths[i] for i in range(len(headers)))
+    body_lines = [
+        sep.join(row[i].ljust(widths[i]) for i in range(len(headers)))
+        for row in table_rows
+    ]
+    lines = [header_line, divider, *body_lines]
+
+    # Per-family count footer — at-a-glance "is this family covered?".
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["family_key"]] = counts.get(row["family_key"], 0) + 1
+    summary = "  ".join(
+        f"{family}={count} stat keys" for family, count in sorted(counts.items())
+    )
+    lines.append("")
+    lines.append(f"Summary: {summary}")
+    return "\n".join(lines)
+
+
+def _inspect_intervals(args: argparse.Namespace) -> int:
+    """Walk the manifest's families and print interval-model state.
+
+    Read-only — no DB queries, no manifest mutation, no joblib loads
+    (just metadata.json reads). Output format toggled by ``--format``:
+    ``table`` (default, human-readable) or ``json`` (pipe-friendly).
+    """
+    manifest_path = Path(args.manifest_path)
+    rows = _collect_interval_artifacts(
+        manifest_path,
+        family_filter=args.family_key,
+    )
+
+    if args.format == "json":
+        print(json.dumps({"interval_models": rows}, indent=2, default=str))
+    else:
+        print(_format_inspect_intervals_table(rows))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m ml.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -821,6 +992,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Extract + report without writing sidecars.",
     )
     train_intervals.set_defaults(func=_train_intervals)
+
+    inspect_intervals = subparsers.add_parser(
+        "inspect-intervals",
+        help="List every interval model artifact referenced by the "
+        "manifest with sample size, empirical coverage, and "
+        "calibration status. Read-only.",
+    )
+    inspect_intervals.add_argument(
+        "--manifest-path",
+        required=True,
+        help="Path to the manifest whose families' artifact_dirs to walk.",
+    )
+    inspect_intervals.add_argument(
+        "--family-key",
+        default=None,
+        help="Optional serves_family_key filter (e.g. nba_props). "
+        "Omit to inspect all families.",
+    )
+    inspect_intervals.add_argument(
+        "--format",
+        choices=("table", "json"),
+        default="table",
+        help="Output format. Default: table.",
+    )
+    inspect_intervals.set_defaults(func=_inspect_intervals)
 
     return parser
 
