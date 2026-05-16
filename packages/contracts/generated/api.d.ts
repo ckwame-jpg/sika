@@ -884,6 +884,36 @@ export interface components {
              */
             upstream_sources: components["schemas"]["UpstreamSourceHealthRead"][];
         };
+        /**
+         * IntervalModelStatusRead
+         * @description Smarter #21 phase 2b operator UX — per-(family, stat_key)
+         *     interval-model status. Same shape the
+         *     ``python -m ml.cli inspect-intervals --format json`` CLI emits
+         *     (PR #163); this surfaces it inside ``/ops/models/readiness`` so
+         *     operators see it in the browser without shelling out.
+         */
+        IntervalModelStatusRead: {
+            /**
+             * Coverage Status
+             * @default unknown
+             * @enum {string}
+             */
+            coverage_status: "ok" | "warn" | "bad" | "unknown";
+            /** Empirical Coverage */
+            empirical_coverage?: number | null;
+            /** Family Key */
+            family_key: string;
+            /** Sample Size */
+            sample_size?: number | null;
+            /** Stat Key */
+            stat_key: string;
+            /** Trained At */
+            trained_at?: string | null;
+            /** Window End */
+            window_end?: string | null;
+            /** Window Start */
+            window_start?: string | null;
+        };
         /** JobRefreshResponse */
         JobRefreshResponse: {
             /** Job Id */
@@ -1396,6 +1426,8 @@ export interface components {
             families?: components["schemas"]["ModelFamilyReadinessRead"][];
             /** Generated At */
             generated_at: string;
+            /** Interval Models */
+            interval_models?: components["schemas"]["IntervalModelStatusRead"][];
             /**
              * Min Promotion Shadow Samples
              * @default 150

@@ -552,6 +552,91 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "IntervalModelStatusRead": {
+        "description": "Smarter #21 phase 2b operator UX \u2014 per-(family, stat_key)\ninterval-model status. Same shape the\n``python -m ml.cli inspect-intervals --format json`` CLI emits\n(PR #163); this surfaces it inside ``/ops/models/readiness`` so\noperators see it in the browser without shelling out.",
+        "properties": {
+          "coverage_status": {
+            "default": "unknown",
+            "enum": [
+              "ok",
+              "warn",
+              "bad",
+              "unknown"
+            ],
+            "title": "Coverage Status",
+            "type": "string"
+          },
+          "empirical_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Empirical Coverage"
+          },
+          "family_key": {
+            "title": "Family Key",
+            "type": "string"
+          },
+          "sample_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Size"
+          },
+          "stat_key": {
+            "title": "Stat Key",
+            "type": "string"
+          },
+          "trained_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trained At"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
+          }
+        },
+        "required": [
+          "family_key",
+          "stat_key"
+        ],
+        "title": "IntervalModelStatusRead",
+        "type": "object"
+      },
       "JobRefreshResponse": {
         "properties": {
           "job_id": {
@@ -2390,6 +2475,13 @@
           "generated_at": {
             "title": "Generated At",
             "type": "string"
+          },
+          "interval_models": {
+            "items": {
+              "$ref": "#/components/schemas/IntervalModelStatusRead"
+            },
+            "title": "Interval Models",
+            "type": "array"
           },
           "min_promotion_shadow_samples": {
             "default": 150,

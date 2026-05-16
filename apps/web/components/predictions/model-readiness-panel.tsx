@@ -14,6 +14,7 @@ import type {
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { IntervalModelsBadge } from "@/components/predictions/interval-models-badge";
 import { SettlementAgingBadge } from "@/components/predictions/settlement-aging-badge";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
 
@@ -522,6 +523,9 @@ export function ModelReadinessPanel() {
           ) : null}
           <div className="mb-4">
             <SettlementAgingBadge aging={summary.settlement_aging} />
+          </div>
+          <div className="mb-4">
+            <IntervalModelsBadge intervals={summary.interval_models ?? []} />
           </div>
           <div className="mb-4 grid gap-3 md:grid-cols-3">
             <div className="stats-tile">

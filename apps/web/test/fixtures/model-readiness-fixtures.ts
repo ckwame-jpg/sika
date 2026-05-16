@@ -155,4 +155,7 @@ export const modelReadinessSummaryFixture: ModelReadinessSummaryRead = {
   // server-side but the hand-written mirror never picked them up.
   sportsbook_disagreement_min_book_count: 3,
   sportsbook_disagreement_threshold: 0.15,
+  // Smarter #21 phase 2b — empty list by default mirrors the
+  // pre-CLI-run state of the readiness API.
+  interval_models: [],
 };
