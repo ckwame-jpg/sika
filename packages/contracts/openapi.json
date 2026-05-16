@@ -489,6 +489,14 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "upstream_sources": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/UpstreamSourceHealthRead"
+            },
+            "title": "Upstream Sources",
+            "type": "array"
           }
         },
         "required": [
@@ -2147,6 +2155,17 @@
             ],
             "title": "Ml Serving Mode"
           },
+          "narrator_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Narrator Enabled"
+          },
           "pick_history_default_n": {
             "anyOf": [
               {
@@ -2162,6 +2181,31 @@
               }
             ],
             "title": "Pick History Default N"
+          },
+          "sportsbook_disagreement_min_book_count": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sportsbook Disagreement Min Book Count"
+          },
+          "sportsbook_disagreement_threshold": {
+            "anyOf": [
+              {
+                "exclusiveMaximum": 1.0,
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sportsbook Disagreement Threshold"
           }
         },
         "title": "ModelReadinessSettingsUpdate",
@@ -2215,6 +2259,11 @@
             "title": "Ml Serving Mode",
             "type": "string"
           },
+          "narrator_enabled": {
+            "default": false,
+            "title": "Narrator Enabled",
+            "type": "boolean"
+          },
           "pick_history_default_n": {
             "default": 5,
             "title": "Pick History Default N",
@@ -2225,10 +2274,23 @@
             "title": "Promotion Stability Days Required",
             "type": "integer"
           },
+          "settlement_aging": {
+            "$ref": "#/components/schemas/SettlementAgingRead"
+          },
           "shadow_enabled": {
             "default": false,
             "title": "Shadow Enabled",
             "type": "boolean"
+          },
+          "sportsbook_disagreement_min_book_count": {
+            "default": 3,
+            "title": "Sportsbook Disagreement Min Book Count",
+            "type": "integer"
+          },
+          "sportsbook_disagreement_threshold": {
+            "default": 0.15,
+            "title": "Sportsbook Disagreement Threshold",
+            "type": "number"
           }
         },
         "required": [
@@ -3164,6 +3226,11 @@
             "title": "Demo Orders",
             "type": "array"
           },
+          "demo_truncated": {
+            "default": false,
+            "title": "Demo Truncated",
+            "type": "boolean"
+          },
           "kalshi_account": {
             "$ref": "#/components/schemas/KalshiAccountRead"
           },
@@ -3173,6 +3240,11 @@
             },
             "title": "Paper Positions",
             "type": "array"
+          },
+          "paper_truncated": {
+            "default": false,
+            "title": "Paper Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -4126,6 +4198,17 @@
             ],
             "title": "Model Version"
           },
+          "narrator_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Narrator Text"
+          },
           "quality_tier": {
             "anyOf": [
               {
@@ -4767,6 +4850,38 @@
           }
         },
         "title": "RunSummaryCounts",
+        "type": "object"
+      },
+      "SettlementAgingRead": {
+        "description": "Smarter #26 \u2014 counts of predictions stuck in ``pending`` past\ntheir market close, bucketed by how long ago the close was. Surfaces\non the readiness panel as an ops badge.",
+        "properties": {
+          "bucket_0_to_1h": {
+            "default": 0,
+            "title": "Bucket 0 To 1H",
+            "type": "integer"
+          },
+          "bucket_1_to_6h": {
+            "default": 0,
+            "title": "Bucket 1 To 6H",
+            "type": "integer"
+          },
+          "bucket_6_to_24h": {
+            "default": 0,
+            "title": "Bucket 6 To 24H",
+            "type": "integer"
+          },
+          "bucket_beyond_24h": {
+            "default": 0,
+            "title": "Bucket Beyond 24H",
+            "type": "integer"
+          },
+          "total_pending_past_close": {
+            "default": 0,
+            "title": "Total Pending Past Close",
+            "type": "integer"
+          }
+        },
+        "title": "SettlementAgingRead",
         "type": "object"
       },
       "SignalSnapshotRead": {
@@ -5954,6 +6069,58 @@
         "title": "TradeDeskThresholdRead",
         "type": "object"
       },
+      "UpstreamSourceHealthRead": {
+        "description": "Smarter #23 \u2014 per-upstream-source freshness for the /health surface.",
+        "properties": {
+          "is_stale": {
+            "title": "Is Stale",
+            "type": "boolean"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_failure_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Failure At"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "is_stale"
+        ],
+        "title": "UpstreamSourceHealthRead",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -7122,6 +7289,49 @@
         ]
       }
     },
+    "/ops/recommendations/{recommendation_id}/narrator": {
+      "post": {
+        "description": "Smarter #31 \u2014 on-demand narrator generation for a single rec.\n\nIdempotent \u2014 re-POSTing for a recommendation that already has a\ncached verifier-passing narration returns the cached value\nwithout re-calling OpenAI. Forcing a regen requires deleting the\ncache row (Phase 2: add a query param + DELETE endpoint).\n\nReturns the full recommendation read so the UI can update the\ncard in place. Raises 503 when ``OPENAI_API_KEY`` is unset or the\noperator-side toggle is off \u2014 callers should surface a clear\n\"narrator not configured / disabled\" hint rather than silently\nshowing the mechanical rationale.",
+        "operationId": "generate_recommendation_narration_ops_recommendations__recommendation_id__narrator_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recommendation_id",
+            "required": true,
+            "schema": {
+              "title": "Recommendation Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Recommendation Narration",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/ops/runs": {
       "get": {
         "operationId": "list_runs_ops_runs_get",
@@ -7565,6 +7775,30 @@
               "default": false,
               "title": "Force",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "paper_limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Paper Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "demo_limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Demo Limit",
+              "type": "integer"
             }
           }
         ],
