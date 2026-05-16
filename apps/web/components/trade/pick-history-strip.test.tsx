@@ -48,6 +48,8 @@ function summaryFixture(n = 5): ModelReadinessSummaryRead {
       total_pending_past_close: 0,
     },
     narrator_enabled: false,
+    sportsbook_disagreement_min_book_count: 3,
+    sportsbook_disagreement_threshold: 0.15,
   };
 }
 
