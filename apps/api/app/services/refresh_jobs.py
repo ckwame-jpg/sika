@@ -38,6 +38,9 @@ REFRESH_JOB_KINDS = frozenset({
     "nba_injury_refresh",
     # Smarter #13 phase 2a-2 — populate ``NbaRefereeAssignmentCache``
     # ahead of the same-day consumer-side wiring (phase 2b/c/d).
+    # Phase 2b-2 (2026-05-16) bundles the per-season tendency cache
+    # refresh into the same job — both are NBA-officiating data on
+    # the same daily cadence, no need for a separate job kind.
     "nba_referee_refresh",
 })
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
@@ -1483,19 +1486,50 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     "report_updated_at": (payload or {}).get("report_updated_at"),
                 }
             elif job.kind == "nba_referee_refresh":
-                # Smarter #13 phase 2a-2 — populates ``NbaRefereeAssignmentCache``
-                # so the consumer-side referee feature emission
-                # (phase 2b/c/d, deferred) has assignments to join
-                # against per-referee tendency stats.
+                # Smarter #13 phase 2a-2 + 2b-2 — populates BOTH the
+                # daily ``NbaRefereeAssignmentCache`` AND the per-season
+                # referee tendency cache (the latter from BR's
+                # ``/referees/{end_year}_register.html`` table). The
+                # two are conceptually linked (both about NBA
+                # officiating) and refresh on the same daily cadence,
+                # so bundling avoids a separate job kind + scheduler
+                # entry for what would be one extra call.
+                from app.clients.basketball_reference import (
+                    BasketballReferenceClient,
+                )
                 from app.services.nba_referee_assignments import (
                     load_nba_referee_assignments,
                 )
+                from app.services.nba_referee_tendencies import (
+                    load_nba_referee_tendencies,
+                )
+                from app.services.stats_query import default_season_for_sport
 
                 payload = load_nba_referee_assignments(db, allow_network=True)
+                # Phase 2b-2: tendency refresh — fetcher is the new
+                # ``fetch_referee_season_stats`` method on the BR
+                # client (Smarter #13 phase 2b-2). Anonymous BR fetches
+                # return 403 from fresh IPs; the operator's
+                # ``basketball_reference_base_url`` config governs
+                # whether this succeeds. On 403/404 the fetcher
+                # returns ``[]`` and the loader stores an empty
+                # tendency payload — graceful degradation.
+                br_client = BasketballReferenceClient()
+                season = default_season_for_sport("NBA")
+                tendencies_payload = load_nba_referee_tendencies(
+                    db,
+                    season=season,
+                    fetcher=br_client.fetch_referee_season_stats,
+                    allow_network=True,
+                )
                 job.details = {
                     **(job.details or {}),
                     "assignments": len((payload or {}).get("assignments") or []),
                     "page_date": (payload or {}).get("page_date"),
+                    "tendency_season": season,
+                    "tendency_referees": len(
+                        (tendencies_payload or {}).get("referees") or {}
+                    ),
                 }
             else:  # pragma: no cover - guarded above
                 raise ValueError(f"Unsupported refresh job kind: {job.kind}")
