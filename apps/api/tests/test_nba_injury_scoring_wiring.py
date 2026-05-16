@@ -78,12 +78,22 @@ def _run_nba_injury_wiring_slice(
     The slice mirrors the production code at scoring.py:1701–1718 and
     will fail in lockstep if either the import or the call signature
     drifts.
+
+    Pass ``now=_NOW`` to the loader as well as the emitter so the
+    cache's ``expires_at`` check uses the same controlled clock the
+    seed wrote against. Without it, the loader falls back to
+    ``utcnow()`` and treats the seeded row as stale whenever real
+    time has moved past ``_NOW + expires_offset_hours``, which made
+    the suite fail intermittently after the seed clock baked into
+    the past.
     """
     from app.services.advanced_stats import emit_nba_injury_features
     from app.services.nba_injury_report import load_nba_injury_report
 
     features: dict[str, Any] = {}
-    injury_payload = load_nba_injury_report(db_session, allow_network=False)
+    injury_payload = load_nba_injury_report(
+        db_session, allow_network=False, now=_NOW,
+    )
     features.update(
         emit_nba_injury_features(
             injury_payload, player_name=display_name, now=_NOW,
