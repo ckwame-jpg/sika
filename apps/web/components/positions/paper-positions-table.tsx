@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
 import { MarketDetailSheet } from "@/components/markets/market-detail-sheet";
+import { TruncationHint } from "@/components/positions/truncation-hint";
 import {
   Dialog,
   DialogContent,
@@ -357,6 +358,7 @@ export function PaperPositionsTable({ maxHeight }: PaperPositionsTableProps) {
   );
 
   const positions = data?.paper_positions ?? [];
+  const truncated = data?.paper_truncated === true;
   if (error) {
     return (
       <div className="flex h-24 items-center justify-center text-xs text-negative">
@@ -367,6 +369,9 @@ export function PaperPositionsTable({ maxHeight }: PaperPositionsTableProps) {
 
   return (
     <>
+      {truncated && !maxHeight ? (
+        <TruncationHint visibleCount={positions.length} limitParam="paper_limit" />
+      ) : null}
       {maxHeight ? (
         <CompactPositionList
           positions={positions}
