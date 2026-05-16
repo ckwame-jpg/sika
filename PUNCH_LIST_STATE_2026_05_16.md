@@ -1,6 +1,8 @@
 # Punch list state snapshot — 2026-05-16
 
-`SIKA_PUNCH_LIST.md` checkboxes drifted behind the actual shipped work. This is the reconciled state as of today — drop in to the main punch list at your pace, or use this as the authoritative open-items list until you do.
+`SIKA_PUNCH_LIST.md` checkboxes drifted behind the actual shipped work. This is the reconciled state — drop into the main punch list at your pace, or use this as the authoritative open-items list until you do.
+
+**Last refreshed:** 2026-05-16 (late session — after PRs #154-#166 landed).
 
 ## Section 1 — Bugs & Issues
 
@@ -57,6 +59,7 @@ All MEDIUM bugs with `[ ]` are **shipped** except as noted:
 | #37 (`randomWalk` sparkline drifts) | shipped | real captured prices from the API |
 | #38 (sidebar drag pointer hijacking) | n/a — no sidebar drag exists today; covered by #26 starfield fix |
 | #39 (contract drift check not portable) | shipped | portable check in CI |
+| #40 (web contracts split between generated + hand-written) | **shipped** | PRs #148-#159 migrated all 10 endpoint families (phases 1-10); `apps/web/lib/types.ts` 881 → 178 lines, now ~95% `Wire<Schema<…>>` re-exports of the generated package |
 | #41 (stale ML family registry) | shipped | `apps/ml/ml/families.py` deleted; `FAMILY_DEFINITIONS` single source |
 | #42 (`parlay_4_6_leg_combiner` heuristic-only) | wontfix-by-design | `apps/api/app/services/model_families.py:48-55` — 3-leg + 4-6-leg parlays intentionally stay `heuristic_only` because per-family settled volume can't clear bug #20's walk-forward floor |
 | #43 (`_session_predictions` O(N)) | shipped | per-session index with O(1) lookup |
@@ -68,9 +71,7 @@ All MEDIUM bugs with `[ ]` are **shipped** except as noted:
 
 ### Still genuinely OPEN in Section 1
 
-- **Bug #40** — Web contracts split between generated OpenAPI types and hand-written mirrors (`apps/web/lib/types.ts` is 881 lines of hand-written types; `packages/contracts/generated/api.d.ts` is the 126KB generated source). MEDIUM effort. Full migration is one-endpoint-family-at-a-time, not a single PR. See Architecture rewrite #6.
-
-That's the **only** truly open Section 1 item.
+**None.** Bug #40 closed via the 10-phase migration (PRs #148-#159). Every Section 1 item with a fix path has shipped.
 
 ## Make Sika Smarter — open items
 
@@ -78,14 +79,16 @@ That's the **only** truly open Section 1 item.
 |---|---|---|
 | #2 (walk-forward backtest) | shipped | `apps/ml/ml/backtest.py` |
 | #4 (MLB venue → weather pipeline) | shipped | via Bug #4 fix |
-| #7 (MLB park × weather HR interaction) | shipped | `apps/api/app/services/heuristic_factors.py:432` — `_mlb_park_weather_hr_interaction` wired into `home_runs` + `total_bases` via `_MLB_FACTORS_BY_STAT` (12 tests in `test_mlb_park_weather_interaction.py`) |
+| #7 (MLB park × weather HR interaction) | shipped | `apps/api/app/services/heuristic_factors.py:432` — `_mlb_park_weather_hr_interaction` wired into `home_runs` + `total_bases` via `_MLB_FACTORS_BY_STAT` |
 | #8 (correlation-aware parlay engine) | shipped | [sika#141](https://github.com/ckwame-jpg/sika/pull/141) phase 3 |
+| #13 phase 2b-2 (BR referee fetcher wiring) | **operator-blocked** | Public basketball-reference site returns 403 to anonymous fetches; needs the BR URL pattern from your environment to wire `BasketballReferenceClient.fetch_referee_season_stats` into the deferred refresh job |
+| #21 (quantile-regression intervals) | **partial — phase 2b shipped, phase 2d open** | Phase 2b ([sika#154](https://github.com/ckwame-jpg/sika/pull/154), [#158](https://github.com/ckwame-jpg/sika/pull/158)) shipped the dataset extractor + train-intervals CLI. Visibility shipped via inspect-intervals CLI ([#163](https://github.com/ckwame-jpg/sika/pull/163)) + readiness panel section ([#164](https://github.com/ckwame-jpg/sika/pull/164)). Two real bugs found during demo + fixed ([#165](https://github.com/ckwame-jpg/sika/pull/165) resolver, [#166](https://github.com/ckwame-jpg/sika/pull/166) dedupe). First train run produced 7 trained stat keys with 2/7 ok / 1/7 warn / 4/7 bad coverage. **Phase 2d (consumer + UI band) handed off** in [sika#160](https://github.com/ckwame-jpg/sika/pull/160); needs gating-on-coverage-status design before consumer is safe to ship. |
 | #22 (feature freshness SLAs) | blocked | depends on Architecture #5 (open) |
 | #25 (market mapping confidence + override) | shipped | [sika#134](https://github.com/ckwame-jpg/sika/pull/134) |
-| #30 (per-family `watchlist_min_edge` tuning) | shipped | [sika#146](https://github.com/ckwame-jpg/sika/pull/146) — mechanism-only ship (empty `WATCHLIST_MIN_EDGE_OVERRIDES` registry, default fallback to `settings.watchlist_min_edge`) |
+| #28 (per-family `quality_tier` calibration) | shipped (mechanism); awaiting tuning data | empty registry until Smarter #2 backtest results inform per-family overrides |
+| #30 (per-family `watchlist_min_edge` tuning) | shipped (mechanism); awaiting tuning data | [sika#146](https://github.com/ckwame-jpg/sika/pull/146) — empty `WATCHLIST_MIN_EDGE_OVERRIDES` registry, default fallback to `settings.watchlist_min_edge`; populate from Smarter #2 results |
+| #31 (LLM narrator) | shipped | merged via [sika#94](https://github.com/ckwame-jpg/sika/pull/94); the snapshot's "pending UI eyeball" note was stale |
 | #32 (drawdown brake on demo trading) | shipped | [sika#144](https://github.com/ckwame-jpg/sika/pull/144) — drawdown brake snapshot on `GET /positions` |
-| #31 (LLM narrator) | shipped, **pending operator UI eyeball** | branch `claude/smarter-31-llm-narrator` pushed but PR unmerged — operator needs to spot-check the toggle + rendered narration |
-| #21 phase 2b/d (quantile-regression intervals — training pipeline + UI band) | handed off | see [SMARTER_21_PHASE_2B_HANDOFF.md](SMARTER_21_PHASE_2B_HANDOFF.md) + [SMARTER_21_PHASE_2B_PROMPT.md](SMARTER_21_PHASE_2B_PROMPT.md) |
 
 ## Architecture / Rewrite Candidates
 
@@ -95,27 +98,28 @@ That's the **only** truly open Section 1 item.
 | #2 (Refresh job runner) | shipped (retires bugs #10, #11, #22) |
 | #3 (ML training & promotion pipeline) | shipped (retires bug #21; underpins Smarter #2, #20) |
 | #4 (Market / player resolution service) | shipped (retires bugs #13, #17; feeds Smarter #25) |
-| #5 (Feature freshness layer) | OPEN — prerequisite for Smarter #22, #23 |
-| #6 (Contract / type ownership) | OPEN — retires bugs #39, #40 (only #40 still open) |
+| #5 (Feature freshness layer) | OPEN — prerequisite for Smarter #22 |
+| #6 (Contract / type ownership) | **shipped** — closed by Bug #40 migration phases 1-10 |
 
 ### Also-worth-tracking single-PR refactors
 
 | Item | Status |
 |---|---|
-| R1 (split `scoring.py`) | shipped (R1 phase 1-4 — PRs #135-#137) |
-| R2 (decompose `ingestion.py`) | shipped (R2 phase 1-3 — PRs #138, #139) |
+| R1 (split `scoring.py`) | shipped (R1 phases 1-4 — PRs #135-#137) |
+| R2 (decompose `ingestion.py`) | shipped (R2 phases 1-3 — PRs #138, #139) |
 | R3 (latest_by_max_id helper) | shipped (Bug #8 fix) |
 | R4 (consolidate `features.py`) | shipped (Bug #29 fix) |
 
-## Recommended next bets
+## Truly-open items (the short list)
 
-The clean small-effort items are all shipped. What remains needs either a strategy decision or a fresh session:
+After the late-2026-05-16 reconciliation:
 
-1. **Bug #40 / Architecture #6** — Web contracts migration. `apps/web/lib/types.ts` is 881 lines of hand-written types that mirror `packages/contracts/generated/api.d.ts` (the OpenAPI-generated 126KB source). The migration is one endpoint family at a time, and each migration needs verification that every consumer surface (components, hooks, page handlers) still type-checks against the generated `Schema[…]` references. Recommend tackling read-only endpoint families first (`/health`, `/predictions/summary`) before mutating ones.
-2. **Smarter #21 phase 2b/d** — Already handed off in [SMARTER_21_PHASE_2B_PROMPT.md](SMARTER_21_PHASE_2B_PROMPT.md); needs its own session.
-3. **Architecture #5 — Feature freshness layer** — Prerequisite for Smarter #22. Not started; needs a design pass to define the `FeatureGroupSnapshot` shape and a migration order (MLB weather/park/starter + NBA injury/rest first, then sportsbook/referee features). L effort across multiple PRs.
-4. **Smarter #13 phase 2b-2** — BR referee tendency fetcher wiring is deferred pending operator manual validation of the basketball-reference URL + table layout (the public BR site returns 403 to anonymous fetches; operators need to supply the working URL pattern from their environment).
-5. **Smarter #31** — LLM narrator branch is shipped but unmerged; needs operator UI eyeball.
+1. **Smarter #21 phase 2d** (consumer + UI band) — handed off in [sika#160](https://github.com/ckwame-jpg/sika/pull/160); needs a coverage-status gating design pass before the consumer is safe (intervals on disk currently mix `ok` / `warn` / `bad` per-stat-key). Defer until more games settle and more stat keys clear the `ok` band, OR ship with strict gating that only consumes `ok` rows.
+2. **Architecture #5 — Feature freshness layer** — prerequisite for Smarter #22; multi-PR design pass first. Not started; no urgency.
+3. **Smarter #13 phase 2b-2** — BR referee tendency fetcher wiring needs operator-supplied BR URL pattern (anonymous fetches return 403). Small once unblocked.
+4. **Smarter #28 + #30 override tuning** — mechanism shipped; populating the override registries needs Smarter #2 backtest output, not code.
+
+Nothing on this list blocks expanding to a new sport (WNBA).
 
 ## Recently shipped PRs (since last roll-up)
 
@@ -132,5 +136,25 @@ The clean small-effort items are all shipped. What remains needs either a strate
 | [#142](https://github.com/ckwame-jpg/sika/pull/142) | Smarter #9 phase 3 | Kelly sizing diagnostics on scored recommendations |
 | [#143](https://github.com/ckwame-jpg/sika/pull/143) | Smarter #21 phase 2b/d | Session handoff + spawn prompt |
 | [#144](https://github.com/ckwame-jpg/sika/pull/144) | Smarter #32 | Drawdown brake snapshot on `/positions` |
-| [#145](https://github.com/ckwame-jpg/sika/pull/145) | docs | This punch list state snapshot |
+| [#145](https://github.com/ckwame-jpg/sika/pull/145) | docs | Punch list state snapshot (v1) |
 | [#146](https://github.com/ckwame-jpg/sika/pull/146) | Smarter #30 | Per-family `watchlist_min_edge` tuning mechanism |
+| [#147](https://github.com/ckwame-jpg/sika/pull/147) | docs | Punch list state corrections (Smarter #7, #30) |
+| [#148](https://github.com/ckwame-jpg/sika/pull/148) | Bug #40 phase 1 | Migrate `/health` family to generated Schema |
+| [#149](https://github.com/ckwame-jpg/sika/pull/149) | Bug #40 phase 2 | Migrate `/predictions` family |
+| [#150](https://github.com/ckwame-jpg/sika/pull/150) | Bug #40 phase 3 | Migrate `/ops/models/readiness` family |
+| [#151](https://github.com/ckwame-jpg/sika/pull/151) | Bug #40 phase 4 | Migrate `/events` + `/markets` family |
+| [#152](https://github.com/ckwame-jpg/sika/pull/152) | Bug #40 phase 5 | Migrate `/trade-desk` family |
+| [#153](https://github.com/ckwame-jpg/sika/pull/153) | Bug #40 phase 6 | Migrate `/runs` + `/jobs` family |
+| [#154](https://github.com/ckwame-jpg/sika/pull/154) | Smarter #21 phase 2b | Interval-training dataset extraction |
+| [#155](https://github.com/ckwame-jpg/sika/pull/155) | Bug #40 phase 7 | Migrate `/positions` + `/demo-orders` + `/paper-positions` |
+| [#156](https://github.com/ckwame-jpg/sika/pull/156) | Bug #40 phase 8 | Migrate `/stats-query` + `/team-history` family |
+| [#157](https://github.com/ckwame-jpg/sika/pull/157) | Bug #40 phase 9 | Migrate `/ops/market-mapping/*` family |
+| [#158](https://github.com/ckwame-jpg/sika/pull/158) | Smarter #21 phase 2b | `train-intervals` CLI subcommand |
+| [#159](https://github.com/ckwame-jpg/sika/pull/159) | Bug #40 phase 10 | Migrate `/product/*` + final orphans (Bug #40 COMPLETE) |
+| [#160](https://github.com/ckwame-jpg/sika/pull/160) | Smarter #21 phase 2d | Session handoff (consumer + UI band still open) |
+| [#161](https://github.com/ckwame-jpg/sika/pull/161) | chore | Pre-commit hook to guard web contracts shim against drift |
+| [#162](https://github.com/ckwame-jpg/sika/pull/162) | docs | README install:hooks Quick Start surface |
+| [#163](https://github.com/ckwame-jpg/sika/pull/163) | Smarter #21 ops UX | `inspect-intervals` CLI for operator visibility |
+| [#164](https://github.com/ckwame-jpg/sika/pull/164) | Smarter #21 ops UX | Readiness panel `interval_models` section (API + web) |
+| [#165](https://github.com/ckwame-jpg/sika/pull/165) | Smarter #21 fix | Resolver accepts bare cache row when team_name matches hint |
+| [#166](https://github.com/ckwame-jpg/sika/pull/166) | Smarter #21 fix | Dedupe interval listings + metadata family attribution |
