@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from math import exp, tanh
 from statistics import NormalDist, pstdev
-from typing import Any, Literal
+from typing import Any
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, joinedload
@@ -42,88 +42,18 @@ from app.sports.base import alias_tokens
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
-class ResolvedPropSubject:
-    sport_key: str
-    athlete_id: str
-    display_name: str
-    team_name: str | None
-    season: int
-    game_logs: list[dict[str, Any]]
-    player_search_cache_status: str = "miss"
-    gamelog_cache_status: str = "miss"
-    context_stale: bool = False
-    advanced_payload: dict[str, Any] = field(default_factory=dict)
-    advanced_cache_status: str = "miss"
-    # Cross-source player IDs resolved during _load_advanced. Threaded
-    # through here so downstream emitters (long-tail NBA, MLB lineup) can
-    # look up per-player records in O(1) without re-scanning the search
-    # cache. ``None`` until the resolver runs and finds a match.
-    nba_stats_id: str | None = None
-    mlb_stats_id: str | None = None
-
-
-@dataclass(slots=True)
-class PropResolverStats:
-    prop_subjects_warmed: int = 0
-    player_search_cache_hits: int = 0
-    player_search_cache_misses: int = 0
-    gamelog_cache_hits: int = 0
-    gamelog_cache_misses: int = 0
-    stale_gamelog_fallbacks: int = 0
-
-    def as_dict(self) -> dict[str, int]:
-        return {
-            "prop_subjects_warmed": self.prop_subjects_warmed,
-            "player_search_cache_hits": self.player_search_cache_hits,
-            "player_search_cache_misses": self.player_search_cache_misses,
-            "gamelog_cache_hits": self.gamelog_cache_hits,
-            "gamelog_cache_misses": self.gamelog_cache_misses,
-            "stale_gamelog_fallbacks": self.stale_gamelog_fallbacks,
-        }
-
-
-@dataclass(slots=True)
-class ScoredRecommendation:
-    recommendation: Recommendation | None
-    signal: SignalSnapshot
-    metadata: dict[str, Any]
-
-
-# Slice 6: ``_score_watchlist_markets_batch`` was previously responsible for
-# both producing scored recommendations *and* persisting them via
-# ``db.add(scored.signal)`` + ``capture_prediction(...)``. That made the
-# scoring kernel impossible to test in isolation: any unit test that wanted
-# to exercise the scoring math also got a database write. The split now
-# returns a list of ``ScoredWatchlistCapture`` records describing what the
-# persist step *would* do, and a separate ``_persist_scored_watchlist_captures``
-# helper handles the side effects. The ``stage_*_watchlist_batch`` wrappers
-# call the two in sequence so external behavior is unchanged.
-@dataclass(slots=True)
-class ScoredWatchlistCapture:
-    market: Market
-    scored: ScoredRecommendation
-    capture_scope: Literal["recommendation", "coverage"] | None
-
-
-@dataclass(slots=True)
-class WatchlistGenerationSummary:
-    recommendation_count: int = 0
-    prediction_count: int = 0
-    parlay_recommendation_count: int = 0
-    parlay_prediction_count: int = 0
-    loaded_candidate_market_count: int = 0
-    filtered_candidate_market_count: int = 0
-    scored_market_count: int = 0
-    coverage_prediction_count: int = 0
-    heuristic_longshots_suppressed: int = 0
-    inverse_winner_duplicates_collapsed: int = 0
-    combo_prop_candidates_emitted: int = 0
-    combo_prop_candidates_suppressed: int = 0
-    critical_context_suppressed: int = 0
-    candidate_filter_reason_counts: dict[str, int] = field(default_factory=dict)
-    outcome_reason_counts: dict[str, int] = field(default_factory=dict)
-    quality_tier_counts: dict[str, int] = field(default_factory=dict)
+# Dataclasses live in ``scoring.types`` so they can be imported
+# without pulling in the rest of the scoring kernel (which drags
+# the full DB / ML graph through the import). Re-exported below for
+# backward compatibility with consumers that ``from app.services.scoring
+# import ResolvedPropSubject``.
+from app.services.scoring.types import (  # noqa: E402
+    PropResolverStats,
+    ResolvedPropSubject,
+    ScoredRecommendation,
+    ScoredWatchlistCapture,
+    WatchlistGenerationSummary,
+)
 
 
 def _mlb_bullpen_total_factor(
@@ -3028,219 +2958,29 @@ def score_event(
     return scored.recommendation
 
 
-def _quality_tier_rank(value: str | None) -> int:
-    return {"high": 2, "medium": 1, "low": 0}.get((value or "").lower(), -1)
+# Monotonicity clamps + thesis-key dedupe — see scoring/monotonicity.py
+# for the full implementations. Re-exported here so existing
+# consumers (tests, orchestration helpers in this module) keep
+# working unchanged.
+from app.services.scoring.monotonicity import (  # noqa: E402
+    _dedupe_prediction_recommendations,
+    _dedupe_winner_recommendations,
+    _enforce_prop_monotonicity,
+    _apply_prediction_monotonicity,
+    _prediction_recommendation_tuple,
+    _quality_tier_rank,
+)
 
 
-def _enforce_prop_monotonicity(
-    scored_recommendations: list[tuple[Market, ScoredRecommendation]],
-    *,
-    summary: WatchlistGenerationSummary | None = None,
-) -> None:
-    from collections import defaultdict
-
-    settings = get_settings()
-    grouped: dict[tuple[int, str, str], list[tuple[Market, ScoredRecommendation]]] = defaultdict(list)
-    for market, scored in scored_recommendations:
-        metadata = scored.metadata or {}
-        if str(metadata.get("copilot_market_family") or "") != "player_prop":
-            continue
-        subject_name = str(metadata.get("copilot_subject_name") or "").strip()
-        stat_key = str(metadata.get("copilot_stat_key") or "").strip()
-        threshold = metadata.get("copilot_threshold")
-        if not subject_name or not stat_key or threshold is None or market.event_id is None:
-            continue
-        grouped[(market.event_id, subject_name.lower(), stat_key)].append((market, scored))
-
-    for group in grouped.values():
-        if len(group) < 2:
-            continue
-        group.sort(key=lambda item: float((item[1].metadata or {}).get("copilot_threshold") or 0.0))
-        for index in range(1, len(group)):
-            previous_scored = group[index - 1][1]
-            current_scored = group[index][1]
-            previous_probability = float(previous_scored.signal.fair_yes_price or 0.0)
-            current_probability = float(current_scored.signal.fair_yes_price or 0.0)
-            if current_probability <= previous_probability:
-                continue
-
-            clamped_probability = round(previous_probability, 4)
-            current_scored.signal.fair_yes_price = clamped_probability
-            current_scored.signal.fair_no_price = round(1 - clamped_probability, 4)
-
-            signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
-            signal_diagnostics["monotonicity_adjusted"] = True
-            current_scored.signal.scoring_diagnostics = signal_diagnostics
-
-            recommendation = current_scored.recommendation
-            if recommendation is None:
-                continue
-
-            recommendation.edge = round(clamped_probability - recommendation.suggested_price, 4)
-            # Codex PR #33 P2/P3: mirror the recomputed edge AND the clamped
-            # selected_side_probability onto the signal so coverage captures
-            # (which read signal fields when recommendation is None) persist
-            # the post-clamp values, not the stale pre-clamp pair.
-            current_scored.signal.edge = recommendation.edge
-            signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
-            signal_diagnostics["selected_side_probability"] = clamped_probability
-            signal_diagnostics["monotonicity_adjusted"] = True
-            current_scored.signal.scoring_diagnostics = signal_diagnostics
-            recommendation.scoring_diagnostics = {
-                **dict(recommendation.scoring_diagnostics or {}),
-                "selected_side_probability": clamped_probability,
-                "monotonicity_adjusted": True,
-            }
-
-            # Bug #9: when the clamp drops edge below the watchlist floor,
-            # the user shouldn't see this pick — it would have been filtered
-            # out had the lowered probability been the original. Record the
-            # suppression reason on the signal (so ops can explain it) and
-            # clear the recommendation so downstream surfaces drop it.
-            if recommendation.edge < settings.watchlist_min_edge:
-                signal_diagnostics = dict(current_scored.signal.scoring_diagnostics or {})
-                signal_diagnostics["monotonicity_edge_below_min"] = True
-                suppression_reasons = list(signal_diagnostics.get("suppression_reasons") or [])
-                if "monotonicity_edge_below_min" not in suppression_reasons:
-                    suppression_reasons.append("monotonicity_edge_below_min")
-                signal_diagnostics["suppression_reasons"] = suppression_reasons
-                current_scored.signal.scoring_diagnostics = signal_diagnostics
-                current_scored.recommendation = None
-                # Codex PR #33 round-3 P3: the market was counted as
-                # ``recommended`` upstream before monotonicity ran. Reclassify
-                # it so scorer-outcome metrics surface this suppression
-                # instead of overreporting recommendations.
-                if summary is not None:
-                    counts = summary.outcome_reason_counts
-                    if counts.get("recommended", 0) > 0:
-                        counts["recommended"] = counts["recommended"] - 1
-                        if counts["recommended"] == 0:
-                            counts.pop("recommended", None)
-                    counts["suppressed_monotonicity_edge_below_min"] = (
-                        counts.get("suppressed_monotonicity_edge_below_min", 0) + 1
-                    )
-
-
-def _dedupe_winner_recommendations(
-    scored_recommendations: list[tuple[Market, ScoredRecommendation]],
-) -> tuple[list[tuple[Market, ScoredRecommendation]], int, int]:
-    deduped: dict[str, tuple[Market, ScoredRecommendation]] = {}
-    passthrough: list[tuple[Market, ScoredRecommendation]] = []
-    collapsed_count = 0
-    combo_suppressed = 0
-
-    for market, scored in scored_recommendations:
-        recommendation = scored.recommendation
-        if recommendation is None:
-            continue
-        diagnostics = dict(recommendation.scoring_diagnostics or {})
-        thesis_key = diagnostics.get("selected_thesis_key")
-        if not thesis_key:
-            passthrough.append((market, scored))
-            continue
-
-        current = deduped.get(str(thesis_key))
-        if current is None:
-            deduped[str(thesis_key)] = (market, scored)
-            continue
-
-        _, existing_scored = current
-        existing_recommendation = existing_scored.recommendation
-        assert existing_recommendation is not None
-
-        candidate_tuple = (
-            recommendation.selection_score or 0.0,
-            recommendation.edge,
-            -recommendation.suggested_price,
-            _quality_tier_rank(diagnostics.get("quality_tier")),
-        )
-        existing_tuple = (
-            existing_recommendation.selection_score or 0.0,
-            existing_recommendation.edge,
-            -existing_recommendation.suggested_price,
-            _quality_tier_rank((existing_recommendation.scoring_diagnostics or {}).get("quality_tier")),
-        )
-        if candidate_tuple > existing_tuple:
-            if str((existing_recommendation.scoring_diagnostics or {}).get("source_type") or "") == "combo_derived":
-                combo_suppressed += 1
-            deduped[str(thesis_key)] = (market, scored)
-        else:
-            if str(diagnostics.get("source_type") or "") == "combo_derived":
-                combo_suppressed += 1
-        collapsed_count += 1
-
-    return [*passthrough, *deduped.values()], collapsed_count, combo_suppressed
-
-
-def _prediction_recommendation_tuple(prediction: Prediction) -> tuple[float, float, float, int]:
-    diagnostics = dict(prediction.scoring_diagnostics or {})
-    return (
-        prediction.selection_score or 0.0,
-        prediction.edge,
-        -prediction.suggested_price,
-        _quality_tier_rank(diagnostics.get("quality_tier")),
-    )
-
-
-def _build_recommendation_from_prediction(prediction: Prediction) -> Recommendation:
-    return Recommendation(
-        event_id=prediction.event_id,
-        market_id=prediction.market_id,
-        side=prediction.side,
-        action=prediction.action,
-        status="active",
-        suggested_price=prediction.suggested_price,
-        edge=prediction.edge,
-        confidence=prediction.confidence,
-        selection_score=prediction.selection_score,
-        model_name=prediction.model_name,
-        model_version=prediction.model_version,
-        calibration_version=prediction.calibration_version,
-        feature_set_version=prediction.feature_set_version,
-        model_metadata=dict(prediction.model_metadata or {}),
-        invalidation=prediction.invalidation or "Pull if execution conditions materially change.",
-        rationale=prediction.rationale,
-        scoring_diagnostics=dict(prediction.scoring_diagnostics or {}),
-        captured_at=prediction.captured_at,
-    )
-
-
-def _signal_snapshot_from_prediction(prediction: Prediction) -> SignalSnapshot:
-    fair_yes_price = float(prediction.fair_yes_price or 0.0)
-    fair_no_price = float(prediction.fair_no_price if prediction.fair_no_price is not None else (1 - fair_yes_price))
-    return SignalSnapshot(
-        event_id=prediction.event_id,
-        market_id=prediction.market_id,
-        captured_at=prediction.captured_at,
-        model_name=prediction.model_name or MODEL_NAME,
-        model_version=prediction.model_version,
-        calibration_version=prediction.calibration_version,
-        feature_set_version=prediction.feature_set_version,
-        model_metadata=dict(prediction.model_metadata or {}),
-        confidence=prediction.confidence,
-        fair_yes_price=fair_yes_price,
-        fair_no_price=fair_no_price,
-        edge=prediction.edge,
-        selection_score=prediction.selection_score,
-        reasons=list(prediction.reasons or []),
-        features=dict(prediction.features or {}),
-        scoring_diagnostics=dict(prediction.scoring_diagnostics or {}),
-    )
-
-
-def _parlay_candidate_from_prediction(prediction: Prediction) -> ParlayCandidateInput | None:
-    market = prediction.market
-    event = market.event if market is not None else None
-    if market is None or event is None:
-        return None
-    return ParlayCandidateInput(
-        event=event,
-        market=market,
-        recommendation=_build_recommendation_from_prediction(prediction),
-        signal=_signal_snapshot_from_prediction(prediction),
-        prediction=prediction,
-        metadata=dict(market.raw_data or {}),
-    )
+# Prediction → Recommendation rehydration helpers live in
+# scoring.persistence (extracted as part of R1). Re-exported here
+# for backward-compat with consumers / tests that import from
+# ``app.services.scoring``.
+from app.services.scoring.persistence import (  # noqa: E402
+    _build_recommendation_from_prediction,
+    _parlay_candidate_from_prediction,
+    _signal_snapshot_from_prediction,
+)
 
 
 def _maintenance_watchlist_market_batch(
@@ -3396,37 +3136,9 @@ def _score_watchlist_markets_batch(
     return summary, captures
 
 
-def _persist_scored_watchlist_captures(
-    db: Session,
-    *,
-    run_id: int,
-    captures: list[ScoredWatchlistCapture],
-) -> None:
-    """Persist the side-effect tail of ``_score_watchlist_markets_batch``.
-
-    Slice 6: split out so the scoring kernel above is unit-testable as a
-    pure function. Iterates the captures, stages each ``SignalSnapshot``
-    via ``db.add``, and routes ``capture_prediction`` calls to either the
-    ``"recommendation"`` or ``"coverage"`` scope (or skips it for captures
-    that were emitted purely for signal persistence).
-    """
-    if not captures:
-        return
-    for capture in captures:
-        db.add(capture.scored.signal)
-        if capture.capture_scope is None:
-            continue
-        capture_prediction(
-            db,
-            run_id=run_id,
-            event=capture.market.event,
-            market=capture.market,
-            recommendation=capture.scored.recommendation,
-            signal=capture.scored.signal,
-            metadata=capture.scored.metadata,
-            capture_scope=capture.capture_scope,
-        )
-    db.flush()
+# ``_persist_scored_watchlist_captures`` moved to scoring.persistence
+# as part of R1; re-exported here for backward compat.
+from app.services.scoring.persistence import _persist_scored_watchlist_captures  # noqa: E402
 
 
 def stage_maintenance_watchlist_batch(
@@ -3485,102 +3197,6 @@ def stage_current_slate_watchlist_batch(
     _persist_scored_watchlist_captures(db, run_id=run_id, captures=captures)
     return scoring_summary, next_index, complete
 
-
-def _apply_prediction_monotonicity(
-    predictions: list[Prediction],
-    *,
-    summary: WatchlistGenerationSummary | None = None,
-) -> None:
-    from collections import defaultdict
-
-    settings = get_settings()
-    grouped: dict[tuple[int, str, str], list[Prediction]] = defaultdict(list)
-    for prediction in predictions:
-        if prediction.market_family != "player_prop":
-            continue
-        subject_name = str(prediction.subject_name or "").strip()
-        stat_key = str(prediction.stat_key or "").strip()
-        threshold = prediction.threshold
-        if not subject_name or not stat_key or threshold is None or prediction.event_id is None:
-            continue
-        grouped[(prediction.event_id, subject_name.lower(), stat_key)].append(prediction)
-
-    for group in grouped.values():
-        if len(group) < 2:
-            continue
-        group.sort(key=lambda prediction: float(prediction.threshold or 0.0))
-        for index in range(1, len(group)):
-            previous = group[index - 1]
-            current = group[index]
-            previous_probability = float(previous.fair_yes_price or 0.0)
-            current_probability = float(current.fair_yes_price or 0.0)
-            if current_probability <= previous_probability:
-                continue
-            clamped_probability = round(previous_probability, 4)
-            current.fair_yes_price = clamped_probability
-            current.fair_no_price = round(1 - clamped_probability, 4)
-            current.edge = round(clamped_probability - current.suggested_price, 4)
-            diagnostics = dict(current.scoring_diagnostics or {})
-            diagnostics["selected_side_probability"] = clamped_probability
-            diagnostics["monotonicity_adjusted"] = True
-            if current.edge < settings.watchlist_min_edge:
-                # Bug #9: the clamp dropped edge below the watchlist floor —
-                # mark the prediction suppressed so finalize_staged_watchlist
-                # excludes it from the dedup pass (and the operator never
-                # sees it on the watchlist). capture_scope == "suppressed"
-                # is the same filter the downstream pipeline already uses.
-                diagnostics["monotonicity_edge_below_min"] = True
-                suppression_reasons = list(diagnostics.get("suppression_reasons") or [])
-                if "monotonicity_edge_below_min" not in suppression_reasons:
-                    suppression_reasons.append("monotonicity_edge_below_min")
-                diagnostics["suppression_reasons"] = suppression_reasons
-                current.capture_scope = "suppressed"
-                # Codex PR #33 round-4 P2: the staged path counted this
-                # prediction as ``recommended`` during batch scoring; keep
-                # the run summary aligned with the predictions finalize
-                # actually emits.
-                if summary is not None:
-                    counts = summary.outcome_reason_counts
-                    if counts.get("recommended", 0) > 0:
-                        counts["recommended"] = counts["recommended"] - 1
-                        if counts["recommended"] == 0:
-                            counts.pop("recommended", None)
-                    counts["suppressed_monotonicity_edge_below_min"] = (
-                        counts.get("suppressed_monotonicity_edge_below_min", 0) + 1
-                    )
-            current.scoring_diagnostics = diagnostics
-
-
-def _dedupe_prediction_recommendations(
-    predictions: list[Prediction],
-) -> tuple[list[Prediction], int, int]:
-    deduped: dict[str, Prediction] = {}
-    passthrough: list[Prediction] = []
-    collapsed_count = 0
-    combo_suppressed = 0
-
-    for prediction in predictions:
-        diagnostics = dict(prediction.scoring_diagnostics or {})
-        thesis_key = diagnostics.get("selected_thesis_key")
-        if not thesis_key:
-            passthrough.append(prediction)
-            continue
-
-        current = deduped.get(str(thesis_key))
-        if current is None:
-            deduped[str(thesis_key)] = prediction
-            continue
-
-        if _prediction_recommendation_tuple(prediction) > _prediction_recommendation_tuple(current):
-            if str((current.scoring_diagnostics or {}).get("source_type") or "") == "combo_derived":
-                combo_suppressed += 1
-            deduped[str(thesis_key)] = prediction
-        else:
-            if str(diagnostics.get("source_type") or "") == "combo_derived":
-                combo_suppressed += 1
-        collapsed_count += 1
-
-    return [*passthrough, *deduped.values()], collapsed_count, combo_suppressed
 
 
 def finalize_staged_watchlist(
