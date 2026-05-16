@@ -10,15 +10,20 @@ import {
   useState,
 } from "react";
 
-export type PriceDisplayMode = "american" | "prediction" | "kalshi";
+import {
+  PRICE_DISPLAY_COOKIE,
+  isPriceDisplayMode,
+  type PriceDisplayMode,
+} from "./price-display-types";
 
-export const PRICE_DISPLAY_COOKIE = "sika.price-display-mode";
+// Re-exported so existing client imports of ``@/lib/price-display``
+// keep working without churn. Server components MUST import these
+// from ``@/lib/price-display-types`` directly.
+export { PRICE_DISPLAY_COOKIE, isPriceDisplayMode };
+export type { PriceDisplayMode };
+
 const LEGACY_STORAGE_KEY = "sika.price-display-mode";
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
-
-export function isPriceDisplayMode(value: unknown): value is PriceDisplayMode {
-  return value === "american" || value === "prediction" || value === "kalshi";
-}
 
 interface PriceDisplayContextValue {
   mode: PriceDisplayMode;
