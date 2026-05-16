@@ -1328,7 +1328,7 @@ def test_score_watchlist_markets_batch_counts_suppression_reasons(db_session, mo
     market.raw_data = {**(market.raw_data or {}), "copilot_market_family": "winner"}
     db_session.commit()
 
-    def fake_build_scored_recommendation(db, event, market, snapshot, resolver=None):
+    def fake_build_scored_recommendation(db, event, market, snapshot, resolver=None, *, events_fresh_at=None):
         signal = SignalSnapshot(
             event_id=event.id,
             market_id=market.id,
@@ -1360,7 +1360,7 @@ def test_score_watchlist_markets_batch_counts_low_confidence_suppression(db_sess
     market.raw_data = {**(market.raw_data or {}), "copilot_market_family": "winner"}
     db_session.commit()
 
-    def fake_build_scored_recommendation(db, event, market, snapshot, resolver=None):
+    def fake_build_scored_recommendation(db, event, market, snapshot, resolver=None, *, events_fresh_at=None):
         signal = SignalSnapshot(
             event_id=event.id,
             market_id=market.id,
@@ -1398,6 +1398,66 @@ def test_score_watchlist_markets_batch_counts_scoring_returned_none(db_session, 
     assert captures == []
     assert summary.scored_market_count == 0
     assert summary.outcome_reason_counts["scoring_returned_none"] == 1
+
+
+def test_score_watchlist_markets_batch_reads_events_fresh_at_once(db_session, monkeypatch):
+    """Architecture #5 follow-up — the espn_scoreboard freshness read
+    must happen exactly once per batch regardless of N markets. The
+    pre-follow-up behavior was N reads (one per market emit); this pin
+    enforces O(1) for the batch flow.
+    """
+    market_a = _setup_scorable_winner_market(db_session, key="fresh-at-batch-a")
+    market_b = _setup_scorable_winner_market(db_session, key="fresh-at-batch-b")
+    for market in (market_a, market_b):
+        market.event.starts_at = datetime.now(timezone.utc)
+        market.raw_data = {**(market.raw_data or {}), "copilot_market_family": "winner"}
+    db_session.commit()
+
+    call_count = {"n": 0}
+    real_fresh_at = scoring_module._events_ingestion_fresh_at
+
+    def counting_fresh_at(db):
+        call_count["n"] += 1
+        return real_fresh_at(db)
+
+    monkeypatch.setattr(scoring_module, "_events_ingestion_fresh_at", counting_fresh_at)
+
+    _score_watchlist_markets_batch(db_session, markets=[market_a, market_b])
+
+    assert call_count["n"] == 1, (
+        "Expected _events_ingestion_fresh_at to be called exactly once "
+        f"per batch; got {call_count['n']}"
+    )
+
+
+def test_regenerate_watchlist_reads_events_fresh_at_once(db_session, monkeypatch):
+    """Companion to ``test_score_watchlist_markets_batch_reads_events_fresh_at_once``
+    — the same O(1)-per-batch invariant must hold for the
+    ``regenerate_watchlist`` entrypoint (used by the full watchlist
+    rebuild path).
+    """
+    market_a = _setup_scorable_winner_market(db_session, key="regen-fresh-at-a")
+    market_b = _setup_scorable_winner_market(db_session, key="regen-fresh-at-b")
+    for market in (market_a, market_b):
+        market.event.starts_at = datetime.now(timezone.utc)
+        market.raw_data = {**(market.raw_data or {}), "copilot_market_family": "winner"}
+    db_session.commit()
+
+    call_count = {"n": 0}
+    real_fresh_at = scoring_module._events_ingestion_fresh_at
+
+    def counting_fresh_at(db):
+        call_count["n"] += 1
+        return real_fresh_at(db)
+
+    monkeypatch.setattr(scoring_module, "_events_ingestion_fresh_at", counting_fresh_at)
+
+    regenerate_watchlist(db_session, candidate_markets=[market_a, market_b], replace_all=False)
+
+    assert call_count["n"] == 1, (
+        "Expected _events_ingestion_fresh_at to be called exactly once "
+        f"per batch in regenerate_watchlist; got {call_count['n']}"
+    )
 
 
 def test_stage_current_slate_watchlist_batch_advances_past_empty_filtered_batch(db_session, monkeypatch):

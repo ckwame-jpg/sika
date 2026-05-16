@@ -65,12 +65,12 @@ def _events_ingestion_fresh_at(db: Session) -> datetime | None:
     that as opt-out (no penalty) rather than treating "no signal" as
     "infinitely stale" — matches the conservative default behavior.
 
-    Perf note: this hits ``OperatorSetting`` once per scoring call
-    (i.e. once per market in a batch). Reviewer flagged the N+1; the
-    follow-up plumbs the value through ``_build_scored_recommendation``
-    from the batch-level entrypoint so it computes once per pass. For
-    now the per-call cost is one indexed read against a single row
-    (~1-2ms × N markets) — real but bounded; deferred.
+    Computed once per batch at the top-level entrypoint
+    (``score_event``, ``_score_watchlist_markets_batch``,
+    ``regenerate_watchlist``) and threaded through
+    ``_build_scored_recommendation`` → ``_score_player_prop`` via the
+    ``events_fresh_at`` kwarg. The per-market read that this previously
+    incurred is retired.
     """
     # Lazy import: upstream_health uses OperatorSetting which pulls
     # in the wider ORM surface. Local import keeps the scoring module
@@ -932,6 +932,8 @@ def _score_player_prop(
     market: Market,
     snapshot: MarketSnapshot | None,
     resolver: PropStatsResolver,
+    *,
+    events_fresh_at: datetime | None = None,
 ) -> tuple[float, float, list[str], dict[str, Any], dict[str, FeatureGroupSnapshot]] | None:
     metadata = _market_metadata(market)
     sport_key = str(market.sport_key or event.sport_key)
@@ -1519,7 +1521,7 @@ def _score_player_prop(
                         "opposing_bullpen_rest_index_3d": rest_index,
                         "bullpen_rest_data_complete": 1.0,
                     },
-                    fresh_at=_events_ingestion_fresh_at(db),
+                    fresh_at=events_fresh_at,
                     source="Event+EventParticipant (espn_scoreboard refresh)",
                 )
 
@@ -1995,6 +1997,8 @@ def _build_scored_recommendation(
     market: Market | None,
     snapshot: MarketSnapshot | None,
     resolver: PropStatsResolver | None = None,
+    *,
+    events_fresh_at: datetime | None = None,
 ) -> ScoredRecommendation | None:
     settings = get_settings()
     participants = sorted(event.participants, key=lambda item: item.is_home, reverse=True)
@@ -2012,7 +2016,10 @@ def _build_scored_recommendation(
     # no-op for those scopes (no groups → no assessments → no penalty).
     feature_groups: dict[str, FeatureGroupSnapshot] = {}
     if market and market_family == "player_prop":
-        prop_score = _score_player_prop(db, event, market, snapshot, resolver or PropStatsResolver(db))
+        prop_score = _score_player_prop(
+            db, event, market, snapshot, resolver or PropStatsResolver(db),
+            events_fresh_at=events_fresh_at,
+        )
         if prop_score is None:
             return None
         probability_yes, confidence, reasons, features, feature_groups = prop_score
@@ -2481,7 +2488,13 @@ def score_event(
     snapshot: MarketSnapshot | None,
     resolver: PropStatsResolver | None = None,
 ) -> Recommendation | None:
-    scored = _build_scored_recommendation(db, event, market, snapshot, resolver=resolver)
+    # Single-market entrypoint: events_fresh_at is computed once here
+    # so the kernel's PENALIZE policy for mlb_bullpen has a freshness
+    # signal without a redundant per-emitter upstream_health read.
+    scored = _build_scored_recommendation(
+        db, event, market, snapshot, resolver=resolver,
+        events_fresh_at=_events_ingestion_fresh_at(db),
+    )
     if not scored:
         return None
     db.add(scored.signal)
