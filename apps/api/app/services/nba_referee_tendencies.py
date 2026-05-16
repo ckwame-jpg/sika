@@ -24,16 +24,29 @@ so:
 
 - Tests inject a deterministic stub.
 - Production wires ``BasketballReferenceClient.fetch_referee_season_stats``
-  once the BR URL + table layout have been validated against a manual
-  fetch (basketball-reference returns 403 to anonymous WebFetch from a
-  fresh IP, so the URL+table layout decoding requires the operator's
-  configured base_url path that the existing client already uses for
-  player / team gamelogs).
+  once the BR table layout (column header names + table id) has been
+  validated against a manual fetch.
 
-The fetcher returns BR-shaped raw rows (a list of dicts with column
-names like ``"Referee"``, ``"G"``, ``"PF/G"``, ``"FT/G"``, ``"T"``);
-``parse_referee_tendency_rows`` translates them into the
-consumer-facing payload.
+## URL (verified pattern)
+
+The page lives at ``/referees/{end_year}_register.html`` — e.g. the
+2025-26 season is
+``https://www.basketball-reference.com/referees/2026_register.html``.
+URL pattern verified via WebSearch (seasons 2003-2026 all share the
+shape). ``end_year`` is the calendar year the season finishes,
+matching the convention used by the existing ``/leagues/NBA_{end_year}*.html``
+helpers in ``BasketballReferenceClient``.
+
+Basketball-reference returns 403 to anonymous WebFetch from fresh IPs,
+so the table layout cannot be decoded from a sika dev session — phase
+2b-2 needs the operator to view the page in their browser once and
+confirm the table headers match what ``parse_referee_tendency_rows``
+expects (``"Referee"``, ``"G"``, ``"PF/G"``, ``"FT/G"``, ``"T"``). If
+the headers differ, the parser is the file to update.
+
+The fetcher returns BR-shaped raw rows (a list of dicts keyed by those
+column names); ``parse_referee_tendency_rows`` translates them into
+the consumer-facing payload.
 
 ## Stale-fallback ceiling
 
