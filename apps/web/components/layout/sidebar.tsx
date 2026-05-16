@@ -9,6 +9,7 @@ import {
   ChevronRight,
   DatabaseZap,
   FileText,
+  Link2,
   RefreshCw,
   Settings2,
   Target,
@@ -38,6 +39,7 @@ const RESEARCH_NAV = [
 
 const OPS_NAV = [
   { href: "/runs", label: "Runs", icon: DatabaseZap },
+  { href: "/mappings", label: "Mappings", icon: Link2 },
   { href: "/settings", label: "Settings", icon: Settings2 },
 ];
 
