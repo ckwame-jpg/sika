@@ -27,6 +27,10 @@ function makeResult(overrides: Partial<StatsQueryRead> = {}): StatsQueryRead {
       wins: 7,
       losses: 3,
       draws: 0,
+      // Bug #40 phase 8 migration surfaced these — Wire<> requires
+      // them on the wire (Pydantic emits {} default for both).
+      percentiles: {},
+      metric_categories: {},
     } as StatsQueryRead["summary"],
     metric_labels: { pts: "PTS", ast: "AST", fg3m: "3PM" },
     explanation: "Hot stretch; line 25.5 hit 7-of-10.",
