@@ -102,6 +102,19 @@ export type RecommendationRead = Wire<Schema<"RecommendationRead">>;
 export type MarketDetailRead = Wire<Schema<"MarketDetailRead">>;
 export type MarketHistoryRead = Wire<Schema<"MarketHistoryRead">>;
 
+// ── /trade-desk endpoint family ──
+//
+// The hand-written names dropped the ``Read`` suffix for the inner
+// trade-desk types (TradeDeskGameLine vs. the generated
+// TradeDeskGameLineRead, etc.). The shim aliases preserve the
+// hand-written names so consumers don't need to rename.
+export type TradeDeskGameLine = Wire<Schema<"TradeDeskGameLineRead">>;
+export type TradeDeskThreshold = Wire<Schema<"TradeDeskThresholdRead">>;
+export type TradeDeskPlayerProp = Wire<Schema<"TradeDeskPlayerPropRead">>;
+export type TradeDeskEvent = Wire<Schema<"TradeDeskEventRead">>;
+export type TradeDeskArchivedSlate = Wire<Schema<"TradeDeskArchivedSlateRead">>;
+export type TradeDeskResponse = Wire<Schema<"TradeDeskResponse">>;
+
 // Hand-written EventParticipantRead / EventRead / RecommendationRead /
 // MarketSnapshotRead / SignalSnapshotRead / MarketDetailRead replaced by
 // the shim re-exports near the top of this file (Bug #40 phase 4).
@@ -114,106 +127,10 @@ interface SportAvailabilityRead {
   last_refresh_at: string | null;
 }
 
-export interface TradeDeskGameLine {
-  ticker: string;
-  market_title: string;
-  display_label: string;
-  sport_key: string | null;
-  market_kind: string;
-  selected_side: string;
-  projected_side_label: string | null;
-  selected_side_probability: number | null;
-  entry_price: number | null;
-  edge: number;
-  confidence: number;
-  kalshi_url: string | null;
-  /** Signed numeric line from the picked side's perspective. Negative for
-   *  favored/under, positive for dog/over. Null when there's no number to
-   *  chart (moneyline, first_five_winner). */
-  numeric_line: number | null;
-  /** Effective over/under direction for total markets (folds in
-   *  ``copilot_direction`` so Under-market YES picks resolve to
-   *  ``under``). Null for non-total markets. */
-  total_direction: "over" | "under" | null;
-  /** Bug #37: most recent ``last_price`` values for this market in
-   *  chronological order (oldest → newest), capped server-side. Empty
-   *  when no captured snapshots exist; the row sparkline falls back to
-   *  a deterministic synthetic walk. */
-  price_history: number[];
-  /** Smarter #24 — minutes until close. ``null`` for markets without a
-   *  scheduled close; clamped at 0 for past close. */
-  time_to_close_minutes: number | null;
-}
-
-export interface TradeDeskThreshold {
-  ticker: string;
-  threshold: number;
-  probability_yes: number;
-  selected_side: string;
-  selected_side_probability: number | null;
-  entry_price: number | null;
-  edge: number;
-  confidence: number;
-  is_best: boolean;
-  kalshi_url: string | null;
-  /** Smarter #24 — minutes until close. ``null`` for markets without a
-   *  scheduled close; clamped at 0 for past close. */
-  time_to_close_minutes: number | null;
-}
-
-interface TradeDeskStatGroup {
-  stat_key: string;
-  thresholds: TradeDeskThreshold[];
-}
-
-export interface TradeDeskPlayerProp {
-  subject_name: string;
-  subject_team: string | null;
-  stat_groups: TradeDeskStatGroup[];
-  best_edge: number;
-  best_win_prob: number | null;
-}
-
-export interface TradeDeskEvent {
-  event_id: number;
-  event_name: string;
-  event_status: string;
-  starts_at: string | null;
-  sport_key: string;
-  candidate_market_count: number;
-  scored_market_count: number;
-  coverage_prediction_count: number;
-  game_lines: TradeDeskGameLine[];
-  player_props: TradeDeskPlayerProp[];
-}
-
-export interface TradeDeskArchivedSlate {
-  events: TradeDeskEvent[];
-  generated_at: string | null;
-  freshness_status: "stale";
-  event_count: number;
-  candidate_market_count: number;
-  scored_market_count: number;
-  recommendation_count: number;
-  coverage_prediction_count: number;
-  blocking_reason: string | null;
-  generated_from_run_id: number | null;
-}
-
-export interface TradeDeskResponse {
-  events: TradeDeskEvent[];
-  research_sports: SportAvailabilityRead[];
-  generated_at: string | null;
-  freshness_status: "fresh" | "stale" | "degraded" | "empty";
-  event_count: number;
-  candidate_market_count: number;
-  scored_market_count: number;
-  recommendation_count: number;
-  coverage_prediction_count: number;
-  blocking_reason: string | null;
-  generated_from_run_id: number | null;
-  previous_slate: TradeDeskArchivedSlate | null;
-}
+// Hand-written TradeDeskGameLine / TradeDeskThreshold / TradeDeskStatGroup /
+// TradeDeskPlayerProp / TradeDeskEvent / TradeDeskArchivedSlate /
+// TradeDeskResponse replaced by the shim re-exports near the top of this
+// file (Bug #40 phase 5).
 
 // Hand-written MarketHistoryPointRead / MarketHistoryRead replaced by the
 // shim re-exports near the top of this file (Bug #40 phase 4).
