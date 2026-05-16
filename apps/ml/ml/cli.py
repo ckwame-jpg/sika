@@ -11,6 +11,11 @@ import numpy as np
 from sqlalchemy import create_engine, text
 
 from ml.dataset import normalize_database_url
+from ml.interval_dataset import build_interval_training_rows
+from ml.interval_training import (
+    interval_models_paths,
+    train_prop_interval_models,
+)
 from ml.recalibration import (
     DEFAULT_WINDOW_DAYS,
     MIN_RECALIBRATION_SAMPLES,
@@ -18,6 +23,7 @@ from ml.recalibration import (
     write_sidecar_recalibrator,
 )
 from ml.training import train_and_package
+from ml_features import FeatureSpec
 
 
 _ADVANCED_ONLY_MAP = {"auto": None, "yes": True, "no": False}
@@ -51,6 +57,21 @@ def _now() -> datetime:
 # on a different day replaces the existing tag rather than accumulating
 # (operators should see ONE rolling-window date, not a chain).
 _RECALIBRATION_TAG_PREFIX = "+iso30d-"
+
+
+# Smarter #21 phase 2b — defaults for the ``train-intervals`` subcommand.
+#
+# - 30-day lookback mirrors Smarter #20's recalibration window: same
+#   data the operator is already used to seeing for rolling-window
+#   retrains, simplifying the audit story.
+# - 50 minimum samples is the quantile-regression floor — the three
+#   independent fits (p10/p50/p90) each need ~30-50 rows for stable
+#   convergence at the boundary quantiles. Below that, in-sample
+#   empirical coverage is misleading and the regressor is more likely
+#   to invert (p90 < p10) on edge inputs even with the monotonization
+#   pass in ``compute_prediction_interval``.
+DEFAULT_INTERVAL_LOOKBACK_DAYS = 30
+MIN_INTERVAL_SAMPLES = 50
 
 
 def _parse_serve_family_keys(raw: str) -> tuple[str, ...]:
@@ -592,6 +613,107 @@ def _recalibrate(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- Smarter #21 phase 2b: ``train-intervals`` subcommand --------------
+
+
+def _load_feature_spec(artifact_dir: Path) -> FeatureSpec:
+    """Load ``FeatureSpec`` from ``<artifact_dir>/feature_spec.json``.
+
+    The interval regressors share the classifier's feature vector —
+    operators must train + serve through the same spec or the
+    regressor learns a different surface than the classifier.
+    """
+    spec_path = artifact_dir / "feature_spec.json"
+    payload = json.loads(spec_path.read_text(encoding="utf-8"))
+    return FeatureSpec.from_dict(payload)
+
+
+def _train_intervals(args: argparse.Namespace) -> int:
+    """Fit + persist quantile interval regressors for one family + stat
+    key. Sidecars land under ``<artifact_dir>/interval_models/<stat_key>/``
+    (phase 2a layout). No manifest mutation — the sidecar fingerprint
+    in ``apps/api/app/services/ml/artifact_loader.py`` automatically
+    invalidates the artifact cache on sidecar add/replace, and the
+    per-stat ``metadata.json`` already carries operator audit
+    provenance (``trained_at``, ``sample_size``, ``empirical_coverage``,
+    window dates). Decoupling the manifest from interval retrains keeps
+    the classifier's ``calibration_version`` history clean.
+    """
+    manifest_path = Path(args.manifest_path)
+    artifact_dir = _resolve_artifact_dir(manifest_path, args.family_key)
+    feature_spec = _load_feature_spec(artifact_dir)
+    paths = interval_models_paths(artifact_dir, args.stat_key)
+
+    # Pass ``min_samples=0`` so we get the full extract (with skipped
+    # counts) regardless of size, then apply the operator's gate in the
+    # CLI. Otherwise the function's None-return strips the skip
+    # taxonomy from the summary just when operators need it most
+    # (diagnosing "why so few samples?").
+    extract = build_interval_training_rows(
+        args.database_url,
+        family_key=args.family_key,
+        stat_key=args.stat_key,
+        feature_spec=feature_spec,
+        lookback_days=args.lookback_days,
+        min_samples=0,
+        now=_now(),
+    )
+
+    summary: dict[str, object] = {
+        "family_key": args.family_key,
+        "stat_key": args.stat_key,
+        "manifest_path": str(manifest_path),
+        "artifact_dir": str(artifact_dir),
+        "lookback_days": args.lookback_days,
+        "min_samples": args.min_samples,
+        "sample_size": 0,
+        "window_start": None,
+        "window_end": None,
+        "skipped": {},
+        "sidecar_paths": {
+            "p10": str(paths.p10),
+            "p50": str(paths.p50),
+            "p90": str(paths.p90),
+            "metadata": str(paths.metadata),
+        },
+        "empirical_coverage": None,
+        "applied": False,
+        "dry_run": args.dry_run,
+    }
+
+    if extract is not None:
+        summary["sample_size"] = extract.sample_size
+        summary["window_start"] = extract.window_start.isoformat()
+        summary["window_end"] = extract.window_end.isoformat()
+        summary["skipped"] = dict(extract.skipped)
+
+    # Decision tree mirrors the recalibrate CLI:
+    # insufficient_samples → dry_run → apply.
+    if extract is None or extract.sample_size < args.min_samples:
+        summary["skip_reason"] = "insufficient_samples"
+        print(json.dumps(summary, indent=2, default=str))
+        return 0
+    if args.dry_run:
+        summary["skip_reason"] = "dry_run"
+        print(json.dumps(summary, indent=2, default=str))
+        return 0
+
+    result = train_prop_interval_models(
+        extract.features,
+        extract.targets,
+        family_key=args.family_key,
+        stat_key=args.stat_key,
+        artifact_dir=artifact_dir,
+        window_start=extract.window_start,
+        window_end=extract.window_end,
+    )
+    summary["applied"] = True
+    summary["empirical_coverage"] = result.empirical_coverage
+
+    print(json.dumps(summary, indent=2, default=str))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m ml.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -652,6 +774,54 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fit and report metrics but skip sidecar write and manifest bump.",
     )
     recalibrate.set_defaults(func=_recalibrate)
+
+    train_intervals = subparsers.add_parser(
+        "train-intervals",
+        help="Fit (p10, p50, p90) prop-stat interval regressors for one "
+        "served family + stat key. Joins settled predictions to ESPN "
+        "gamelog cache for continuous-stat targets, then writes the "
+        "phase 2a sidecar layout under "
+        "<artifact_dir>/interval_models/<stat_key>/.",
+    )
+    train_intervals.add_argument(
+        "--family-key",
+        required=True,
+        help="serves_family_key whose artifact_dir receives the interval "
+        "sidecars (e.g. nba_props, mlb_props).",
+    )
+    train_intervals.add_argument(
+        "--stat-key",
+        required=True,
+        help="The prop stat_key as written into predictions.stat_key "
+        "(e.g. points, rebounds, points_rebounds, total_bases). "
+        "One stat key per invocation; shell-loop for multiple.",
+    )
+    train_intervals.add_argument(
+        "--manifest-path",
+        required=True,
+        help="Path to the manifest whose entry for --family-key points "
+        "at the artifact_dir.",
+    )
+    train_intervals.add_argument("--database-url", default=None)
+    train_intervals.add_argument(
+        "--lookback-days",
+        type=int,
+        default=DEFAULT_INTERVAL_LOOKBACK_DAYS,
+        help=f"Rolling window in days (default: {DEFAULT_INTERVAL_LOOKBACK_DAYS}).",
+    )
+    train_intervals.add_argument(
+        "--min-samples",
+        type=int,
+        default=MIN_INTERVAL_SAMPLES,
+        help=f"Minimum extracted samples before fitting (default: {MIN_INTERVAL_SAMPLES}).",
+    )
+    train_intervals.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Extract + report without writing sidecars.",
+    )
+    train_intervals.set_defaults(func=_train_intervals)
+
     return parser
 
 
