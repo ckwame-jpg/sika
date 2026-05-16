@@ -33,6 +33,25 @@ _RECALIBRATORS_SUBDIR = "recalibrators"
 _SIDECAR_RECALIBRATOR_FILENAME = "isotonic_recalibrator.joblib"
 _SIDECAR_METADATA_FILENAME = "isotonic_recalibration_metadata.json"
 
+# Smarter #21 phase 2a defined the on-disk layout:
+#
+#     <artifact_dir>/interval_models/<stat_key>/p10.joblib
+#     <artifact_dir>/interval_models/<stat_key>/p50.joblib
+#     <artifact_dir>/interval_models/<stat_key>/p90.joblib
+#     <artifact_dir>/interval_models/<stat_key>/metadata.json
+#
+# (Subdirectory per stat key so phase 2b's training pipeline can fit
+# independent quantile regressors per prop family without one
+# stat-key swap clobbering the others.) Phase 2c (this module)
+# discovers and loads every per-stat sidecar at artifact-load time
+# and caches the triples on ``SklearnArtifact`` so the hot serving
+# path is just a dict lookup.
+_INTERVAL_MODELS_SUBDIR = "interval_models"
+_INTERVAL_P10_FILENAME = "p10.joblib"
+_INTERVAL_P50_FILENAME = "p50.joblib"
+_INTERVAL_P90_FILENAME = "p90.joblib"
+_INTERVAL_METADATA_FILENAME = "metadata.json"
+
 
 @dataclass(frozen=True, slots=True)
 class SklearnArtifact:
@@ -46,6 +65,13 @@ class SklearnArtifact:
     # are present (the common pre-recalibration state). Each entry's
     # value is a fitted ``sklearn.isotonic.IsotonicRegression``.
     recalibrators: dict[str, Any] = field(default_factory=dict)
+    # Smarter #21 phase 2c — per-stat-key prediction-interval models
+    # loaded from ``<artifact_dir>/interval_models/<stat_key>/``. Each
+    # entry is a ``(p10_model, p50_model, p90_model)`` tuple matching
+    # the shape ``ml.quantile_regression.compute_prediction_interval``
+    # consumes. Empty dict when no sidecars are present (pre-phase-2b
+    # state).
+    interval_models: dict[str, tuple[Any, Any, Any]] = field(default_factory=dict)
 
 
 _CACHE: dict[
@@ -74,7 +100,8 @@ def _sha256_of_file(path: Path) -> str:
 
 
 def _sidecar_fingerprint(artifact_dir: Path) -> tuple[tuple[str, float, int, str], ...]:
-    """Per-file fingerprint of every sidecar under ``recalibrators/``.
+    """Per-file fingerprint of every sidecar under ``recalibrators/``
+    AND ``interval_models/``.
 
     Returns a tuple of ``(relative_path, mtime, size, sha256_hex)``
     sorted by path. Any sidecar add / remove / rewrite produces a
@@ -83,28 +110,30 @@ def _sidecar_fingerprint(artifact_dir: Path) -> tuple[tuple[str, float, int, str
     a file is replaced with different content but identical
     ``(mtime, size)`` (codex review round 4 P2).
 
-    Returns ``()`` when the subdirectory doesn't exist (common
-    pre-recalibration state).
+    Returns ``()`` when neither subdirectory exists (common
+    pre-recalibration / pre-interval state).
     """
-    sidecar_root = artifact_dir / _RECALIBRATORS_SUBDIR
-    if not sidecar_root.exists() or not sidecar_root.is_dir():
-        return ()
     fingerprints: list[tuple[str, float, int, str]] = []
-    for family_dir in sorted(sidecar_root.iterdir()):
-        if not family_dir.is_dir():
+    for subdir_name in (_RECALIBRATORS_SUBDIR, _INTERVAL_MODELS_SUBDIR):
+        sidecar_root = artifact_dir / subdir_name
+        if not sidecar_root.exists() or not sidecar_root.is_dir():
             continue
-        for sidecar_file in sorted(family_dir.iterdir()):
-            if not sidecar_file.is_file():
+        for inner_dir in sorted(sidecar_root.iterdir()):
+            if not inner_dir.is_dir():
                 continue
-            stat = sidecar_file.stat()
-            fingerprints.append(
-                (
-                    str(sidecar_file.relative_to(artifact_dir)),
-                    stat.st_mtime,
-                    stat.st_size,
-                    _sha256_of_file(sidecar_file),
+            for sidecar_file in sorted(inner_dir.iterdir()):
+                if not sidecar_file.is_file():
+                    continue
+                stat = sidecar_file.stat()
+                fingerprints.append(
+                    (
+                        str(sidecar_file.relative_to(artifact_dir)),
+                        stat.st_mtime,
+                        stat.st_size,
+                        _sha256_of_file(sidecar_file),
+                    )
                 )
-            )
+    fingerprints.sort()
     return tuple(fingerprints)
 
 
@@ -244,6 +273,77 @@ def _load_sidecar_recalibrators(artifact_dir: Path) -> dict[str, Any]:
     return loaded
 
 
+def _load_sidecar_interval_models(artifact_dir: Path) -> dict[str, tuple[Any, Any, Any]]:
+    """Discover and load every per-stat-key sidecar under
+    ``interval_models/``.
+
+    Each sidecar lives in ``interval_models/<stat_key>/`` with the
+    canonical filename triple ``p10.joblib`` / ``p50.joblib`` /
+    ``p90.joblib``. Metadata.json is optional but present-by-default
+    (phase 2a writes it for provenance); the loader does NOT require
+    it. The stat key is taken from the directory name — that's the
+    source of truth at load time.
+
+    Each loaded triple is probed at a 1-row zero-feature matrix to
+    catch joblib-loads-but-predict-crashes corruption early (same
+    pattern as the recalibrator sidecar). Sidecars that fail the
+    probe are skipped with a logger.warning; the rest of the
+    artifact loads fine.
+    """
+    sidecar_root = artifact_dir / _INTERVAL_MODELS_SUBDIR
+    if not sidecar_root.exists() or not sidecar_root.is_dir():
+        return {}
+    loaded: dict[str, tuple[Any, Any, Any]] = {}
+    for stat_dir in sorted(sidecar_root.iterdir()):
+        if not stat_dir.is_dir():
+            continue
+        stat_key = stat_dir.name
+        joblib_paths = [
+            stat_dir / _INTERVAL_P10_FILENAME,
+            stat_dir / _INTERVAL_P50_FILENAME,
+            stat_dir / _INTERVAL_P90_FILENAME,
+        ]
+        if not all(path.exists() for path in joblib_paths):
+            # Partial sidecar (e.g. a deploy script that copied
+            # p10/p50 but not p90) must not load. Skip silently so
+            # the artifact serves without intervals for this stat.
+            continue
+        try:
+            triple = tuple(joblib.load(path) for path in joblib_paths)
+        except Exception as exc:  # noqa: BLE001 — corruption is runtime
+            logger.warning(
+                "ml.interval_models_skipped: joblib load failed "
+                "(stat=%s, dir=%s, error=%s)",
+                stat_key, stat_dir, exc,
+            )
+            continue
+        # Probe at a 1-row zero matrix to surface
+        # joblib-loads-but-predict-crashes corruption.
+        try:
+            probe_cols = int(triple[0].n_features_in_)
+        except AttributeError:
+            # Older sklearn / unusual estimator without
+            # ``n_features_in_`` — skip probe rather than reject.
+            loaded[stat_key] = triple  # type: ignore[assignment]
+            continue
+        import numpy as np
+
+        probe = np.zeros((1, probe_cols), dtype=float)
+        try:
+            for model in triple:
+                model.predict(probe)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "ml.interval_models_skipped: probe predict failed "
+                "(stat=%s, dir=%s, error=%s) — bad sidecar; "
+                "serving without intervals.",
+                stat_key, stat_dir, exc,
+            )
+            continue
+        loaded[stat_key] = triple  # type: ignore[assignment]
+    return loaded
+
+
 def load_sklearn_artifact(abs_dir: str | Path) -> SklearnArtifact:
     artifact_dir = Path(abs_dir).resolve()
     key = _artifact_cache_key(artifact_dir)
@@ -256,13 +356,66 @@ def load_sklearn_artifact(abs_dir: str | Path) -> SklearnArtifact:
     training_metadata = json.loads((artifact_dir / "training_metadata.json").read_text(encoding="utf-8"))
     pipeline = joblib.load(artifact_dir / "model.joblib")
     recalibrators = _load_sidecar_recalibrators(artifact_dir)
+    interval_models = _load_sidecar_interval_models(artifact_dir)
     artifact = SklearnArtifact(
         artifact_dir=artifact_dir,
         pipeline=pipeline,
         feature_spec=feature_spec,
         training_metadata=dict(training_metadata or {}),
         recalibrators=recalibrators,
+        interval_models=interval_models,
     )
     with _LOCK:
         _CACHE[key] = artifact
     return artifact
+
+
+def apply_interval_models(
+    artifact: SklearnArtifact,
+    stat_key: str,
+    features,
+) -> tuple[float, float, float] | None:
+    """Smarter #21 phase 2c — serve-time helper that returns the
+    (p10, p50, p90) prediction interval for ``stat_key`` if interval
+    models are loaded on this artifact.
+
+    Returns ``None`` when:
+    - The artifact has no interval models for ``stat_key`` (the
+      common case — most stat keys don't have intervals trained).
+    - ``predict`` raises on the loaded triple (probe-level
+      corruption that survived load-time check). The caller falls
+      back to the point estimate.
+
+    Triple ordering is monotonized: independently-fit quantile
+    regressors can in rare cases "cross" (a p10 prediction higher
+    than the p50 for noisy inputs). The returned tuple is always
+    sorted so consumers can rely on ``p10 <= p50 <= p90`` without
+    per-call defensive checks.
+    """
+    triple = artifact.interval_models.get(stat_key)
+    if triple is None:
+        return None
+    import numpy as np
+
+    # Accept either a flat 1-D vector or an explicit 2-D row.
+    array = np.asarray(features, dtype=float)
+    if array.ndim == 1:
+        array = array.reshape(1, -1)
+    if array.shape[0] != 1:
+        raise ValueError(
+            f"apply_interval_models expects a single-row input; got {array.shape[0]} rows"
+        )
+    try:
+        raw = [float(model.predict(array)[0]) for model in triple]
+    except Exception as exc:  # noqa: BLE001 — defensive at serve time
+        logger.warning(
+            "ml.interval_models_predict_failed: stat=%s error=%s",
+            stat_key, exc,
+        )
+        return None
+    sorted_triple = sorted(raw)
+    return (
+        round(sorted_triple[0], 4),
+        round(sorted_triple[1], 4),
+        round(sorted_triple[2], 4),
+    )
