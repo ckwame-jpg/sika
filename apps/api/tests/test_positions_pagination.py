@@ -210,3 +210,80 @@ def test_demo_orders_keep_most_recent_when_capped(client, db_session) -> None:
     # Highest 3 ids by descending order.
     ids = [item["id"] for item in demo]
     assert ids == sorted(ids, reverse=True)
+
+
+# -- Truncation signal -------------------------------------------------
+
+
+def test_paper_truncated_true_when_more_rows_exist(client, db_session) -> None:
+    """Reviewer P1: silent truncation must surface a flag so the UI
+    can warn the operator. ``paper_truncated`` must be True whenever
+    the cap dropped at least one row."""
+    market = _seed_market(db_session)
+    _seed_paper_positions(db_session, market, count=10)
+
+    payload = client.get("/positions?paper_limit=3").json()
+
+    assert payload["paper_truncated"] is True
+    assert len(payload["paper_positions"]) == 3
+
+
+def test_demo_truncated_true_when_more_rows_exist(client, db_session) -> None:
+    market = _seed_market(db_session)
+    _seed_demo_orders(db_session, market, count=10)
+
+    payload = client.get("/positions?demo_limit=3").json()
+
+    assert payload["demo_truncated"] is True
+    assert len(payload["demo_orders"]) == 3
+
+
+def test_truncated_false_when_under_cap(client, db_session) -> None:
+    """A table that fits inside the cap must NOT report truncated;
+    the UI shouldn't warn for nothing."""
+    market = _seed_market(db_session)
+    _seed_paper_positions(db_session, market, count=5)
+    _seed_demo_orders(db_session, market, count=5)
+
+    payload = client.get("/positions?paper_limit=10&demo_limit=10").json()
+
+    assert payload["paper_truncated"] is False
+    assert payload["demo_truncated"] is False
+
+
+def test_truncated_false_at_exact_boundary(client, db_session) -> None:
+    """Exactly ``limit`` rows in the table is the off-by-one case the
+    ``limit + 1`` fetch trick guards against. ``len(...) == limit``
+    would false-positive here; the extra-row probe must report
+    truncated=False because nothing was actually dropped."""
+    market = _seed_market(db_session)
+    _seed_paper_positions(db_session, market, count=3)
+
+    payload = client.get("/positions?paper_limit=3").json()
+
+    assert payload["paper_truncated"] is False
+    assert len(payload["paper_positions"]) == 3
+
+
+def test_truncated_flags_are_independent(client, db_session) -> None:
+    """One side overflowing the cap must not contaminate the other
+    side's truncation flag."""
+    market = _seed_market(db_session)
+    _seed_paper_positions(db_session, market, count=10)
+    _seed_demo_orders(db_session, market, count=2)
+
+    payload = client.get("/positions?paper_limit=3&demo_limit=10").json()
+
+    assert payload["paper_truncated"] is True
+    assert payload["demo_truncated"] is False
+
+
+def test_default_response_does_not_set_truncated_when_empty(client) -> None:
+    """The defensive ``False`` defaults on ``PositionsRead`` mean an
+    empty install must still report ``False`` for both flags."""
+    payload = client.get("/positions").json()
+
+    assert payload["paper_truncated"] is False
+    assert payload["demo_truncated"] is False
+    assert payload["paper_positions"] == []
+    assert payload["demo_orders"] == []

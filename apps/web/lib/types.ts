@@ -590,6 +590,14 @@ export interface PositionsRead {
   paper_positions: PaperPositionRead[];
   demo_orders: DemoOrderRead[];
   kalshi_account: KalshiAccountRead;
+  /** Bug #28: ``true`` when the server hit ``paper_limit`` and at
+   *  least one row past the cap exists. UI surfaces a "showing N of
+   *  more" hint so operators know to raise the cap. Optional for
+   *  backwards compatibility with older API builds. */
+  paper_truncated?: boolean;
+  /** Bug #28: ``true`` when the server hit ``demo_limit`` and at
+   *  least one row past the cap exists. */
+  demo_truncated?: boolean;
 }
 
 export interface PaperPositionCreate {

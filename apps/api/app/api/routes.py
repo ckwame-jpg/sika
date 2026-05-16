@@ -1462,19 +1462,33 @@ def get_positions(
     # raise the cap up to 500. Cursor pagination remains a follow-up
     # (see punch list bug #28) for the rare case where 500 rows is
     # itself too few.
-    paper_positions = db.scalars(
+    #
+    # Fetch ``limit + 1`` so we can flag ``*_truncated`` exactly when
+    # the cap actually trimmed something — using ``len(...) == limit``
+    # would false-positive at the boundary (a table with exactly
+    # ``limit`` rows would look truncated even though every row was
+    # served). The extra row is dropped before serialization.
+    paper_rows = db.scalars(
         select(PaperPosition)
         .order_by(PaperPosition.opened_at.desc(), PaperPosition.id.desc())
-        .limit(paper_limit)
+        .limit(paper_limit + 1)
     ).all()
-    demo_orders = db.scalars(
-        select(DemoOrder).order_by(DemoOrder.id.desc()).limit(demo_limit)
+    paper_truncated = len(paper_rows) > paper_limit
+    paper_positions = paper_rows[:paper_limit]
+
+    demo_rows = db.scalars(
+        select(DemoOrder).order_by(DemoOrder.id.desc()).limit(demo_limit + 1)
     ).all()
+    demo_truncated = len(demo_rows) > demo_limit
+    demo_orders = demo_rows[:demo_limit]
+
     kalshi_account = build_kalshi_account_snapshot(db)
     return PositionsRead(
         paper_positions=[PaperPositionRead.model_validate(item) for item in paper_positions],
         demo_orders=[DemoOrderRead.model_validate(item) for item in demo_orders],
         kalshi_account=kalshi_account,
+        paper_truncated=paper_truncated,
+        demo_truncated=demo_truncated,
     )
 
 

@@ -951,6 +951,14 @@ class PositionsRead(BaseModel):
     paper_positions: list[PaperPositionRead]
     demo_orders: list[DemoOrderRead]
     kalshi_account: KalshiAccountRead
+    # Bug #28: ``True`` when the server hit ``paper_limit`` /
+    # ``demo_limit`` and at least one additional row exists past the
+    # cap. The UI surfaces a "showing N of more" hint so operators
+    # know to raise the cap (or page) rather than assuming the table
+    # is fully drained. Defaulting to ``False`` keeps existing
+    # consumers that don't read these fields working unchanged.
+    paper_truncated: bool = False
+    demo_truncated: bool = False
 
 
 class JobRefreshResponse(BaseModel):
