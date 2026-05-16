@@ -4,17 +4,28 @@ You are picking up Smarter #21 (conformal prediction intervals on prop expected 
 
 ## Prerequisite — confirm interval artifacts exist in prod
 
-The handoff doc that drove phase 2b explicitly says:
+The original phase 2b handoff said:
 
 > **Don't ship phase 2d before phase 2b populates real interval artifacts.** Without populated intervals, the consumer wiring is dead code that complicates rollback.
 
-Before starting this session's work:
+**As of 2026-05-16 this prerequisite is satisfied** — the operator ran `train-intervals` for 7 stat keys and the inspect-intervals CLI confirms artifacts exist. Live coverage results (recorded so you can ground the gating design in real evidence, not theory):
 
-1. **Verify the CLI has been run in prod for at least one stat key.** SSH into the API host (or check the artifact bucket) for `<artifact_dir>/interval_models/<stat_key>/p10.joblib` + `p50.joblib` + `p90.joblib` + `metadata.json`. Typical first-target: NBA `points` (highest-volume, widely-traded prop).
-2. **Sanity-check the empirical coverage** in the metadata.json. A calibrated 80% interval should report `empirical_coverage ≈ 0.75–0.85`. Significantly off (e.g. 0.5) means the regressor is mis-calibrated and the consumer should NOT ship yet — the upstream training fix is more important than the consumer.
-3. **Confirm the operator readiness panel sees the artifact** — phase 2c's loader (`apply_interval_models(artifact, stat_key, features)`) returns the triple instead of None.
+```
+FAMILY     STAT         SAMPLES  COVERAGE  STATUS
+mlb_props  hits         84       0.964     bad
+mlb_props  home_runs    62       0.952     bad
+mlb_props  total_bases  59       0.915     warn
+nba_props  assists      82       0.878     ok
+nba_props  made_threes  71       0.972     bad
+nba_props  points       126      0.786     ok
+nba_props  rebounds     84       0.952     bad
+```
 
-Only after those three checks pass should you start the phase 2d PRs.
+**Key signal for the gating design: 2/7 ok, 1/7 warn, 4/7 bad.** Most low-sample-size stat keys over-cover (interval too wide). High-volume keys (points 126 samples / assists 82) calibrate correctly. This means the consumer **must** gate on `coverage_status` — naively consuming all intervals would ship worse projections than the Poisson approximation for 4/7 stat keys.
+
+The inspect-intervals CLI lives at `python -m ml.cli inspect-intervals --manifest-path manifests/current.json`; it's the read path you'll want during PR 3 design + verification.
+
+Re-run the inspect CLI before starting PR 3 — coverage may have improved since this snapshot as more games settle.
 
 ## What's already shipped
 
@@ -25,6 +36,10 @@ Only after those three checks pass should you start the phase 2d PRs.
 | [sika#140](https://github.com/ckwame-jpg/sika/pull/140) (phase 2c) | Serve-time loader | `apps/api/app/services/ml/artifact_loader.py` — `SklearnArtifact.interval_models`, `_load_sidecar_interval_models`, `apply_interval_models`. Pinned by 11 tests in `apps/api/tests/test_artifact_loader_intervals.py`. |
 | [sika#154](https://github.com/ckwame-jpg/sika/pull/154) (phase 2b dataset) | DB-side dataset extraction | `apps/ml/ml/interval_dataset.py` — `build_interval_training_rows`, `IntervalDatasetExtract`. 31 tests covering team-hint disambiguation, MLB doubleheader anchoring, asymmetric game-match window, skip taxonomy. |
 | [sika#158](https://github.com/ckwame-jpg/sika/pull/158) (phase 2b CLI) | `train-intervals` CLI subcommand | `apps/ml/ml/cli.py` — `_train_intervals` + `_load_feature_spec`. 8 tests pinning the apply / dry-run / insufficient-samples decision tree. |
+| [sika#163](https://github.com/ckwame-jpg/sika/pull/163) (operator visibility CLI) | `inspect-intervals` CLI for operator visibility | `apps/ml/ml/cli.py` — `_inspect_intervals` + `_collect_interval_artifacts` + `_format_inspect_intervals_table` + `_classify_coverage`. Output is a table or JSON; bands coverage into `ok` / `warn` / `bad` / `unknown` against the 80% target. 13 tests. |
+| [sika#164](https://github.com/ckwame-jpg/sika/pull/164) (operator visibility UI) | Readiness panel `interval_models` section (API + web) | `apps/api/app/services/ml/interval_status.py:collect_interval_model_status` + `apps/api/app/schemas.py:IntervalModelStatusRead` + `apps/web/components/predictions/interval-models-badge.tsx`. 8 + 5 tests. Same `coverage_status` banding as the CLI (cross-package drift guard pins them). |
+| [sika#165](https://github.com/ckwame-jpg/sika/pull/165) (resolver fix) | Bare cache row accepted when team_name matches hint | `apps/ml/ml/interval_dataset.py:_build_athlete_resolver` + `_team_hint_matches_subtitle` (+ ESPN team abbreviation map, drift-guarded against `apps/api/app/clients/espn.py`). Found because the strict policy from #154 rejected 100% of rows when run against the live DB. |
+| [sika#166](https://github.com/ckwame-jpg/sika/pull/166) (dedupe fix) | Dedupe shared-artifact listings + metadata family attribution | `apps/ml/ml/cli.py:_collect_interval_artifacts` + `apps/api/app/services/ml/interval_status.py:collect_interval_model_status`. Found because sika's `global_v1` artifact serves 4 manifest families; the listings were 4×-reported. Both surfaces (CLI + readiness panel) attribute rows by metadata's `family_key` now, not by manifest's `serves_family_key`. |
 
 ## On-disk contract (don't change it)
 
@@ -71,7 +86,17 @@ scoring_diagnostics["prediction_interval"] = {
 
 Persist both so the operator can A/B inspect interval vs Poisson per prop without re-running.
 
-**Gating**: the new code path is gated on `apply_interval_models` returning non-None. Stat keys without trained intervals continue to use the Poisson approximation — no behavior change for them. This is critical for rollback safety (revert PR removes the consumer; Poisson still works).
+**Gating** — **the load-bearing design decision for this PR.** Two gates, both required:
+
+1. `apply_interval_models` returns non-None. Stat keys without trained intervals continue to use the Poisson approximation — no behavior change for them. This is the rollback-safety gate (revert PR removes the consumer; Poisson still works).
+2. **`metadata.coverage_status == "ok"`.** This is NEW — wasn't in the original handoff. The 2026-05-16 demo proved 4/7 stat keys land in `bad` (over-covering) or `warn` (edge) coverage. Naively consuming bad intervals = worse than Poisson. Solutions to consider:
+   - **Strict (recommended for first ship):** only consume when `coverage_status == "ok"`. The other 4-5 stat keys keep using Poisson, transparent to the operator. As more games settle and coverage migrates to `ok`, more stat keys naturally activate.
+   - **Lenient:** consume `ok` + `warn`. Risks shipping slightly-miscalibrated intervals. Requires explaining the choice in scoring_diagnostics.
+   - **Weighted:** blend interval-derived YES probability with the Poisson value, weighted by 1 - |coverage - 0.80|. Cleanest in theory; harder to operator-explain.
+
+The metadata for this gate is already loaded — `SklearnArtifact.interval_models` is keyed by stat_key but the per-stat metadata.json (with `empirical_coverage`) is read at artifact-load time too. May need a small helper on the artifact loader to expose `coverage_status` per stat key without re-reading metadata.
+
+This is the open design pass to do **before** writing PR 3's code. Sketch the gating policy in the PR description; the answer affects how many lines of code change.
 
 **Tests** (apps/api side):
 - Happy path: a SklearnArtifact with interval models loaded + a prop with that stat key → `scoring_diagnostics["prediction_interval"]` populated, YES probability derived from CDF.
@@ -175,19 +200,36 @@ apps/web/lib/types.ts           # Phase 2d PR 4 — PredictionInterval interface
 
 ## Baseline tests must stay green
 
-- `apps/api`: **1,529 baseline → expected ~1,540 after phase 2d** (10-15 new tests for the consumer + CDF math).
-- `apps/ml`: **225 (after phase 2b)** — phase 2d doesn't touch apps/ml; should stay 225.
-- `apps/web`: **148 baseline → expected ~153 after PR 4** (5-7 new vitest tests for the band).
+Updated counts after the 2026-05-16 session shipped 4 more PRs (#163, #164, #165, #166):
+
+- `apps/api`: **1,560 baseline → expected ~1,575 after phase 2d** (10-15 new tests for the consumer + CDF math + coverage gating).
+- `apps/ml`: **247 (after PRs #163, #165, #166)** — phase 2d doesn't touch apps/ml; should stay 247.
+- `apps/web`: **153 baseline → expected ~160 after PR 4** (5-7 new vitest tests for the band).
 
 ## Open design decisions you'll need to make
 
-1. **CDF distribution choice** — triangular (cheap, defensible default) vs. piecewise-linear with more quantiles (more accurate, requires more training data). Triangular is the right starting point.
-2. **YES probability resolution** — replace the Poisson value entirely when intervals are available, OR ship both side-by-side with a feature flag? Recommend: when `prediction_interval` is present, use the interval-derived YES probability for `fair_yes_price`. Keep the Poisson value in `scoring_diagnostics["prediction_interval"]["yes_probability_from_poisson"]` for A/B inspection.
-3. **UI band height / width** — match the existing sparkline patterns. The frontend-design skill family will have opinions here.
-4. **Color scheme for over vs under** — green/red is the obvious choice; check `apps/web` design tokens for the canonical green/red.
+1. **Coverage-status gating policy** (NEW — see PR 3 §Gating above). Strict / lenient / weighted. Affects the consumer's branch logic. Decide before writing tests.
+2. **CDF distribution choice** — triangular (cheap, defensible default) vs. piecewise-linear with more quantiles (more accurate, requires more training data). Triangular is the right starting point.
+3. **YES probability resolution** — replace the Poisson value entirely when intervals are available, OR ship both side-by-side with a feature flag? Recommend: when `prediction_interval` is present AND coverage_status passes the gate, use the interval-derived YES probability for `fair_yes_price`. Keep the Poisson value in `scoring_diagnostics["prediction_interval"]["yes_probability_from_poisson"]` for A/B inspection.
+4. **UI band height / width** — match the existing sparkline patterns. The frontend-design skill family will have opinions here.
+5. **Color scheme for over vs under** — green/red is the obvious choice; check `apps/web` design tokens for the canonical green/red (e.g. `outcome-pill` tones `settled` / `lost` reuse here too).
+
+## Lessons from the 2026-05-16 session (read first)
+
+Specifically applies to phase 2d. Compounds with the broader `SIKA_SESSION_RULES.md` rules.
+
+1. **Cross-package drift guards work.** PRs #165 + #166 added `_ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME` + `INTERVAL_COVERAGE_*` constants duplicated across apps/api + apps/ml, with `ast.literal_eval`-based drift-guard tests that fail CI when copies diverge. For phase 2d: the same pattern applies if you duplicate any consumer-side classification constants (e.g. CDF-band labels) between scoring and the readiness panel.
+2. **Don't fabricate facts.** Per `SIKA_SESSION_RULES.md`, when you need a URL / config value / threshold from outside the codebase, research it (WebSearch / WebFetch / `gh` CLI) before writing it in a doc, commit message, or PR body. Mistakes cost trust + clarification rounds.
+3. **Codex hung 4× in the 2026-05-16 session.** Manual self-review against the 9-point checklist was the documented fallback. If codex is responsive when you ship phase 2d, prefer it; if not, the python-reviewer / typescript-reviewer subagents are the next step. The model `gpt-5-codex` errors on ChatGPT accounts — default to `gpt-5.5` or omit `--model`.
+4. **Real data informs real design.** The 2026-05-16 inspect-intervals run produced 7 trained stat keys; 4 landed in `bad` coverage. That's the evidence base for the gating decision in PR 3. Re-run `inspect-intervals` before starting design — coverage may have improved.
+5. **Worktree vs repo-root contracts gotcha.** When PR 4 regenerates contracts (`npm run contracts:generate`), the new files land in the worktree's `packages/contracts/`. The worktree's `npm` workspaces symlink to the repo-root `packages/contracts/`, so copy the regenerated `api.d.ts` + `openapi.json` to the repo root before running local `tsc`. CI/prod are unaffected.
 
 ## Punch-list pointer
 
-The smarter roadmap lives in `SIKA_PUNCH_LIST.md` (repo root). Smarter #21 is the section labeled "Conformal prediction intervals on prop expected values."
+The smarter roadmap lives in `SIKA_PUNCH_LIST.md` (repo root, with status banner at top pointing to `PUNCH_LIST_STATE_2026_05_16.md`). Smarter #21 is the section labeled "Conformal prediction intervals on prop expected values."
 
-The historical phase 2b handoff is in `SMARTER_21_PHASE_2B_HANDOFF.md` — keep for reference; everything in it that's flagged as "deferred" is now shipped (phase 2b complete).
+Read-first docs in this order:
+1. **`SIKA_SESSION_RULES.md`** — durable patterns / behaviors from prior sessions (research-first rule + others).
+2. **This doc** — phase 2d execution brief.
+3. **`PUNCH_LIST_STATE_2026_05_16.md`** — current open items list (confirms nothing else blocks phase 2d).
+4. `SMARTER_21_PHASE_2B_HANDOFF.md` — historical context for phase 2b; everything flagged "deferred" there is shipped.
