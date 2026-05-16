@@ -133,6 +133,41 @@ def test_mlb_lineup_callback_returns_none_when_market_does_not_require_lineup() 
     assert reason is None
 
 
+def test_mlb_lineup_callback_gated_to_props_families() -> None:
+    """Codex review caught: the original inline gate was nested inside
+    ``elif family_key.endswith("_props")``. A non-prop family (winner,
+    game-line, first-five) that somehow set ``copilot_requires_lineup``
+    + scratch-shaped lineup features was never reached pre-consolidation
+    and must not fire now either — codex Pattern 9.
+    """
+    scratch_features = {
+        "lineup_data_complete": 1.0,
+        "player_in_starting_lineup": 0.0,
+    }
+    requires_lineup = {"copilot_requires_lineup": True}
+    for non_prop_family in ("winner", "mlb_singles", "nba_singles", "game_line"):
+        reason = mlb_lineup_suppress_when(
+            _ctx(
+                features=scratch_features,
+                metadata=requires_lineup,
+                family_key=non_prop_family,
+            )
+        )
+        assert reason is None, (
+            f"mlb_lineup_suppress_when must not fire for family_key={non_prop_family!r}"
+        )
+    # Sanity-check: the same inputs DO fire for a _props family so
+    # we know the test setup is otherwise correct.
+    reason_props = mlb_lineup_suppress_when(
+        _ctx(
+            features=scratch_features,
+            metadata=requires_lineup,
+            family_key="mlb_props",
+        )
+    )
+    assert reason_props == "player_not_in_starting_lineup"
+
+
 # -- nba_injury_suppress_when -------------------------------------------
 
 

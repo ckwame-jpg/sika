@@ -173,9 +173,17 @@ def mlb_lineup_suppress_when(ctx: SuppressionContext) -> str | None:
     the policy decision.
 
     Returns ``"player_not_in_starting_lineup"`` on suppression, ``None``
-    otherwise (pre-lineup-window, confirmed-in-lineup, or
-    ``copilot_requires_lineup`` not set).
+    otherwise (pre-lineup-window, confirmed-in-lineup,
+    ``copilot_requires_lineup`` not set, or a non-prop family).
+
+    Codex Pattern 9: family gate to ``_props``. The original inline
+    logic was nested inside the ``elif family_key.endswith("_props")``
+    branch, so a winner / game-line market that somehow set
+    ``copilot_requires_lineup=True`` was never reached by this gate.
+    Preserving the same gate here keeps the behavior bit-identical.
     """
+    if not ctx.family_key.endswith("_props"):
+        return None
     if not ctx.metadata.get("copilot_requires_lineup"):
         return None
     lineup_data_complete = (
