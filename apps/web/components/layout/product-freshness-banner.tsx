@@ -2,7 +2,7 @@
 
 import useSWR from "swr";
 import { fetchProductFreshness, keys } from "@/lib/api";
-import type { ProductFreshnessResponse, ProductScopeFreshnessRead } from "@/lib/api";
+import type { ProductFreshnessResponse, ProductScopeFreshnessRead } from "@/lib/types";
 import { fmtRelative } from "@/lib/utils";
 
 function pickWorstScope(

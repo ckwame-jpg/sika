@@ -154,53 +154,20 @@ export type MarketMappingStateRead = Wire<Schema<"MarketMappingStateRead">>;
 export type MarketMappingListItemRead = Wire<Schema<"MarketMappingListItemRead">>;
 export type MarketMappingOverrideCreate = Schema<"MarketMappingOverrideCreate">;
 
-// Hand-written EventParticipantRead / EventRead / RecommendationRead /
-// MarketSnapshotRead / SignalSnapshotRead / MarketDetailRead replaced by
-// the shim re-exports near the top of this file (Bug #40 phase 4).
+// ── /product/* endpoint family ──
+//
+// ``ProductFreshnessResponse`` + ``ProductScopeFreshnessRead`` previously
+// lived in lib/api.ts as ad-hoc shim re-exports (the slice-4 migration
+// that predated this consolidated effort). Moved here so every generated-
+// schema type has one canonical import surface.
+export type ProductFreshnessResponse = Schema<"ProductFreshnessResponse">;
+export type ProductScopeFreshnessRead = Schema<"ProductScopeFreshnessRead">;
+export type ProductSportsResponse = Wire<Schema<"ProductSportsResponse">>;
+export type SportRead = Wire<Schema<"SportRead">>;
+export type SportAvailabilityRead = Wire<Schema<"SportAvailabilityRead">>;
 
-interface SportAvailabilityRead {
-  sport_key: string;
-  availability_mode: "live" | "research_only";
-  events_count: number;
-  recommendations_count: number;
-  last_refresh_at: string | null;
-}
-
-// Hand-written TradeDeskGameLine / TradeDeskThreshold / TradeDeskStatGroup /
-// TradeDeskPlayerProp / TradeDeskEvent / TradeDeskArchivedSlate /
-// TradeDeskResponse replaced by the shim re-exports near the top of this
-// file (Bug #40 phase 5).
-
-// Hand-written MarketHistoryPointRead / MarketHistoryRead replaced by the
-// shim re-exports near the top of this file (Bug #40 phase 4).
-
-// Hand-written RunSummaryCounts / RunRead / RunDetailRead / JobRefreshResponse
-// replaced by the shim re-exports near the top of this file (Bug #40 phase 6).
-
-// Hand-written ReadinessStatus / RuntimeHealthStatus / StudyTrack /
-// ReadinessBucketRead / CalibrationBucketRead / ModelFamilyRuntimeHealthRead /
-// ModelFamilyReadinessRead / SettlementAgingRead / ModelReadinessSummaryRead /
-// ModelReadinessSettingsUpdate replaced by shim re-exports near the top
-// of this file (Bug #40 phase 3).
-
-// Hand-written PaperPositionRead / DemoOrderRead / KalshiAccountBalanceRead /
-// KalshiAccountMarketPositionRead / KalshiAccountFillRead / KalshiAccountRead /
-// PositionsRead / PaperPositionCreate / PaperPositionExit / DemoOrderCreate
-// replaced by the shim re-exports near the top of this file (Bug #40 phase 7).
-
-// Hand-written PredictionRead / PredictionSummaryRead / ParlayPredictionRead /
-// ParlayPredictionSummaryRead / ParlayPredictionLegRead replaced by the shim
-// re-exports near the top of this file (Bug #40 phase 2).
-
-// Hand-written StatsSummaryRead / StatsGameLogRead / StatsQueryRead /
-// TeamGameResultRead / TeamHistoryRead replaced by the shim re-exports
-// near the top of this file (Bug #40 phase 8).
-
-// PredictionSettlementResponse replaced by the shim re-export near the
-// top of this file (Bug #40 phase 2).
-
-/* ─── Smarter #25 — market-mapping review queue ─── */
-
-// Hand-written MarketMappingCandidateRead / MarketMappingStateRead /
-// MarketMappingListItemRead / MarketMappingOverrideCreate replaced by
-// the shim re-exports near the top of this file (Bug #40 phase 9).
+// Bug #40 (Architecture #6) — web contracts migration COMPLETE.
+// Every API DTO this file used to define by hand now flows from
+// ``packages/contracts/generated/api.d.ts`` via the shim re-exports
+// above. The only hand-written remnant is ``SportKey`` + ``SPORT_LABELS``
+// at the top (display-only constants the API doesn't emit).
