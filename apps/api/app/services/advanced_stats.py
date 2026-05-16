@@ -74,6 +74,16 @@ class AdvancedLoadResult:
     payload: dict[str, Any]
     cache_status: str  # "hit" | "miss" | "stale" | "skipped"
     complete: bool
+    # Architecture #5 — when the underlying cache row was last
+    # refreshed. ``None`` for loaders that haven't been migrated to
+    # populate it yet (the kernel treats those groups as fresh_at-None,
+    # which opts them out of the freshness check — matches the
+    # DEFAULT_POLICY=IGNORE behavior so no scoring regression).
+    # Populated by load_weather, the gamelog loader, and the bullpen
+    # density helper as part of the initial Architecture #5 ship; other
+    # loaders adopt it in follow-up PRs as their groups graduate from
+    # IGNORE to PENALIZE / SUPPRESS.
+    cached_at: datetime | None = None
 
 
 # -----------------------------------------------------------------------------
