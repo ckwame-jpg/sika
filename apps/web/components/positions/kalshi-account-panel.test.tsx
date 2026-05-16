@@ -67,6 +67,14 @@ const connectedPositions: PositionsRead = {
       },
     ],
   },
+  // Bug #28 truncation flags + Smarter #32 drawdown brake snapshot.
+  // Previously the hand-written interface marked these optional so
+  // fixtures could skip them; the generated schema treats them as
+  // always-present-on-the-wire (Pydantic defaults + nullable for the
+  // brake).
+  paper_truncated: false,
+  demo_truncated: false,
+  drawdown_brake: null,
 };
 
 describe("KalshiAccountPanel", () => {

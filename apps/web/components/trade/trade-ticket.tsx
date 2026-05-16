@@ -143,7 +143,9 @@ export function TradeTicket({
         defaults={{
           destination: tradeDestination ?? "paper",
           ticker: selection.ticker,
-          side: selection.selectedSide,
+          // Bug #40 phase 7 — TradeDialogDefaults.side narrowed to "yes" | "no".
+          // selection.selectedSide is typed string upstream; lowercase and cast.
+          side: selection.selectedSide.toLowerCase() as "yes" | "no",
           price: selection.entryPrice ?? undefined,
         }}
         description="Route this pick to paper or demo without leaving the trade desk."

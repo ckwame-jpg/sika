@@ -27,8 +27,8 @@ import { usePriceDisplay } from "@/lib/price-display";
 interface TradeDialogDefaults {
   destination?: "paper" | "demo";
   ticker?: string;
-  side?: string;
-  action?: string;
+  side?: "yes" | "no";
+  action?: "buy" | "sell";
   price?: number;
   notes?: string;
 }
@@ -49,8 +49,12 @@ export function TradeDialog({
   const { mode, formatEditablePrice, parsePriceInput } = usePriceDisplay();
   const [destination, setDestination] = useState<"paper" | "demo">("paper");
   const [ticker, setTicker] = useState("");
-  const [side, setSide] = useState("yes");
-  const [action, setAction] = useState("buy");
+  // Bug #40 phase 7 — the migrated Schema<"PaperPositionCreate"> /
+  // Schema<"DemoOrderCreate"> types narrow ``side`` to ``"yes" | "no"``
+  // and ``action`` to ``"buy" | "sell"``. Type the state to match so the
+  // submit call type-checks against the generated contract.
+  const [side, setSide] = useState<"yes" | "no">("yes");
+  const [action, setAction] = useState<"buy" | "sell">("buy");
   const [quantity, setQuantity] = useState("1");
   const [priceInput, setPriceInput] = useState("");
   const [parsedPrice, setParsedPrice] = useState<number | null>(null);
@@ -115,6 +119,12 @@ export function TradeDialog({
           quantity: qty,
           limit_price: price,
           approved,
+          // Bug #40 phase 7 — DemoOrderCreate's generated schema requires
+          // ``time_in_force`` because its Pydantic default
+          // ("good_till_canceled") is emitted as a non-optional field with
+          // a default value. Supplying it explicitly here matches the
+          // server-side default and keeps the call type-checked.
+          time_in_force: "good_till_canceled",
         });
       }
       await mutate(keys.positions);
@@ -168,7 +178,7 @@ export function TradeDialog({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1.5 block text-xs text-muted-foreground">Side</label>
-              <Select value={side} onValueChange={setSide}>
+              <Select value={side} onValueChange={(value) => setSide(value as "yes" | "no")}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -187,7 +197,7 @@ export function TradeDialog({
           {destination === "demo" && (
             <div>
               <label className="mb-1.5 block text-xs text-muted-foreground">Action</label>
-              <Select value={action} onValueChange={setAction}>
+              <Select value={action} onValueChange={(value) => setAction(value as "buy" | "sell")}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

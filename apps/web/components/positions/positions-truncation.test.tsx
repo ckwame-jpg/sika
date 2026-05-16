@@ -64,6 +64,7 @@ function buildResponse(overrides: Partial<PositionsRead> = {}): PositionsRead {
     },
     paper_truncated: false,
     demo_truncated: false,
+    drawdown_brake: null,
     ...overrides,
   };
 }

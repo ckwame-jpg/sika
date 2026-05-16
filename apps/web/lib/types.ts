@@ -121,6 +121,26 @@ export type RunRead = Wire<Schema<"RunRead">>;
 export type RunDetailRead = Wire<Schema<"RunDetailRead">>;
 export type JobRefreshResponse = Wire<Schema<"JobRefreshResponse">>;
 
+// ── /positions + /paper-positions + /demo-orders endpoint family ──
+//
+// First migration to use the **bare Schema<>** convention for Create
+// DTOs (alongside Wire<> for Read DTOs and Partial<> for Update DTOs).
+// Bare Schema<> preserves the required-field constraints openapi-
+// typescript emits — caller must supply every field the Pydantic
+// schema doesn't default. The trade-off vs. Partial<>: stricter at
+// compile time, but the few fields with Pydantic defaults
+// (DemoOrderCreate.time_in_force, .action, .approved) now require
+// explicit values at the call site.
+export type PaperPositionRead = Wire<Schema<"PaperPositionRead">>;
+export type DemoOrderRead = Wire<Schema<"DemoOrderRead">>;
+export type KalshiAccountMarketPositionRead = Wire<Schema<"KalshiAccountMarketPositionRead">>;
+export type KalshiAccountFillRead = Wire<Schema<"KalshiAccountFillRead">>;
+export type DrawdownBrakeRead = Wire<Schema<"DrawdownBrakeRead">>;
+export type PositionsRead = Wire<Schema<"PositionsRead">>;
+export type PaperPositionCreate = Schema<"PaperPositionCreate">;
+export type PaperPositionExit = Schema<"PaperPositionExit">;
+export type DemoOrderCreate = Schema<"DemoOrderCreate">;
+
 // Hand-written EventParticipantRead / EventRead / RecommendationRead /
 // MarketSnapshotRead / SignalSnapshotRead / MarketDetailRead replaced by
 // the shim re-exports near the top of this file (Bug #40 phase 4).
@@ -150,120 +170,10 @@ interface SportAvailabilityRead {
 // ModelReadinessSettingsUpdate replaced by shim re-exports near the top
 // of this file (Bug #40 phase 3).
 
-export interface PaperPositionRead {
-  id: number;
-  ticker: string;
-  side: string;
-  quantity: number;
-  entry_price: number;
-  exit_price: number | null;
-  status: string;
-  pnl: number | null;
-  notes: string | null;
-  opened_at: string;
-  closed_at: string | null;
-}
-
-export interface DemoOrderRead {
-  id: number;
-  ticker: string;
-  client_order_id: string;
-  kalshi_order_id: string | null;
-  side: string;
-  action: string;
-  quantity: number;
-  limit_price: number;
-  status: string;
-  approved_by_user: boolean;
-  submitted_at: string | null;
-  last_synced_at: string | null;
-}
-
-interface KalshiAccountBalanceRead {
-  cash_balance_dollars: number | null;
-  portfolio_value_dollars: number | null;
-  updated_ts: number | null;
-}
-
-export interface KalshiAccountMarketPositionRead {
-  ticker: string;
-  bet_label: string | null;
-  bet_subtitle: string | null;
-  market_title: string | null;
-  market_subtitle: string | null;
-  sport_key: string | null;
-  position: number;
-  total_traded_dollars: number | null;
-  market_exposure_dollars: number | null;
-  realized_pnl_dollars: number | null;
-  fees_paid_dollars: number | null;
-  resting_orders_count: number;
-  last_updated_ts: string | null;
-}
-
-export interface KalshiAccountFillRead {
-  fill_id: string | null;
-  trade_id: string | null;
-  order_id: string | null;
-  ticker: string;
-  bet_label: string | null;
-  bet_subtitle: string | null;
-  market_title: string | null;
-  market_subtitle: string | null;
-  sport_key: string | null;
-  side: string | null;
-  action: string | null;
-  count: number;
-  yes_price_dollars: number | null;
-  no_price_dollars: number | null;
-  fee_dollars: number | null;
-  created_time: string | null;
-}
-
-interface KalshiAccountRead {
-  configured: boolean;
-  status: "connected" | "not_configured" | "error";
-  error_message: string | null;
-  balance: KalshiAccountBalanceRead | null;
-  market_positions: KalshiAccountMarketPositionRead[];
-  recent_fills: KalshiAccountFillRead[];
-}
-
-export interface PositionsRead {
-  paper_positions: PaperPositionRead[];
-  demo_orders: DemoOrderRead[];
-  kalshi_account: KalshiAccountRead;
-  /** Bug #28: ``true`` when the server hit ``paper_limit`` and at
-   *  least one row past the cap exists. UI surfaces a "showing N of
-   *  more" hint so operators know to raise the cap. Optional for
-   *  backwards compatibility with older API builds. */
-  paper_truncated?: boolean;
-  /** Bug #28: ``true`` when the server hit ``demo_limit`` and at
-   *  least one row past the cap exists. */
-  demo_truncated?: boolean;
-}
-
-export interface PaperPositionCreate {
-  ticker: string;
-  side: string;
-  quantity: number;
-  entry_price: number;
-  notes?: string;
-}
-
-export interface PaperPositionExit {
-  exit_price: number;
-}
-
-export interface DemoOrderCreate {
-  ticker: string;
-  side: string;
-  action?: string;
-  quantity: number;
-  limit_price: number;
-  approved?: boolean;
-  time_in_force?: string;
-}
+// Hand-written PaperPositionRead / DemoOrderRead / KalshiAccountBalanceRead /
+// KalshiAccountMarketPositionRead / KalshiAccountFillRead / KalshiAccountRead /
+// PositionsRead / PaperPositionCreate / PaperPositionExit / DemoOrderCreate
+// replaced by the shim re-exports near the top of this file (Bug #40 phase 7).
 
 // Hand-written PredictionRead / PredictionSummaryRead / ParlayPredictionRead /
 // ParlayPredictionSummaryRead / ParlayPredictionLegRead replaced by the shim

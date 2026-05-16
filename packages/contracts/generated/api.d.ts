@@ -197,6 +197,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/market-mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Market Mappings
+         * @description Smarter #25 — operator review queue for fuzzy market→event
+         *     mappings.
+         *
+         *     Default ordering: confidence ascending so the worst matches
+         *     surface first. ``mapping_confidence IS NULL`` rows (never
+         *     auto-mapped, or pre-bug-#17 rows that weren't scored) sort
+         *     after the rest so they don't crowd out the actual ambiguous
+         *     matches.
+         */
+        get: operations["list_market_mappings_ops_market_mapping_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/market-mapping/{ticker}": {
         parameters: {
             query?: never;
@@ -738,6 +765,30 @@ export interface components {
             /** Ticker */
             ticker: string;
         };
+        /**
+         * DrawdownBrakeRead
+         * @description Smarter #32 — operator-facing drawdown brake snapshot.
+         *
+         *     Composes the inputs to ``kelly_sizing.drawdown_brake_multiplier``
+         *     (bankroll + rolling 7-day PnL fraction) with the resulting
+         *     multiplier so the UI can render the current brake state without
+         *     re-deriving it. ``is_active`` flips true whenever
+         *     ``brake_multiplier < 1.0``.
+         */
+        DrawdownBrakeRead: {
+            /** Bankroll */
+            bankroll: number;
+            /** Brake Multiplier */
+            brake_multiplier: number;
+            /** Is Active */
+            is_active: boolean;
+            /** Rolling Pnl Dollars */
+            rolling_pnl_dollars: number;
+            /** Rolling Pnl Fraction */
+            rolling_pnl_fraction: number;
+            /** Threshold */
+            threshold: number;
+        };
         /** EventParticipantRead */
         EventParticipantRead: {
             /** Display Name */
@@ -1054,6 +1105,48 @@ export interface components {
             sport_key?: string | null;
             /** Time Delta Seconds */
             time_delta_seconds?: number | null;
+        };
+        /**
+         * MarketMappingListItemRead
+         * @description One row in the ops mapping-review queue. Lighter than
+         *     ``MarketMappingStateRead`` (which carries the full candidate
+         *     list) — this is what the table view needs to triage
+         *     low-confidence mappings before the operator opens the drawer
+         *     for the per-market detail.
+         *
+         *     Smarter #25: the ops surface for reviewing auto-mapping
+         *     confidence. ``top_candidate_*`` summarizes the winning
+         *     candidate so the operator can scan the table without
+         *     expanding each row.
+         */
+        MarketMappingListItemRead: {
+            /**
+             * Candidate Count
+             * @default 0
+             */
+            candidate_count: number;
+            /** Event Id */
+            event_id?: number | null;
+            /** Event Name */
+            event_name?: string | null;
+            /** Mapping Confidence */
+            mapping_confidence?: number | null;
+            /** Mapping Overridden At */
+            mapping_overridden_at?: string | null;
+            /** Mapping Overridden Reason */
+            mapping_overridden_reason?: string | null;
+            /** Sport Key */
+            sport_key?: string | null;
+            /** Ticker */
+            ticker: string;
+            /** Title */
+            title: string;
+            /** Top Candidate Event Id */
+            top_candidate_event_id?: number | null;
+            /** Top Candidate Event Name */
+            top_candidate_event_name?: string | null;
+            /** Top Candidate Score */
+            top_candidate_score?: number | null;
         };
         /**
          * MarketMappingOverrideCreate
@@ -1630,6 +1723,7 @@ export interface components {
              * @default false
              */
             demo_truncated: boolean;
+            drawdown_brake?: components["schemas"]["DrawdownBrakeRead"] | null;
             kalshi_account: components["schemas"]["KalshiAccountRead"];
             /** Paper Positions */
             paper_positions: components["schemas"]["PaperPositionRead"][];
@@ -3188,6 +3282,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RefreshJobRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_market_mappings_ops_market_mapping_get: {
+        parameters: {
+            query?: {
+                /** @description Only return markets whose ``mapping_confidence`` is below this threshold. ``None`` returns everything. */
+                max_confidence?: number | null;
+                /** @description When False (default), markets the operator has already overridden are excluded — the table is the *unresolved* review queue. Pass True to include them for an audit view. */
+                include_overridden?: boolean;
+                /** @description Filter to a single ``sport_key`` (e.g. ``NBA``). */
+                sport?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarketMappingListItemRead"][];
                 };
             };
             /** @description Validation Error */
