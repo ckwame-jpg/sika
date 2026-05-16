@@ -38,6 +38,7 @@ gets retired — ``compute_rolling_pnl_fraction`` will switch to
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
@@ -45,12 +46,18 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.models import Prediction
+from app.services.kelly_sizing import (
+    DEFAULT_DRAWDOWN_THRESHOLD,
+    drawdown_brake_multiplier,
+)
 
 __all__ = [
     "DEFAULT_PNL_LOOKBACK_DAYS",
-    "resolve_bankroll",
+    "DrawdownBrakeSnapshot",
+    "compute_drawdown_brake_snapshot",
     "compute_rolling_pnl_dollars",
     "compute_rolling_pnl_fraction",
+    "resolve_bankroll",
 ]
 
 # Mirrors ``kelly_sizing.DEFAULT_DROWDOWN_THRESHOLD``'s 7-day
@@ -189,3 +196,85 @@ def compute_rolling_pnl_fraction(
         db, lookback_days=lookback_days, end_date=end_date,
     )
     return float(pnl_per_share * notional / bankroll)
+
+
+# -- Drawdown brake snapshot (Smarter #32) ------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DrawdownBrakeSnapshot:
+    """Operator-facing snapshot of the current drawdown brake state.
+
+    Composes the three inputs the brake math reads (bankroll +
+    rolling PnL fraction + threshold) with the resulting multiplier
+    so an operator surface can render the state without re-deriving
+    it. ``is_active`` is the binary "brake is dampening sizing right
+    now" signal — true whenever ``brake_multiplier < 1.0``.
+
+    Smarter #32 wires this into ``GET /positions`` so the portfolio
+    panel can show a brake banner during a losing streak. The same
+    snapshot also documents the math behind the
+    ``brake_multiplier`` field already persisted on each
+    recommendation's ``scoring_diagnostics.kelly_sizing`` block — a
+    recommendation captured an hour ago can carry a stale brake
+    value, but the snapshot is always current.
+    """
+
+    bankroll: float
+    rolling_pnl_dollars: float
+    rolling_pnl_fraction: float
+    brake_multiplier: float
+    threshold: float
+    is_active: bool
+
+
+def compute_drawdown_brake_snapshot(
+    db: Session,
+    *,
+    lookback_days: int = DEFAULT_PNL_LOOKBACK_DAYS,
+    end_date: datetime | None = None,
+    settings: Settings | None = None,
+) -> DrawdownBrakeSnapshot | None:
+    """Compute the current drawdown brake state for operator display.
+
+    Returns ``None`` when bankroll resolution fails — the brake is
+    bankroll-relative, so without a bankroll there's nothing to
+    surface. Operators get the same "configure bankroll first"
+    affordance they'd see in the Kelly sizing block on a
+    recommendation.
+
+    ``threshold`` always reflects the brake's configured trigger
+    point (default -5%); a positive rolling PnL still surfaces the
+    snapshot with ``is_active=False`` so the UI can show the
+    "no drawdown" baseline without ambiguity.
+    """
+    settings = settings or get_settings()
+    bankroll = resolve_bankroll(db, settings=settings)
+    if bankroll is None:
+        return None
+    rolling_pnl_dollars = compute_rolling_pnl_dollars(
+        db, lookback_days=lookback_days, end_date=end_date,
+    )
+    # Derive the fraction from the dollars we already fetched
+    # instead of calling ``compute_rolling_pnl_fraction`` — that
+    # would re-issue the same ``SELECT SUM(realized_pnl)`` query on
+    # every ``/positions`` poll. Same defensive notional guard the
+    # helper uses (non-positive / non-finite notional → 0.0 so the
+    # brake doesn't fire on a bookkeeping error).
+    notional = settings.kelly_sizing_assumed_notional_dollars
+    if not math.isfinite(notional) or notional <= 0.0:
+        rolling_pnl_fraction = 0.0
+    else:
+        rolling_pnl_fraction = float(rolling_pnl_dollars * notional / bankroll)
+    threshold = DEFAULT_DRAWDOWN_THRESHOLD
+    multiplier = drawdown_brake_multiplier(
+        rolling_pnl_fraction, threshold=threshold,
+    )
+    return DrawdownBrakeSnapshot(
+        bankroll=round(bankroll, 2),
+        rolling_pnl_dollars=round(rolling_pnl_dollars, 2),
+        rolling_pnl_fraction=round(rolling_pnl_fraction, 4),
+        brake_multiplier=round(multiplier, 4),
+        threshold=round(threshold, 4),
+        is_active=multiplier < 1.0,
+    )

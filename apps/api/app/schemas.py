@@ -974,6 +974,24 @@ class KalshiAccountRead(BaseModel):
     recent_fills: list[KalshiAccountFillRead] = Field(default_factory=list)
 
 
+class DrawdownBrakeRead(BaseModel):
+    """Smarter #32 — operator-facing drawdown brake snapshot.
+
+    Composes the inputs to ``kelly_sizing.drawdown_brake_multiplier``
+    (bankroll + rolling 7-day PnL fraction) with the resulting
+    multiplier so the UI can render the current brake state without
+    re-deriving it. ``is_active`` flips true whenever
+    ``brake_multiplier < 1.0``.
+    """
+
+    bankroll: float
+    rolling_pnl_dollars: float
+    rolling_pnl_fraction: float
+    brake_multiplier: float
+    threshold: float
+    is_active: bool
+
+
 class PositionsRead(BaseModel):
     paper_positions: list[PaperPositionRead]
     demo_orders: list[DemoOrderRead]
@@ -986,6 +1004,13 @@ class PositionsRead(BaseModel):
     # consumers that don't read these fields working unchanged.
     paper_truncated: bool = False
     demo_truncated: bool = False
+    # Smarter #32 — drawdown brake snapshot. ``None`` when bankroll
+    # resolution fails (operator hasn't configured
+    # ``kelly_sizing_bankroll_dollars`` and the Kalshi opt-in is off
+    # or unavailable). Same affordance as the kelly_sizing block on
+    # individual recommendations: render the brake panel only when
+    # the snapshot is populated.
+    drawdown_brake: DrawdownBrakeRead | None = None
 
 
 class JobRefreshResponse(BaseModel):

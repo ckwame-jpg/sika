@@ -16,8 +16,11 @@ import pytest
 
 from app.config import Settings
 from app.models import Market, Prediction
+from app.services.kelly_sizing import DEFAULT_DRAWDOWN_THRESHOLD
 from app.services.kelly_sizing_db import (
     DEFAULT_PNL_LOOKBACK_DAYS,
+    DrawdownBrakeSnapshot,
+    compute_drawdown_brake_snapshot,
     compute_rolling_pnl_dollars,
     compute_rolling_pnl_fraction,
     resolve_bankroll,
@@ -296,3 +299,100 @@ def test_default_lookback_matches_drawdown_brake_horizon() -> None:
     against a 7-day window — this helper's default must match or
     the brake fires on the wrong horizon."""
     assert DEFAULT_PNL_LOOKBACK_DAYS == 7
+
+
+# -- Drawdown brake snapshot (Smarter #32) -----------------------------
+
+
+def test_drawdown_brake_snapshot_inactive_with_no_pnl(db_session) -> None:
+    """No settled rows → rolling PnL is zero → multiplier 1.0 →
+    ``is_active`` False. The snapshot still surfaces so the UI can
+    render the "no drawdown" baseline."""
+    snapshot = compute_drawdown_brake_snapshot(
+        db_session, end_date=_NOW, settings=_settings(),
+    )
+    assert isinstance(snapshot, DrawdownBrakeSnapshot)
+    assert snapshot.bankroll == 1000.0
+    assert snapshot.rolling_pnl_dollars == 0.0
+    assert snapshot.rolling_pnl_fraction == 0.0
+    assert snapshot.brake_multiplier == 1.0
+    assert snapshot.threshold == pytest.approx(DEFAULT_DRAWDOWN_THRESHOLD)
+    assert snapshot.is_active is False
+
+
+def test_drawdown_brake_snapshot_activates_below_threshold(db_session) -> None:
+    """A 5% drawdown lands exactly at the brake threshold (default
+    -0.05) → multiplier stays at 1.0 by linear-ramp construction
+    (boundary inclusive). Pushing past the threshold engages the
+    brake."""
+    market = _seed_market(db_session)
+    # -0.5 per-share * 100 notional / 1000 bankroll = -0.05 fraction.
+    _seed_settled_prediction(
+        db_session, market=market, realized_pnl=-0.50, settled_at=_NOW - timedelta(days=1),
+    )
+    db_session.commit()
+    at_threshold = compute_drawdown_brake_snapshot(
+        db_session, end_date=_NOW, settings=_settings(),
+    )
+    assert at_threshold is not None
+    assert at_threshold.rolling_pnl_fraction == pytest.approx(-0.05)
+    assert at_threshold.brake_multiplier == 1.0
+    assert at_threshold.is_active is False
+
+    # Add another -$0.05/share row → fraction = -0.055 → brake engages.
+    _seed_settled_prediction(
+        db_session, market=market, realized_pnl=-0.05, settled_at=_NOW - timedelta(days=2),
+    )
+    db_session.commit()
+    engaged = compute_drawdown_brake_snapshot(
+        db_session, end_date=_NOW, settings=_settings(),
+    )
+    assert engaged is not None
+    assert engaged.rolling_pnl_fraction < at_threshold.rolling_pnl_fraction
+    assert engaged.brake_multiplier < 1.0
+    assert engaged.is_active is True
+
+
+def test_drawdown_brake_snapshot_returns_none_when_no_bankroll(db_session) -> None:
+    """Operator hasn't configured a bankroll → snapshot is None.
+    The endpoint passes this through so the UI hides the brake panel
+    rather than showing a brake-against-zero number."""
+    snapshot = compute_drawdown_brake_snapshot(
+        db_session,
+        end_date=_NOW,
+        settings=_settings(kelly_sizing_bankroll_dollars=0.0),
+    )
+    assert snapshot is None
+
+
+def test_drawdown_brake_snapshot_positive_pnl_keeps_brake_off(db_session) -> None:
+    """A profitable week never engages the brake (multiplier 1.0)."""
+    market = _seed_market(db_session)
+    _seed_settled_prediction(
+        db_session, market=market, realized_pnl=0.40, settled_at=_NOW - timedelta(days=1),
+    )
+    db_session.commit()
+    snapshot = compute_drawdown_brake_snapshot(
+        db_session, end_date=_NOW, settings=_settings(),
+    )
+    assert snapshot is not None
+    assert snapshot.rolling_pnl_dollars == pytest.approx(0.40)
+    assert snapshot.rolling_pnl_fraction > 0.0
+    assert snapshot.brake_multiplier == 1.0
+    assert snapshot.is_active is False
+
+
+def test_drawdown_brake_snapshot_respects_lookback_window(db_session) -> None:
+    """Rows outside the lookback window aren't counted in the
+    fraction. Defaults to 7 days."""
+    market = _seed_market(db_session)
+    _seed_settled_prediction(
+        db_session, market=market, realized_pnl=-1.00, settled_at=_NOW - timedelta(days=20),
+    )
+    db_session.commit()
+    snapshot = compute_drawdown_brake_snapshot(
+        db_session, end_date=_NOW, settings=_settings(),
+    )
+    assert snapshot is not None
+    assert snapshot.rolling_pnl_dollars == 0.0
+    assert snapshot.is_active is False
