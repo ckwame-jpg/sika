@@ -1437,7 +1437,12 @@ def parlay_prediction_summary(
 
 
 @router.get("/positions", response_model=PositionsRead)
-def get_positions(force: bool = False, db: Session = Depends(get_db)) -> PositionsRead:
+def get_positions(
+    force: bool = False,
+    paper_limit: int = Query(200, ge=1, le=500),
+    demo_limit: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> PositionsRead:
     # Bug #6, codex round-5 P2: the Kalshi account snapshot is cached
     # for 30 s to throttle the portfolio page's 15 s polling. A user
     # clicking the in-app Refresh button needs a way to bypass the
@@ -1449,13 +1454,41 @@ def get_positions(force: bool = False, db: Session = Depends(get_db)) -> Positio
     # refresh would replace good data with an error response.
     if force:
         expire_kalshi_account_cache()
-    paper_positions = db.scalars(select(PaperPosition).order_by(PaperPosition.opened_at.desc())).all()
-    demo_orders = db.scalars(select(DemoOrder).order_by(DemoOrder.id.desc())).all()
+    # Bug #28: previously both queries returned every row in the
+    # table, so a long-lived account would steadily grow each
+    # ``/positions`` poll until JSON serialization dominated request
+    # latency. Bounded ``.limit(...)`` keeps the response small with
+    # a sensible default; operators that need the historical tail can
+    # raise the cap up to 500. Cursor pagination remains a follow-up
+    # (see punch list bug #28) for the rare case where 500 rows is
+    # itself too few.
+    #
+    # Fetch ``limit + 1`` so we can flag ``*_truncated`` exactly when
+    # the cap actually trimmed something — using ``len(...) == limit``
+    # would false-positive at the boundary (a table with exactly
+    # ``limit`` rows would look truncated even though every row was
+    # served). The extra row is dropped before serialization.
+    paper_rows = db.scalars(
+        select(PaperPosition)
+        .order_by(PaperPosition.opened_at.desc(), PaperPosition.id.desc())
+        .limit(paper_limit + 1)
+    ).all()
+    paper_truncated = len(paper_rows) > paper_limit
+    paper_positions = paper_rows[:paper_limit]
+
+    demo_rows = db.scalars(
+        select(DemoOrder).order_by(DemoOrder.id.desc()).limit(demo_limit + 1)
+    ).all()
+    demo_truncated = len(demo_rows) > demo_limit
+    demo_orders = demo_rows[:demo_limit]
+
     kalshi_account = build_kalshi_account_snapshot(db)
     return PositionsRead(
         paper_positions=[PaperPositionRead.model_validate(item) for item in paper_positions],
         demo_orders=[DemoOrderRead.model_validate(item) for item in demo_orders],
         kalshi_account=kalshi_account,
+        paper_truncated=paper_truncated,
+        demo_truncated=demo_truncated,
     )
 
 
