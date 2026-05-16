@@ -66,6 +66,10 @@ ADVANCED_COMPLETENESS_MARKERS = (
                                       # the prop subject. Backfilled here: the
                                       # consumer-side PR shipped the emitter without
                                       # adding the marker; symmetry test caught it.
+    "referee_data_complete",          # Smarter #13 — NBA referee tendency emitter
+                                      # (PR #115). Same backfill as injury_data_complete:
+                                      # the emitter shipped without the marker, and the
+                                      # symmetry test surfaced the drift on main.
     # nba_long_tail.py
     "hustle_data_complete",
     "drives_data_complete",
