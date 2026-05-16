@@ -35,6 +35,7 @@ from app.schemas import (
     MarketListRead,
     MarketMappingCandidateRead,
     MarketMappingOverrideCreate,
+    MarketMappingListItemRead,
     MarketMappingStateRead,
     MarketSnapshotRead,
     ModelFamilyReadinessRead,
@@ -1768,6 +1769,101 @@ def _serialize_market_mapping(market: Market) -> MarketMappingStateRead:
         mapping_overridden_at=market.mapping_overridden_at,
         mapping_overridden_reason=market.mapping_overridden_reason,
     )
+
+
+def _serialize_mapping_list_item(market: Market) -> MarketMappingListItemRead:
+    """Summary-row variant for the ops mapping-review queue. Keeps
+    the table response small (no full candidate list) — operators
+    expand the drawer for the full ``MarketMappingStateRead``."""
+    candidates_raw = market.mapping_candidates or []
+    candidate_count = 0
+    top_event_id: int | None = None
+    top_event_name: str | None = None
+    top_score: float | None = None
+    for entry in candidates_raw:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            event_id = int(entry["event_id"])
+            score = float(entry["score"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        candidate_count += 1
+        if top_score is None or score > top_score:
+            top_event_id = event_id
+            top_event_name = entry.get("event_name")
+            top_score = score
+    event_name: str | None = None
+    if market.event is not None:
+        event_name = market.event.name
+    return MarketMappingListItemRead(
+        ticker=market.ticker,
+        title=market.title,
+        sport_key=market.sport_key,
+        event_id=market.event_id,
+        event_name=event_name,
+        mapping_confidence=market.mapping_confidence,
+        candidate_count=candidate_count,
+        top_candidate_event_id=top_event_id,
+        top_candidate_event_name=top_event_name,
+        top_candidate_score=top_score,
+        mapping_overridden_at=market.mapping_overridden_at,
+        mapping_overridden_reason=market.mapping_overridden_reason,
+    )
+
+
+@ops_router.get("/market-mapping", response_model=list[MarketMappingListItemRead])
+def list_market_mappings(
+    max_confidence: float | None = Query(
+        None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Only return markets whose ``mapping_confidence`` is below "
+            "this threshold. ``None`` returns everything."
+        ),
+    ),
+    include_overridden: bool = Query(
+        False,
+        description=(
+            "When False (default), markets the operator has already "
+            "overridden are excluded — the table is the *unresolved* "
+            "review queue. Pass True to include them for an audit view."
+        ),
+    ),
+    sport: str | None = Query(
+        None,
+        description="Filter to a single ``sport_key`` (e.g. ``NBA``).",
+    ),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> list[MarketMappingListItemRead]:
+    """Smarter #25 — operator review queue for fuzzy market→event
+    mappings.
+
+    Default ordering: confidence ascending so the worst matches
+    surface first. ``mapping_confidence IS NULL`` rows (never
+    auto-mapped, or pre-bug-#17 rows that weren't scored) sort
+    after the rest so they don't crowd out the actual ambiguous
+    matches.
+    """
+    stmt = (
+        select(Market)
+        .options(joinedload(Market.event))
+        .order_by(
+            Market.mapping_confidence.asc().nullslast(),
+            Market.id.asc(),
+        )
+        .limit(limit)
+    )
+    if max_confidence is not None:
+        stmt = stmt.where(Market.mapping_confidence < max_confidence)
+    if not include_overridden:
+        stmt = stmt.where(Market.mapping_overridden_at.is_(None))
+    if sport:
+        stmt = stmt.where(Market.sport_key == sport.upper())
+    markets = db.scalars(stmt).all()
+    return [_serialize_mapping_list_item(market) for market in markets]
 
 
 @ops_router.get("/market-mapping/{ticker}", response_model=MarketMappingStateRead)

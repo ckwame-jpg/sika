@@ -839,3 +839,43 @@ export interface PredictionSettlementResponse {
   unresolved: number;
   errors: number;
 }
+
+/* ─── Smarter #25 — market-mapping review queue ─── */
+
+export interface MarketMappingCandidateRead {
+  event_id: number;
+  event_name: string | null;
+  sport_key: string | null;
+  score: number;
+  time_delta_seconds: number | null;
+}
+
+export interface MarketMappingStateRead {
+  ticker: string;
+  event_id: number | null;
+  sport_key: string | null;
+  mapping_confidence: number | null;
+  mapping_candidates: MarketMappingCandidateRead[];
+  mapping_overridden_at: string | null;
+  mapping_overridden_reason: string | null;
+}
+
+export interface MarketMappingListItemRead {
+  ticker: string;
+  title: string;
+  sport_key: string | null;
+  event_id: number | null;
+  event_name: string | null;
+  mapping_confidence: number | null;
+  candidate_count: number;
+  top_candidate_event_id: number | null;
+  top_candidate_event_name: string | null;
+  top_candidate_score: number | null;
+  mapping_overridden_at: string | null;
+  mapping_overridden_reason: string | null;
+}
+
+export interface MarketMappingOverrideCreate {
+  event_id: number | null;
+  reason: string | null;
+}

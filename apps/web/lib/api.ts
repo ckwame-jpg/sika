@@ -8,6 +8,9 @@ import type {
   JobRefreshResponse,
   MarketDetailRead,
   MarketHistoryRead,
+  MarketMappingListItemRead,
+  MarketMappingOverrideCreate,
+  MarketMappingStateRead,
   ModelFamilyReadinessRead,
   ModelReadinessSettingsUpdate,
   ModelReadinessSummaryRead,
@@ -176,6 +179,54 @@ export const triggerRefresh = () =>
 
 export const fetchRefreshJob = (id: number) =>
   request<RefreshJobRead>(`/ops/jobs/${id}`);
+
+// Smarter #25 — operator review queue for fuzzy market→event
+// mappings. ``maxConfidence`` filters the table to ambiguous matches
+// only; ``includeOverridden`` flips between the unresolved queue and
+// the audit view.
+export interface OpsMappingsListOptions {
+  maxConfidence?: number;
+  includeOverridden?: boolean;
+  sport?: string;
+  limit?: number;
+}
+
+export const fetchOpsMappings = (options: OpsMappingsListOptions = {}) => {
+  const params = new URLSearchParams();
+  if (options.maxConfidence != null) {
+    params.set("max_confidence", String(options.maxConfidence));
+  }
+  if (options.includeOverridden) {
+    params.set("include_overridden", "true");
+  }
+  if (options.sport) {
+    params.set("sport", options.sport.toUpperCase());
+  }
+  if (options.limit != null) {
+    params.set("limit", String(options.limit));
+  }
+  const qs = params.toString();
+  return request<MarketMappingListItemRead[]>(
+    `/ops/market-mapping${qs ? `?${qs}` : ""}`,
+  );
+};
+
+export const fetchOpsMapping = (ticker: string) =>
+  request<MarketMappingStateRead>(
+    `/ops/market-mapping/${encodeURIComponent(ticker)}`,
+  );
+
+export const submitOpsMappingOverride = (
+  ticker: string,
+  body: MarketMappingOverrideCreate,
+) =>
+  request<MarketMappingStateRead>(
+    `/ops/market-mapping/${encodeURIComponent(ticker)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
 
 export const fetchPredictions = (
   options: {
@@ -384,6 +435,18 @@ export const keys = {
   runs: "/ops/runs",
   run: (id: number) => `/ops/runs/${id}`,
   refreshJob: (id: number) => `/ops/jobs/${id}`,
+  opsMappings: (options: OpsMappingsListOptions = {}) =>
+    pathWithQuery(
+      "/ops/market-mapping",
+      serializeQuery({
+        max_confidence: options.maxConfidence ?? undefined,
+        include_overridden: options.includeOverridden ? "true" : undefined,
+        sport: options.sport ? options.sport.toUpperCase() : undefined,
+        limit: options.limit ?? undefined,
+      }),
+    ),
+  opsMapping: (ticker: string) =>
+    `/ops/market-mapping/${encodeURIComponent(ticker)}`,
   predictions: (args?: Record<string, string | number | undefined>) =>
     pathWithQuery("/predictions", serializeQuery(args ?? {})),
   predictionSummary: (args?: Record<string, string | number | undefined>) =>

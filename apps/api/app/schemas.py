@@ -258,6 +258,33 @@ class MarketMappingOverrideCreate(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class MarketMappingListItemRead(BaseModel):
+    """One row in the ops mapping-review queue. Lighter than
+    ``MarketMappingStateRead`` (which carries the full candidate
+    list) — this is what the table view needs to triage
+    low-confidence mappings before the operator opens the drawer
+    for the per-market detail.
+
+    Smarter #25: the ops surface for reviewing auto-mapping
+    confidence. ``top_candidate_*`` summarizes the winning
+    candidate so the operator can scan the table without
+    expanding each row.
+    """
+
+    ticker: str
+    title: str
+    sport_key: str | None = None
+    event_id: int | None = None
+    event_name: str | None = None
+    mapping_confidence: float | None = None
+    candidate_count: int = 0
+    top_candidate_event_id: int | None = None
+    top_candidate_event_name: str | None = None
+    top_candidate_score: float | None = None
+    mapping_overridden_at: UTCDateTime | None = None
+    mapping_overridden_reason: str | None = None
+
+
 class MarketDetailRead(BaseModel):
     ticker: str
     title: str
