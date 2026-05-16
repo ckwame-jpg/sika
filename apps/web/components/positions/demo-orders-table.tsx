@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
 import { MarketDetailSheet } from "@/components/markets/market-detail-sheet";
+import { TruncationHint } from "@/components/positions/truncation-hint";
 import { fmtDatetime, sideClass } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -193,6 +194,7 @@ export function DemoOrdersTable({ maxHeight }: DemoOrdersTableProps) {
   );
 
   const orders = data?.demo_orders ?? [];
+  const truncated = data?.demo_truncated === true;
   async function handleCancel(id: number) {
     try {
       await cancelDemoOrder(id);
@@ -212,6 +214,9 @@ export function DemoOrdersTable({ maxHeight }: DemoOrdersTableProps) {
 
   return (
     <>
+      {truncated ? (
+        <TruncationHint visibleCount={orders.length} limitParam="demo_limit" />
+      ) : null}
       <div className="space-y-3 lg:hidden">
         {isLoading
           ? Array.from({ length: 4 }).map((_, index) => (
