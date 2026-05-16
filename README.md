@@ -35,8 +35,11 @@ python3.12 -m venv .venv
 .venv/bin/pip install -r apps/api/requirements.txt
 npm install
 cp apps/api/.env.example apps/api/.env
+npm run install:hooks   # one-time — enables the contracts-drift pre-commit hook
 npm run dev
 ```
+
+**`npm run install:hooks`** points git at `.githooks/`. After that runs once, commits that touch `apps/api/app/schemas.py` or `apps/api/app/api/routes.py` will block if `packages/contracts/generated/api.d.ts` is out of sync with the live FastAPI schema (fix: `npm run contracts:generate`, re-stage, re-commit). Bypass for emergencies: `git commit --no-verify`. See `.githooks/README.md` for details.
 
 `npm run dev` is the canonical local entrypoint. It validates that ports `8000` and `3000` are either free or already owned by this checkout, waits for the current `/health` payload on the API, and then starts the Next.js app against the matching backend.
 
