@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# Bug #40 follow-up — guard the web contracts shim against silent drift.
+#
+# After the Architecture #6 migration shipped in PRs #148–#159, every
+# DTO that ``apps/web`` consumes is a deep-required wrap of the
+# generated ``Schema<"…">`` re-exports from
+# ``packages/contracts/generated/api.d.ts``. The generated file is
+# committed; when ``apps/api/app/schemas.py`` (Pydantic models) or
+# ``apps/api/app/api/routes.py`` (response_model decorators) change,
+# the generated file has to be regenerated and committed in the same
+# change set or the web types silently disagree with the actual wire
+# contract.
+#
+# This hook detects that miss. It runs ``npm run contracts:check``
+# only when a commit touches the two files that drive 99% of schema
+# changes — keeps the friction low for unrelated commits.
+#
+# Install: from the repo root, run
+#     git config core.hooksPath .githooks
+# (also wired as ``npm run install:hooks`` for convenience).
+#
+# Bypass for emergencies: ``git commit --no-verify``.
+
+set -euo pipefail
+
+# Files whose changes most often shift the OpenAPI schema. The check
+# itself diffs the full generated artifact so it catches anything that
+# slips through these triggers — these patterns just decide when to
+# spend the ~3s running the check at all.
+trigger_files=(
+  "apps/api/app/schemas.py"
+  "apps/api/app/api/routes.py"
+)
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [ -z "$staged_files" ]; then
+  exit 0
+fi
+
+needs_check=0
+for trigger in "${trigger_files[@]}"; do
+  if printf '%s\n' "$staged_files" | grep -Fxq "$trigger"; then
+    needs_check=1
+    break
+  fi
+done
+
+if [ "$needs_check" -eq 0 ]; then
+  exit 0
+fi
+
+printf 'pre-commit: schema-touching files staged — running contracts:check…\n'
+if ! npm run contracts:check --silent; then
+  cat >&2 <<'EOF'
+
+pre-commit: contracts:check FAILED — the committed OpenAPI spec or
+generated TypeScript types are out of sync with the live FastAPI app.
+
+Fix:
+    npm run contracts:generate
+    git add packages/contracts/openapi.json packages/contracts/generated/api.d.ts
+
+Then re-run your commit. Use ``git commit --no-verify`` to bypass
+this hook for emergencies (and follow up with the regen in a
+separate commit).
+EOF
+  exit 1
+fi

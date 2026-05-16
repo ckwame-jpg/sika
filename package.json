@@ -11,6 +11,7 @@
     "contracts:check": "npm --workspace @kalshi-sports-copilot/contracts run check",
     "dev": "bash ./scripts/dev.sh",
     "dev:doctor": "bash ./scripts/dev-doctor.sh",
+    "install:hooks": "git config core.hooksPath .githooks",
     "web:dev": "npm --workspace @kalshi-sports-copilot/web run dev",
     "web:build": "npm --workspace @kalshi-sports-copilot/web run build",
     "web:test": "npm --workspace @kalshi-sports-copilot/web run test",
