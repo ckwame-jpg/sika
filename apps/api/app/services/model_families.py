@@ -136,6 +136,42 @@ def quality_tier_thresholds_for(family_key: str) -> QualityTierThresholds:
     return QUALITY_TIER_THRESHOLDS_BY_FAMILY.get(family_key, DEFAULT_QUALITY_TIER_THRESHOLDS)
 
 
+# Smarter #30 — per-family ``watchlist_min_edge`` tuning mechanism.
+#
+# The watchlist suppression floor (``Settings.watchlist_min_edge``,
+# default 0.03) is the bar a scored recommendation must clear to land
+# on the watchlist. A single floor is too aggressive for high-variance
+# NBA props (where edge realization is noisy and a 0.03 floor filters
+# real signal) and too lenient for tight MLB game lines (where a 0.03
+# floor lets through every barely-mispriced market).
+#
+# Like Smarter #28's ``QUALITY_TIER_THRESHOLDS_BY_FAMILY``, this ships
+# the **mechanism only** — the override registry is intentionally empty
+# so today's behavior is preserved exactly. Operators populate from
+# backtest results (Smarter #2 produces the per-family Brier + hit-rate
+# data needed to tune these) without touching scoring code.
+#
+# Consumers:
+# - ``scoring/__init__.py:_single_scoring_adjustments`` (the main
+#   ``min_edge`` suppression check).
+# - ``scoring/monotonicity.py`` (post-clamp bug #9 floor check — both
+#   the recommendation and prediction paths).
+WATCHLIST_MIN_EDGE_OVERRIDES: dict[str, float] = {}
+
+
+def watchlist_min_edge_for(family_key: str, default: float) -> float:
+    """Return the per-family watchlist edge floor, falling back to the
+    operator-set ``Settings.watchlist_min_edge`` default.
+
+    Unknown family keys (e.g. parlay scopes that don't have a tuned
+    floor) get the default. The ``default`` argument is required (not
+    a module-level constant) so the caller always passes the live
+    operator setting — overrides represent deltas off that baseline,
+    not absolute floors that would silently outlive a config change.
+    """
+    return WATCHLIST_MIN_EDGE_OVERRIDES.get(family_key, default)
+
+
 # Smarter #19 — per-family monotonic constraints for HGBC training.
 # The actual registry lives in ``ml_features.monotonic`` (shared
 # package) because ``apps/ml/ml/training.py`` can't import from

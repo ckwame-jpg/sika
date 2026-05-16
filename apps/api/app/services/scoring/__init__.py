@@ -26,7 +26,11 @@ from app.models import (
 from app.services.ml.lineage import HEURISTIC_SINGLE_MODEL
 from app.services.ml.runtime import run_serving_inference
 from app.services.market_support import infer_yes_label, market_metadata
-from app.services.model_families import quality_tier_thresholds_for, single_family_key
+from app.services.model_families import (
+    quality_tier_thresholds_for,
+    single_family_key,
+    watchlist_min_edge_for,
+)
 from app.services.parlays import ParlayCandidateInput, capture_parlay_artifacts, clear_active_parlay_watchlist
 from app.services.predictions import MODEL_NAME, OPEN_MARKET_STATUSES, capture_prediction
 from app.services.stats_query import _build_game_logs, default_season_for_sport
@@ -2142,7 +2146,13 @@ def _build_scored_recommendation(
         and selected_side_probability < settings.watchlist_min_selected_prob_heuristic_winner
     ):
         suppression_reasons.append("winner_selected_probability_floor")
-    if edge < settings.watchlist_min_edge:
+    # Smarter #30 — per-family edge floor with operator-setting
+    # fallback. Empty override registry today means this resolves to
+    # ``settings.watchlist_min_edge`` for every family; populating
+    # ``WATCHLIST_MIN_EDGE_OVERRIDES`` tunes individual families
+    # without touching this call site.
+    family_min_edge = watchlist_min_edge_for(family_key, settings.watchlist_min_edge)
+    if edge < family_min_edge:
         suppression_reasons.append("min_edge")
     if confidence < settings.watchlist_min_confidence:
         suppression_reasons.append("min_confidence")
