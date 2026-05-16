@@ -26,6 +26,7 @@ from app.models import (
 from app.schemas import (
     DemoOrderCreate,
     DemoOrderRead,
+    DrawdownBrakeRead,
     EventParticipantRead,
     EventRead,
     HealthResponse,
@@ -78,6 +79,7 @@ from app.services.kalshi_account import (
     build_kalshi_account_snapshot,
     expire_kalshi_account_cache,
 )
+from app.services.kelly_sizing_db import compute_drawdown_brake_snapshot
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
 from app.services.ml.study_progress import retained_study_cutoff
 from app.services.narrator import (
@@ -1484,12 +1486,34 @@ def get_positions(
     demo_orders = demo_rows[:demo_limit]
 
     kalshi_account = build_kalshi_account_snapshot(db)
+    # Smarter #32 — drawdown brake snapshot. Composes the same
+    # bankroll + rolling-PnL inputs the per-recommendation
+    # ``kelly_sizing`` block uses, so the portfolio panel can render
+    # the brake state without polling each recommendation. ``None``
+    # passes through to the UI as "no brake panel to render"
+    # whenever bankroll resolution fails (e.g. operator hasn't set
+    # ``kelly_sizing_bankroll_dollars`` and the Kalshi opt-in is
+    # off).
+    brake_snapshot = compute_drawdown_brake_snapshot(db)
+    drawdown_brake = (
+        DrawdownBrakeRead(
+            bankroll=brake_snapshot.bankroll,
+            rolling_pnl_dollars=brake_snapshot.rolling_pnl_dollars,
+            rolling_pnl_fraction=brake_snapshot.rolling_pnl_fraction,
+            brake_multiplier=brake_snapshot.brake_multiplier,
+            threshold=brake_snapshot.threshold,
+            is_active=brake_snapshot.is_active,
+        )
+        if brake_snapshot is not None
+        else None
+    )
     return PositionsRead(
         paper_positions=[PaperPositionRead.model_validate(item) for item in paper_positions],
         demo_orders=[DemoOrderRead.model_validate(item) for item in demo_orders],
         kalshi_account=kalshi_account,
         paper_truncated=paper_truncated,
         demo_truncated=demo_truncated,
+        drawdown_brake=drawdown_brake,
     )
 
 
