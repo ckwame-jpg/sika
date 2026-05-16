@@ -198,6 +198,45 @@
         "title": "DemoOrderRead",
         "type": "object"
       },
+      "DrawdownBrakeRead": {
+        "description": "Smarter #32 \u2014 operator-facing drawdown brake snapshot.\n\nComposes the inputs to ``kelly_sizing.drawdown_brake_multiplier``\n(bankroll + rolling 7-day PnL fraction) with the resulting\nmultiplier so the UI can render the current brake state without\nre-deriving it. ``is_active`` flips true whenever\n``brake_multiplier < 1.0``.",
+        "properties": {
+          "bankroll": {
+            "title": "Bankroll",
+            "type": "number"
+          },
+          "brake_multiplier": {
+            "title": "Brake Multiplier",
+            "type": "number"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "rolling_pnl_dollars": {
+            "title": "Rolling Pnl Dollars",
+            "type": "number"
+          },
+          "rolling_pnl_fraction": {
+            "title": "Rolling Pnl Fraction",
+            "type": "number"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          }
+        },
+        "required": [
+          "bankroll",
+          "rolling_pnl_dollars",
+          "rolling_pnl_fraction",
+          "brake_multiplier",
+          "threshold",
+          "is_active"
+        ],
+        "title": "DrawdownBrakeRead",
+        "type": "object"
+      },
       "EventParticipantRead": {
         "properties": {
           "display_name": {
@@ -1455,6 +1494,129 @@
           "score"
         ],
         "title": "MarketMappingCandidateRead",
+        "type": "object"
+      },
+      "MarketMappingListItemRead": {
+        "description": "One row in the ops mapping-review queue. Lighter than\n``MarketMappingStateRead`` (which carries the full candidate\nlist) \u2014 this is what the table view needs to triage\nlow-confidence mappings before the operator opens the drawer\nfor the per-market detail.\n\nSmarter #25: the ops surface for reviewing auto-mapping\nconfidence. ``top_candidate_*`` summarizes the winning\ncandidate so the operator can scan the table without\nexpanding each row.",
+        "properties": {
+          "candidate_count": {
+            "default": 0,
+            "title": "Candidate Count",
+            "type": "integer"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "mapping_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping Confidence"
+          },
+          "mapping_overridden_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping Overridden At"
+          },
+          "mapping_overridden_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping Overridden Reason"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "top_candidate_event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Candidate Event Id"
+          },
+          "top_candidate_event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Candidate Event Name"
+          },
+          "top_candidate_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Candidate Score"
+          }
+        },
+        "required": [
+          "ticker",
+          "title"
+        ],
+        "title": "MarketMappingListItemRead",
         "type": "object"
       },
       "MarketMappingOverrideCreate": {
@@ -3230,6 +3392,16 @@
             "default": false,
             "title": "Demo Truncated",
             "type": "boolean"
+          },
+          "drawdown_brake": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DrawdownBrakeRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "kalshi_account": {
             "$ref": "#/components/schemas/KalshiAccountRead"
@@ -7088,6 +7260,106 @@
           }
         },
         "summary": "Refresh Job Detail",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/market-mapping": {
+      "get": {
+        "description": "Smarter #25 \u2014 operator review queue for fuzzy market\u2192event\nmappings.\n\nDefault ordering: confidence ascending so the worst matches\nsurface first. ``mapping_confidence IS NULL`` rows (never\nauto-mapped, or pre-bug-#17 rows that weren't scored) sort\nafter the rest so they don't crowd out the actual ambiguous\nmatches.",
+        "operationId": "list_market_mappings_ops_market_mapping_get",
+        "parameters": [
+          {
+            "description": "Only return markets whose ``mapping_confidence`` is below this threshold. ``None`` returns everything.",
+            "in": "query",
+            "name": "max_confidence",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only return markets whose ``mapping_confidence`` is below this threshold. ``None`` returns everything.",
+              "title": "Max Confidence"
+            }
+          },
+          {
+            "description": "When False (default), markets the operator has already overridden are excluded \u2014 the table is the *unresolved* review queue. Pass True to include them for an audit view.",
+            "in": "query",
+            "name": "include_overridden",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "When False (default), markets the operator has already overridden are excluded \u2014 the table is the *unresolved* review queue. Pass True to include them for an audit view.",
+              "title": "Include Overridden",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Filter to a single ``sport_key`` (e.g. ``NBA``).",
+            "in": "query",
+            "name": "sport",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a single ``sport_key`` (e.g. ``NBA``).",
+              "title": "Sport"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MarketMappingListItemRead"
+                  },
+                  "title": "Response List Market Mappings Ops Market Mapping Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Market Mappings",
         "tags": [
           "ops"
         ]

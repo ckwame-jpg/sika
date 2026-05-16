@@ -366,7 +366,12 @@ function MarketDetailContent({ ticker }: { ticker: string }) {
         defaults={tradeRec != null ? {
           destination: "paper",
           ticker: tradeRec.ticker,
-          side: tradeRec.side.toLowerCase(),
+          // Bug #40 phase 7 — TradeDialogDefaults.side narrowed to "yes" | "no"
+          // to match the migrated PaperPositionCreate / DemoOrderCreate
+          // contracts. Recommendation rows only carry these two values in
+          // practice; the coercion-to-lowercase normalizes any legacy
+          // capitalization.
+          side: tradeRec.side.toLowerCase() as "yes" | "no",
           price: tradeRec.suggested_price,
         } : undefined}
         description={tradeRec != null
