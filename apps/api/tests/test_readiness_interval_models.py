@@ -268,6 +268,76 @@ def test_readiness_endpoint_skips_missing_artifact_dir_silently(
     assert response.json()["interval_models"] == []
 
 
+# -- Multi-family dedupe (PR D) --------------------------------------
+
+
+def _seed_multi_family_manifest(
+    tmp_path: Path,
+    *,
+    stat_artifacts: list[tuple[str, dict]] | None = None,
+    families: tuple[str, ...] = ("nba_props", "nba_singles", "mlb_props", "mlb_singles"),
+) -> Path:
+    """Seed a manifest where N families share ONE artifact_dir (sika's
+    production global_v1 topology). Tests the dedupe path."""
+    artifact_dir = tmp_path / "artifacts" / "global_v1"
+    artifact_dir.mkdir(parents=True)
+    for stat_key, metadata in stat_artifacts or []:
+        stat_dir = artifact_dir / "interval_models" / stat_key
+        stat_dir.mkdir(parents=True)
+        (stat_dir / "p10.joblib").write_bytes(b"")
+        (stat_dir / "p50.joblib").write_bytes(b"")
+        (stat_dir / "p90.joblib").write_bytes(b"")
+        (stat_dir / "metadata.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8",
+        )
+    manifest_path = tmp_path / "manifest.json"
+    relative = Path(
+        os.path.relpath(artifact_dir.resolve(), manifest_path.parent.resolve())
+    ).as_posix()
+    manifest_path.write_text(
+        json.dumps({
+            "version": "test",
+            "serving_mode": "shadow",
+            "families": [
+                {
+                    "family_key": "global_v1",
+                    "serves_family_key": family_key,
+                    "model_name": "global-model",
+                    "model_version": "v1",
+                    "artifact_path": relative,
+                    "mode": "ml",
+                }
+                for family_key in families
+            ],
+        }, indent=2),
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def test_readiness_endpoint_dedupes_when_one_artifact_serves_multiple_families(
+    client, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sika's global_v1 manifest serves 4 families from one artifact.
+    Without dedupe, a single trained ``points/`` would surface 4×.
+    The fix: dedupe by artifact_dir + use metadata.json's family_key.
+    """
+    manifest_path = _seed_multi_family_manifest(
+        tmp_path,
+        stat_artifacts=[
+            ("points", _metadata(stat_key="points", empirical_coverage=0.81)),
+            ("hits", _metadata(family_key="mlb_props", stat_key="hits", empirical_coverage=0.78)),
+        ],
+    )
+    _pin_manifest_path(monkeypatch, manifest_path)
+
+    entries = client.get("/ops/models/readiness").json()["interval_models"]
+    pairs = {(e["family_key"], e["stat_key"]) for e in entries}
+    # Exactly two rows — one for each metadata family_key — even
+    # though the manifest has 4 family entries sharing the artifact.
+    assert pairs == {("nba_props", "points"), ("mlb_props", "hits")}
+
+
 # -- Cross-package drift guard ----------------------------------------
 
 
