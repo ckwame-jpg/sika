@@ -78,15 +78,21 @@ def test_initial_registry_has_expected_penalize_groups() -> None:
     assert penalize_groups == {"mlb_weather", "mlb_bullpen", "nba_workload"}
 
 
-def test_no_suppress_policies_in_initial_registry() -> None:
-    """Bespoke kernel paths (Smarter #16, #17, plus the
-    has_probable_starter_context gate) are authoritative for the
-    SUPPRESS-policy groups today. The unified-registry SUPPRESS
-    path lands in a follow-up; pin that no group accidentally
-    activates it now."""
-    for group_key, policy in FEATURE_GROUP_POLICIES.items():
-        assert policy.severity is not FeatureGroupSeverity.SUPPRESS, (
-            f"{group_key} maps to SUPPRESS but no kernel handler exists yet"
+def test_suppress_policies_match_consolidated_registry() -> None:
+    """Architecture #5 follow-up 2 consolidated the Smarter #16
+    (mlb_lineup) and Smarter #17 (nba_injury) bespoke gates into
+    SUPPRESS-policy registry entries. mlb_starter remains bespoke
+    (not suppression-shaped). Pin the exact set so adding a new
+    SUPPRESS group is an explicit test update — not a silent
+    activation."""
+    suppress_groups = {
+        group: policy for group, policy in FEATURE_GROUP_POLICIES.items()
+        if policy.severity is FeatureGroupSeverity.SUPPRESS
+    }
+    assert set(suppress_groups) == {"mlb_lineup", "nba_injury"}
+    for policy in suppress_groups.values():
+        assert policy.suppress_when is not None, (
+            "SUPPRESS policy entries must declare a suppress_when callback"
         )
 
 
