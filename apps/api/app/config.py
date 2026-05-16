@@ -165,6 +165,27 @@ class Settings(BaseSettings):
     narrator_request_timeout_seconds: float = 25.0
     narrator_max_output_tokens: int = 220
 
+    # Smarter #9 phase 2 — fractional Kelly position sizing inputs.
+    # ``kelly_sizing_bankroll_dollars`` is the operator's fallback
+    # bankroll when the Kalshi-balance opt-in is off (or the
+    # account isn't connected). A small default sized for paper /
+    # demo testing — operators with real money override via env.
+    kelly_sizing_bankroll_dollars: float = 1000.0
+    # Opt-in: when True AND the Kalshi account is connected, the
+    # bankroll resolver returns the live account total instead of
+    # the static ``kelly_sizing_bankroll_dollars``. Defaults off so
+    # an account-connection blip can't silently change position
+    # sizes mid-session.
+    kelly_sizing_use_kalshi_balance: bool = False
+    # Hypothetical notional used by ``compute_rolling_pnl_fraction``
+    # to convert per-share realized PnL (which is what the
+    # Prediction table tracks today, ahead of per-prediction sizing
+    # persistence) into a bankroll-relative drawdown signal. A
+    # reasonable proxy when actual sizes aren't recorded; phase 2b
+    # will replace this with persisted ``suggested_size_dollars``
+    # per prediction once sizing lands in the schema.
+    kelly_sizing_assumed_notional_dollars: float = 100.0
+
 
 @lru_cache
 def get_settings() -> Settings:
