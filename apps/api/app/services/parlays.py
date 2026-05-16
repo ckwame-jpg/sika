@@ -176,9 +176,64 @@ def _count_correlation_pairs(combo: tuple[ParlayCandidateInput, ...]) -> dict[st
     }
 
 
+# Theoretical per-pair-type weights for the correlation blend (bug
+# #5 / PR #31). Smarter #8 phase 3 layers a sample-size-aware blend
+# with empirical estimates on top of these — see ``_pair_weight``
+# below.
+_THEORETICAL_PAIR_WEIGHTS = {
+    "shared_subject": 0.7,
+    "same_team": 0.3,
+    "shared_opponent": 0.2,
+}
+
+
+def _pair_weight(
+    pair_type: str,
+    empirical_map: dict[str, Any] | None,
+) -> float:
+    """Smarter #8 phase 3: blend the theoretical prior with the
+    empirical pair-correlation estimate when one is available.
+
+    ``empirical_map`` is the dict returned by
+    ``cached_empirical_pair_correlations`` — pair type → ``PairCorrelation``
+    or ``None``. When the entry is ``None`` (insufficient settled
+    history for that pair type) the blend collapses to the
+    theoretical prior. When it's populated the blend smoothly shifts
+    toward the empirical estimate as the sample size grows.
+
+    The empirical coefficient is in ``[-1, 1]`` (Pearson / phi) and
+    the theoretical weights are in ``[0, 1]``; we map the empirical
+    coefficient onto the weight axis using ``max(coefficient, 0)``
+    since negative-correlation entries indicate the live combiner
+    shouldn't be lifting those legs at all (it'd over-state the
+    joint). A future phase can add ``min`` floors when negative-
+    correlation parlays become a thing sika ranks.
+    """
+    # Lazy import: ``parlay_correlation`` is shipped with apps/api but
+    # the import here keeps the dependency one-way (parlays.py imports
+    # parlay_correlation, not the reverse).
+    from app.services.parlay_correlation import blend_theoretical_with_empirical
+
+    theoretical = _THEORETICAL_PAIR_WEIGHTS.get(pair_type, 0.0)
+    if empirical_map is None:
+        return theoretical
+    empirical = empirical_map.get(pair_type)
+    if empirical is None:
+        return theoretical
+    # Map negative empirical correlation onto 0 so the blend never
+    # drives the per-pair weight negative (the combiner's
+    # correlation_factor is min(weighted, 0.85) below; a negative
+    # empirical wiping out the prior would understate the joint).
+    blendable = max(empirical.coefficient, 0.0)
+    blendable_estimate = type(empirical)(coefficient=blendable, sample_size=empirical.sample_size)
+    return blend_theoretical_with_empirical(theoretical, blendable_estimate)
+
+
 def _correlation_adjusted_joint_probability(
     combo: tuple[ParlayCandidateInput, ...],
     pairs: dict[str, int],
+    *,
+    empirical_correlations: dict[str, Any] | None = None,
 ) -> float:
     """Joint probability of all legs hitting, corrected for correlation.
 
@@ -201,6 +256,15 @@ def _correlation_adjusted_joint_probability(
     min(P(A), P(B))`` regardless of correlation direction). Correlation
     factor scales with the number of shared-subject/team/opponent pairs.
     For independent legs the factor is zero and this returns the product.
+
+    Smarter #8 phase 3: per-pair weights now blend the theoretical
+    priors (0.7 / 0.3 / 0.2) with empirical estimates from settled
+    parlay history when an ``empirical_correlations`` map is supplied.
+    Empirical entries with ``None`` (insufficient samples) fall back
+    to the theoretical prior; entries with enough samples shift the
+    weight toward the observed correlation via
+    ``blend_theoretical_with_empirical``. When no map is passed the
+    function is byte-identical to the pre-phase-3 behavior.
     """
     leg_probs = [_selected_model_probability(candidate) for candidate in combo]
     independent = prod(leg_probs)
@@ -216,9 +280,9 @@ def _correlation_adjusted_joint_probability(
     # is mild. Hard cap below 1.0 so the joint never reaches min_leg fully
     # (some idiosyncratic noise remains even on co-moving legs).
     weighted = (
-        0.7 * pairs.get("shared_subject", 0)
-        + 0.3 * pairs.get("same_team", 0)
-        + 0.2 * pairs.get("shared_opponent", 0)
+        _pair_weight("shared_subject", empirical_correlations) * pairs.get("shared_subject", 0)
+        + _pair_weight("same_team", empirical_correlations) * pairs.get("same_team", 0)
+        + _pair_weight("shared_opponent", empirical_correlations) * pairs.get("shared_opponent", 0)
     ) / max(total_pairs, 1)
     correlation_factor = min(weighted, 0.85)
     return float(independent + correlation_factor * (min_leg - independent))
@@ -283,6 +347,20 @@ def _build_generated_parlays(db: Session, candidates: list[ParlayCandidateInput]
     if len(eligible) < settings.parlay_min_legs:
         return []
 
+    # Smarter #8 phase 3: fetch the cached empirical correlations
+    # once per build. The lazy import keeps the dependency one-way
+    # (parlays.py imports the cache, not the reverse). Wrapped in
+    # try/except so a cache read failure can't crash parlay
+    # generation — the combiner falls back to theoretical priors
+    # when ``empirical_correlations`` is ``None``.
+    try:
+        from app.services.parlay_correlation_cache import (  # noqa: PLC0415
+            cached_empirical_pair_correlations,
+        )
+        empirical_correlations: dict[str, Any] | None = cached_empirical_pair_correlations(db)
+    except Exception:  # noqa: BLE001 — defensive, never crash scoring on a cache miss
+        empirical_correlations = None
+
     generated: list[GeneratedParlay] = []
     max_legs = min(settings.parlay_max_legs, len(eligible))
     for leg_count in range(settings.parlay_min_legs, max_legs + 1):
@@ -293,9 +371,14 @@ def _build_generated_parlays(db: Session, candidates: list[ParlayCandidateInput]
             combined_market_price = round(prod(candidate.recommendation.suggested_price for candidate in combo), 4)
             # Bug #5: lift the joint probability toward max_leg when legs
             # share subject/team/opponent. Independent legs are unchanged.
+            # Smarter #8 phase 3: per-pair weights blend the theoretical
+            # priors with the empirical estimate when available.
             pair_counts = _count_correlation_pairs(combo)
             combined_model_probability = round(
-                _correlation_adjusted_joint_probability(combo, pair_counts), 4
+                _correlation_adjusted_joint_probability(
+                    combo, pair_counts, empirical_correlations=empirical_correlations,
+                ),
+                4,
             )
             participating_sports = sorted({(candidate.market.sport_key or candidate.event.sport_key or "UNKNOWN").upper() for candidate in combo})
             sport_scope = _sport_scope(participating_sports)
