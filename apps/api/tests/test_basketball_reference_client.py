@@ -201,3 +201,64 @@ def test_stubbed_endpoints_return_empty_envelope_without_network(method_call, na
     rows = parse_result_set(payload, name=name)
     assert rows == []
     assert payload["resultSets"][0]["headers"] == []
+
+
+# ---------------------------------------------------------------------------
+# Referee tendency (Smarter #13 phase 2b-2)
+
+
+def test_fetch_referee_season_stats_parses_rs_raw_table(monkeypatch):
+    """Happy path: scraper reads the rs_raw table at /referees/{season}_register.html
+    and returns BR-shaped rows with the canonical column keys the parser
+    (apps/api/app/services/nba_referee_tendencies.py:parse_referee_tendency_rows)
+    expects: Referee / G / FTA / PF.
+
+    Fixture mirrors the live 2025-26 page screenshot verified on
+    2026-05-16 — 31-column layout across 6 group headers; scraper
+    positionally indexes the first 7 cells (Referee, Lg, G, then the
+    Per Game group: FGA, FTA, PF, PTS).
+    """
+    seen = _install_get(monkeypatch, text=_fixture("referee_register.html"))
+    client = BasketballReferenceClient()
+    rows = client.fetch_referee_season_stats(2026)
+
+    assert seen["url"].endswith("/referees/2026_register.html")
+    # 3 valid rows + 1 row with empty referee name (skipped) + 1 mid-table
+    # header row (< 7 cells, skipped). Expect 3 surviving rows.
+    assert len(rows) == 3
+    by_name = {r["Referee"]: r for r in rows}
+    assert set(by_name.keys()) == {"Tony Brothers", "Scott Foster", "Brent Haskill"}
+    foster = by_name["Scott Foster"]
+    assert foster["G"] == "62"
+    assert foster["PF"] == "41.3"  # per-game personal fouls (Per Game group, col 5)
+    assert foster["FTA"] == "48.9"  # per-game free-throw attempts (col 4)
+
+
+def test_fetch_referee_season_stats_returns_empty_on_403(monkeypatch):
+    """BR returns 403 to fresh IPs that aren't the operator's
+    configured proxy. The scraper's empty-return path matches the
+    loader's tolerance for missing data — the operator UI surfaces
+    'no tendency data cached' rather than the scoring kernel
+    crashing."""
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return httpx.Response(403, request=httpx.Request("GET", url), text="")
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        BasketballReferenceClient().fetch_referee_season_stats(2026)
+
+
+def test_fetch_referee_season_stats_returns_empty_when_table_missing(monkeypatch):
+    """Off-season or before-season-tips state: page exists but no
+    rs_raw table yet. Scraper returns []."""
+    _install_get(monkeypatch, text="<html><body><p>no data</p></body></html>")
+    rows = BasketballReferenceClient().fetch_referee_season_stats(2026)
+    assert rows == []
+
+
+def test_fetch_referee_season_stats_returns_empty_on_404(monkeypatch):
+    """Far-future season pages don't exist yet — 404 path returns []
+    via _fetch_html_or_empty's None handling."""
+    _install_get(monkeypatch, status=404)
+    rows = BasketballReferenceClient().fetch_referee_season_stats(2099)
+    assert rows == []

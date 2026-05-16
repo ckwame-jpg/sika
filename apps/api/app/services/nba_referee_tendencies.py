@@ -178,12 +178,29 @@ def parse_referee_tendency_rows(
 ) -> dict[str, Any]:
     """Translate BR-shaped raw rows into the consumer-facing payload.
 
-    Expected raw column names (BR's ``Officials Per Game`` table):
+    Expected raw column names (BR's per-season ``rs_raw`` register table
+    at ``/referees/{end_year}_register.html`` — verified against the
+    2025-26 page screenshot, 2026-05-16):
     - ``"Referee"`` — display name
-    - ``"G"`` — games officiated
-    - ``"PF/G"`` — personal fouls per game
-    - ``"FT/G"`` — free-throw attempts per game (both teams)
-    - ``"T"`` — total technicals (season)
+    - ``"G"`` — games officiated this season
+    - ``"PF"`` — personal fouls called per game (from the "Per Game"
+      column group; BR also publishes the same stat across 5 other
+      column groups — "Per Game Relative", "Home Teams", "Visitor
+      Teams", "Home Minus Visitor", "Relative to Average" — but the
+      scraper extracts only the base Per Game value)
+    - ``"FTA"`` — free-throw attempts per game (Per Game group, both
+      teams combined)
+
+    Earlier drafts of this parser expected keys ``"PF/G"``, ``"FT/G"``,
+    and ``"T"`` (technicals); those came from a guess at BR's layout
+    before the page was actually viewed. The real BR page uses the
+    short forms ``"PF"`` / ``"FTA"`` and does NOT publish a technicals
+    column on the register page (technicals data would have to come
+    from a separate BR endpoint not currently wired). The
+    ``technicals`` field is preserved in the output shape (set to
+    ``None``) for backward compat with any consumer that reads it;
+    the heuristic factor at ``_nba_referee_factor`` only consumes
+    ``fouls_per_game`` so the None doesn't affect scoring.
 
     Defensive: rows missing a referee name are skipped; rows with
     ``games_officiated == 0`` (didn't officiate this season) are
@@ -201,10 +218,10 @@ def parse_referee_tendency_rows(
             "referees": {
                 "Scott Foster": {
                     "name": "Scott Foster",
-                    "games_officiated": 60,
-                    "fouls_per_game": 42.1,
-                    "fta_per_game": 44.5,
-                    "technicals": 12,
+                    "games_officiated": 62,
+                    "fouls_per_game": 41.3,
+                    "fta_per_game": 48.9,
+                    "technicals": None,
                 },
                 ...
             },
@@ -230,9 +247,13 @@ def parse_referee_tendency_rows(
         referees[name] = {
             "name": name,
             "games_officiated": games,
-            "fouls_per_game": _safe_float(row.get("PF/G")),
-            "fta_per_game": _safe_float(row.get("FT/G")),
-            "technicals": _safe_int(row.get("T")),
+            "fouls_per_game": _safe_float(row.get("PF")),
+            "fta_per_game": _safe_float(row.get("FTA")),
+            # Technicals not published on BR's per-season register
+            # page (only on per-game box scores). Preserved here as
+            # None for schema stability — consumers that read it
+            # should already handle None gracefully.
+            "technicals": None,
         }
     return {
         "season": int(season),

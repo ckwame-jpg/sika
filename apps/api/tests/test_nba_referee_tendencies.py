@@ -48,31 +48,31 @@ _NOW = datetime(2026, 5, 15, 12, 0, tzinfo=timezone.utc)
 
 def _br_rows(*, n: int = 3) -> list[dict[str, Any]]:
     """Return BR-shaped raw rows. Mirrors basketball-reference's
-    ``Officials Per Game`` style table — column names are best guesses
-    based on BR's standard conventions; the parser tolerates extras
-    and skips missing keys defensively, so the contract is robust to
-    minor column-name drift between scrape attempts."""
+    per-season ``rs_raw`` register table — column names verified
+    against the 2025-26 page screenshot (2026-05-16). BR uses the
+    short forms ``"PF"`` / ``"FTA"`` rather than ``"PF/G"`` / ``"FT/G"``
+    (the earlier guess) and does NOT publish a technicals column on
+    the register page. The parser tolerates extras and skips missing
+    keys defensively, so the contract is robust to minor column-name
+    drift between scrape attempts."""
     return [
         {
             "Referee": "Scott Foster",
-            "G": "60",
-            "PF/G": "42.1",
-            "FT/G": "44.5",
-            "T": "12",
+            "G": "62",
+            "PF": "41.3",
+            "FTA": "48.9",
         },
         {
             "Referee": "Tony Brothers",
-            "G": "55",
-            "PF/G": "39.8",
-            "FT/G": "42.0",
-            "T": "8",
+            "G": "58",
+            "PF": "39.3",
+            "FTA": "48.3",
         },
         {
-            "Referee": "James Capers",
-            "G": "47",
-            "PF/G": "40.5",
-            "FT/G": "43.2",
-            "T": "5",
+            "Referee": "Brent Haskill",
+            "G": "8",
+            "PF": "42.0",
+            "FTA": "51.0",
         },
     ][:n]
 
@@ -85,12 +85,14 @@ def test_parser_returns_consumer_shape_with_per_referee_tendencies() -> None:
 
     assert payload["season"] == _SEASON
     assert payload["fetched_at"] == _NOW.isoformat()
-    assert set(payload["referees"].keys()) == {"Scott Foster", "Tony Brothers", "James Capers"}
+    assert set(payload["referees"].keys()) == {"Scott Foster", "Tony Brothers", "Brent Haskill"}
     foster = payload["referees"]["Scott Foster"]
-    assert foster["games_officiated"] == 60
-    assert foster["fouls_per_game"] == 42.1
-    assert foster["fta_per_game"] == 44.5
-    assert foster["technicals"] == 12
+    assert foster["games_officiated"] == 62
+    assert foster["fouls_per_game"] == 41.3
+    assert foster["fta_per_game"] == 48.9
+    # Technicals are not published on BR's per-season register page;
+    # parser preserves the field as None for schema stability.
+    assert foster["technicals"] is None
 
 
 def test_parser_drops_rows_with_zero_games() -> None:
@@ -99,7 +101,7 @@ def test_parser_drops_rows_with_zero_games() -> None:
     Drop them so consumers don't accidentally read divide-by-zero
     placeholder values."""
     rows = _br_rows(n=2) + [
-        {"Referee": "Inactive Ref", "G": "0", "PF/G": "0.0", "FT/G": "0.0", "T": "0"},
+        {"Referee": "Inactive Ref", "G": "0", "PF": "0.0", "FTA": "0.0"},
     ]
     payload = parse_referee_tendency_rows(rows, season=_SEASON, fetched_at=_NOW)
 
@@ -108,7 +110,7 @@ def test_parser_drops_rows_with_zero_games() -> None:
 
 
 def test_parser_skips_rows_missing_referee_name() -> None:
-    rows = _br_rows(n=1) + [{"G": "30", "PF/G": "40.0", "FT/G": "42.0"}]
+    rows = _br_rows(n=1) + [{"G": "30", "PF": "40.0", "FTA": "42.0"}]
     payload = parse_referee_tendency_rows(rows, season=_SEASON, fetched_at=_NOW)
     assert len(payload["referees"]) == 1
 
@@ -118,7 +120,7 @@ def test_parser_tolerates_non_numeric_fields() -> None:
     missing values. Coerce safely to None and keep the rest of the
     row intact rather than dropping the whole entry."""
     rows = [
-        {"Referee": "Spotty Ref", "G": "20", "PF/G": "--", "FT/G": "", "T": "n/a"},
+        {"Referee": "Spotty Ref", "G": "20", "PF": "--", "FTA": ""},
     ]
     payload = parse_referee_tendency_rows(rows, season=_SEASON, fetched_at=_NOW)
     spotty = payload["referees"]["Spotty Ref"]
@@ -144,7 +146,7 @@ def test_parser_skips_non_dict_rows(caplog) -> None:
         "header row from BR",
         42,
         ["wrong", "shape"],
-        {"Referee": "Real Ref", "G": "30", "PF/G": "40.0"},
+        {"Referee": "Real Ref", "G": "30", "PF": "40.0"},
     ]
     payload = parse_referee_tendency_rows(rows, season=_SEASON, fetched_at=_NOW)
     assert "Real Ref" in payload["referees"]
@@ -283,7 +285,7 @@ def test_dataclass_round_trip() -> None:
         fta_per_game=raw["fta_per_game"],
         technicals=raw["technicals"],
     )
-    assert rebuilt.fouls_per_game == 42.1
+    assert rebuilt.fouls_per_game == 41.3
 
 
 # -- Loader -----------------------------------------------------------

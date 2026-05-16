@@ -563,6 +563,67 @@ class BasketballReferenceClient:
         return _empty_envelope("PlayerDefense")
 
     # ------------------------------------------------------------------
+    # Public methods — referee tendency (Smarter #13 phase 2b-2)
+
+    def fetch_referee_season_stats(self, season: int) -> list[dict[str, Any]]:
+        """Fetch BR's per-season referee stats from the ``rs_raw`` table.
+
+        URL: ``/referees/{end_year}_register.html`` — pattern verified
+        for every season 2003-2026 via WebSearch; the 2025-26 page
+        layout was verified against an operator screenshot on
+        2026-05-16. Table id (``rs_raw``) confirmed via cross-
+        referenced public scrapers (``anandijain/sips``).
+
+        Returns a list of dicts with the BR-canonical keys
+        ``"Referee"``, ``"G"``, ``"PF"``, ``"FTA"`` extracted
+        positionally from the table cells. Position-indexed (not
+        column-name-indexed) because BR's table has 31 columns across
+        6 group headers ("Per Game", "Per Game Relative", "Home
+        Teams", "Visitor Teams", "Home Minus Visitor", "Relative to
+        Average*") with the same column names ("FGA", "FTA", "PF",
+        "PTS") repeating 4× under different groups. Positional
+        indexing reliably picks the base Per Game columns
+        (referee/lg/g at indices 0-2; per-game FGA/FTA/PF/PTS at
+        indices 3-6) without parsing the multi-row header structure.
+
+        Returns ``[]`` when the page can't be loaded (404 / 500 / 403)
+        — basketball-reference returns 403 to fresh IPs that aren't
+        the operator's configured proxy, so empty-return is the
+        graceful path. The loader at
+        ``apps/api/app/services/nba_referee_tendencies.py`` handles
+        empty results without raising.
+
+        The returned shape feeds ``parse_referee_tendency_rows``
+        unchanged.
+        """
+        path = f"/referees/{season}_register.html"
+        doc = self._fetch_html_or_empty(path)
+        if doc is None:
+            return []
+        tables = doc.xpath("//table[@id='rs_raw']")
+        if not tables:
+            return []
+        rows: list[dict[str, Any]] = []
+        for tr in tables[0].xpath(".//tbody/tr"):
+            cells = tr.xpath("./th|./td")
+            # 7 = Referee + Lg + G + 4 Per Game cols (FGA, FTA, PF, PTS).
+            # Anything shorter is a group-header row or malformed.
+            if len(cells) < 7:
+                continue
+            name = cells[0].text_content().strip()
+            if not name:
+                continue
+            rows.append(
+                {
+                    "Referee": name,
+                    "G": cells[2].text_content().strip(),
+                    "FTA": cells[4].text_content().strip(),
+                    "PF": cells[5].text_content().strip(),
+                }
+            )
+        return rows
+
+    # ------------------------------------------------------------------
     # Internal
 
     def _fetch_html_or_empty(self, path: str):
