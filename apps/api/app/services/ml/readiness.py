@@ -30,6 +30,7 @@ from app.services.operator_settings import (
     effective_sportsbook_disagreement_min_book_count,
     effective_sportsbook_disagreement_threshold,
 )
+from app.services.ml.interval_status import collect_interval_model_status
 from app.services.predictions import compute_settlement_aging
 
 # Sample size for diagnostic aggregations (buckets, rates, recent-row averages).
@@ -834,6 +835,27 @@ def build_model_readiness_summary(
     # clock comparison against pre-seeded close_times drifts over time.
     aging = compute_settlement_aging(db, now=now)
 
+    # Smarter #21 phase 2b — per-(family, stat_key) interval-model
+    # status. Same source of truth as the ``inspect-intervals`` CLI
+    # (PR #163): walks the active manifest + reads
+    # interval_models/<stat>/metadata.json. Returns [] when no manifest
+    # is configured or no artifacts have been trained (the common
+    # pre-CLI-run state).
+    interval_statuses = collect_interval_model_status()
+    interval_models = [
+        {
+            "family_key": status.family_key,
+            "stat_key": status.stat_key,
+            "sample_size": status.sample_size,
+            "empirical_coverage": status.empirical_coverage,
+            "coverage_status": status.coverage_status,
+            "trained_at": status.trained_at,
+            "window_start": status.window_start,
+            "window_end": status.window_end,
+        }
+        for status in interval_statuses
+    ]
+
     return {
         "generated_at": _now_utc(),
         "ml_serving_mode": serving_mode,
@@ -861,6 +883,7 @@ def build_model_readiness_summary(
         # ``set_sportsbook_disagreement_*``.
         "sportsbook_disagreement_threshold": effective_sportsbook_disagreement_threshold(db),
         "sportsbook_disagreement_min_book_count": effective_sportsbook_disagreement_min_book_count(db),
+        "interval_models": interval_models,
     }
 
 

@@ -76,6 +76,11 @@ export type CalibrationBucketRead = Wire<Schema<"CalibrationBucketRead">>;
 export type ModelFamilyRuntimeHealthRead = Wire<Schema<"ModelFamilyRuntimeHealthRead">>;
 export type ModelFamilyReadinessRead = Wire<Schema<"ModelFamilyReadinessRead">>;
 export type SettlementAgingRead = Wire<Schema<"SettlementAgingRead">>;
+// Smarter #21 phase 2b — per-(family, stat_key) interval-model status
+// surfaced in the readiness panel. Coverage status banding (ok / warn /
+// bad / unknown) mirrors the ``python -m ml.cli inspect-intervals``
+// classification so the browser and the CLI agree byte-for-byte.
+export type IntervalModelStatusRead = Wire<Schema<"IntervalModelStatusRead">>;
 export type ModelReadinessSummaryRead = Wire<Schema<"ModelReadinessSummaryRead">>;
 // Update DTOs use ``Partial<Schema<…>>`` instead of ``Wire<Schema<…>>``
 // because the partial-PATCH idiom (caller sends only the fields they

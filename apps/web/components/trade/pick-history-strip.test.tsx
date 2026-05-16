@@ -50,6 +50,7 @@ function summaryFixture(n = 5): ModelReadinessSummaryRead {
     narrator_enabled: false,
     sportsbook_disagreement_min_book_count: 3,
     sportsbook_disagreement_threshold: 0.15,
+    interval_models: [],
   };
 }
 

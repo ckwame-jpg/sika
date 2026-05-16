@@ -736,6 +736,23 @@ class SettlementAgingRead(BaseModel):
     total_pending_past_close: int = 0
 
 
+class IntervalModelStatusRead(BaseModel):
+    """Smarter #21 phase 2b operator UX — per-(family, stat_key)
+    interval-model status. Same shape the
+    ``python -m ml.cli inspect-intervals --format json`` CLI emits
+    (PR #163); this surfaces it inside ``/ops/models/readiness`` so
+    operators see it in the browser without shelling out."""
+
+    family_key: str
+    stat_key: str
+    sample_size: int | None = None
+    empirical_coverage: float | None = None
+    coverage_status: Literal["ok", "warn", "bad", "unknown"] = "unknown"
+    trained_at: UTCDateTime | None = None
+    window_start: UTCDateTime | None = None
+    window_end: UTCDateTime | None = None
+
+
 class ModelReadinessSummaryRead(BaseModel):
     generated_at: UTCDateTime
     ml_serving_mode: Literal["heuristic", "shadow", "ml"] = "heuristic"
@@ -770,6 +787,12 @@ class ModelReadinessSummaryRead(BaseModel):
     # Defaults: 0.15 (15-pp gap) AND ≥3 books before the rule fires.
     sportsbook_disagreement_threshold: float = 0.15
     sportsbook_disagreement_min_book_count: int = 3
+    # Smarter #21 phase 2b — per-(family, stat_key) interval-model
+    # status. Empty list pre-CLI-run; populated rows mirror the
+    # ``inspect-intervals`` CLI output. Defaults to an empty list so
+    # the field is always present on the response (stable schema for
+    # the operator UI's TypeScript types).
+    interval_models: list[IntervalModelStatusRead] = Field(default_factory=list)
 
 
 class ModelReadinessSettingsUpdate(BaseModel):
