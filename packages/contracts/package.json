@@ -9,7 +9,7 @@
     "./openapi": "./generated/api.d.ts"
   },
   "scripts": {
-    "dump": "../../.venv/bin/python scripts/dump_openapi.py openapi.json",
+    "dump": "node scripts/dump.mjs openapi.json",
     "generate:types": "openapi-typescript openapi.json --output generated/api.d.ts",
     "generate": "npm run dump && npm run generate:types",
     "check": "node scripts/check_drift.mjs"

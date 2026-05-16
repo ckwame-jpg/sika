@@ -266,6 +266,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/recommendations/{recommendation_id}/narrator": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Recommendation Narration
+         * @description Smarter #31 — on-demand narrator generation for a single rec.
+         *
+         *     Idempotent — re-POSTing for a recommendation that already has a
+         *     cached verifier-passing narration returns the cached value
+         *     without re-calling OpenAI. Forcing a regen requires deleting the
+         *     cache row (Phase 2: add a query param + DELETE endpoint).
+         *
+         *     Returns the full recommendation read so the UI can update the
+         *     card in place. Raises 503 when ``OPENAI_API_KEY`` is unset or the
+         *     operator-side toggle is off — callers should surface a clear
+         *     "narrator not configured / disabled" hint rather than silently
+         *     showing the mechanical rationale.
+         */
+        post: operations["generate_recommendation_narration_ops_recommendations__recommendation_id__narrator_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/runs": {
         parameters: {
             query?: never;
@@ -796,6 +827,11 @@ export interface components {
             scheduler_enabled: boolean;
             /** Status */
             status: string;
+            /**
+             * Upstream Sources
+             * @default []
+             */
+            upstream_sources: components["schemas"]["UpstreamSourceHealthRead"][];
         };
         /** JobRefreshResponse */
         JobRefreshResponse: {
@@ -1247,8 +1283,14 @@ export interface components {
             enqueue_shadow_backfill: boolean;
             /** Ml Serving Mode */
             ml_serving_mode?: ("heuristic" | "shadow" | "ml") | null;
+            /** Narrator Enabled */
+            narrator_enabled?: boolean | null;
             /** Pick History Default N */
             pick_history_default_n?: (5 | 10 | 20) | null;
+            /** Sportsbook Disagreement Min Book Count */
+            sportsbook_disagreement_min_book_count?: number | null;
+            /** Sportsbook Disagreement Threshold */
+            sportsbook_disagreement_threshold?: number | null;
         };
         /** ModelReadinessSummaryRead */
         ModelReadinessSummaryRead: {
@@ -1288,6 +1330,11 @@ export interface components {
              */
             ml_serving_mode: "heuristic" | "shadow" | "ml";
             /**
+             * Narrator Enabled
+             * @default false
+             */
+            narrator_enabled: boolean;
+            /**
              * Pick History Default N
              * @default 5
              */
@@ -1297,11 +1344,22 @@ export interface components {
              * @default 3
              */
             promotion_stability_days_required: number;
+            settlement_aging?: components["schemas"]["SettlementAgingRead"];
             /**
              * Shadow Enabled
              * @default false
              */
             shadow_enabled: boolean;
+            /**
+             * Sportsbook Disagreement Min Book Count
+             * @default 3
+             */
+            sportsbook_disagreement_min_book_count: number;
+            /**
+             * Sportsbook Disagreement Threshold
+             * @default 0.15
+             */
+            sportsbook_disagreement_threshold: number;
         };
         /** PaperPositionCreate */
         PaperPositionCreate: {
@@ -1567,9 +1625,19 @@ export interface components {
         PositionsRead: {
             /** Demo Orders */
             demo_orders: components["schemas"]["DemoOrderRead"][];
+            /**
+             * Demo Truncated
+             * @default false
+             */
+            demo_truncated: boolean;
             kalshi_account: components["schemas"]["KalshiAccountRead"];
             /** Paper Positions */
             paper_positions: components["schemas"]["PaperPositionRead"][];
+            /**
+             * Paper Truncated
+             * @default false
+             */
+            paper_truncated: boolean;
         };
         /** PredictionRead */
         PredictionRead: {
@@ -1879,6 +1947,8 @@ export interface components {
             model_name?: string | null;
             /** Model Version */
             model_version?: string | null;
+            /** Narrator Text */
+            narrator_text?: string | null;
             /** Quality Tier */
             quality_tier?: string | null;
             /** Rationale */
@@ -2187,6 +2257,39 @@ export interface components {
             watchlist_counts_by_sport?: {
                 [key: string]: number;
             };
+        };
+        /**
+         * SettlementAgingRead
+         * @description Smarter #26 — counts of predictions stuck in ``pending`` past
+         *     their market close, bucketed by how long ago the close was. Surfaces
+         *     on the readiness panel as an ops badge.
+         */
+        SettlementAgingRead: {
+            /**
+             * Bucket 0 To 1H
+             * @default 0
+             */
+            bucket_0_to_1h: number;
+            /**
+             * Bucket 1 To 6H
+             * @default 0
+             */
+            bucket_1_to_6h: number;
+            /**
+             * Bucket 6 To 24H
+             * @default 0
+             */
+            bucket_6_to_24h: number;
+            /**
+             * Bucket Beyond 24H
+             * @default 0
+             */
+            bucket_beyond_24h: number;
+            /**
+             * Total Pending Past Close
+             * @default 0
+             */
+            total_pending_past_close: number;
         };
         /** SignalSnapshotRead */
         SignalSnapshotRead: {
@@ -2602,6 +2705,22 @@ export interface components {
             ticker: string;
             /** Time To Close Minutes */
             time_to_close_minutes?: number | null;
+        };
+        /**
+         * UpstreamSourceHealthRead
+         * @description Smarter #23 — per-upstream-source freshness for the /health surface.
+         */
+        UpstreamSourceHealthRead: {
+            /** Is Stale */
+            is_stale: boolean;
+            /** Last Error */
+            last_error?: string | null;
+            /** Last Failure At */
+            last_failure_at?: string | null;
+            /** Last Success At */
+            last_success_at?: string | null;
+            /** Source */
+            source: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -3232,6 +3351,37 @@ export interface operations {
             };
         };
     };
+    generate_recommendation_narration_ops_recommendations__recommendation_id__narrator_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recommendation_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecommendationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_runs_ops_runs_get: {
         parameters: {
             query?: {
@@ -3486,6 +3636,8 @@ export interface operations {
         parameters: {
             query?: {
                 force?: boolean;
+                paper_limit?: number;
+                demo_limit?: number;
             };
             header?: never;
             path?: never;
