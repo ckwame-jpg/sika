@@ -777,12 +777,18 @@ def _collect_interval_artifacts(
       trained yet for this family).
     """
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    rows: list[dict[str, Any]] = []
+    # sika's manifest has multiple ``serves_family_key`` entries
+    # pointing at the same artifact_path (one global_v1 artifact
+    # serves all 4 families). The interval_models/ subdir is a
+    # physical directory shared across those manifest entries; each
+    # stat key was trained for ONE family (recorded in metadata.json's
+    # ``family_key`` field). Dedupe by (artifact_dir, stat_key) and
+    # attribute to metadata's family_key so we don't 4×-report the
+    # same physical file under unrelated families.
+    artifact_dirs: dict[Path, list[str]] = {}
     for entry in manifest.get("families", []):
         family_key = _entry_serves_family_key(entry)
         if family_key is None:
-            continue
-        if family_filter is not None and family_key != family_filter:
             continue
         relative = entry.get("artifact_path")
         if not relative:
@@ -790,6 +796,10 @@ def _collect_interval_artifacts(
         artifact_dir = (manifest_path.parent / relative).resolve()
         if not artifact_dir.exists() or not artifact_dir.is_dir():
             continue
+        artifact_dirs.setdefault(artifact_dir, []).append(family_key)
+
+    rows: list[dict[str, Any]] = []
+    for artifact_dir, serves_family_keys in artifact_dirs.items():
         intervals_root = artifact_dir / "interval_models"
         if not intervals_root.exists() or not intervals_root.is_dir():
             continue
@@ -804,6 +814,16 @@ def _collect_interval_artifacts(
                 coverage_float = float(coverage) if coverage is not None else None
             except (TypeError, ValueError):
                 coverage_float = None
+            # Prefer metadata's family_key (the truth — that's the
+            # family this regressor was fit for). Fall back to the
+            # first manifest entry that serves this artifact_dir when
+            # metadata is missing / unparseable; the operator still
+            # sees ``coverage_status="unknown"`` so the bad-metadata
+            # state is visible.
+            metadata_family = str(metadata.get("family_key") or "").strip()
+            family_key = metadata_family or serves_family_keys[0]
+            if family_filter is not None and family_key != family_filter:
+                continue
             rows.append({
                 "family_key": family_key,
                 "stat_key": stat_key,

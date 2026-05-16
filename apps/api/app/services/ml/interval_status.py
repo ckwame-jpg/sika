@@ -123,7 +123,11 @@ def collect_interval_model_status() -> list[IntervalModelStatus]:
         return []
     manifest_dir = Path(manifest.source_path).parent if manifest.source_path else None
 
-    rows: list[IntervalModelStatus] = []
+    # Dedupe by artifact_dir so a single global_v1 artifact serving 4
+    # manifest families isn't reported 4× (the on-disk file is one
+    # physical file; each stat key was trained for ONE family per
+    # metadata.json). Mirror of the apps/ml CLI fix in PR D.
+    artifact_dirs: dict[Path, list[str]] = {}
     for family in manifest.families:
         family_key = (family.serves_family_key or family.family_key or "").strip()
         if not family_key or not family.artifact_path:
@@ -135,6 +139,10 @@ def collect_interval_model_status() -> list[IntervalModelStatus]:
         )
         if not artifact_dir.exists() or not artifact_dir.is_dir():
             continue
+        artifact_dirs.setdefault(artifact_dir, []).append(family_key)
+
+    rows: list[IntervalModelStatus] = []
+    for artifact_dir, serves_family_keys in artifact_dirs.items():
         intervals_root = artifact_dir / "interval_models"
         if not intervals_root.exists() or not intervals_root.is_dir():
             continue
@@ -154,6 +162,14 @@ def collect_interval_model_status() -> list[IntervalModelStatus]:
                 sample_size_int: int | None = int(sample_size) if sample_size is not None else None
             except (TypeError, ValueError):
                 sample_size_int = None
+            # Prefer metadata's family_key (the truth — that's the
+            # family this regressor was fit for). Fall back to the
+            # first manifest entry that serves this artifact_dir when
+            # metadata is missing / unparseable; the operator still
+            # sees ``coverage_status="unknown"`` so the bad-metadata
+            # state is visible.
+            metadata_family = str(metadata.get("family_key") or "").strip()
+            family_key = metadata_family or serves_family_keys[0]
             rows.append(
                 IntervalModelStatus(
                     family_key=family_key,
