@@ -23,8 +23,10 @@ from app.services.scoring.feature_groups import (
     FreshnessAssessment,
     check_freshness,
     deserialize_feature_groups,
+    emit_to_group,
     features_view,
     policy_for_group,
+    register_group,
     serialize_feature_groups,
 )
 
@@ -86,6 +88,62 @@ def test_no_suppress_policies_in_initial_registry() -> None:
         assert policy.severity is not FeatureGroupSeverity.SUPPRESS, (
             f"{group_key} maps to SUPPRESS but no kernel handler exists yet"
         )
+
+
+# -- migration helpers -------------------------------------------------
+
+
+def test_register_group_writes_snapshot_with_completeness() -> None:
+    feature_groups: dict[str, FeatureGroupSnapshot] = {}
+    register_group(
+        feature_groups,
+        "mlb_weather",
+        {"weather_temp_f": 72.0},
+        fresh_at=_NOW,
+        source="load_weather",
+    )
+    assert "mlb_weather" in feature_groups
+    snap = feature_groups["mlb_weather"]
+    assert snap.group_key == "mlb_weather"
+    assert snap.values == {"weather_temp_f": 72.0}
+    assert snap.fresh_at == _NOW
+    assert snap.source == "load_weather"
+    assert snap.completeness == 1.0
+
+
+def test_register_group_completeness_zero_for_empty_values() -> None:
+    feature_groups: dict[str, FeatureGroupSnapshot] = {}
+    register_group(feature_groups, "mlb_weather", {}, fresh_at=_NOW)
+    assert feature_groups["mlb_weather"].completeness == 0.0
+
+
+def test_emit_to_group_writes_to_both_structures() -> None:
+    """The migration helper writes the same values dict to both the
+    structured ``feature_groups`` (source of truth) AND the flat
+    ``features`` (derived view). The kernel's interim reads —
+    ``emit_nba_interaction_term`` reads ``recent_usage_pct`` right
+    after ``emit_nba_player_features`` populates it — depend on
+    ``features`` being current after each call."""
+    feature_groups: dict[str, FeatureGroupSnapshot] = {}
+    features: dict[str, Any] = {"venue_indoor": False}  # kernel-direct prior write
+    emit_to_group(
+        feature_groups,
+        features,
+        "mlb_weather",
+        {"weather_temp_f": 72.0, "weather_wind_speed_mph": 8.0},
+        fresh_at=_NOW,
+        source="load_weather",
+    )
+    # Source of truth.
+    assert feature_groups["mlb_weather"].values == {
+        "weather_temp_f": 72.0, "weather_wind_speed_mph": 8.0,
+    }
+    # Derived view — kernel-direct keys preserved alongside the emitter's.
+    assert features == {
+        "venue_indoor": False,
+        "weather_temp_f": 72.0,
+        "weather_wind_speed_mph": 8.0,
+    }
 
 
 # -- derived view ------------------------------------------------------

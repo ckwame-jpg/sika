@@ -198,7 +198,19 @@ class PropStatsResolver:
         self.db.flush()
         return payload, "miss"
 
-    def _load_player_gamelog(self, sport_key: str, athlete_id: str, season: int) -> tuple[dict[str, Any], str]:
+    def _load_player_gamelog(
+        self, sport_key: str, athlete_id: str, season: int,
+    ) -> tuple[dict[str, Any], str, datetime | None]:
+        """Return the cached gamelog payload, the cache status, and
+        the row's ``cached_at`` timestamp.
+
+        Architecture #5 added ``cached_at`` to the return tuple so
+        ``ResolvedPropSubject.gamelog_cached_at`` can feed
+        ``FeatureGroupSnapshot.fresh_at`` for the ``nba_workload``
+        group. ``None`` is returned only when there is no cache row
+        AND the network fetch produced a fresh write (in which case
+        ``now`` IS the cached_at — see the post-fetch branch below).
+        """
         now = self._now()
         row = self.db.scalar(
             select(EspnPlayerGamelogCache).where(
@@ -210,13 +222,14 @@ class PropStatsResolver:
         expires_at = self._coerce_utc(row.expires_at) if row else None
         if row and expires_at and expires_at > now:
             self.stats.gamelog_cache_hits += 1
-            return dict(row.payload or {}), "hit"
+            return dict(row.payload or {}), "hit", self._coerce_utc(row.cached_at)
         if row and not self.allow_network:
             self.stats.gamelog_cache_hits += 1
+            row_cached_at = self._coerce_utc(row.cached_at)
             if expires_at and expires_at <= now:
                 self.stats.stale_gamelog_fallbacks += 1
-                return dict(row.payload or {}), "stale"
-            return dict(row.payload or {}), "hit"
+                return dict(row.payload or {}), "stale", row_cached_at
+            return dict(row.payload or {}), "hit", row_cached_at
         if not self.allow_network:
             self.stats.gamelog_cache_misses += 1
             raise LookupError(f"No cached ESPN gamelog found for {sport_key}:{athlete_id}:{season}")
@@ -227,7 +240,7 @@ class PropStatsResolver:
         except Exception:
             if row:
                 self.stats.stale_gamelog_fallbacks += 1
-                return dict(row.payload or {}), "stale"
+                return dict(row.payload or {}), "stale", self._coerce_utc(row.cached_at)
             raise
 
         if row is None:
@@ -241,7 +254,8 @@ class PropStatsResolver:
         row.cached_at = now
         row.expires_at = now + self._gamelog_ttl(sport_key)
         self.db.flush()
-        return payload, "miss"
+        # Just-fetched: the wire-format cached_at IS now.
+        return payload, "miss", now
 
     def resolve(self, sport_key: str, subject_name: str, team_hint: str | None = None) -> ResolvedPropSubject:
         key = (sport_key, subject_name.lower(), (team_hint or "").upper())
@@ -251,7 +265,9 @@ class PropStatsResolver:
 
         player, player_cache_status = self._load_player_search(sport_key, subject_name, team_hint=team_hint)
         season = default_season_for_sport(sport_key)
-        gamelog_payload, gamelog_cache_status = self._load_player_gamelog(sport_key, player["athlete_id"], season)
+        gamelog_payload, gamelog_cache_status, gamelog_cached_at = self._load_player_gamelog(
+            sport_key, player["athlete_id"], season,
+        )
         game_logs = _build_game_logs(sport_key, gamelog_payload)
         advanced_payload, advanced_status, resolved_ids = self._load_advanced(sport_key, player, season)
         resolved = ResolvedPropSubject(
@@ -268,6 +284,7 @@ class PropStatsResolver:
             advanced_cache_status=advanced_status,
             nba_stats_id=resolved_ids.get("nba_stats_id"),
             mlb_stats_id=resolved_ids.get("mlb_stats_id"),
+            gamelog_cached_at=gamelog_cached_at,
         )
         self._cache[key] = resolved
         self.stats.prop_subjects_warmed += 1

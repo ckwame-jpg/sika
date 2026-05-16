@@ -692,7 +692,7 @@ def test_score_player_prop_emits_opposing_starter_and_batting_order_features(db_
     result = _score_player_prop(db_session, event, market, None, resolver)
     assert result is not None, "scoring path must return a signal for the seeded prop"
 
-    _, _, reasons, features = result
+    _, _, reasons, features, _feature_groups = result
 
     # The features Codex specifically asked for:
     assert features.get("opposing_starter_xfip") == pytest.approx(3.55)

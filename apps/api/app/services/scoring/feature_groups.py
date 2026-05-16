@@ -193,6 +193,77 @@ def policy_for_group(group_key: str) -> FeatureGroupPolicy:
     return FEATURE_GROUP_POLICIES.get(group_key, DEFAULT_POLICY)
 
 
+def register_group(
+    feature_groups: dict[str, FeatureGroupSnapshot],
+    group_key: str,
+    values: dict[str, Any],
+    *,
+    fresh_at: datetime | None = None,
+    source: str = "",
+) -> None:
+    """Build a snapshot and stash it in ``feature_groups``.
+
+    Lower-level than :func:`emit_to_group` — used by call sites that
+    only care about the structured snapshot (e.g. test fixtures,
+    persistence-layer reconstruction).
+
+    ``completeness`` is derived from ``values`` truthiness: an empty
+    values dict means the emitter didn't have data to publish
+    (cache miss with no payload), which the kernel surfaces via the
+    existing ``*_data_complete`` markers AND the structural 0.0
+    completeness on the snapshot.
+    """
+    feature_groups[group_key] = FeatureGroupSnapshot(
+        group_key=group_key,
+        values=values,
+        fresh_at=fresh_at,
+        source=source,
+        completeness=1.0 if values else 0.0,
+    )
+
+
+def emit_to_group(
+    feature_groups: dict[str, FeatureGroupSnapshot],
+    features: dict[str, Any],
+    group_key: str,
+    values: dict[str, Any],
+    *,
+    fresh_at: datetime | None = None,
+    source: str = "",
+) -> None:
+    """Migration helper for the scoring kernel.
+
+    Replaces the pre-Architecture-#5 idiom
+
+        features.update(emit_X(payload))
+
+    with
+
+        emit_to_group(
+            feature_groups, features, "X", emit_X(payload),
+            fresh_at=..., source="...",
+        )
+
+    Writes ``values`` to BOTH ``feature_groups[group_key]`` (the
+    Architecture #5 source of truth carrying freshness metadata) AND
+    ``features`` (the derived flat view the kernel and heuristic
+    factors continue to read from). Because both writes happen
+    atomically from the same ``values`` dict, drift between them is
+    structurally impossible — this is the in-process "pure A" shape
+    despite the surface appearance of dual writes.
+
+    The kernel reads ``features.get("k")`` immediately after this
+    call (e.g. the Smarter #12 interaction term reads
+    ``recent_usage_pct`` right after ``emit_nba_player_features``
+    populates it) so the dual-write keeps the existing read order
+    working unchanged.
+    """
+    register_group(
+        feature_groups, group_key, values, fresh_at=fresh_at, source=source,
+    )
+    features.update(values)
+
+
 def features_view(
     feature_groups: dict[str, FeatureGroupSnapshot],
 ) -> dict[str, Any]:
@@ -360,6 +431,8 @@ __all__ = [
     "DEFAULT_POLICY",
     "FEATURE_GROUP_POLICIES",
     "policy_for_group",
+    "register_group",
+    "emit_to_group",
     "features_view",
     "check_freshness",
     "serialize_feature_groups",
