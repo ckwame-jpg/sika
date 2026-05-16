@@ -94,6 +94,63 @@ def _parlay_candidate_from_prediction(prediction: Prediction) -> ParlayCandidate
     )
 
 
+def _enrich_with_kelly_sizing(
+    db: Session, capture: ScoredWatchlistCapture,
+) -> None:
+    """Smarter #9 phase 3: compute the suggested position size for a
+    scored recommendation and merge the diagnostic block into both
+    the signal and the recommendation's ``scoring_diagnostics`` JSON.
+
+    ``capture.scored.recommendation`` carries the picked side +
+    suggested_price; ``capture.scored.signal`` carries the model's
+    P(YES). The helper consumes both, handles the side-aware mapping
+    onto the Kelly axis, and stashes the resulting size + provenance
+    under the ``kelly_sizing`` key. Returns silently when:
+
+    - Capture scope is not ``"recommendation"`` (no need to size a
+      coverage-only signal).
+    - ``recommendation`` is None (suppressed by monotonicity etc.).
+    - The sizing helper returns None (no bankroll, invalid inputs).
+
+    Wrapped in try/except so a sizing failure never crashes the
+    persistence path — sizing is observability, not correctness.
+    """
+    if capture.capture_scope != "recommendation":
+        return
+    recommendation = capture.scored.recommendation
+    signal = capture.scored.signal
+    if recommendation is None or signal is None:
+        return
+    side = str(getattr(recommendation, "side", "") or "")
+    probability_yes = signal.fair_yes_price
+    price_yes = recommendation.suggested_price
+    if probability_yes is None or price_yes is None:
+        return
+    try:
+        from app.services.kelly_sizing_consumer import (  # noqa: PLC0415
+            compute_kelly_sizing_diagnostics,
+        )
+        sizing = compute_kelly_sizing_diagnostics(
+            db,
+            probability_yes=float(probability_yes),
+            price_yes=float(price_yes),
+            side=side,
+        )
+    except Exception:  # noqa: BLE001
+        sizing = None
+    if sizing is None:
+        return
+    # Merge into BOTH the signal and recommendation diagnostics so
+    # downstream consumers (operator UI reading either Prediction or
+    # Recommendation) see the same persisted sizing decision.
+    signal_diag = dict(signal.scoring_diagnostics or {})
+    signal_diag["kelly_sizing"] = sizing
+    signal.scoring_diagnostics = signal_diag
+    rec_diag = dict(recommendation.scoring_diagnostics or {})
+    rec_diag["kelly_sizing"] = sizing
+    recommendation.scoring_diagnostics = rec_diag
+
+
 def _persist_scored_watchlist_captures(
     db: Session,
     *,
@@ -107,10 +164,16 @@ def _persist_scored_watchlist_captures(
     via ``db.add``, and routes ``capture_prediction`` calls to either the
     ``"recommendation"`` or ``"coverage"`` scope (or skips it for captures
     that were emitted purely for signal persistence).
+
+    Smarter #9 phase 3: before persisting, enrich each capture's
+    diagnostics with the suggested Kelly position size when
+    applicable. The enrichment is a no-op when no bankroll is
+    configured or when the recommendation was suppressed.
     """
     if not captures:
         return
     for capture in captures:
+        _enrich_with_kelly_sizing(db, capture)
         db.add(capture.scored.signal)
         if capture.capture_scope is None:
             continue
