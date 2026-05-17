@@ -161,6 +161,17 @@ def _persist_market_payload_records(
         ticker = payload.get("ticker")
         if not ticker:
             return False
+        # Defense in depth: even when the classifier correctly recognizes
+        # a sport, ``enabled_sports`` is the operator-controlled feature
+        # flag for whether sika should actually persist + serve that
+        # sport. PR 1 deliberately left WNBA out of the default list
+        # because the sport adapter / refresh wiring / scoring kernel
+        # land in PRs 4-6; without this gate, the WNBA market classifier
+        # added in PR 2 would otherwise persist KXWNBA markets and feed
+        # combo-prop warming with sport_key="WNBA" before
+        # ``_build_game_logs`` knows what to do with it.
+        if market_sport_key and market_sport_key not in settings.enabled_sports:
+            return False
         if metadata.get("copilot_market_family") == "player_prop":
             if market_sport_key == "NBA":
                 supported_nba_props += 1

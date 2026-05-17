@@ -158,4 +158,198 @@ def test_combo_leg_prefilter_rejects_non_target_combo_leg_ticker_metadata():
     )
 
     assert classification["supported"] is False
-    assert classification["reason"] == "unsupported_sport"
+
+
+# -- Smarter WNBA PR 2 ------------------------------------------------------
+
+
+def test_market_filter_accepts_wnba_player_prop():
+    """WNBA props share NBA's title regex + alias dict; classification
+    should produce the same shape as an NBA prop with sport_key=WNBA.
+    """
+    payload = {
+        "ticker": "KXWNBAPTS-26MAY15INDNYL-INDCCLARK22-22",
+        "event_ticker": "KXWNBAPTS-26MAY15INDNYL",
+        "title": "Caitlin Clark: 22+ points?",
+        "yes_sub_title": "Caitlin Clark: 22+",
+        "rules_primary": "If Caitlin Clark records 22+ Points in the Indiana at New York professional basketball game, then the market resolves to Yes.",
+        "primary_participant_key": "basketball_player",
+    }
+
+    classification = classify_market_payload(payload)
+
+    assert classification["supported"] is True
+    assert classification["sport_key"] == "WNBA"
+    metadata = classification["metadata"]
+    assert metadata["copilot_market_family"] == "player_prop"
+    assert metadata["copilot_stat_key"] == "points"
+    assert metadata["copilot_threshold"] == 22.0
+    assert metadata["copilot_subject_name"] == "Caitlin Clark"
+
+
+def test_market_filter_accepts_wnba_combo_prop():
+    """Combo props sum components via PROP_COMPONENT_ORDER; WNBA's
+    component order mirrors NBA's so points + rebounds + assists
+    must resolve to the canonical ``points_rebounds_assists`` stat key.
+    """
+    payload = {
+        "ticker": "KXWNBAPRA-26MAY15INDNYL-NYLBSTEWART11-35",
+        "event_ticker": "KXWNBAPRA-26MAY15INDNYL",
+        "title": "Breanna Stewart: 35+ points + rebounds + assists?",
+        "yes_sub_title": "Breanna Stewart: 35+",
+        "rules_primary": "If Breanna Stewart records 35+ total points + rebounds + assists in the Indiana vs New York professional basketball game, then the market resolves to Yes.",
+        "primary_participant_key": "basketball_player",
+    }
+
+    classification = classify_market_payload(payload)
+
+    assert classification["supported"] is True
+    assert classification["sport_key"] == "WNBA"
+    assert classification["metadata"]["copilot_stat_key"] == "points_rebounds_assists"
+
+
+def test_market_filter_accepts_wnba_made_threes_prop():
+    """Pin the alias resolution path — "made threes" / "3 pointers"
+    phrasing must resolve to the canonical ``made_threes`` stat key.
+    """
+    payload = {
+        "ticker": "KXWNBA3PM-26MAY16LVPHX-PHXBGRINER13-3",
+        "event_ticker": "KXWNBA3PM-26MAY16LVPHX",
+        "title": "Diana Taurasi: 3+ made threes?",
+        "yes_sub_title": "Diana Taurasi: 3+",
+        "rules_primary": "If Diana Taurasi records 3+ Three Pointers in the Las Vegas at Phoenix professional basketball game, then the market resolves to Yes.",
+        "primary_participant_key": "basketball_player",
+    }
+
+    classification = classify_market_payload(payload)
+
+    assert classification["supported"] is True
+    assert classification["metadata"]["copilot_stat_key"] == "made_threes"
+
+
+def test_market_filter_accepts_wnba_game_winner():
+    """Game-winner markets should classify with copilot_market_kind
+    == 'game_winner' for WNBA the same way they do for NBA / MLB.
+    """
+    payload = {
+        "ticker": "KXWNBAGAME-26MAY15INDNYL-NYL",
+        "event_ticker": "KXWNBAGAME-26MAY15INDNYL",
+        "title": "Indiana Fever at New York Liberty winner?",
+        "yes_sub_title": "New York Liberty",
+    }
+
+    classification = classify_market_payload(payload)
+
+    assert classification["supported"] is True
+    assert classification["sport_key"] == "WNBA"
+    assert classification["metadata"]["copilot_market_family"] == "winner"
+    assert classification["metadata"]["copilot_market_kind"] == "game_winner"
+
+
+def test_market_filter_accepts_wnba_spread_and_total_game_lines():
+    """Spread + total game-line title regex must accept WNBA markets.
+    Pre-PR 2 the dispatcher gated game_line metadata to
+    {NBA, NFL, MLB, SOCCER}; WNBA was added with this PR.
+    """
+    spread_payload = {
+        "ticker": "KXWNBASPREAD-26MAY15INDNYL-NYL-5_5",
+        "event_ticker": "KXWNBAGAME-26MAY15INDNYL",
+        "title": "New York Liberty wins by over 5.5 points",
+        "yes_sub_title": "New York Liberty wins by over 5.5 points",
+    }
+    total_payload = {
+        "ticker": "KXWNBATOTAL-26MAY15INDNYL-160_5",
+        "event_ticker": "KXWNBAGAME-26MAY15INDNYL",
+        "title": "Over 160.5 points scored",
+        "yes_sub_title": "Over 160.5 points scored",
+    }
+
+    spread = classify_market_payload(spread_payload)
+    total = classify_market_payload(total_payload)
+
+    assert spread["supported"] is True
+    assert spread["metadata"]["copilot_market_kind"] == "spread"
+    assert spread["metadata"]["copilot_threshold"] == 5.5
+
+    assert total["supported"] is True
+    assert total["metadata"]["copilot_market_kind"] == "total"
+    assert total["metadata"]["copilot_threshold"] == 160.5
+
+
+def test_combo_leg_prefilter_accepts_supported_wnba_prop_ticker():
+    """KXWNBA-prefixed combo legs were unsupported pre-PR 2
+    (combo_leg_metadata_prefilter gated to {NBA, MLB}). Now WNBA is in
+    the allowlist and the family code dispatcher recognizes the
+    ``KXWNBA`` prefix.
+    """
+    classification = combo_leg_metadata_prefilter(
+        {
+            "event_ticker": "KXWNBAPTS-26MAY16LVPHX",
+            "market_ticker": "KXWNBAPTS-26MAY16LVPHX-LVAJWILSON09-26",
+        }
+    )
+
+    assert classification["supported"] is True
+    assert classification["sport_key"] == "WNBA"
+    assert classification["market_family_code"] == "PTS"
+
+
+def test_combo_leg_prefilter_blocks_wnba_winner_family():
+    """Same BLOCKED prefixes as NBA (GAME / WINNER / SPREAD / TOTAL /
+    1H..4Q) — a KXWNBAGAME or KXWNBAWINNER leg must not get treated
+    as a prop combo leg.
+    """
+    classification = combo_leg_metadata_prefilter(
+        {
+            "market_ticker": "KXWNBAGAME-26MAY16LVPHX-PHX",
+        }
+    )
+
+    assert classification["supported"] is False
+    assert classification["reason"] == "unsupported_market_family"
+
+
+def test_persist_market_payload_records_skips_wnba_when_not_in_enabled_sports(db_session):
+    """Codex caught the cross-PR cliff: PR 2's classifier change
+    enables WNBA recognition, but PR 1 left WNBA OUT of default
+    ``enabled_sports`` because PRs 4-6 still need to wire the
+    sport adapter / refresh job / scoring kernel. Without an
+    ingestion-level gate, classified WNBA markets would persist and
+    feed combo-prop warming despite WNBA being feature-disabled.
+
+    Pin: with ``enabled_sports`` defaulting to NBA / NFL / MLB /
+    SOCCER / TENNIS, an otherwise-supported WNBA market payload is
+    NOT persisted by ``_persist_market_payload_records``.
+    """
+    from app.models import Market
+    from app.services.ingestion import _persist_market_payload_records
+
+    wnba_prop = {
+        "ticker": "KXWNBAPTS-26MAY15INDNYL-INDCCLARK22-22",
+        "event_ticker": "KXWNBAPTS-26MAY15INDNYL",
+        "title": "Caitlin Clark: 22+ points?",
+        "yes_sub_title": "Caitlin Clark: 22+",
+        "rules_primary": "If Caitlin Clark records 22+ Points in the Indiana at New York professional basketball game, then the market resolves to Yes.",
+        "primary_participant_key": "basketball_player",
+        "status": "active",
+    }
+
+    summary = _persist_market_payload_records(
+        db_session,
+        [
+            {
+                "payload": wnba_prop,
+                "source_type": "standalone",
+                "source_payload": None,
+                "classification_override": None,
+            }
+        ],
+    )
+    db_session.commit()
+
+    # No Market row should have been created for the WNBA ticker.
+    market = db_session.query(Market).filter(Market.ticker == wnba_prop["ticker"]).one_or_none()
+    assert market is None, "WNBA market persisted while WNBA is not in enabled_sports"
+    # The summary's NBA / MLB counters should be unchanged.
+    assert summary.get("supported_nba_props", 0) == 0
+    assert summary.get("supported_mlb_props", 0) == 0

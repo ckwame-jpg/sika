@@ -15,7 +15,15 @@ UNSUPPORTED_WINNER_CONTEXTS = (
     "set winner",
     "round winner",
 )
+# Iteration order is load-bearing here — ``infer_market_sport_key``
+# returns the FIRST sport whose hints match, and ``"NBA"`` is a
+# substring of ``"WNBA"`` (so a ``KXWNBA…`` ticker would otherwise
+# classify as NBA). Keep WNBA above NBA so the more-specific match
+# wins. If a third sport with a token that contains an existing sport
+# code lands (e.g. some hypothetical ``NBAG``), apply the same rule:
+# the longer / more-specific code goes first.
 SUPPORTED_SPORT_HINTS = {
+    "WNBA": ("WNBA",),
     "NBA": ("NBA",),
     "NFL": ("NFL",),
     "MLB": ("MLB",),
@@ -25,14 +33,23 @@ SUPPORTED_SPORT_HINTS = {
 SUPPORTED_COMBO_PROP_FAMILIES = {
     "NBA": frozenset({"PTS", "REB", "AST", "PR", "PA", "RA", "PRA", "3PM", "STL", "BLK", "TOV"}),
     "MLB": frozenset({"H", "HIT", "HITS", "R", "RUN", "RUNS", "RBI", "RBIS", "HR", "BB", "TB", "HRR"}),
+    # WNBA mirrors NBA's box-score stat set — points / rebounds / assists /
+    # made threes / steals / blocks / turnovers all map to the same ESPN
+    # gamelog payload keys (PR 3 will share _build_nba_game_logs).
+    "WNBA": frozenset({"PTS", "REB", "AST", "PR", "PA", "RA", "PRA", "3PM", "STL", "BLK", "TOV"}),
 }
 BLOCKED_COMBO_LEG_FAMILY_PREFIXES = {
     "NBA": ("GAME", "SPREAD", "TOTAL", "WINNER", "1H", "2H", "1Q", "2Q", "3Q", "4Q"),
     "MLB": ("GAME", "SPREAD", "TOTAL", "WINNER", "F5"),
+    # WNBA has the same 4-quarter game structure as NBA, plus 1H/2H halves
+    # for live-betting splits — block the same prefixes from being treated
+    # as player-prop combo legs.
+    "WNBA": ("GAME", "SPREAD", "TOTAL", "WINNER", "1H", "2H", "1Q", "2Q", "3Q", "4Q"),
 }
 KNOWN_UNSUPPORTED_COMBO_PROP_FAMILIES = {
     "NBA": frozenset(),
     "MLB": frozenset({"SO", "IP", "OUTS", "ER"}),
+    "WNBA": frozenset(),
 }
 
 PLAYER_PROP_TITLE_RE = re.compile(
@@ -90,6 +107,13 @@ MLB_PROP_ALIASES = {
     "total bases": "total_bases",
     "total base": "total_bases",
 }
+# WNBA prop stat phrases mirror NBA's — same box-score stat set, same
+# Kalshi prop title phrasing (verified for "<player>: <N>+ points" /
+# "rebounds" / "assists" / "made threes" patterns at PR 2 time). Kept as
+# a distinct dict (rather than aliased to NBA_PROP_ALIASES) so future
+# WNBA-only colloquialisms (e.g. league-specific shorthand) can land
+# without touching the NBA dict.
+WNBA_PROP_ALIASES = dict(NBA_PROP_ALIASES)
 PROP_COMPONENT_ORDER = {
     "NBA": {
         "points": 0,
@@ -108,6 +132,15 @@ PROP_COMPONENT_ORDER = {
         "walks": 4,
         "strikeouts": 5,
         "total_bases": 6,
+    },
+    "WNBA": {
+        "points": 0,
+        "rebounds": 1,
+        "assists": 2,
+        "made_threes": 3,
+        "steals": 4,
+        "blocks": 5,
+        "turnovers": 6,
     },
 }
 
@@ -171,7 +204,7 @@ def combo_leg_metadata_prefilter(payload: dict[str, Any]) -> dict[str, Any]:
     if not market_ticker:
         result["reason"] = "missing_identity"
         return result
-    if sport_key not in {"NBA", "MLB"}:
+    if sport_key not in {"NBA", "MLB", "WNBA"}:
         result["reason"] = "unsupported_sport"
         return result
     if not family_code:
@@ -297,7 +330,7 @@ def _winner_market_metadata(payload: dict[str, Any], sport_key: str, lowered_tit
 
 
 def _game_line_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, Any] | None:
-    if sport_key not in {"NBA", "NFL", "MLB", "SOCCER"}:
+    if sport_key not in {"NBA", "NFL", "MLB", "WNBA", "SOCCER"}:
         return None
 
     title = str(payload.get("title") or "").strip()
@@ -338,7 +371,7 @@ def _game_line_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, An
 
 
 def _player_prop_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, Any] | None:
-    if sport_key not in {"NBA", "MLB"}:
+    if sport_key not in {"NBA", "MLB", "WNBA"}:
         return None
 
     title = str(payload.get("title") or "").strip()
@@ -384,10 +417,17 @@ def _player_prop_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, 
     }
 
 
+_SPORT_KEY_TO_COMBO_TICKER_PREFIX = {
+    "NBA": "KXNBA",
+    "MLB": "KXMLB",
+    "WNBA": "KXWNBA",
+}
+
+
 def _combo_leg_family_code(market_ticker: str, sport_key: str | None) -> str | None:
-    if sport_key not in {"NBA", "MLB"}:
+    prefix = _SPORT_KEY_TO_COMBO_TICKER_PREFIX.get(sport_key or "")
+    if prefix is None:
         return None
-    prefix = "KXNBA" if sport_key == "NBA" else "KXMLB"
     if not market_ticker.startswith(prefix):
         return None
     family_code, _separator, _rest = market_ticker[len(prefix) :].partition("-")
@@ -403,8 +443,17 @@ def _combo_leg_has_player_prop_shape(market_ticker: str) -> bool:
     return len(parts) >= 4 and len(parts[-2]) > 4
 
 
+_PROP_ALIASES_BY_SPORT = {
+    "NBA": NBA_PROP_ALIASES,
+    "MLB": MLB_PROP_ALIASES,
+    "WNBA": WNBA_PROP_ALIASES,
+}
+
+
 def _component_stat_keys(sport_key: str, raw_phrase: str) -> list[str] | None:
-    aliases = NBA_PROP_ALIASES if sport_key == "NBA" else MLB_PROP_ALIASES
+    aliases = _PROP_ALIASES_BY_SPORT.get(sport_key)
+    if aliases is None:
+        return None
     components: list[str] = []
     for part in raw_phrase.split("+"):
         normalized = _normalize_prop_component(part)
