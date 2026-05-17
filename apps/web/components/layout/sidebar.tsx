@@ -187,7 +187,7 @@ function SyncFoot() {
 
   return (
     <div className="sync-pill" title={title}>
-      <div className="sync-orb">
+      <div className="sync-orb" aria-hidden>
         <div className="sync-core" />
       </div>
       <div className="sync-meta">
