@@ -2073,6 +2073,24 @@ def _build_scored_recommendation(
         right=right,
     )
 
+    # Smarter #21 phase 2d (PR 4) — surface the prediction-interval
+    # diagnostic on ``scoring_diagnostics`` so downstream surfaces
+    # (the trade-desk endpoint, the trade-ticket UI band) can read
+    # it from ``recommendation.scoring_diagnostics`` instead of
+    # plucking it from the signal's raw ``features`` blob. The
+    # consumer in PR 3 writes the same payload into ``features``
+    # for ML-training continuity; this copy makes the operator-
+    # facing diagnostic available without a second column lookup.
+    #
+    # The ML-inference branch below (around line 2200) rebuilds
+    # ``scoring_diagnostics`` via ``{**scoring_diagnostics, ...}``
+    # — the spread preserves the ``prediction_interval`` key
+    # because the ML branch doesn't write its own. Verified manually
+    # during PR review.
+    prediction_interval = features.get("prediction_interval")
+    if prediction_interval is not None:
+        scoring_diagnostics["prediction_interval"] = prediction_interval
+
     # Architecture #5 — compute per-group freshness policy. Penalty
     # application is DEFERRED until after the ML branch below so it
     # applies to both the heuristic path AND the ML-served confidence.

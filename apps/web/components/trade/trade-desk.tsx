@@ -295,6 +295,7 @@ function buildPlayerPropSelection(
     subjectTeam,
     statKey,
     threshold: threshold.threshold,
+    predictionInterval: threshold.prediction_interval,
   };
 }
 

@@ -393,6 +393,38 @@ class TradeDeskGameLineRead(BaseModel):
     time_to_close_minutes: int | None = None
 
 
+class PredictionIntervalRead(BaseModel):
+    """Smarter #21 phase 2d — operator-facing serialization of the
+    interval consumer's diagnostic dict (see
+    ``apps/api/app/services/scoring/interval_consumer.py``).
+
+    Surfaced on ``TradeDeskThresholdRead.prediction_interval`` so the
+    trade-ticket UI band can render the [p10, p90] range with a
+    threshold tick. The same payload also lives on
+    ``recommendation.scoring_diagnostics["prediction_interval"]`` for
+    the market-detail sheet; this schema gives the trade-desk surface
+    a strongly-typed contract instead of indexing into a generic dict.
+    """
+
+    p10: float
+    p50: float
+    p90: float
+    threshold: float
+    # Versioned source tag — currently always
+    # ``"interval_model_v1"`` (triangular CDF over the trained
+    # quantile regressors). A future phase may emit
+    # ``"interval_model_v2"`` with piecewise-linear interpolation.
+    source: str
+    # Coverage-status banding from the readiness panel / inspect-
+    # intervals CLI. ``"ok"`` is the only band where the scoring
+    # kernel actually swaps the Poisson probability for the
+    # interval-derived one; the other bands are informational.
+    coverage_status: Literal["ok", "warn", "bad", "unknown"]
+    yes_probability_from_interval: float
+    yes_probability_from_poisson: float
+    delta: float
+
+
 class TradeDeskThresholdRead(BaseModel):
     ticker: str
     threshold: float
@@ -406,6 +438,13 @@ class TradeDeskThresholdRead(BaseModel):
     kalshi_url: str | None = None
     # Smarter #24 — see ``TradeDeskGameLineRead.time_to_close_minutes``.
     time_to_close_minutes: int | None = None
+    # Smarter #21 phase 2d — prediction-interval diagnostic surfaced
+    # in ``recommendation.scoring_diagnostics["prediction_interval"]``
+    # by the scoring kernel's interval consumer (PR 3). ``None`` when
+    # no trained interval sidecar exists for this stat key, or when
+    # the artifact lookup fails. The trade-ticket UI band reads this
+    # to render the [p10, p90] range with a threshold tick.
+    prediction_interval: PredictionIntervalRead | None = None
 
 
 class TradeDeskStatGroupRead(BaseModel):
