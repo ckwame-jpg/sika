@@ -188,7 +188,7 @@ function CollapsibleAccountSection({
     <section className="min-w-0">
       <button
         type="button"
-        className="mb-2 flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left transition-colors duration-[120ms] hover:bg-surface-hover"
+        className="mb-2 flex w-full items-center justify-between gap-2 rounded px-1 py-1 text-left transition-colors duration-[120ms] hover:bg-surface-hover focus-visible:ring-focus"
         aria-label={`${title} ${count}`}
         aria-expanded={expanded}
         aria-controls={panelId}

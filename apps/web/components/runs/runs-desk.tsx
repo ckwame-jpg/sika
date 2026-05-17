@@ -116,6 +116,7 @@ export function RunsDesk() {
                       onClick={() => setSelectedRunId(run.id)}
                       className={cn(
                         "w-full rounded-xl border px-3 py-3 text-left transition-colors duration-[120ms]",
+                        "focus-visible:ring-focus",
                         selectedRunId === run.id
                           ? "border-accent/30 bg-accent/8"
                           : "border-border bg-surface-hover hover:border-border-bright",

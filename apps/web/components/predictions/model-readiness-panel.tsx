@@ -130,6 +130,7 @@ function FamilyCard({
       onClick={() => onSelect(family.family_key)}
       className={cn(
         "rounded-xl border p-3 text-left transition-colors",
+        "focus-visible:ring-focus",
         selected ? "border-foreground/20 bg-surface-hover" : "border-border bg-surface",
       )}
     >

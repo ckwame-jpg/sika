@@ -107,7 +107,7 @@ export function PlayerPropGroup({
     >
       <button
         type="button"
-        className="prop-head"
+        className="prop-head focus-visible:ring-focus"
         onClick={() => setExpanded((current) => !current)}
       >
         <ChevronRight className="prop-chev" aria-hidden />
@@ -178,7 +178,7 @@ export function PlayerPropGroup({
                             threshold,
                           )
                         }
-                        className={cn("prop-threshold-chip", threshold.is_best && "best", isSelected && "selected")}
+                        className={cn("prop-threshold-chip focus-visible:ring-focus", threshold.is_best && "best", isSelected && "selected")}
                       >
                         {thresholdLabel}
                       </button>

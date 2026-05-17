@@ -142,7 +142,7 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
             <button
               key={chip}
               type="button"
-              className="sa-prompt"
+              className="sa-prompt focus-visible:ring-focus"
               onClick={() => runSearch(chip)}
               data-testid="sa-prompt"
             >
@@ -204,7 +204,7 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
             </select>
           </div>
           <button
-            className="sa-run"
+            className="sa-run focus-visible:ring-focus"
             type="button"
             onClick={() => runSearch()}
             disabled={loading}
@@ -329,7 +329,7 @@ function StatsAnswer({ result }: { result: StatsQueryRead }) {
             <button
               key={key}
               type="button"
-              className={cn("sa-stat", isActive && "is-active", !chartable && "is-static")}
+              className={cn("sa-stat focus-visible:ring-focus", isActive && "is-active", !chartable && "is-static")}
               onClick={chartable ? () => setSelectedMetric(key) : undefined}
               disabled={!chartable}
               aria-pressed={chartable ? isActive : undefined}
