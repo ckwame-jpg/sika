@@ -209,7 +209,7 @@ def test_nba_usage_proxy_fires_when_no_advanced_data(db_session):
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     # Proxy is computed and stored even when the value lands at 1.0.
     assert features["usage_factor"] == 1.0
     # Crucial: the gate must NOT mark the proxy as superseded — there is
@@ -240,7 +240,7 @@ def test_nba_usage_proxy_skipped_when_advanced_usage_present(db_session):
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     assert features["usage_factor"] == 1.0
     assert features["usage_factor_proxy_superseded"] is True
     # Advanced USG% must have been emitted into features.
@@ -267,7 +267,7 @@ def test_nba_pace_proxy_falls_back_when_no_advanced_pace(db_session):
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     assert "pace_factor_proxy_superseded" not in features
 
 
@@ -300,7 +300,7 @@ def test_nba_pace_proxy_skipped_when_advanced_opp_pace_present(db_session, monke
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     # Advanced opponent pace must have been emitted.
     assert features["opponent_pace_recent_5"] == pytest.approx(102.0)
     # Gate must skip the box-score pace proxy.
@@ -331,7 +331,7 @@ def test_mlb_starter_proxy_fires_when_no_advanced_data(db_session):
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     # ERA proxy is None-valued because the event has no probables wiring,
     # so era_factor stays at 1.0. The supersede flag must be absent.
     assert features["starter_era_factor"] == 1.0
@@ -380,7 +380,7 @@ def test_mlb_starter_proxy_skipped_when_advanced_xfip_present(db_session, monkey
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     # Advanced xFIP must be in features.
     assert features["opposing_starter_xfip"] == pytest.approx(4.40)
     # Gate must skip the ERA proxy.
@@ -422,7 +422,7 @@ def test_mlb_pa_factor_unaffected_by_advanced_starter_data(db_session, monkeypat
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     # PA proxy still ran (uniform synthetic logs → pa_factor at exactly 1.0).
     assert "plate_appearance_factor" in features
     # And advanced data did make it into features.
@@ -473,7 +473,7 @@ def test_nba_rebounds_keeps_usage_proxy_when_replacement_not_wired(db_session, m
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     # USG% data IS in features...
     assert features["recent_usage_pct"] == pytest.approx(0.32)
     # ...but rebounds doesn't wire usage_factor_advanced, so the proxy must
@@ -513,7 +513,7 @@ def test_nba_turnovers_keeps_pace_proxy_when_replacement_not_wired(db_session, m
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     # Pace IS in features...
     assert features["opponent_pace_recent_5"] == pytest.approx(102.0)
     # ...but turnovers doesn't wire pace_factor_advanced — proxy stays.
@@ -554,7 +554,7 @@ def test_nba_made_threes_alias_routes_to_three_points_made_gating(db_session, mo
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     # Both proxies should be superseded (made_threes wires both replacements)...
     assert features.get("usage_factor_proxy_superseded") is True
     assert features.get("pace_factor_proxy_superseded") is True
@@ -596,7 +596,7 @@ def test_mlb_runs_keeps_starter_era_proxy_when_replacement_not_wired(db_session,
     )
     result = _score_player_prop(db_session, event, market, snapshot, _FakeResolver(resolved))
     assert result is not None
-    _prob, _confidence, _reasons, features = result
+    _prob, _confidence, _reasons, features, _feature_groups = result
     # xFIP IS in features...
     assert features["opposing_starter_xfip"] == pytest.approx(4.40)
     # ...but runs doesn't wire starter_factor_advanced — proxy stays.

@@ -31,6 +31,13 @@ from app.services.model_families import (
     single_family_key,
     watchlist_min_edge_for,
 )
+from app.services.scoring.feature_groups import (
+    FeatureGroupSeverity,
+    FeatureGroupSnapshot,
+    check_freshness,
+    emit_to_group,
+    serialize_feature_groups,
+)
 from app.services.parlays import ParlayCandidateInput, capture_parlay_artifacts, clear_active_parlay_watchlist
 from app.services.predictions import MODEL_NAME, OPEN_MARKET_STATUSES, capture_prediction
 from app.services.stats_query import _build_game_logs, default_season_for_sport
@@ -44,6 +51,40 @@ from app.sports.base import alias_tokens
 
 
 logger = logging.getLogger(__name__)
+
+
+def _events_ingestion_fresh_at(db: Session) -> datetime | None:
+    """Return ``last_success_at`` for the ``espn_scoreboard`` upstream
+    source — the freshness signal feeding the ``mlb_bullpen`` feature
+    group's PENALIZE policy.
+
+    The bullpen-rest helper queries Event + EventParticipant directly
+    (no per-call cache), so the staleness of the bullpen rest index
+    tracks the staleness of the events ingestion job. ``None`` means
+    we've never recorded a successful run; the freshness layer treats
+    that as opt-out (no penalty) rather than treating "no signal" as
+    "infinitely stale" — matches the conservative default behavior.
+
+    Perf note: this hits ``OperatorSetting`` once per scoring call
+    (i.e. once per market in a batch). Reviewer flagged the N+1; the
+    follow-up plumbs the value through ``_build_scored_recommendation``
+    from the batch-level entrypoint so it computes once per pass. For
+    now the per-call cost is one indexed read against a single row
+    (~1-2ms × N markets) — real but bounded; deferred.
+    """
+    # Lazy import: upstream_health uses OperatorSetting which pulls
+    # in the wider ORM surface. Local import keeps the scoring module
+    # import-time small.
+    from app.services.upstream_health import get_upstream_health  # noqa: PLC0415
+
+    # ``get_upstream_health`` is documented to always return one row
+    # per source (None-filled when never recorded). With a single
+    # ``espn_scoreboard`` source the list is always length 1; access
+    # ``[0]`` directly. ``last_success_at`` IS None when the row has
+    # never been written, which is the conservative "no signal →
+    # opt-out" path documented above.
+    snapshots = get_upstream_health(db, sources=["espn_scoreboard"])
+    return snapshots[0].last_success_at
 
 
 # Dataclasses live in ``scoring.types`` so they can be imported
@@ -891,7 +932,7 @@ def _score_player_prop(
     market: Market,
     snapshot: MarketSnapshot | None,
     resolver: PropStatsResolver,
-) -> tuple[float, float, list[str], dict[str, Any]] | None:
+) -> tuple[float, float, list[str], dict[str, Any], dict[str, FeatureGroupSnapshot]] | None:
     metadata = _market_metadata(market)
     sport_key = str(market.sport_key or event.sport_key)
     subject_name = str(metadata.get("copilot_subject_name") or "")
@@ -934,6 +975,13 @@ def _score_player_prop(
         "gamelog_cache_status": resolved.gamelog_cache_status,
         "uses_stale_prop_context": resolved.context_stale,
     }
+    # Architecture #5 — feature_groups is the source of truth for
+    # emitter-produced features; ``features`` becomes a derived view
+    # that ``emit_to_group`` keeps in sync as each group is registered.
+    # Kernel-direct writes (above + venue context below) stay in
+    # ``features`` only — they're operational metadata, not externally-
+    # refreshed cache data.
+    feature_groups: dict[str, FeatureGroupSnapshot] = {}
     reasons = [
         f"{resolved.display_name} recent 10-game {stat_key.replace('_', ' ')} average: {features['recent_10_average']:.2f}",
         f"{resolved.display_name} season {stat_key.replace('_', ' ')} average: {features['season_average']:.2f}",
@@ -1029,7 +1077,16 @@ def _score_player_prop(
         from app.services.nba_referee_tendencies import load_nba_referee_tendencies
 
         if resolved.advanced_payload:
-            features.update(emit_nba_player_features(resolved.advanced_payload))
+            emit_to_group(
+                feature_groups,
+                features,
+                "nba_advanced",
+                emit_nba_player_features(resolved.advanced_payload),
+                # Advanced-stats loader doesn't expose cached_at yet;
+                # default DEFAULT_POLICY (IGNORE, 365d) means no
+                # penalty fires regardless. Follow-up plumbs this.
+                source="load_nba_advanced",
+            )
 
         # Smarter #17 phase 3 — wire the late-breaking-injury features
         # into the scoring path. Phase 1 shipped the emitter + the
@@ -1043,15 +1100,37 @@ def _score_player_prop(
         # cache miss here yields an empty payload (the emitter
         # returns ``{}`` when the player has no entry, so the
         # downstream suppression gate never fires on missing data).
+        #
+        # Architecture #5: nba_injury group is IGNORE policy — Smarter
+        # #17's bespoke gate (OUT/DOUBTFUL + fresh report) stays
+        # authoritative for this group. The freshness layer here is
+        # passive; consolidating the bespoke gate into the registry is
+        # a follow-up.
         injury_payload = load_nba_injury_report(db, allow_network=False)
-        features.update(
-            emit_nba_injury_features(injury_payload, player_name=resolved.display_name)
+        emit_to_group(
+            feature_groups,
+            features,
+            "nba_injury",
+            emit_nba_injury_features(injury_payload, player_name=resolved.display_name),
+            source="NbaInjuryReportCache",
         )
 
         # Smarter #11: workload features from the ESPN game log. Pure
         # function read against ``resolved.game_logs`` (already in scope
         # and sorted reverse-chrono) — no network or cache reads.
-        features.update(emit_nba_workload_features(resolved.game_logs))
+        #
+        # Architecture #5: nba_workload is PENALIZE (-3% / 24h TTL).
+        # ``resolved.gamelog_cached_at`` is sourced from the
+        # EspnPlayerGamelogCache row that backs ``game_logs`` — when
+        # that row is past TTL, the freshness layer applies the penalty.
+        emit_to_group(
+            feature_groups,
+            features,
+            "nba_workload",
+            emit_nba_workload_features(resolved.game_logs),
+            fresh_at=resolved.gamelog_cached_at,
+            source="EspnPlayerGamelogCache",
+        )
 
         if opponent_entry is not None:
             opponent_name = opponent_entry.participant.display_name or ""
@@ -1066,7 +1145,13 @@ def _score_player_prop(
                     allow_network=False,
                 )
                 if opponent_team_result.payload:
-                    features.update(emit_nba_opponent_team_features(opponent_team_result.payload))
+                    emit_to_group(
+                        feature_groups,
+                        features,
+                        "nba_opponent_team",
+                        emit_nba_opponent_team_features(opponent_team_result.payload),
+                        source="NbaTeamAdvancedCache",
+                    )
                     features["opponent_team_cache_status"] = opponent_team_result.cache_status
 
         # Smarter #12: emit the usage × pace × (1 / opponent_DRtg) interaction
@@ -1081,7 +1166,10 @@ def _score_player_prop(
         # practice.
         _recent_usage = features.get("recent_usage_pct")
         _recent_pace = features.get("opponent_pace_recent_5")
-        features.update(
+        emit_to_group(
+            feature_groups,
+            features,
+            "nba_interaction",
             emit_nba_interaction_term(
                 usage_pct=(
                     _recent_usage if _recent_usage is not None
@@ -1092,7 +1180,11 @@ def _score_player_prop(
                     else features.get("opponent_pace_season")
                 ),
                 opponent_drtg=features.get("opponent_def_rating_recent_5"),
-            )
+            ),
+            # Derived from upstream nba_advanced + nba_opponent_team
+            # values; no independent cache, so fresh_at=None opts the
+            # group out of the freshness check.
+            source="emit_nba_interaction_term",
         )
 
         # Long-tail NBA features — hustle, drives, clutch — for the prop subject.
@@ -1104,15 +1196,33 @@ def _score_player_prop(
 
         if nba_stats_id:
             hustle_result = load_nba_hustle_player(db, season=resolved.season, allow_network=False)
-            features.update(emit_nba_hustle_features(hustle_result.payload, str(nba_stats_id)))
+            emit_to_group(
+                feature_groups,
+                features,
+                "nba_hustle",
+                emit_nba_hustle_features(hustle_result.payload, str(nba_stats_id)),
+                source="NbaHustleStatsCache",
+            )
 
             drives_result = load_nba_tracking(
                 db, season=resolved.season, pt_measure_type="Drives", allow_network=False
             )
-            features.update(emit_nba_drives_features(drives_result.payload, str(nba_stats_id)))
+            emit_to_group(
+                feature_groups,
+                features,
+                "nba_drives",
+                emit_nba_drives_features(drives_result.payload, str(nba_stats_id)),
+                source="NbaPlayerTrackingCache",
+            )
 
             clutch_result = load_nba_clutch_player(db, season=resolved.season, allow_network=False)
-            features.update(emit_nba_clutch_features(clutch_result.payload, str(nba_stats_id)))
+            emit_to_group(
+                feature_groups,
+                features,
+                "nba_clutch",
+                emit_nba_clutch_features(clutch_result.payload, str(nba_stats_id)),
+                source="NbaClutchStatsCache",
+            )
 
         # Smarter #13 phase 2d — referee tendency factor.
         # Phases 2a/2b shipped the daily assignments + per-season
@@ -1158,13 +1268,17 @@ def _score_player_prop(
             )
             home_entry = team_entry if team_entry.is_home else opponent_entry
             away_entry = opponent_entry if team_entry.is_home else team_entry
-            features.update(
+            emit_to_group(
+                feature_groups,
+                features,
+                "nba_referee",
                 emit_nba_referee_features(
                     assignments_payload=assignments_payload,
                     tendencies_payload=tendencies_payload,
                     away_team_name=away_entry.participant.display_name,
                     home_team_name=home_entry.participant.display_name,
-                )
+                ),
+                source="NbaRefereeAssignmentCache+NbaRefereeTendenciesCache",
             )
 
     elif resolved.sport_key.upper() == "MLB":
@@ -1190,7 +1304,13 @@ def _score_player_prop(
         if resolved.advanced_payload:
             sabermetrics = resolved.advanced_payload.get("batter_sabermetrics")
             statcast = resolved.advanced_payload.get("batter_statcast")
-            features.update(emit_mlb_batter_features(sabermetrics, statcast))
+            emit_to_group(
+                feature_groups,
+                features,
+                "mlb_batter",
+                emit_mlb_batter_features(sabermetrics, statcast),
+                source="MlbBatterSabermetricsCache+MlbBatterStatcastCache",
+            )
 
         # Bug #4: park factors are not keyed by ESPN's venue id; the
         # helper prefers venue-name match (disambiguates TBR Tropicana
@@ -1199,7 +1319,15 @@ def _score_player_prop(
         home_competitor = _competitor_for_role(event, "home")
         home_team_abbr = (home_competitor.get("team") or {}).get("abbreviation")
         park = load_park_factors_for_event(event.raw_data, home_team_abbr)
-        features.update(emit_park_features(park))
+        emit_to_group(
+            feature_groups,
+            features,
+            "mlb_park",
+            emit_park_features(park),
+            # Park factors are season-stable; IGNORE policy (default)
+            # never penalizes. fresh_at=None reflects that.
+            source="load_park_factors_for_event",
+        )
 
         venue_indoor_flag = bool(features.get("venue_indoor"))
         # Bug #4 fix: weather lookup needs lat/lon to actually return
@@ -1230,7 +1358,18 @@ def _score_player_prop(
             allow_network=False,
         )
         if weather_result.payload:
-            features.update(emit_weather_features(weather_result.payload))
+            emit_to_group(
+                feature_groups,
+                features,
+                "mlb_weather",
+                emit_weather_features(weather_result.payload),
+                # Architecture #5 — mlb_weather is PENALIZE (-5% /
+                # 6h TTL). load_weather populates cached_at on the
+                # AdvancedLoadResult for every return path; dome
+                # games return cached_at=None (no refresh lifecycle).
+                fresh_at=weather_result.cached_at,
+                source="load_weather",
+            )
             features["weather_cache_status"] = weather_result.cache_status
 
         # Opposing probable starter — name comes from ESPN's competitor
@@ -1276,11 +1415,15 @@ def _score_player_prop(
                     season=resolved.season,
                     allow_network=False,
                 )
-                features.update(
+                emit_to_group(
+                    feature_groups,
+                    features,
+                    "mlb_starter",
                     emit_mlb_pitcher_features(
                         pitcher_result.payload,
                         pitcher_statcast_result.payload,
-                    )
+                    ),
+                    source="MlbPitcherAdvancedCache+MlbPitcherStatcastCache",
                 )
 
         # Lineup context — batting-order position drives the lineup_factor.
@@ -1288,7 +1431,16 @@ def _score_player_prop(
         # to re-scan the search cache here.
         lineup_result = load_lineup_for_event(db, event_id=str(event.id))
         if lineup_result.payload and resolved.mlb_stats_id:
-            features.update(emit_lineup_features(lineup_result.payload, str(resolved.mlb_stats_id)))
+            emit_to_group(
+                feature_groups,
+                features,
+                "mlb_lineup",
+                emit_lineup_features(lineup_result.payload, str(resolved.mlb_stats_id)),
+                # IGNORE policy — Smarter #16's bespoke gate
+                # (confirmed-and-scratched suppression) stays
+                # authoritative for this group.
+                source="MlbLineupCache",
+            )
 
         # Smarter #5 — batter-vs-starter platoon factor. Resolved starter id
         # + cached splits payload + cached season OPS combine into a single
@@ -1308,12 +1460,16 @@ def _score_player_prop(
                     split_kind="vsLeftRight",
                     allow_network=False,
                 )
-                features.update(
+                emit_to_group(
+                    feature_groups,
+                    features,
+                    "mlb_platoon",
                     emit_mlb_platoon_features(
                         starter_pitch_hand,
                         splits_result.payload,
                         features.get("season_ops"),
-                    )
+                    ),
+                    source="MlbBatterSplitsCache",
                 )
 
         # Smarter #6 — opposing-bullpen rest index. Counts the opposing
@@ -1338,14 +1494,34 @@ def _score_player_prop(
                 home_games_in_window=None,
                 away_games_in_window=opp_recent,
             )
-            if bullpen_features:
-                # The scoring kernel reads ``opposing_bullpen_rest_index_3d``
-                # — alias the away_* emission so the feature name matches
-                # the matchup framing (the batter's perspective).
-                rest_index = bullpen_features.get("away_bullpen_rest_index_3d")
-                if rest_index is not None:
-                    features["opposing_bullpen_rest_index_3d"] = rest_index
-                    features["bullpen_rest_data_complete"] = 1.0
+            # The scoring kernel reads ``opposing_bullpen_rest_index_3d``
+            # — alias the away_* emission so the feature name matches
+            # the matchup framing (the batter's perspective).
+            rest_index = (
+                bullpen_features.get("away_bullpen_rest_index_3d")
+                if bullpen_features else None
+            )
+            if rest_index is not None:
+                # Architecture #5 — mlb_bullpen is PENALIZE (-5% / 4h
+                # TTL). The bullpen helper queries Event +
+                # EventParticipant directly (no per-call cache), so the
+                # "freshness" of the result depends on when the events
+                # ingestion last ran. Source that signal from
+                # upstream_health for ``espn_scoreboard`` (the source
+                # that populates MLB events). If the events ingestion
+                # is stale, the bullpen rest index is computed against
+                # an incomplete schedule window — PENALIZE fires.
+                emit_to_group(
+                    feature_groups,
+                    features,
+                    "mlb_bullpen",
+                    {
+                        "opposing_bullpen_rest_index_3d": rest_index,
+                        "bullpen_rest_data_complete": 1.0,
+                    },
+                    fresh_at=_events_ingestion_fresh_at(db),
+                    source="Event+EventParticipant (espn_scoreboard refresh)",
+                )
 
     features["advanced_cache_status"] = resolved.advanced_cache_status
 
@@ -1519,7 +1695,7 @@ def _score_player_prop(
                 "Recommendation is only valid if the player is confirmed active / in the starting lineup."
             )
 
-    return probability_yes, confidence, reasons, features
+    return probability_yes, confidence, reasons, features, feature_groups
 
 
 def _single_scoring_adjustments(
@@ -1831,11 +2007,15 @@ def _build_scored_recommendation(
     market_kind = str(metadata.get("copilot_market_kind") or "")
     market_family = str(metadata.get("copilot_market_family") or "")
 
+    # Architecture #5 — non-prop scorers don't currently call emitters;
+    # they return an empty feature_groups dict. The freshness check is a
+    # no-op for those scopes (no groups → no assessments → no penalty).
+    feature_groups: dict[str, FeatureGroupSnapshot] = {}
     if market and market_family == "player_prop":
         prop_score = _score_player_prop(db, event, market, snapshot, resolver or PropStatsResolver(db))
         if prop_score is None:
             return None
-        probability_yes, confidence, reasons, features = prop_score
+        probability_yes, confidence, reasons, features, feature_groups = prop_score
         probability_subject = str(metadata.get("copilot_subject_name") or "Player")
     elif market and market_family == "game_line":
         if not left or not right:
@@ -1880,6 +2060,43 @@ def _build_scored_recommendation(
         left=left,
         right=right,
     )
+
+    # Architecture #5 — compute per-group freshness policy. Penalty
+    # application is DEFERRED until after the ML branch below so it
+    # applies to both the heuristic path AND the ML-served confidence.
+    # Reviewer round 1 caught the original ordering as a correctness
+    # bug: the ML model was trained on historical rows and doesn't
+    # know the staleness state at inference time, so its calibrated
+    # confidence doesn't encode the per-group freshness signal — the
+    # penalty has to ride on top of whatever confidence the ML branch
+    # produces, not be overwritten by it.
+    total_freshness_delta = 0.0
+    if feature_groups:
+        freshness_now = datetime.now(timezone.utc)
+        freshness_assessments = check_freshness(feature_groups, now=freshness_now)
+        stale_groups: list[dict[str, Any]] = []
+        for assessment in freshness_assessments:
+            if assessment.is_stale:
+                stale_groups.append(
+                    {
+                        "group_key": assessment.group_key,
+                        "severity": assessment.severity.value,
+                        "age_seconds": (
+                            int(assessment.age.total_seconds())
+                            if assessment.age is not None else None
+                        ),
+                        "confidence_delta": assessment.confidence_delta,
+                    }
+                )
+                total_freshness_delta += assessment.confidence_delta
+        # Always surface the serialized feature_groups + stale-group
+        # diagnostics so operators can audit freshness even when no
+        # penalty fires.
+        scoring_diagnostics["feature_groups"] = serialize_feature_groups(feature_groups)
+        if stale_groups:
+            scoring_diagnostics["freshness_stale_groups"] = stale_groups
+        if total_freshness_delta != 0.0:
+            scoring_diagnostics["freshness_confidence_delta"] = round(total_freshness_delta, 4)
 
     runtime_decision = None
     active_lineage = HEURISTIC_SINGLE_MODEL
@@ -1929,6 +2146,19 @@ def _build_scored_recommendation(
                 reasons = [*reasons, f"Served by heuristic fallback because ML was unavailable: {runtime_decision.last_error}"]
             else:
                 scoring_diagnostics["serving_mode"] = "heuristic"
+
+    # Architecture #5 — apply the per-group freshness penalty AFTER
+    # the ML branch overrides confidence. Reviewer round 1 caught
+    # the original ordering as a correctness bug: putting this
+    # before the ML branch meant ``ml_result.confidence`` silently
+    # discarded the penalty on the ML path, even though the model
+    # was trained on historical rows and doesn't know the staleness
+    # state of the current scoring call. Applying here means the
+    # penalty rides on top of whatever confidence the kernel chose
+    # (heuristic or ML), bounded so a deep penalty can't push below
+    # zero.
+    if total_freshness_delta != 0.0:
+        confidence = max(0.0, round(confidence + total_freshness_delta, 4))
 
     fair_yes_price = round(probability_yes, 4)
     fair_no_price = round(1 - probability_yes, 4)

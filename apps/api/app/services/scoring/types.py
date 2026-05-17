@@ -10,6 +10,7 @@ package to import from a single canonical location.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 from app.models import Market, Recommendation, SignalSnapshot
@@ -42,6 +43,14 @@ class ResolvedPropSubject:
     # cache. ``None`` until the resolver runs and finds a match.
     nba_stats_id: str | None = None
     mlb_stats_id: str | None = None
+    # Architecture #5 — when the underlying gamelog cache row was last
+    # refreshed. Feeds ``FeatureGroupSnapshot.fresh_at`` for the
+    # ``nba_workload`` group so the freshness layer can compute real
+    # staleness against the 24h PENALIZE TTL. ``None`` means we
+    # haven't seen the cache row (network-only path or miss-without-
+    # cache); the freshness check treats that as opt-out, falling
+    # through to no penalty — same conservative behavior as before.
+    gamelog_cached_at: datetime | None = None
 
 
 @dataclass(slots=True)

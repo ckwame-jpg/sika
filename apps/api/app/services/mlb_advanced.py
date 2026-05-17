@@ -820,16 +820,34 @@ def load_weather(
             "temp_f": 72.0, "wind_speed_mph": 0.0, "wind_dir_deg": 0.0,
             "precip_pct": 0.0, "humidity_pct": 50.0, "is_dome": True, "source": "dome",
         }
-        return AdvancedLoadResult(payload=payload, cache_status="dome", complete=True)
+        # Architecture #5 — dome forecasts don't have a refresh
+        # lifecycle (fixed values), so fresh_at=None opts out of the
+        # freshness check entirely. Dome games never get penalized
+        # for "stale weather" — the value is constant by construction.
+        return AdvancedLoadResult(payload=payload, cache_status="dome", complete=True, cached_at=None)
 
     cached = (
         db.query(MlbWeatherCache).filter(MlbWeatherCache.event_id == str(event_id)).one_or_none()
     )
     if cached is not None and (_coerce_utc(cached.expires_at) or moment) > moment:
-        return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="hit", complete=True)
+        # Architecture #5 — surface when the cache row was written so
+        # the kernel can build a FeatureGroupSnapshot with the correct
+        # fresh_at; the freshness layer's policy (currently 6h TTL,
+        # -5% confidence on stale) reads this.
+        return AdvancedLoadResult(
+            payload=dict(cached.payload or {}),
+            cache_status="hit",
+            complete=True,
+            cached_at=_coerce_utc(cached.cached_at),
+        )
     if not allow_network or not settings.advanced_stats_enabled:
         if cached is not None:
-            return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
+            return AdvancedLoadResult(
+                payload=dict(cached.payload or {}),
+                cache_status="stale",
+                complete=True,
+                cached_at=_coerce_utc(cached.cached_at),
+            )
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
     if lat is None or lon is None or game_time_utc is None:
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
@@ -840,7 +858,12 @@ def load_weather(
     except Exception as exc:  # noqa: BLE001
         logger.warning("Weather fetch failed for event %s: %s", event_id, exc)
         if cached is not None:
-            return AdvancedLoadResult(payload=dict(cached.payload or {}), cache_status="stale", complete=True)
+            return AdvancedLoadResult(
+                payload=dict(cached.payload or {}),
+                cache_status="stale",
+                complete=True,
+                cached_at=_coerce_utc(cached.cached_at),
+            )
         return AdvancedLoadResult(payload={}, cache_status="miss", complete=False)
 
     if cached is None:
@@ -857,7 +880,8 @@ def load_weather(
         cached.cached_at = moment
         cached.expires_at = moment + ttl
     db.flush()
-    return AdvancedLoadResult(payload=payload, cache_status="miss", complete=True)
+    # Just-fetched payload — cached_at is "now" by construction.
+    return AdvancedLoadResult(payload=payload, cache_status="miss", complete=True, cached_at=moment)
 
 
 # -----------------------------------------------------------------------------
