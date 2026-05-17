@@ -256,6 +256,63 @@ def test_family_definitions_include_wnba_props_and_singles() -> None:
     assert wnba_singles.study_track == "active"
 
 
+def test_prop_value_from_raw_handles_wnba_made_threes_and_combo() -> None:
+    """Codex PR 4 round 1 (HIGH → fixed): pre-fix, ``_prop_value_from_raw``
+    only handled NBA explicitly. WNBA props for ``made_threes`` and
+    combo stat keys (``points_rebounds_assists``) silently scored
+    expected = 0 because WNBA fell through to ``raw.get(stat_key, 0)``
+    — and ``made_threes`` isn't a raw_metrics key (the canonical key
+    is ``three_points_made``). PR 2 explicitly supports KXWNBA3PM and
+    KXWNBAPRA markets, so this would zero out every such recommendation.
+
+    Fix: widen the basketball branch from {NBA} to {NBA, WNBA} so the
+    canonical stat-key → raw-metric aliasing fires for WNBA too.
+    """
+    from app.services.scoring import _prop_value_from_raw
+
+    raw = {
+        "points": 24.0,
+        "rebounds": 5.0,
+        "assists": 7.0,
+        "three_points_made": 4.0,
+        "steals": 1.0,
+        "blocks": 0.0,
+        "turnovers": 3.0,
+    }
+    # made_threes alias must resolve to three_points_made for WNBA.
+    assert _prop_value_from_raw("WNBA", "made_threes", raw) == 4.0
+    # Combo stat key must sum the right components.
+    assert _prop_value_from_raw("WNBA", "points_rebounds_assists", raw) == 36.0
+    assert _prop_value_from_raw("WNBA", "points_rebounds", raw) == 29.0
+    assert _prop_value_from_raw("WNBA", "rebounds_assists", raw) == 12.0
+    # Singles still work after the widening.
+    assert _prop_value_from_raw("WNBA", "points", raw) == 24.0
+    assert _prop_value_from_raw("WNBA", "rebounds", raw) == 5.0
+    # NBA paths are unchanged by the widening.
+    assert _prop_value_from_raw("NBA", "made_threes", raw) == 4.0
+    assert _prop_value_from_raw("NBA", "points_rebounds_assists", raw) == 36.0
+
+
+def test_gamelog_ttl_uses_wnba_setting_for_wnba_sport_key() -> None:
+    """Codex PR 4 round 1 (Medium → fixed): the resolver's
+    ``_gamelog_ttl`` only special-cased NBA, so WNBA fell back to the
+    MLB cache TTL. PR 1 added ``wnba_prop_gamelog_cache_minutes``;
+    this test pins that the resolver actually uses it.
+    """
+    from app.config import get_settings
+    from app.services.scoring.resolver import PropStatsResolver
+
+    settings = get_settings()
+    resolver = PropStatsResolver(db=None)  # ttl helper doesn't touch the db
+
+    wnba_ttl = resolver._gamelog_ttl("WNBA")
+    nba_ttl = resolver._gamelog_ttl("NBA")
+    mlb_ttl = resolver._gamelog_ttl("MLB")
+    assert wnba_ttl == timedelta(minutes=settings.wnba_prop_gamelog_cache_minutes)
+    assert nba_ttl == timedelta(minutes=settings.nba_prop_gamelog_cache_minutes)
+    assert mlb_ttl == timedelta(minutes=settings.mlb_prop_gamelog_cache_minutes)
+
+
 def test_single_heuristic_profiles_include_wnba_props_and_singles() -> None:
     """Heuristic-path scoring keys off ``SINGLE_HEURISTIC_PROFILES``
     via ``_profile_for_single_family``. Without the WNBA entries the

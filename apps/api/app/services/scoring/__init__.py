@@ -471,7 +471,7 @@ def _score_team_winner(
     left_avg_score = _avg_score(left_results)
     right_avg_score = _avg_score(right_results)
     score_gap = left_avg_score - right_avg_score
-    home_advantage = 0.03 if event.sport_key in {"NBA", "NFL", "MLB", "SOCCER"} and left.is_home else 0.0
+    home_advantage = 0.03 if event.sport_key in {"NBA", "NFL", "MLB", "WNBA", "SOCCER"} and left.is_home else 0.0
     left_rest_days = float(left_schedule.get("days_rest") or 0.0)
     right_rest_days = float(right_schedule.get("days_rest") or 0.0)
     rest_edge = clamp((left_rest_days - right_rest_days) * 0.015, -0.05, 0.05)
@@ -803,7 +803,13 @@ def _score_game_line(
 
 
 def _prop_value_from_raw(sport_key: str, stat_key: str, raw: dict[str, float]) -> float:
-    if sport_key == "NBA":
+    # WNBA shares NBA's basketball stat surface 1:1 (PR 3 wired
+    # _build_game_logs to dispatch WNBA → _nba_raw_metrics_from_stat_map).
+    # Without WNBA in this branch, codex caught that WNBA props like
+    # made_threes (which alias to three_points_made) and combo props
+    # like points_rebounds_assists would silently score expected = 0
+    # — a HIGH-severity correctness bug for any WNBA 3PM / PRA market.
+    if sport_key in {"NBA", "WNBA"}:
         if stat_key == "points":
             return raw.get("points", 0.0)
         if stat_key == "rebounds":

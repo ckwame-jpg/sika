@@ -122,8 +122,14 @@ class PropStatsResolver:
 
     def _gamelog_ttl(self, sport_key: str) -> timedelta:
         settings = get_settings()
-        if sport_key.upper() == "NBA":
+        sport = sport_key.upper()
+        if sport == "NBA":
             return timedelta(minutes=settings.nba_prop_gamelog_cache_minutes)
+        # WNBA has its own TTL setting from PR 1; without this branch
+        # WNBA stale-context status would lag the MLB fallback (codex
+        # PR 4 review Medium).
+        if sport == "WNBA":
+            return timedelta(minutes=settings.wnba_prop_gamelog_cache_minutes)
         return timedelta(minutes=settings.mlb_prop_gamelog_cache_minutes)
 
     def _load_player_search(

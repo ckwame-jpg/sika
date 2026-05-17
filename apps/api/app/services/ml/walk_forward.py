@@ -308,12 +308,20 @@ def _build_single_predicate(family_key: str):
     if definition.scope != "single":
         return None
     sport = definition.sport_scope.upper()
-    if family_key in ("nba_props", "mlb_props"):
+    # WNBA families share the same shape as NBA/MLB (single-sport, scope
+    # determined by family suffix). Including wnba_props / wnba_singles
+    # here ensures walk-forward backtests against WNBA rows return real
+    # predicates once WNBA settled rows accumulate. Without this branch
+    # the helper returns None for WNBA and short-circuits to an empty
+    # walk-forward — the insufficient-history gate elsewhere still
+    # blocks promotion either way, but the readiness panel would show
+    # "no walk-forward data" instead of "insufficient history".
+    if family_key in ("nba_props", "mlb_props", "wnba_props"):
         return and_(
             Prediction.sport_key == sport,
             Prediction.market_family == "player_prop",
         )
-    if family_key in ("nba_singles", "mlb_singles"):
+    if family_key in ("nba_singles", "mlb_singles", "wnba_singles"):
         # "singles" excludes player_prop (which has its own family)
         # — anything else (winner, total, spread) belongs here.
         return and_(
