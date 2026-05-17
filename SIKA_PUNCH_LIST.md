@@ -1,4 +1,4 @@
-# Sika Punch List — 2026-05-12 (audit base) · last reconciled 2026-05-17 EOD
+# Sika Punch List — 2026-05-12 (audit base) · last reconciled 2026-05-17 late-night
 
 Merged from two independent audits (codex deep pass + claude deep pass, plus an earlier capped codex pass). Three suspect single-agent findings were verified against the actual source before inclusion (marked **✓ verified**).
 
@@ -6,7 +6,7 @@ Merged from two independent audits (codex deep pass + claude deep pass, plus an 
 
 **The `[ ]` checkboxes below are stale relative to merged work.** Roughly 80+ items shipped after the audit base date without their checkbox being flipped.
 
-**Authoritative open-items list:** [`PUNCH_LIST_STATE_2026_05_17.md`](PUNCH_LIST_STATE_2026_05_17.md) — reconciled against `git log origin/main` as of 2026-05-17 EOD. Read it first. (Prior snapshot: [`PUNCH_LIST_STATE_2026_05_16.md`](PUNCH_LIST_STATE_2026_05_16.md).)
+**Authoritative open-items list:** [`PUNCH_LIST_STATE_2026_05_17.md`](PUNCH_LIST_STATE_2026_05_17.md) — reconciled against `git log origin/main` as of 2026-05-17 late-night (post-design-system-cleanup batch). Read it first. (Prior snapshot: [`PUNCH_LIST_STATE_2026_05_16.md`](PUNCH_LIST_STATE_2026_05_16.md).)
 
 **Truly-open list as of the last reconciliation** (none block sport expansion):
 1. **Smarter #28 + #30 override registries** — mechanism shipped; populating needs Smarter #2 backtest data, not code.
@@ -16,6 +16,7 @@ Merged from two independent audits (codex deep pass + claude deep pass, plus an 
 
 **Recently completed:**
 - **WNBA sport expansion** — **COMPLETE (8/8 PRs).** [sika#177](https://github.com/ckwame-jpg/sika/pull/177), [sika#178](https://github.com/ckwame-jpg/sika/pull/178), [sika#181](https://github.com/ckwame-jpg/sika/pull/181), [sika#183](https://github.com/ckwame-jpg/sika/pull/183), [sika#184](https://github.com/ckwame-jpg/sika/pull/184), [sika#188](https://github.com/ckwame-jpg/sika/pull/188), [sika#192](https://github.com/ckwame-jpg/sika/pull/192), [sika#193](https://github.com/ckwame-jpg/sika/pull/193).
+- **Design system drift cleanup** — **FULLY RESOLVED (12 PRs).** Every drift item in [`apps/web/DESIGN_SYSTEM.md`](apps/web/DESIGN_SYSTEM.md) §§5.1–5.5, 6.1–6.5, and 9 closed via [sika#196](https://github.com/ckwame-jpg/sika/pull/196)–#205 (excluding #206 = WNBA cleanup) + [sika#207](https://github.com/ckwame-jpg/sika/pull/207) + [sika#208](https://github.com/ckwame-jpg/sika/pull/208). Tier-1 redesigns + new Tailwind tokens + new primitives + a11y closure + JSDoc disambiguation + orphan-token cleanup. Not roadmap-scoped (no Smarter / Architecture number) but unblocks future UI work from re-deriving conventions.
 
 **Sport expansion next up:** **NFL.** 2026 NFL season kicks off ~2026-09-04 (~3.5 months out). 8-PR sequence similar to WNBA, but structurally messier — separate stat lines for passing / rushing / receiving instead of basketball semantics. Recommended start window: now-to-mid-June so there's runway to tune against last season's data before kickoff.
 

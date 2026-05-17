@@ -2,18 +2,21 @@
 
 `SIKA_PUNCH_LIST.md` checkboxes drifted behind merged work. This is the reconciled state — drop into the main punch list at your pace, or use this as the authoritative open-items list until you do.
 
-**Last refreshed:** 2026-05-17 EOD (after PRs #182-#205 landed; supersedes the early-2026-05-17 snapshot of this file).
+**Last refreshed:** 2026-05-17 late-night (after PRs #182-#208 landed; supersedes the early-2026-05-17 + EOD snapshots of this file).
 
 ## Headline
 
 **WNBA sport-expansion is COMPLETE (8 of 8 PRs merged).** The 2026 WNBA season started 2026-05-08 and runs through October; a fresh sika deployment now fetches WNBA events from ESPN, persists KXWNBA Kalshi markets, scores them with the WNBA branch + workload + injury features wired, and surfaces them in the trade desk + `/product/freshness` with the right operator-facing copy.
 
-| Prior open item | Status as of 2026-05-17 EOD | Evidence |
+**Design system audit (started [sika#194](https://github.com/ckwame-jpg/sika/pull/194) earlier today) is now FULLY RESOLVED.** A 12-PR cleanup batch closed every drift category flagged in [`apps/web/DESIGN_SYSTEM.md`](apps/web/DESIGN_SYSTEM.md) §5, §6, and §9: tier-1 surface redesigns ([sika#196](https://github.com/ckwame-jpg/sika/pull/196) + [#198](https://github.com/ckwame-jpg/sika/pull/198) + [#199](https://github.com/ckwame-jpg/sika/pull/199)), new Tailwind tokens ([#200](https://github.com/ckwame-jpg/sika/pull/200), [#201](https://github.com/ckwame-jpg/sika/pull/201)), new primitives ([#202](https://github.com/ckwame-jpg/sika/pull/202) `EmptyState` + `LoadingState`), a11y closures ([#203](https://github.com/ckwame-jpg/sika/pull/203) focus-visible audit, [#207](https://github.com/ckwame-jpg/sika/pull/207) decorative-orb `aria-hidden`), and documentation cleanup ([#197](https://github.com/ckwame-jpg/sika/pull/197), [#204](https://github.com/ckwame-jpg/sika/pull/204), [#205](https://github.com/ckwame-jpg/sika/pull/205), [#208](https://github.com/ckwame-jpg/sika/pull/208)). Not a sika-roadmap item per se (no Smarter / Architecture number), but unblocks future UI work from re-deriving conventions.
+
+| Prior open item | Status as of late 2026-05-17 | Evidence |
 |---|---|---|
 | WNBA sport expansion (was 3/8) | **COMPLETE (8/8)** | [sika#183](https://github.com/ckwame-jpg/sika/pull/183) scoring kernel, [sika#184](https://github.com/ckwame-jpg/sika/pull/184) training pipeline, [sika#188](https://github.com/ckwame-jpg/sika/pull/188) enabled-by-default wiring, [sika#192](https://github.com/ckwame-jpg/sika/pull/192) injury endpoint, [sika#193](https://github.com/ckwame-jpg/sika/pull/193) operator UX polish |
-| Smarter #22 feature freshness SLAs | **PR A shipped + freshness audit panel shipped** | [sika#186](https://github.com/ckwame-jpg/sika/pull/186) operator-facing badge surfaces stale-group + confidence-delta diagnostics on the trade ticket; [sika#190](https://github.com/ckwame-jpg/sika/pull/190) freshness calibration audit panel. PR B (policy registry expansion) gated on operator observation per [`SMARTER_22_TUNING_PLAYBOOK.md`](SMARTER_22_TUNING_PLAYBOOK.md). |
+| Smarter #22 feature freshness SLAs | **PR A shipped + freshness audit panel shipped + components retro-redesigned** | [sika#186](https://github.com/ckwame-jpg/sika/pull/186) operator-facing badge; [sika#190](https://github.com/ckwame-jpg/sika/pull/190) freshness calibration audit panel; [sika#196](https://github.com/ckwame-jpg/sika/pull/196) badge + interval-band retro-redesign to cosmos quality bar. PR B (policy registry expansion) gated on operator observation per [`SMARTER_22_TUNING_PLAYBOOK.md`](SMARTER_22_TUNING_PLAYBOOK.md). |
 | Smarter #28 + #30 override registries | **mechanism-only (unchanged)** | Still awaiting Smarter #2 backtest output to populate; not a code task |
 | Smarter #21 phase 2d coverage-band expansion | **unchanged (ops cadence)** | 2 of 7 trained stat keys in `ok` band; more migrate as games settle |
+| Design system drift (§§5.1-5.5, 6.1-6.5, 9 in [`DESIGN_SYSTEM.md`](apps/web/DESIGN_SYSTEM.md)) | **FULLY RESOLVED** | 12-PR cleanup batch — see headline + Recently-shipped-PRs table below |
 
 Earlier in the day (covered in the prior snapshot): Smarter #21 phase 2d shipped, Architecture #5 + follow-ups shipped, Smarter #13 phase 2b-2 shipped, WNBA PRs 1-3 shipped.
 
@@ -104,10 +107,18 @@ Nothing on this list blocks the active NBA + MLB + WNBA ship target.
 | [#191](https://github.com/ckwame-jpg/sika/pull/191) | docs | Point Smarter #22 playbook at the audit panel |
 | [#192](https://github.com/ckwame-jpg/sika/pull/192) | WNBA | WNBA injury endpoint + suppression gate — new `WnbaInjuryReportCache`, parallel `wnba_injury` SUPPRESS-policy entry, scoring kernel emit, `wnba_injury_refresh` job kind + cron (PR 7 of 8) |
 | [#193](https://github.com/ckwame-jpg/sika/pull/193) | WNBA | Operator UX polish — `PRODUCT_SLATE_NO_CANDIDATES_REASON` + health-status banners updated to "NBA/MLB/WNBA"; mappings-desk `SPORT_PRESETS` widened; missing `wnba` badge variant added (PR 8 of 8 — **WNBA sequence complete**) |
+| [#194](https://github.com/ckwame-jpg/sika/pull/194) | docs | `apps/web/DESIGN_SYSTEM.md` — initial audit + documentation (foundation for the late-night drift-cleanup batch) |
+| [#195](https://github.com/ckwame-jpg/sika/pull/195) | docs | Session handoff 2026-05-17 + spawn prompt |
+| [#196](https://github.com/ckwame-jpg/sika/pull/196) | web refactor | Retro-redesign trade-ticket freshness badge + interval band to cosmos quality bar (DESIGN_SYSTEM.md §5.3) |
+| [#197](https://github.com/ckwame-jpg/sika/pull/197) | docs | Mark `DESIGN_SYSTEM.md` §5.3 resolved post-sika#196 |
+| [#198](https://github.com/ckwame-jpg/sika/pull/198) | web refactor | Adopt orphaned `.cosmos-chip` utility on Settings page (DESIGN_SYSTEM.md §9 rec 7) |
 | [#199](https://github.com/ckwame-jpg/sika/pull/199) | web refactor | Mappings desk redesign with `cosmos-chip` + mobile polish |
-| [#200](https://github.com/ckwame-jpg/sika/pull/200) | web refactor | Add `text-2xs` + `text-3xs` Tailwind utilities |
-| [#201](https://github.com/ckwame-jpg/sika/pull/201) | web refactor | Add `bg-surface-soft` + `border-surface-soft` tokens |
-| [#202](https://github.com/ckwame-jpg/sika/pull/202) | web | `EmptyState` + `LoadingState` primitives |
-| [#203](https://github.com/ckwame-jpg/sika/pull/203) | web refactor | Add `focus-visible:ring-focus` to bare buttons |
+| [#200](https://github.com/ckwame-jpg/sika/pull/200) | web refactor | Add `text-2xs` + `text-3xs` Tailwind utilities (DESIGN_SYSTEM.md §5.1) |
+| [#201](https://github.com/ckwame-jpg/sika/pull/201) | web refactor | Add `bg-surface-soft` + `border-surface-soft` tokens (DESIGN_SYSTEM.md §5.2) |
+| [#202](https://github.com/ckwame-jpg/sika/pull/202) | web | `EmptyState` + `LoadingState` primitives (DESIGN_SYSTEM.md §5.4 + §6.1 + §6.2) |
+| [#203](https://github.com/ckwame-jpg/sika/pull/203) | web refactor | Add `focus-visible:ring-focus` to 19 bare buttons (DESIGN_SYSTEM.md §6.5) |
 | [#204](https://github.com/ckwame-jpg/sika/pull/204) | docs | Mark resolved drift items in `DESIGN_SYSTEM.md` |
-| [#205](https://github.com/ckwame-jpg/sika/pull/205) | web refactor | JSDoc Badge / outcome-pill + delete orphaned tokens |
+| [#205](https://github.com/ckwame-jpg/sika/pull/205) | web refactor | JSDoc Badge / outcome-pill + delete orphaned tokens (DESIGN_SYSTEM.md §5.5 + §9 rec 6) |
+| [#206](https://github.com/ckwame-jpg/sika/pull/206) | docs | Punch-list refresh from a parallel WNBA-cleanup session (sets EOD baseline of this file) |
+| [#207](https://github.com/ckwame-jpg/sika/pull/207) | web | Close §6.3 + §6.4 a11y cross-cuts — decorative-orb `aria-hidden` + status-pill audit |
+| [#208](https://github.com/ckwame-jpg/sika/pull/208) | docs | Fix stale PR reference in `DESIGN_SYSTEM.md` summary |
