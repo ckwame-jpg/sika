@@ -25,14 +25,10 @@ const EXAMPLES: Record<SportKey, string[]> = {
   TENNIS: ["Novak Djokovic last 5 matches", "Carlos Alcaraz this season"],
 };
 
-// PR 1 scaffolding gates WNBA out of the Stats Assistant dropdown
-// until PR 3 ships the `/stats/query` backend WNBA branch
-// (`_METRIC_LABELS`, `_build_game_logs`, `_build_summary_metrics`).
-// Without this filter the dropdown would expose WNBA but the API
-// would 400 on every query. Remove this gate when PR 3 lands.
-const STATS_SUPPORTED_SPORTS: ReadonlySet<SportKey> = new Set([
-  "NBA", "NFL", "MLB", "SOCCER", "TENNIS",
-]);
+// Smarter WNBA PR 3 wired the /stats/query backend WNBA branch
+// (`_METRIC_LABELS`, `_build_game_logs`, `_build_summary_metrics`,
+// `default_season_for_sport`), so WNBA is now safe to expose here.
+// The dropdown reads from SPORT_LABELS directly — no longer gated.
 
 const SEASON_OPTIONS = ["2026-27", "2025-26", "2024-25", "2023-24", "2022-23"];
 
@@ -48,6 +44,15 @@ function defaultSeasonForSport(sport: SportKey, today: Date = new Date()): strin
   if (sport === "NBA" || sport === "TENNIS") {
     const endYear = month >= 10 ? year + 1 : year;
     return `${endYear - 1}-${String(endYear).slice(2)}`;
+  }
+  // WNBA mirrors the backend's ``default_season_for_sport`` rollover at
+  // month >= 5. May → Sept tag as the current calendar year; Jan → Apr
+  // roll back to the previous season's year. Without this, an offseason
+  // UI query would send next-year season to the API, which would 404
+  // against the not-yet-started season.
+  if (sport === "WNBA") {
+    const startYear = month >= 5 ? year : year - 1;
+    return `${startYear}-${String(startYear + 1).slice(2)}`;
   }
   // MLB/NFL/Soccer/UFC: use the calendar-year start that's currently active.
   // MLB starts in March; before March, the previous calendar year is still
@@ -181,11 +186,9 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
               aria-label="Sport"
               data-testid="sa-sport"
             >
-              {(Object.entries(SPORT_LABELS) as Array<[SportKey, string]>)
-                .filter(([key]) => STATS_SUPPORTED_SPORTS.has(key))
-                .map(([key, label]) => (
-                  <option key={key} value={key}>{label}</option>
-                ))}
+              {(Object.entries(SPORT_LABELS) as Array<[SportKey, string]>).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
             </select>
           </div>
           <div className="sa-select">

@@ -669,7 +669,7 @@ def _parse_gamelog_entries(
     unsupported sports or malformed payloads. Mirrors the narrow slice
     we need from ``apps/api/app/services/stats_query.py:_build_game_logs``
     (see module docstring for the cross-app rationale)."""
-    if sport_key not in {"NBA", "MLB"}:
+    if sport_key not in {"NBA", "MLB", "WNBA"}:
         return []
     stat_names = list(payload.get("names") or [])
     events_metadata = dict(payload.get("events") or {})
@@ -689,10 +689,10 @@ def _parse_gamelog_entries(
                     name: stats[index] if index < len(stats) else None
                     for index, name in enumerate(stat_names)
                 }
-                if sport_key == "NBA":
-                    raw_metrics = _nba_raw_metrics_from_stat_map(stat_map)
-                else:  # MLB
+                if sport_key == "MLB":
                     raw_metrics = _mlb_raw_metrics_from_stat_map(stat_map)
+                else:  # NBA + WNBA share the same payload shape
+                    raw_metrics = _nba_raw_metrics_from_stat_map(stat_map)
                 games.append((game_date, raw_metrics))
     return games
 
@@ -786,7 +786,12 @@ def _stat_value_from_raw_metrics(
 def _direct_lookup(
     sport_key: str, key: str, raw_metrics: dict[str, float | None],
 ) -> float | None:
-    table = _NBA_STAT_TO_RAW if sport_key == "NBA" else _MLB_STAT_TO_RAW
+    # WNBA shares NBA's stat-to-raw mapping (both reuse
+    # ``_nba_raw_metrics_from_stat_map``); MLB has its own.
+    if sport_key == "MLB":
+        table = _MLB_STAT_TO_RAW
+    else:
+        table = _NBA_STAT_TO_RAW
     raw_field = table.get(key)
     if raw_field is None:
         return None
