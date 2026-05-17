@@ -41,12 +41,29 @@ interface BadgeProps
   extends React.HTMLAttributes<HTMLSpanElement>,
     VariantProps<typeof badgeVariants> {}
 
+/**
+ * General-purpose label chip. Use for non-status labels: sport tags,
+ * mode indicators, count badges, confidence-band hints, anything
+ * that's a categorical / informational signal.
+ *
+ * **For settled-outcome semantics (won / lost / pending / cancelled)
+ * use the `.outcome-pill` CSS class instead** — its color tokens are
+ * tuned for outcome states (`--color-cosmos-outcome-*`) and it carries
+ * the established sika status-chip shape.
+ *
+ * Disambiguation reference: DESIGN_SYSTEM.md §3 (Badge vs outcome-pill).
+ */
 export function Badge({ className, variant, ...props }: BadgeProps) {
   return (
     <span className={cn(badgeVariants({ variant }), className)} {...props} />
   );
 }
 
+/**
+ * Sport-tinted badge. Picks the variant from the sport key
+ * (`nba` → `bg-sport-nba/10` etc.) and renders the sport name
+ * in uppercase. Use anywhere a sport label needs to read at a glance.
+ */
 export function SportBadge({ sport }: { sport: string }) {
   const key = sport.toLowerCase() as BadgeVariant;
   return (

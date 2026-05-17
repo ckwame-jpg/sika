@@ -156,16 +156,19 @@ Usage: `shadow-surface`, `shadow-elevated`, `shadow-glow-accent`. **Use `shadow-
 
 Plus custom keyframes for decorative effects: `lo-spin`, `nav-orbit`, `live-pulse`, `stats-orb-pulse`. Standard transitions use `transition-colors duration-[120ms]` (140ms is the de-facto interaction speed).
 
-### 1.6 Orphaned / under-used tokens (drift report seed)
+### 1.6 Orphaned / under-used tokens
 
-These are defined but appear in 0 components by search:
+**Cleaned up 2026-05-17** via the §9 rec 6 follow-up PR. Three orphaned tokens deleted from `globals.css`:
 
-- `--color-cosmos-violet-avatar-top`, `--color-cosmos-violet-avatar-bottom` (avatar pattern not present)
-- `--color-cosmos-hero-shadow` (only used in one inline gradient)
-- `--color-cosmos-stats-white` (could likely be replaced with `--color-cosmos-text-bright`)
-- `--shadow-glow-positive` (defined but no consumers found via grep)
+- ~~`--color-cosmos-violet-avatar-top`~~ + ~~`--color-cosmos-violet-avatar-bottom`~~ — avatar pattern not present; truly unused
+- ~~`--shadow-glow-positive`~~ — defined but no consumers found
+- ~~`--color-cosmos-stats-white`~~ — was an alias for `hsl(0 0% 100%)` identical to `--color-cosmos-text-bright`; the 2 consumers (in `.crumb-orb` gradient + `.stats-run-btn` color) swapped to the canonical token
 
-**Action:** when you add a new pattern, prefer renaming/repurposing one of these over creating a 71st cosmos token. If the orphan stays orphaned across two sessions, delete it.
+**Still present** (has at least one real consumer; left alone):
+
+- `--color-cosmos-hero-shadow` — used in one radial-gradient at `globals.css:638`. Single consumer but real; keep.
+
+**Action when adding a new pattern:** prefer renaming/repurposing an existing token over creating a 71st cosmos token. If an orphan accumulates across two sessions, delete it.
 
 ---
 
@@ -529,11 +532,14 @@ Migrated `events-feed.tsx` + `predictions-desk.tsx` error states to `<EmptyState
 
 The `<RefreshCw className="animate-spin" />` inline-button spinners (4 occurrences) are NOT migrated — they're action-button context, not section-loader context. Adding `aria-label` to those parent buttons is a §6.2 follow-up.
 
-### 5.5 Two parallel pill systems
+### 5.5 Two parallel pill systems (resolved)
 
-`Badge` (the cva primitive in `ui/badge.tsx`) and `.outcome-pill` (CSS class) overlap visually but have different APIs and slightly different color tokens. The repo uses both. Today's rule of thumb: **outcome-pill for status with won/lost/pending semantics, Badge for everything else** — but this isn't documented in code anywhere and consumers occasionally cross the line.
+**Resolved 2026-05-17** by adding usage-disambiguation JSDoc to both primitives:
 
-**Recommendation:** add a JSDoc to each primitive declaring its intended use vs the other. Cheap.
+- `Badge` (in [`badge.tsx`](components/ui/badge.tsx)) — JSDoc above the export now states "For settled-outcome semantics use `.outcome-pill` instead." + cross-reference to this section.
+- `.outcome-pill` (in [`globals.css:1802-1809`](app/globals.css#L1802)) — comment now states "For non-status / categorical labels use `<Badge>` instead." + cross-reference.
+
+The disambiguation rule itself remains: **`.outcome-pill` for settled-outcome semantics (won / lost / pending / cancelled); `<Badge>` for general-purpose / categorical labels.**
 
 ### 5.6 `font-sans` and `font-mono` are aliases of the same font
 
@@ -663,15 +669,16 @@ Captured here so they don't get lost. Each is a candidate for a follow-up PR; no
 
 ### Still open
 
-1. **JSDoc `Badge` and `.outcome-pill` with usage guidance** → resolves §5.5 ambiguity.
-2. **Delete orphaned tokens** (`--color-cosmos-violet-avatar-*`, `--color-cosmos-stats-white`, etc.) → housekeeping per §1.6.
+*(None. All open recommendations as of 2026-05-17 have been resolved.)*
 
 ### Resolved (historical record)
 
-3. ~~Add `text-2xs` / `text-3xs` (10px / 9px) Tailwind utilities~~ → §5.1 resolved via [sika#200](https://github.com/ckwame-jpg/sika/pull/200) on 2026-05-17.
-4. ~~Map cosmos surface tokens to Tailwind utilities~~ (`bg-surface-soft`, `border-surface-softer`) → §5.2 resolved via [sika#201](https://github.com/ckwame-jpg/sika/pull/201) on 2026-05-17.
-5. ~~Build `<EmptyState>` + `<LoadingState>` primitives~~ → §5.4 + §6.1 + §6.2 partially resolved via [sika#202](https://github.com/ckwame-jpg/sika/pull/202) on 2026-05-17 (primitives shipped + ad-hoc consumers migrated; bespoke patterns intentionally preserved).
-6. ~~Focus-visible audit of non-Button interactive elements~~ → §6.5 resolved via [sika#198](https://github.com/ckwame-jpg/sika/pull/198), [sika#199](https://github.com/ckwame-jpg/sika/pull/199), and [sika#203](https://github.com/ckwame-jpg/sika/pull/203) on 2026-05-17.
+1. ~~Add `text-2xs` / `text-3xs` (10px / 9px) Tailwind utilities~~ → §5.1 resolved via [sika#200](https://github.com/ckwame-jpg/sika/pull/200) on 2026-05-17.
+2. ~~Map cosmos surface tokens to Tailwind utilities~~ (`bg-surface-soft`, `border-surface-softer`) → §5.2 resolved via [sika#201](https://github.com/ckwame-jpg/sika/pull/201) on 2026-05-17.
+3. ~~Build `<EmptyState>` + `<LoadingState>` primitives~~ → §5.4 + §6.1 + §6.2 partially resolved via [sika#202](https://github.com/ckwame-jpg/sika/pull/202) on 2026-05-17 (primitives shipped + ad-hoc consumers migrated; bespoke patterns intentionally preserved).
+4. ~~JSDoc `Badge` and `.outcome-pill` with usage guidance~~ → §5.5 resolved in this PR (2026-05-17).
+5. ~~Focus-visible audit of non-Button interactive elements~~ → §6.5 resolved via [sika#198](https://github.com/ckwame-jpg/sika/pull/198), [sika#199](https://github.com/ckwame-jpg/sika/pull/199), and [sika#203](https://github.com/ckwame-jpg/sika/pull/203) on 2026-05-17.
+6. ~~Delete orphaned tokens~~ → §1.6 resolved in this PR (2026-05-17). Three tokens deleted, one swapped to a canonical alias.
 7. ~~Adopt `.cosmos-chip` on the settings page~~ → resolved via [sika#198](https://github.com/ckwame-jpg/sika/pull/198) on 2026-05-17. `.cosmos-chip` now has ~12 consumers across Settings + Mappings Desk; the orphan label in §3 below is stale.
 
 ---
