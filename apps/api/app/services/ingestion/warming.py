@@ -136,7 +136,7 @@ def _ensure_current_slate_run(
         kind="refresh",
         status="running",
         details={
-            "sports": list(sports or ["NBA", "MLB"]),
+            "sports": list(sports or ["NBA", "MLB", "WNBA"]),
             "refresh_scope": "current_slate",
         },
     )

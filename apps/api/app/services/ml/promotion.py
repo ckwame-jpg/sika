@@ -174,7 +174,7 @@ def _single_examples(db: Session, family_key: str) -> list[PromotionExample]:
             ShadowInference.inference_scope == "single",
         )
     )
-    if definition.sport_scope in {"NBA", "MLB"}:
+    if definition.sport_scope in {"NBA", "MLB", "WNBA"}:
         statement = statement.where(Prediction.sport_key == definition.sport_scope)
     if family_key.endswith("_props"):
         statement = statement.where(Prediction.market_family == "player_prop")

@@ -309,20 +309,24 @@ def test_combo_leg_prefilter_blocks_wnba_winner_family():
     assert classification["reason"] == "unsupported_market_family"
 
 
-def test_persist_market_payload_records_skips_wnba_when_not_in_enabled_sports(db_session):
-    """Codex caught the cross-PR cliff: PR 2's classifier change
-    enables WNBA recognition, but PR 1 left WNBA OUT of default
-    ``enabled_sports`` because PRs 4-6 still need to wire the
-    sport adapter / refresh job / scoring kernel. Without an
-    ingestion-level gate, classified WNBA markets would persist and
-    feed combo-prop warming despite WNBA being feature-disabled.
-
-    Pin: with ``enabled_sports`` defaulting to NBA / NFL / MLB /
-    SOCCER / TENNIS, an otherwise-supported WNBA market payload is
-    NOT persisted by ``_persist_market_payload_records``.
+def test_persist_market_payload_records_skips_wnba_when_not_in_enabled_sports(
+    db_session, monkeypatch
+):
+    """The ``enabled_sports`` gate at ``_persist_market_payload_records``
+    is defense-in-depth: even when the classifier correctly recognizes
+    a WNBA market, the operator-controlled feature flag must still gate
+    persistence. PR 6 flipped the default to include WNBA, so this
+    regression test forces ``enabled_sports`` back to the pre-PR-6
+    sport set inside the test scope to keep the gate semantics
+    exercised. If a future change removes the gate, this test will
+    catch it.
     """
+    from app.config import get_settings
     from app.models import Market
     from app.services.ingestion import _persist_market_payload_records
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "enabled_sports", ["NBA", "NFL", "MLB", "SOCCER", "TENNIS"])
 
     wnba_prop = {
         "ticker": "KXWNBAPTS-26MAY15INDNYL-INDCCLARK22-22",

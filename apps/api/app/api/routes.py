@@ -209,10 +209,24 @@ KALSHI_SPORT_CATEGORY_ROOTS = {
     "NFL": "https://kalshi.com/category/sports/football/pro-football",
     "SOCCER": "https://kalshi.com/category/sports/soccer",
     "TENNIS": "https://kalshi.com/category/sports/tennis",
+    # Smarter WNBA PR 6 — Kalshi groups WNBA under the women's pro
+    # basketball slug (``pro-basketball-w``), distinct from NBA's
+    # ``pro-basketball-m``. NBA-side milestone + futures tickers
+    # (kxwnba40pts, kxwnbamvp, kxwnbaseries) live under the same root.
+    "WNBA": "https://kalshi.com/category/sports/basketball/pro-basketball-w",
 }
 KALSHI_EVENT_SERIES = {
     "NBA": ("kxnbagame", "professional-basketball-game"),
     "MLB": ("kxmlbgame", "professional-baseball-game"),
+    # Smarter WNBA PR 6 — series ticker follows Kalshi's
+    # kx{league}game convention (kxnbagame → kxwnbagame). Per-game
+    # WNBA prop coverage was thin as of mid-May 2026 (milestones +
+    # futures only); the infrastructure ships here so the moment
+    # Kalshi extends per-game props, sika picks them up without code
+    # change. Slug uses ``professional-basketball-game`` for the URL
+    # template — Kalshi renders the W vs M variant via the category
+    # root above.
+    "WNBA": ("kxwnbagame", "professional-basketball-game"),
 }
 KALSHI_PROP_CATEGORY_SLUGS = {
     "NBA": {
@@ -232,6 +246,20 @@ KALSHI_PROP_CATEGORY_SLUGS = {
         "strikeouts": "strikeouts",
         "walks": "walks",
         "total_bases": "total-bases",
+    },
+    # Smarter WNBA PR 6 — WNBA shares NBA's prop stat vocabulary
+    # (PR 2 wired the alias mapping). Slug values mirror NBA's because
+    # Kalshi has signaled WNBA parity with the NBA prop framework that
+    # launched late 2025; if Kalshi diverges slugs at WNBA roll-out,
+    # this dict is the surface to update.
+    "WNBA": {
+        "points": "player-points",
+        "rebounds": "player-rebounds",
+        "assists": "player-assists",
+        "made_threes": "player-threes",
+        "steals": "player-steals",
+        "blocks": "player-blocks",
+        "turnovers": "player-turnovers",
     },
 }
 

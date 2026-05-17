@@ -1117,13 +1117,19 @@ def test_sports_availability_reports_live_and_research_only_modes(client, db_ses
 
     assert response.status_code == 200
     payload = {row["sport_key"]: row for row in response.json()}
-    assert list(payload) == ["NBA", "NFL", "MLB", "SOCCER", "TENNIS"]
+    # Smarter WNBA PR 6 added WNBA to ``enabled_sports`` (appended at the
+    # end of the list) and to ``CURRENT_WATCHLIST_SPORTS`` — so WNBA
+    # appears here as a ``live`` row alongside NBA + MLB.
+    assert list(payload) == ["NBA", "NFL", "MLB", "SOCCER", "TENNIS", "WNBA"]
     assert payload["NBA"]["availability_mode"] == "live"
     assert payload["NBA"]["events_count"] == 1
     assert payload["NBA"]["recommendations_count"] == 1
     assert payload["NFL"]["availability_mode"] == "research_only"
     assert payload["NFL"]["events_count"] == 1
     assert payload["MLB"]["availability_mode"] == "live"
+    assert payload["WNBA"]["availability_mode"] == "live"
+    assert payload["WNBA"]["events_count"] == 0
+    assert payload["WNBA"]["recommendations_count"] == 0
     assert "UFC" not in payload
 
 
@@ -1154,12 +1160,16 @@ def _seed_snapshot(
 def test_product_freshness_reports_missing_when_no_snapshots_exist(client):
     """Slice 3: with an empty snapshot store, every scope is ``missing`` and
     the overall_status aggregates to ``missing``. This is the "never been
-    written" baseline — not an error, just zero state."""
+    written" baseline — not an error, just zero state.
+
+    Smarter WNBA PR 6 added WNBA to ``CURRENT_WATCHLIST_SPORTS`` so the
+    per-sport scope set is ``{NBA, MLB, WNBA}`` alongside the cross-sport
+    ``all`` scope."""
     response = client.get("/product/freshness")
     assert response.status_code == 200
     payload = response.json()
     assert payload["overall_status"] == "missing"
-    assert {row["scope"] for row in payload["scopes"]} == {"all", "NBA", "MLB"}
+    assert {row["scope"] for row in payload["scopes"]} == {"all", "NBA", "MLB", "WNBA"}
     for row in payload["scopes"]:
         assert row["status"] == "missing"
         assert row["generated_at"] is None
@@ -1169,7 +1179,7 @@ def test_product_freshness_reports_fresh_when_all_scopes_are_current(client, db_
     """Slice 3: a fresh snapshot for every scope yields ``overall_status="fresh"``
     and echoes the ``generated_at`` timestamp per scope."""
     now = datetime.now(timezone.utc)
-    for scope in ("all", "NBA", "MLB"):
+    for scope in ("all", "NBA", "MLB", "WNBA"):
         _seed_snapshot(db_session, scope=scope, generated_at=now)
     db_session.commit()
 
@@ -1192,9 +1202,13 @@ def test_product_freshness_marks_overall_stale_when_any_scope_has_stale_events(
     fresh. Surfaces should render their per-scope pill regardless, but the
     gauge endpoint collapses to one worst-case for top-level indicators."""
     now = datetime.now(timezone.utc)
-    # Fresh scopes for ALL + MLB
+    # Fresh scopes for ALL + MLB + WNBA. Smarter WNBA PR 6 enrolled WNBA
+    # in ``CURRENT_WATCHLIST_SPORTS`` so the freshness endpoint enumerates
+    # it; seed it ``fresh`` here so the worst-status aggregation pins on
+    # NBA's staleness rather than a missing WNBA scope.
     _seed_snapshot(db_session, scope="all", generated_at=now)
     _seed_snapshot(db_session, scope="MLB", generated_at=now)
+    _seed_snapshot(db_session, scope="WNBA", generated_at=now)
     # Stale NBA: an in_progress NBA event whose start time is deep in the
     # past will flip the loader's freshness flag to "stale".
     stale_starts = datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc)
@@ -1227,6 +1241,7 @@ def test_product_freshness_marks_overall_stale_when_any_scope_has_stale_events(
     per_scope = {row["scope"]: row["status"] for row in payload["scopes"]}
     assert per_scope["NBA"] == "stale"
     assert per_scope["MLB"] == "fresh"
+    assert per_scope["WNBA"] == "fresh"
     assert per_scope["all"] == "fresh"
 
 
@@ -1277,6 +1292,9 @@ def test_product_freshness_ranks_degraded_above_stale_and_empty(client, db_sessi
             }
         ],
     )
+    # Smarter WNBA PR 6: seed WNBA ``fresh`` so the aggregation pins on
+    # NBA's ``degraded`` outcome rather than a missing WNBA scope.
+    _seed_snapshot(db_session, scope="WNBA", generated_at=now)
     db_session.commit()
 
     response = client.get("/product/freshness")
@@ -1291,6 +1309,7 @@ def test_product_freshness_ranks_degraded_above_stale_and_empty(client, db_sessi
     assert nba["generated_from_run_id"] == 123
     assert next(row for row in payload["scopes"] if row["scope"] == "all")["status"] == "empty"
     assert next(row for row in payload["scopes"] if row["scope"] == "MLB")["status"] == "stale"
+    assert next(row for row in payload["scopes"] if row["scope"] == "WNBA")["status"] == "fresh"
 
 
 def test_public_list_endpoints_reject_out_of_range_limit_values(client):

@@ -85,7 +85,15 @@ class Settings(BaseSettings):
     refresh_job_stale_minutes: int = 30
     market_snapshot_heartbeat_minutes: int = 30
     prefer_yes_side_props: bool = True
-    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "SOCCER", "TENNIS"])
+    # Smarter WNBA PR 6 flipped the default: WNBA is appended to the
+    # list (rather than slotting next to NBA) so the existing tuple
+    # ordering for NBA / NFL / MLB / SOCCER / TENNIS — load-bearing for
+    # operator-facing sport pickers and ``/sports/availability`` — is
+    # preserved. ``parlay_enabled_sports`` above deliberately stays
+    # NBA / MLB only; ``parlay_family_key`` has no WNBA-specific family
+    # yet, and adding WNBA without one would silently route WNBA combos
+    # into ``mixed_parlay_*`` and pollute mixed-family calibration.
+    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "SOCCER", "TENNIS", "WNBA"])
     soccer_leagues: list[str] = Field(
         default_factory=lambda: [
             "English Premier League",

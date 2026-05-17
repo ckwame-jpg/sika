@@ -55,9 +55,12 @@ SPORT_LABELS = {
     "MLB": "MLB",
     "SOCCER": "Soccer",
     "TENNIS": "TENNIS",
+    "WNBA": "WNBA",
 }
 
-PUBLIC_MAJOR_SPORTS = {"NBA", "NFL", "MLB"}
+# Smarter WNBA PR 6 — WNBA shares NBA's ESPN scoreboard path, so it
+# fetches via the major-provider branch like NBA / NFL / MLB.
+PUBLIC_MAJOR_SPORTS = {"NBA", "NFL", "MLB", "WNBA"}
 WATCHLIST_SCORE_BATCH_SIZE = 25
 PREDICTION_SETTLEMENT_BATCH_SIZE = 100
 PARLAY_SETTLEMENT_BATCH_SIZE = 50
@@ -152,7 +155,7 @@ def _persist_market_payload_records(
         classification = classification_override or classify_market_payload(payload)
         metadata = classification.get("metadata")
         if not classification.get("supported") or not metadata:
-            if classification.get("reason") == "unsupported_prop_category" and classification.get("sport_key") in {"NBA", "MLB"}:
+            if classification.get("reason") == "unsupported_prop_category" and classification.get("sport_key") in {"NBA", "MLB", "WNBA"}:
                 prop_category = str(classification.get("prop_category") or "unknown")
                 unsupported_prop_categories[prop_category] = unsupported_prop_categories.get(prop_category, 0) + 1
             return False
@@ -349,7 +352,7 @@ def _upsert_event(db: Session, normalized: NormalizedEvent) -> Event:
                 sport_key=normalized.sport_key,
                 display_name=normalized_participant.display_name,
                 short_name=normalized_participant.short_name,
-                participant_type="team" if normalized.sport_key in {"NBA", "NFL", "MLB", "SOCCER"} else "competitor",
+                participant_type="team" if normalized.sport_key in {"NBA", "NFL", "MLB", "SOCCER", "WNBA"} else "competitor",
                 raw_data=normalized_participant.raw_data,
             )
             db.add(participant)
@@ -754,7 +757,7 @@ def advance_current_slate_refresh_job(
     sports: Iterable[str] | None = None,
 ) -> tuple[Run, bool]:
     details = dict(job.details or {})
-    active_sports = list(sports or ["NBA", "MLB"])
+    active_sports = list(sports or ["NBA", "MLB", "WNBA"])
     run = _ensure_current_slate_run(db, job=job, sports=active_sports)
     phase = str(details.get("phase") or "sports_ingest")
     cursor_payload = dict(details.get("cursor") or {}) or None
