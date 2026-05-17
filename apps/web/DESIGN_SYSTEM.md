@@ -1,6 +1,7 @@
 # Sika Design System
 
-**Last reconciled:** 2026-05-17 · against `apps/web/app/globals.css` (3,427 lines) + every file in `apps/web/components/ui/` + a representative sample of composites.
+**Last reconciled:** 2026-05-17 · against `apps/web/app/globals.css` + every file in `apps/web/components/ui/` + a representative sample of composites.
+**Drift cleanup:** late 2026-05-17 batch closed §5.1, §5.2, §5.3, §5.4 (partially), §6.1 (partially), §6.2 (partially), §6.5, and §9 rec 7 across [sika#196](https://github.com/ckwame-jpg/sika/pull/196) – [sika#203](https://github.com/ckwame-jpg/sika/pull/203). See §5 Drift report for status of each item.
 
 This is an **audit + documentation** pass. It catalogs what exists, names the conventions, and flags drift. It does NOT propose new patterns — extension is a separate workflow.
 
@@ -396,11 +397,13 @@ Where `statusPillClass` maps domain status → variant class (`completed → set
 
 **Use when:** a horizontal filter row at the top of a feed. Currently only on /events.
 
-### `.cosmos-chip` (defined `globals.css:464-486`, ~0 found in components via grep)
+### `.cosmos-chip` (defined `globals.css:464-486`, ~12 consumers)
 
-**What it is:** chip-style toggle with hover + active states. Active state uses a violet/cyan gradient + glow.
+**What it is:** chip-style toggle with hover + active states. Active state (via `data-active="true"` attribute selector) uses a violet/cyan gradient + glow.
 
-**Drift:** defined but doesn't appear in any component. Either dead utility or worth adopting on the settings page in place of the current ad-hoc rounded-button styling.
+**Adopted 2026-05-17** via [sika#198](https://github.com/ckwame-jpg/sika/pull/198) (Settings page price-display tiles + pick-history chips + narrator toggles) and [sika#199](https://github.com/ckwame-jpg/sika/pull/199) (Mappings Desk confidence preset chips). Canonical pattern for any toggle / selectable chip.
+
+**Use when:** an exclusive-selection chip / preset / toggle. Pair with `data-active={active ? "true" : undefined}` for the active state and `focus-visible:ring-focus` for keyboard focus.
 
 ### `.cosmos-table-wrap` (used in mappings, runs)
 
@@ -468,31 +471,35 @@ Layout shell at `globals.css:2885-3372`. Includes the orbit brand mark, sync pil
 
 Concrete instances of inconsistency to fix (not blocking, but track).
 
-### 5.1 Arbitrary `text-[10px]` / `text-[10.5px]` / `text-[11px]` / `text-[12px]` literals
+### 5.1 Arbitrary small-text literals (resolved)
 
-**Found in:** 14 component files. Worst offenders by usage count:
+**Resolved 2026-05-17** via [sika#200](https://github.com/ckwame-jpg/sika/pull/200). Tailwind's default text-size scale stops at `text-xs` (12px); everything smaller had to be written as `text-[10px]` / `text-[9px]` / `text-[10.5px]` arbitrary literals (35 occurrences across 14 files, with half-pixel values pixel-snapping inconsistently).
 
-| File | Count |
-|---|---|
-| [`predictions/freshness-audit-panel.tsx`](components/predictions/freshness-audit-panel.tsx) | 10 |
-| [`predictions/model-readiness-panel.tsx`](components/predictions/model-readiness-panel.tsx) | 8 |
-| [`predictions/interval-models-badge.tsx`](components/predictions/interval-models-badge.tsx) | 4 |
-| [`trade/trade-desk.tsx`](components/trade/trade-desk.tsx) | 3 |
-| [`trade/freshness-badge.tsx`](components/trade/freshness-badge.tsx) | 3 |
-| [`trade/prediction-interval-band.tsx`](components/trade/prediction-interval-band.tsx) | 3 |
-| 8 other files | 1-3 each |
+Two new tokens added to `@theme inline`:
 
-**The problem:** half-pixel font sizes (`text-[10.5px]`) and arbitrary integer sizes like `text-[10px]` / `text-[11px]` / `text-[12.5px]` proliferate because there's no documented small-text scale below `text-xs` (12px in Tailwind default). The pattern CSS (e.g. `.stats-tile-label`, `.outcome-pill`) hardcodes `10.5px`, so consumers add matching arbitrary literals to align.
+```css
+--text-2xs: 10px;
+--text-3xs: 9px;
+```
 
-**Recommendation (future PR — out of scope for this audit):** add explicit `text-2xs` (10px), `text-3xs` (9px) tokens to the Tailwind theme. Then refactor the literals across the 14 files. Until then: **prefer existing class patterns over arbitrary literals** when their font size already matches what you want.
+Tailwind v4 auto-generates `text-2xs` and `text-3xs` utilities. All 35 occurrences migrated (24× `text-[10px]` → `text-2xs`, 7× `text-[9px]` → `text-3xs`, 4× `text-[10.5px]` → `text-2xs` rounded down).
 
-### 5.2 Inline opacity literals (`bg-white/[0.04]`, `border-white/[0.06]`)
+**Still as inline literals (out of scope, less common):** `text-[11px]` × 18, `text-[12.5px]` / `text-[13px]` / `text-[13.5px]` / `text-[11.5px]` × handful. Could be normalized in a follow-up if drift accumulates.
 
-**Found in:** the same 14 files. Used for translucent surface backgrounds and hairline borders.
+### 5.2 Inline opacity literals (resolved)
 
-**The problem:** the cosmos token system has matching tokens (`--color-cosmos-tile-border`, `--color-cosmos-border-soft`, `--color-cosmos-border-softer`) but consumers use the Tailwind opacity-literal syntax instead. Two reasons: (a) `bg-white/[0.04]` is short, (b) the cosmos tokens aren't exposed as Tailwind utilities (only as raw CSS variables).
+**Resolved 2026-05-17** via [sika#201](https://github.com/ckwame-jpg/sika/pull/201). The cosmos theme had `--color-cosmos-border-soft` / `--color-cosmos-border-softer` defined but didn't expose them as Tailwind utilities. Consumers fell back to `bg-white/[0.04]` / `border-white/[0.06]` inline literals — approximations of the cosmos tokens, but not actually them, so theme retones couldn't propagate.
 
-**Recommendation (future PR):** map the most-used cosmos surface tokens through `@theme inline` so consumers get `bg-surface-soft`, `border-surface-softer` utilities. Until then: **accept the literals for translucent surfaces** — refactoring without the utility mapping would just trade one inline value for another.
+Two new translucent overlay tokens added to `@theme inline`:
+
+```css
+--color-surface-soft:   hsl(0 0% 100% / 0.06);  /* bg/border-surface-soft */
+--color-surface-softer: hsl(0 0% 100% / 0.03);  /* bg/border-surface-softer */
+```
+
+13 of 14 inline opacity literals migrated. Mode-independent (white at fixed alpha reads the same on light + dark backgrounds).
+
+**One literal preserved:** `bg-white/[0.08]` × 1 in `model-readiness-panel.tsx` (progress-bar track) — one-off "stronger" tint that doesn't fit either token.
 
 ### 5.3 Components built without the design system (resolved)
 
@@ -505,22 +512,22 @@ Historical record:
 
 The audit-panel quality bar (`freshness-audit-panel.tsx`, built via `/frontend-design`) is what both now match — preserved as the canonical reference for the cosmos diagnostic-strip idiom.
 
-### 5.4 Empty/loading/error states are inconsistent
+### 5.4 Empty / loading / error state primitives (resolved)
 
-The sika codebase has at least 4 distinct empty-state patterns:
+**Resolved 2026-05-17** via [sika#202](https://github.com/ckwame-jpg/sika/pull/202). Two new canonical primitives in `apps/web/components/ui/`:
 
-- `.trade-ticket-empty-orb` + `.trade-ticket-empty-orb-core` — orb in the trade ticket
-- `.sa-result-empty` + `.sa-result-orb` — orb in the stats assistant
-- `.cosmos-table-empty` — text-only empty for tables
-- Ad-hoc `rounded-xl border border-border bg-surface px-4 py-8 text-center` — in trade-desk + multiple other components
+- **`<EmptyState>`** ([`empty-state.tsx`](components/ui/empty-state.tsx)) — rounded-xl border container with `tone` (default | error | warning | positive), title, description, optional icon + action slots. Carries `role="status"` + `aria-live="polite"` so screen readers announce on mount.
+- **`<LoadingState>`** ([`loading-state.tsx`](components/ui/loading-state.tsx)) — full-section loader with `Loader2` spinner + required `label`. Carries `role="status"` + `aria-label` for AT announcement.
 
-And at least 3 loading patterns:
+Migrated `events-feed.tsx` + `predictions-desk.tsx` error states to `<EmptyState tone="error">`. The previously-orphan loading primitive is available for future use.
 
-- `<Skeleton>` from `ui/skeleton.tsx` — used in runs, mappings
-- `.sa-result-loading` + `.sa-result-bar` + `.sa-result-scan` — bespoke stats assistant
-- `<RefreshCw className="animate-spin" />` — ad-hoc spinner, used in trade-desk
+**Preserved as bespoke sika personality:**
+- `.trade-ticket-empty-orb` + `.trade-ticket-empty-orb-core` — orb on the trade ticket
+- `.sa-result-empty` + `.sa-result-orb` — orb on the stats assistant
+- `.cosmos-table-empty` — tabular shape
+- `.sa-result-loading` + `.sa-result-bar` + `.sa-result-scan` — stats-assistant idiom
 
-**Recommendation (future PR):** consolidate. A documented `<EmptyState>` primitive with optional orb + body + secondary action would cover the ad-hoc cases. A documented `<LoadingState>` would cover the spinner. The orb patterns are sika-distinctive and worth keeping in the high-personality surfaces (ticket, stats assistant).
+The `<RefreshCw className="animate-spin" />` inline-button spinners (4 occurrences) are NOT migrated — they're action-button context, not section-loader context. Adding `aria-label` to those parent buttons is a §6.2 follow-up.
 
 ### 5.5 Two parallel pill systems
 
@@ -545,26 +552,31 @@ Both resolve to Geist. The `font-mono` utility is used 90+ times across the code
 
 Patterns that recur across components, and where conventions agree / drift.
 
-### 6.1 Empty states
+### 6.1 Empty states (resolved for the primitive; bespoke patterns still informational)
 
-| Pattern | aria-label / role? |
+**Partially resolved 2026-05-17** via [sika#202](https://github.com/ckwame-jpg/sika/pull/202). The new `<EmptyState>` primitive carries `role="status"` + `aria-live="polite"` so consumers that use it get AT announcement for free. The two ad-hoc error states (`events-feed.tsx`, `predictions-desk.tsx`) now use the primitive.
+
+**Bespoke patterns still without role/aria** (intentional — they're sika personality, not ad-hoc drift):
+
+| Pattern | a11y status |
 |---|---|
-| `.trade-ticket.empty` | None. Renders a `<p>` with text. |
-| `.sa-result-empty` | None. Renders a div with `data-testid`. |
-| `.cosmos-table-empty` | None. |
-| `freshness-audit-panel`'s empty state | None (the wrapper has `role="region"` but the empty body itself is just `<div>`). |
+| `.trade-ticket.empty` (the orb pattern) | No role; relies on the surrounding ticket's context. Acceptable for trade ticket's design. |
+| `.sa-result-empty` (the orb pattern) | No role; stats-assistant surface is intentionally personality-heavy. |
+| `.cosmos-table-empty` | No role; the table's `<caption>` (if present) or context provides announcement. |
 
-**Drift.** None of the empty states announce themselves. Recommendation: add `role="status"` + `aria-live="polite"` to empty-state wrappers so screen readers announce them when they appear after a load.
+A future a11y pass could add `role="status"` to these too, but they're not blocking.
 
-### 6.2 Loading states
+### 6.2 Loading states (resolved for the primitive; inline spinners still informational)
 
-| Pattern | a11y |
+**Partially resolved 2026-05-17** via [sika#202](https://github.com/ckwame-jpg/sika/pull/202). The new `<LoadingState>` primitive carries `role="status"` + `aria-label`. For tabular loaders, `<Skeleton>` remains the right primitive (layout-preserving).
+
+**Still without explicit role/aria** (acceptable, scoped follow-up):
+
+| Pattern | a11y status |
 |---|---|
-| `<Skeleton>` | No role. Decorative; sighted users see motion; screen readers hear nothing. |
-| `.sa-result-loading` | None. |
-| `RefreshCw spinner` | None. |
-
-**Drift.** Loaders should at minimum carry `role="status"` + an `aria-label` like "Loading recommendations". Currently they don't.
+| `<Skeleton>` / `<SkeletonRow>` | No role. Decorative placeholder; layout-preserving. Sighted users see motion; screen readers hear nothing — but the loaded content's announcement is what matters for AT. |
+| `.sa-result-loading` (stats assistant) | No role; bespoke sika idiom. Could add `role="status" aria-label="Scanning {sport} logs"` in a follow-up. |
+| `<RefreshCw className="animate-spin" />` inline button spinners (4 callers) | No role. These are action-button context — adding `aria-label` to the parent button (e.g. `aria-label="Refreshing"`) would close the gap. Scoped follow-up. |
 
 ### 6.3 Status pills
 
@@ -574,11 +586,19 @@ Patterns that recur across components, and where conventions agree / drift.
 
 Patterns: `.trade-ticket-empty-orb`, `.sa-result-orb`, `.trade-kpi-orb`, `.crumb-orb`, `.sync-orb`, the brand mark's `.lo-ring`/`.lo-core`/`.lo-sat`. All are decorative — they should use `aria-hidden` on every wrapper. Spot-check: most do via `aria-hidden`, but not consistently.
 
-### 6.5 Focus styles
+### 6.5 Focus styles (resolved)
 
-Tailwind `focus-visible:ring-focus` is used on Button + Input. Other interactive elements (e.g. `.cosmos-chip[data-active="true"]`, `.event-card-toggle:hover`, custom buttons in `mappings-desk.tsx`, `pick-history-strip` controls) rely on hover styles only. **Hover ≠ focus** — keyboard users won't see a focus ring on those.
+**Resolved 2026-05-17** via [sika#198](https://github.com/ckwame-jpg/sika/pull/198) (Settings page), [sika#199](https://github.com/ckwame-jpg/sika/pull/199) (Mappings Desk), and [sika#203](https://github.com/ckwame-jpg/sika/pull/203) (bare-button audit across the rest of the app).
 
-**Recommendation (future PR):** audit interactive elements that aren't `<Button>` or `<Input>` and add `focus-visible:ring-focus`.
+`focus-visible:ring-focus` (defined `globals.css:341-343`) is now applied to:
+
+- All `.cosmos-chip` consumers (Settings page chips, Mappings Desk confidence presets)
+- All bespoke bare-button patterns: `.line-row`, `.event-card-toggle`, `.archived-slate-head`, `.sa-prompt`, `.sa-run`, `.sa-stat`, `.pick-history-strip-n-pill`, `.pick-history-strip-chip`, `.prop-head`, `.prop-threshold-chip`
+- All inline ad-hoc buttons in `paper-positions-table.tsx`, `demo-orders-table.tsx`, `runs-desk.tsx`, `model-readiness-panel.tsx`, `kalshi-account-panel.tsx`, trade-desk mobile close button
+
+WCAG 2.1 SC 2.4.7 (Focus Visible) — Level AA — satisfied across the non-shell interactive surface.
+
+**Out of scope:** sidebar / topbar / nav shell. Per §3 ("Don't touch these for individual component PRs — they're the application shell"). Future PR if needed.
 
 ---
 
@@ -603,7 +623,7 @@ I need a new …
 │  ├─ Settled outcome (won/lost/pending) → .outcome-pill + variant class
 │  ├─ Sport label → <SportBadge sport={...} />
 │  ├─ General-purpose label → <Badge variant="…">
-│  └─ Toggle chip → .cosmos-chip (currently orphaned; you'd be the first user — talk to me first)
+│  └─ Toggle chip → .cosmos-chip + data-active="true" + focus-visible:ring-focus
 │
 ├─ Table
 │  ├─ Generic tabular data → Table primitives (ui/table.tsx)
@@ -614,13 +634,13 @@ I need a new …
 │  ├─ Tabular → <SkeletonRow cols={N} />
 │  ├─ Block → <Skeleton className="h-X w-X" />
 │  ├─ Stats-assistant context → .sa-result-loading + .sa-result-bar + .sa-result-scan
-│  └─ Otherwise → spinner with role="status" + aria-label (we don't have a primitive yet — flag it)
+│  └─ Section loader → <LoadingState label="…" /> (carries role="status" + aria-label)
 │
 ├─ Empty state
 │  ├─ Trade-desk empty → bespoke (orb pattern)
 │  ├─ Stats-assistant empty → .sa-result-empty + .sa-result-orb
 │  ├─ Table empty → .cosmos-table-empty
-│  └─ Otherwise → rounded border + text-center pattern; consider adding a hint about WHY it's empty
+│  └─ Otherwise → <EmptyState tone="default|error|warning|positive" title=… description=… /> (carries role="status" + aria-live="polite")
 │
 └─ Anything else
    └─ Reach for /frontend-design skill. The component has personality and deserves design attention.
@@ -641,13 +661,18 @@ I need a new …
 
 Captured here so they don't get lost. Each is a candidate for a follow-up PR; none block current work.
 
-1. **Add `text-2xs` / `text-3xs` (10px / 9px) Tailwind utilities** → resolves §5.1 drift.
-2. **Map cosmos surface tokens to Tailwind utilities** (`bg-surface-soft`, `border-surface-softer`) → resolves §5.2 drift.
-3. **Build `<EmptyState>` + `<LoadingState>` primitives** → resolves §5.4 + §6.1 + §6.2 drift.
-4. **JSDoc `Badge` and `.outcome-pill` with usage guidance** → resolves §5.5 ambiguity.
-5. **Focus-visible audit** of non-Button interactive elements → resolves §6.5.
-6. **Delete orphaned tokens** (`--color-cosmos-violet-avatar-*`, `--color-cosmos-stats-white`, etc.) → housekeeping per §1.6.
-7. **Adopt `.cosmos-chip` on the settings page** (currently rolled by hand) → resolves §3 `.cosmos-chip` orphan + improves the Settings surface flagged in the earlier audit.
+### Still open
+
+1. **JSDoc `Badge` and `.outcome-pill` with usage guidance** → resolves §5.5 ambiguity.
+2. **Delete orphaned tokens** (`--color-cosmos-violet-avatar-*`, `--color-cosmos-stats-white`, etc.) → housekeeping per §1.6.
+
+### Resolved (historical record)
+
+3. ~~Add `text-2xs` / `text-3xs` (10px / 9px) Tailwind utilities~~ → §5.1 resolved via [sika#200](https://github.com/ckwame-jpg/sika/pull/200) on 2026-05-17.
+4. ~~Map cosmos surface tokens to Tailwind utilities~~ (`bg-surface-soft`, `border-surface-softer`) → §5.2 resolved via [sika#201](https://github.com/ckwame-jpg/sika/pull/201) on 2026-05-17.
+5. ~~Build `<EmptyState>` + `<LoadingState>` primitives~~ → §5.4 + §6.1 + §6.2 partially resolved via [sika#202](https://github.com/ckwame-jpg/sika/pull/202) on 2026-05-17 (primitives shipped + ad-hoc consumers migrated; bespoke patterns intentionally preserved).
+6. ~~Focus-visible audit of non-Button interactive elements~~ → §6.5 resolved via [sika#198](https://github.com/ckwame-jpg/sika/pull/198), [sika#199](https://github.com/ckwame-jpg/sika/pull/199), and [sika#203](https://github.com/ckwame-jpg/sika/pull/203) on 2026-05-17.
+7. ~~Adopt `.cosmos-chip` on the settings page~~ → resolved via [sika#198](https://github.com/ckwame-jpg/sika/pull/198) on 2026-05-17. `.cosmos-chip` now has ~12 consumers across Settings + Mappings Desk; the orphan label in §3 below is stale.
 
 ---
 
