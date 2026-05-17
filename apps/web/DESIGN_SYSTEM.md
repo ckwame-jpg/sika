@@ -1,7 +1,7 @@
 # Sika Design System
 
 **Last reconciled:** 2026-05-17 · against `apps/web/app/globals.css` + every file in `apps/web/components/ui/` + a representative sample of composites.
-**Drift cleanup:** late 2026-05-17 batch closed §5.1, §5.2, §5.3, §5.4 (partially), §5.5, §6.1 (partially), §6.2 (partially), §6.3 (audited; no fix needed), §6.4, §6.5, §1.6, and all 7 §9 open recommendations across [sika#196](https://github.com/ckwame-jpg/sika/pull/196) – sika#206. The entire 2026-05-17 audit doc is now resolved.
+**Drift cleanup:** late 2026-05-17 batch closed §5.1, §5.2, §5.3, §5.4 (partially), §5.5, §6.1 (partially), §6.2 (partially), §6.3 (audited; no fix needed), §6.4, §6.5, §1.6, and all 7 §9 open recommendations across [sika#196](https://github.com/ckwame-jpg/sika/pull/196), [#197](https://github.com/ckwame-jpg/sika/pull/197), [#198](https://github.com/ckwame-jpg/sika/pull/198), [#199](https://github.com/ckwame-jpg/sika/pull/199), [#200](https://github.com/ckwame-jpg/sika/pull/200), [#201](https://github.com/ckwame-jpg/sika/pull/201), [#202](https://github.com/ckwame-jpg/sika/pull/202), [#203](https://github.com/ckwame-jpg/sika/pull/203), [#204](https://github.com/ckwame-jpg/sika/pull/204), [#205](https://github.com/ckwame-jpg/sika/pull/205), and [#207](https://github.com/ckwame-jpg/sika/pull/207). The entire 2026-05-17 audit doc is now resolved.
 
 This is an **audit + documentation** pass. It catalogs what exists, names the conventions, and flags drift. It does NOT propose new patterns — extension is a separate workflow.
 
