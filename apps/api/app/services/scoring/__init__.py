@@ -34,7 +34,9 @@ from app.services.model_families import (
 from app.services.scoring.feature_groups import (
     FeatureGroupSeverity,
     FeatureGroupSnapshot,
+    SuppressionContext,
     check_freshness,
+    check_suppressions,
     emit_to_group,
     serialize_feature_groups,
 )
@@ -1720,17 +1722,26 @@ def _single_scoring_adjustments(
         "market_snapshot": snapshot is not None,
     }
     missing_context: list[str] = []
+    # Architecture #5 follow-up 2 — Smarter #16 / #17 bespoke gates
+    # consolidated into the unified policy registry. ``check_suppressions``
+    # resolves SUPPRESS-policy groups (mlb_lineup, nba_injury) and
+    # returns ``{group_key: suppression_reason}``. The branches below
+    # consume the result and translate to the existing intermediate
+    # diagnostic keys (``lineup_suppression_reason``,
+    # ``injury_suppression_reason``) so downstream readers see the same
+    # shape they did pre-consolidation.
+    suppressions = check_suppressions(
+        SuppressionContext(
+            features=features, metadata=metadata, family_key=family_key,
+        )
+    )
     # Smarter #16: flipped to True when ``copilot_requires_lineup`` is set
     # AND lineup data IS confirmed AND the player is NOT in the starting
-    # lineup. Threaded back via diagnostics so the scoring kernel can add a
-    # ``player_not_in_starting_lineup`` entry to ``suppression_reasons``.
-    lineup_scratch_suppression = False
-    # Smarter #17: set to ``"player_injury_out"`` or
-    # ``"player_injury_doubtful"`` when an NBA prop's player has a fresh
-    # injury report with that status. Threaded back via diagnostics
-    # alongside the lineup suppression hint so downstream code can
-    # translate to ``suppression_reasons``.
-    injury_suppression_reason: str | None = None
+    # lineup. Sourced from ``suppressions["mlb_lineup"]``.
+    lineup_scratch_suppression = "mlb_lineup" in suppressions
+    # Smarter #17: ``"player_injury_out"`` or ``"player_injury_doubtful"``
+    # when the unified gate fires for nba_injury.
+    injury_suppression_reason: str | None = suppressions.get("nba_injury")
 
     if "has_schedule_context" in features:
         feature_flags["schedule_context"] = bool(features.get("has_schedule_context"))
@@ -1757,40 +1768,13 @@ def _single_scoring_adjustments(
             missing_context.append("opponent_context")
         if bool(features.get("uses_stale_prop_context")):
             missing_context.append("fresh_prop_context")
-        # Smarter #17 — NBA injury suppression. Fires only when:
-        #   * family is ``nba_props``
-        #   * an injury report has been observed for this player
-        #     (``injury_data_complete == 1.0``)
-        #   * the report is fresh enough to act on (within the last 12h)
-        #   * the player's status is ``out`` or ``doubtful``
-        # Stale reports DON'T suppress — the lineup-confirmation gate
-        # already handles the pre-game uncertainty; injury data adds
-        # value only when it's recent. Gated to NBA so a stray injury
-        # feature can't trip the MLB scoring path (codex Pattern 9).
-        if (
-            family_key == "nba_props"
-            and float(features.get("injury_data_complete") or 0.0) >= 1.0
-            and float(features.get("injury_report_is_fresh") or 0.0) >= 1.0
-        ):
-            if float(features.get("player_injury_status_out") or 0.0) >= 1.0:
-                injury_suppression_reason = "player_injury_out"
-            elif float(features.get("player_injury_status_doubtful") or 0.0) >= 1.0:
-                injury_suppression_reason = "player_injury_doubtful"
+        # Smarter #16 — lineup confirmation context. The suppression
+        # decision itself flows through ``check_suppressions`` above;
+        # this block keeps the surrounding ``feature_flags`` /
+        # ``missing_context`` bookkeeping that the unified path doesn't
+        # own (it's about reporting context coverage, not about
+        # whether to drop the recommendation).
         if metadata.get("copilot_requires_lineup"):
-            # Smarter #16 — three states, each gets a distinct response:
-            #
-            # 1. Lineup data not yet in payload (``lineup_data_complete``
-            #    absent) — pre-lineup window. Keep the existing
-            #    missing-context penalty so confidence reflects the
-            #    uncertainty.
-            # 2. Lineup data IS in payload AND player NOT in starting
-            #    lineup. Scratch / DNP. The original 0.025 penalty is far
-            #    too lenient — we know the prop is already a near-zero.
-            #    Signal a suppression hint here; the scoring kernel adds
-            #    it to ``suppression_reasons`` so the recommendation is
-            #    dropped instead of merely penalized.
-            # 3. Lineup data IS in payload AND player IS in lineup —
-            #    confirmation, no penalty.
             lineup_data_complete = float(features.get("lineup_data_complete") or 0.0) >= 1.0
             player_in_starting_lineup = (
                 float(features.get("player_in_starting_lineup") or 0.0) >= 1.0
@@ -1800,9 +1784,7 @@ def _single_scoring_adjustments(
             )
             if not lineup_data_complete:
                 missing_context.append("lineup_confirmation")
-            elif not player_in_starting_lineup:
-                lineup_scratch_suppression = True
-            elif family_key == "nba_props":
+            elif not lineup_scratch_suppression and family_key == "nba_props":
                 # Smarter #11: NBA load-management uncertainty. Even when
                 # lineup is confirmed, a top-quartile workload player has a
                 # higher latent "manager pulls them at the half" risk. The

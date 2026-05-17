@@ -40,24 +40,29 @@ Unknown groups fall through to ``DEFAULT_POLICY`` (IGNORE) so adding
 a new emitter without a registry entry doesn't accidentally gate
 scoring — the operator has to opt in.
 
-## Bespoke paths preserved by design
+## SUPPRESS-policy callbacks (Architecture #5 follow-up 2)
 
-Three groups have pre-existing custom suppression logic in the scoring
-kernel that already does the right thing:
+Two groups now consolidate their bespoke suppression logic into the
+unified registry as SUPPRESS-policy entries with ``suppress_when``
+callbacks:
 
-- **nba_injury** — Smarter #17 phase 1 suppresses on OUT/DOUBTFUL with
-  a fresh report. The kernel checks ``injury_report_is_fresh`` (12h
-  window) before acting.
-- **mlb_lineup** — Smarter #16 suppresses on confirmed-and-scratched
-  with the ``player_not_in_starting_lineup`` reason.
-- **mlb_starter** — the kernel has its own
-  ``has_probable_starter_context`` missing-context gate plus the
-  ``opposing_starter_*`` factor degrades gracefully on partial data.
+- **nba_injury** — Smarter #17. :func:`nba_injury_suppress_when` fires
+  on OUT / DOUBTFUL when the injury report is fresh (within 12h);
+  gated to ``nba_props``.
+- **mlb_lineup** — Smarter #16. :func:`mlb_lineup_suppress_when` fires
+  on confirmed-and-scratched (lineup data complete AND player not in
+  starting lineup); gated to props that set ``copilot_requires_lineup``.
 
-For these groups the policy is ``IGNORE`` — the bespoke gate stays
-authoritative. Consolidating the bespoke paths into the unified
-registry is a meaningful follow-up but explicitly out of scope for
-the initial Architecture #5 ship per the design discussion.
+Both callbacks are invoked via :func:`check_suppressions` at scoring
+time and surface group-keyed suppression reasons. The scoring kernel
+maps those reasons onto its existing intermediate diagnostic keys
+(``lineup_suppression_reason``, ``injury_suppression_reason``) so the
+downstream ``suppression_reasons`` translation and the operator-facing
+``scoring_diagnostics`` shape stay byte-compatible.
+
+**mlb_starter** is still bespoke (``has_probable_starter_context``
+missing-context gate plus graceful degradation on partial data) and
+not consolidated here — its policy stays IGNORE.
 """
 
 from __future__ import annotations
@@ -65,7 +70,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
 
 class FeatureGroupSeverity(str, Enum):
@@ -74,6 +79,29 @@ class FeatureGroupSeverity(str, Enum):
     SUPPRESS = "suppress"
     PENALIZE = "penalize"
     IGNORE = "ignore"
+
+
+@dataclass(frozen=True, slots=True)
+class SuppressionContext:
+    """Runtime context passed to a SUPPRESS-policy group's
+    ``suppress_when`` callback at scoring time.
+
+    Callbacks inspect the runtime feature values + market metadata +
+    scoring family to decide whether the recommendation should be
+    suppressed (bespoke gates were value-driven, not just staleness-
+    driven — e.g. mlb_lineup suppresses on "lineup confirmed AND player
+    not in starting lineup", which depends on the lineup payload
+    contents, not just its age).
+
+    Frozen so the callback can't mutate the kernel's context mid-pass.
+    """
+
+    features: dict[str, Any]
+    metadata: dict[str, Any]
+    family_key: str
+
+
+SuppressWhenFn = Callable[[SuppressionContext], "str | None"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +115,16 @@ class FeatureGroupPolicy:
     # Only meaningful when ``severity == PENALIZE``. Confidence delta
     # applied when the group is stale; should be negative.
     penalty_confidence_delta: float = 0.0
+    # Only meaningful when ``severity == SUPPRESS``. Invoked at scoring
+    # time by :func:`check_suppressions`; receives a
+    # :class:`SuppressionContext` and returns the suppression reason
+    # string (which lands in ``suppression_reasons``) or ``None`` when
+    # the group's current state doesn't warrant suppression. The bespoke
+    # gates Smarter #16 / #17 implement here are value-driven (lineup
+    # confirmed-and-scratched, injury OUT/DOUBTFUL with fresh report)
+    # rather than purely TTL-driven, so the callback gets the live
+    # features + metadata + family_key context the inline gates used.
+    suppress_when: SuppressWhenFn | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +162,69 @@ class FeatureGroupSnapshot:
     completeness: float = 0.0
 
 
+def mlb_lineup_suppress_when(ctx: SuppressionContext) -> str | None:
+    """Smarter #16 bespoke gate, unified callback form.
+
+    Suppresses when ``copilot_requires_lineup`` is set in the market
+    metadata AND the lineup payload confirms the player is NOT in the
+    starting lineup (scratch / DNP). Mirrors the inline logic the
+    scoring kernel used pre-consolidation; ``_single_scoring_adjustments``
+    delegates here so the registry is the single source of truth for
+    the policy decision.
+
+    Returns ``"player_not_in_starting_lineup"`` on suppression, ``None``
+    otherwise (pre-lineup-window, confirmed-in-lineup,
+    ``copilot_requires_lineup`` not set, or a non-prop family).
+
+    Codex Pattern 9: family gate to ``_props``. The original inline
+    logic was nested inside the ``elif family_key.endswith("_props")``
+    branch, so a winner / game-line market that somehow set
+    ``copilot_requires_lineup=True`` was never reached by this gate.
+    Preserving the same gate here keeps the behavior bit-identical.
+    """
+    if not ctx.family_key.endswith("_props"):
+        return None
+    if not ctx.metadata.get("copilot_requires_lineup"):
+        return None
+    lineup_data_complete = (
+        float(ctx.features.get("lineup_data_complete") or 0.0) >= 1.0
+    )
+    player_in_starting_lineup = (
+        float(ctx.features.get("player_in_starting_lineup") or 0.0) >= 1.0
+    )
+    if lineup_data_complete and not player_in_starting_lineup:
+        return "player_not_in_starting_lineup"
+    return None
+
+
+def nba_injury_suppress_when(ctx: SuppressionContext) -> str | None:
+    """Smarter #17 bespoke gate, unified callback form.
+
+    Suppresses when the family is ``nba_props`` AND a fresh injury
+    report (within 12h, encoded as ``injury_report_is_fresh == 1.0``
+    by the emitter) reports the player as OUT or DOUBTFUL. Stale
+    reports DON'T suppress — the lineup-confirmation gate covers the
+    pre-game uncertainty; injury data only adds value when recent.
+
+    NBA-gated (codex Pattern 9 — a stray injury feature on an MLB row
+    must not trip this check).
+
+    Returns ``"player_injury_out"`` / ``"player_injury_doubtful"`` on
+    suppression, ``None`` otherwise.
+    """
+    if ctx.family_key != "nba_props":
+        return None
+    if not (float(ctx.features.get("injury_data_complete") or 0.0) >= 1.0):
+        return None
+    if not (float(ctx.features.get("injury_report_is_fresh") or 0.0) >= 1.0):
+        return None
+    if float(ctx.features.get("player_injury_status_out") or 0.0) >= 1.0:
+        return "player_injury_out"
+    if float(ctx.features.get("player_injury_status_doubtful") or 0.0) >= 1.0:
+        return "player_injury_doubtful"
+    return None
+
+
 # Default policy: ignore. Adding a new emitter without an explicit
 # registry entry never accidentally gates scoring; operators opt in.
 DEFAULT_POLICY = FeatureGroupPolicy(
@@ -158,14 +259,33 @@ FEATURE_GROUP_POLICIES: dict[str, FeatureGroupPolicy] = {
         ttl=timedelta(hours=24),
         penalty_confidence_delta=-0.03,
     ),
+    # SUPPRESS (Architecture #5 follow-up 2): Smarter #16 — the bespoke
+    # confirmed-and-scratched gate now lives in
+    # ``mlb_lineup_suppress_when`` and the registry is the single
+    # source of truth. ``ttl`` is unused for SUPPRESS groups (the gate
+    # is value-driven, not time-driven) — left at the upstream
+    # cache TTL for diagnostic display only.
+    "mlb_lineup": FeatureGroupPolicy(
+        severity=FeatureGroupSeverity.SUPPRESS,
+        ttl=timedelta(hours=12),
+        suppress_when=mlb_lineup_suppress_when,
+    ),
+    # SUPPRESS (Architecture #5 follow-up 2): Smarter #17 — NBA-only
+    # OUT / DOUBTFUL gate. ``ttl`` is informational; the freshness
+    # window is enforced inside ``nba_injury_suppress_when`` via
+    # ``injury_report_is_fresh`` (the emitter does the 12h math).
+    "nba_injury": FeatureGroupPolicy(
+        severity=FeatureGroupSeverity.SUPPRESS,
+        ttl=timedelta(hours=12),
+        suppress_when=nba_injury_suppress_when,
+    ),
     # IGNORE groups (registry entries omitted; fall through to
     # ``DEFAULT_POLICY``). Documented here for operator visibility:
     #
-    # Bespoke gates already authoritative:
-    # - nba_injury — Smarter #17 phase 1 suppression on OUT/DOUBTFUL
-    #   with fresh report
-    # - mlb_lineup — Smarter #16 suppression on confirmed-and-scratched
+    # Bespoke gates not yet consolidated:
     # - mlb_starter — has_probable_starter_context missing-context gate
+    #   plus graceful degradation in opposing_starter_* factors. Not
+    #   suppression-shaped; stays bespoke for now.
     #
     # Season-stable / aggregates:
     # - mlb_park (park factors stable across season)
@@ -360,6 +480,34 @@ def check_freshness(
     return assessments
 
 
+def check_suppressions(context: SuppressionContext) -> dict[str, str]:
+    """Evaluate every SUPPRESS-policy group's ``suppress_when``
+    callback and collect non-None reasons by group_key.
+
+    The scoring kernel calls this from
+    ``_single_scoring_adjustments`` (post Architecture #5 follow-up 2)
+    instead of inlining the bespoke gates. Group keys returned by this
+    function map onto the existing intermediate diagnostic keys
+    (``mlb_lineup`` → ``lineup_suppression_reason`` etc.) so the
+    downstream translation in ``_build_scored_recommendation`` keeps
+    its existing shape.
+
+    Iteration order is insertion order over ``FEATURE_GROUP_POLICIES``;
+    callbacks must be independent — no callback may rely on another
+    having (or not having) fired for the same scoring pass.
+    """
+    result: dict[str, str] = {}
+    for group_key, policy in FEATURE_GROUP_POLICIES.items():
+        if policy.severity is not FeatureGroupSeverity.SUPPRESS:
+            continue
+        if policy.suppress_when is None:
+            continue
+        reason = policy.suppress_when(context)
+        if reason is not None:
+            result[group_key] = reason
+    return result
+
+
 def serialize_feature_groups(
     feature_groups: dict[str, FeatureGroupSnapshot],
 ) -> dict[str, dict[str, Any]]:
@@ -428,6 +576,8 @@ __all__ = [
     "FeatureGroupPolicy",
     "FeatureGroupSnapshot",
     "FreshnessAssessment",
+    "SuppressionContext",
+    "SuppressWhenFn",
     "DEFAULT_POLICY",
     "FEATURE_GROUP_POLICIES",
     "policy_for_group",
@@ -435,6 +585,9 @@ __all__ = [
     "emit_to_group",
     "features_view",
     "check_freshness",
+    "check_suppressions",
+    "mlb_lineup_suppress_when",
+    "nba_injury_suppress_when",
     "serialize_feature_groups",
     "deserialize_feature_groups",
 ]
