@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy import func, select
 
 import app.services.scoring as scoring_module
@@ -24,6 +25,46 @@ from app.services.scoring import (
     score_event,
     stage_current_slate_watchlist_batch,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_from_bundled_ml_manifest(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Smarter #21 phase 2d — make scoring tests hermetic against the
+    operator-trained bundled ML manifest.
+
+    ``apps/ml/manifests/current.json`` ships in the repo and points
+    at ``apps/ml/artifacts/global_v1_*`` directories that exist on
+    operators' machines (after running ``train``) but NOT in CI. With
+    the phase-2d interval consumer now wired into ``_score_player_prop``,
+    any scoring test that doesn't pin ``ML_MANIFEST_PATH`` would pick
+    up the operator's locally-trained interval models and produce
+    different probability_yes values — flaky locally, fine in CI, the
+    worst kind of test failure.
+
+    Pinning to a non-existent path makes the manifest loader return
+    ``None``, which makes the interval consumer return ``None``,
+    which makes scoring fall back to the Poisson path the existing
+    tests pin. Tests that DO want manifest-aware behavior (see
+    ``test_interval_consumer.py``) override this fixture by setting
+    their own ``ML_MANIFEST_PATH``.
+
+    Also clears the artifact loader cache around the test — today the
+    manifest short-circuit means the cache is never populated from
+    scoring tests, but if the manifest-load gate is ever restructured
+    the cache could leak between sessions. Mirrors the safety pattern
+    in ``test_interval_consumer.py``'s autouse fixture.
+    """
+    from app.services.ml.artifact_loader import clear_cache
+
+    missing = tmp_path_factory.mktemp("no-ml-manifest") / "manifest.json"
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(missing))
+    get_settings.cache_clear()
+    clear_cache()
+    yield
+    get_settings.cache_clear()
+    clear_cache()
 
 
 def test_score_event_aligns_yes_price_to_market_target(db_session):

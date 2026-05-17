@@ -102,6 +102,28 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def coverage_status_for_stat(artifact_dir: Path, stat_key: str) -> CoverageStatus:
+    """Read the coverage_status for a single (artifact_dir, stat_key)
+    pair without walking the whole manifest.
+
+    Used by the Smarter #21 phase 2d scoring consumer to gate
+    interval consumption on the same operator-facing band as the
+    readiness panel + ``inspect-intervals`` CLI. Returns ``"unknown"``
+    when the stat subdir, metadata.json, or ``empirical_coverage``
+    field is missing — visible (not silent) so the consumer falls
+    back to the Poisson approximation.
+    """
+    metadata = _read_interval_metadata(
+        artifact_dir / "interval_models" / stat_key / "metadata.json"
+    ) or {}
+    coverage = metadata.get("empirical_coverage")
+    try:
+        coverage_float = float(coverage) if coverage is not None else None
+    except (TypeError, ValueError):
+        coverage_float = None
+    return _classify_coverage(coverage_float)
+
+
 def collect_interval_model_status() -> list[IntervalModelStatus]:
     """Walk the active manifest's family entries and collect per-stat
     interval-model status.

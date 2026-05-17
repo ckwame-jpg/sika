@@ -101,6 +101,7 @@ from app.services.scoring.types import (  # noqa: E402
     ScoredWatchlistCapture,
     WatchlistGenerationSummary,
 )
+from app.services.scoring.interval_consumer import consume_prediction_interval  # noqa: E402
 
 
 def _mlb_bullpen_total_factor(
@@ -1681,6 +1682,28 @@ def _score_player_prop(
         features["_drivers"] = drivers
         for line in driver_reason_strings(drivers):
             reasons.append(line)
+
+    # Smarter #21 phase 2d — interval-model consumer. Gated on (1) a
+    # trained sidecar existing for this stat key on the served
+    # artifact and (2) ``coverage_status == "ok"`` (strict policy —
+    # the 2026-05-16 demo proved 4/7 stat keys land in ``bad``
+    # coverage where intervals would ship worse than Poisson). The
+    # diagnostic is ALWAYS surfaced when the sidecar exists so the
+    # operator can A/B inspect interval vs. Poisson per prop; the
+    # probability is only swapped when coverage clears the gate.
+    interval_diag = consume_prediction_interval(
+        family_key=single_family_key(sport_key, "player_prop"),
+        stat_key=stat_key,
+        threshold=threshold,
+        features=features,
+        poisson_yes_probability=probability_yes,
+    )
+    if interval_diag is not None:
+        features["prediction_interval"] = interval_diag
+        if interval_diag["coverage_status"] == "ok":
+            probability_yes = float(interval_diag["yes_probability_from_interval"])
+            features["yes_probability"] = round(probability_yes, 4)
+
     reasons.append(f"Model probability of clearing {threshold:.1f}: {probability_yes:.0%}")
     if resolved.context_stale:
         reasons.append("Using stale cached prop context while live ESPN refresh catches up.")
