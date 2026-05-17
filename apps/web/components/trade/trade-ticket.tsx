@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { TradeDialog } from "@/components/positions/trade-dialog";
 import { PickHistoryStrip } from "./pick-history-strip";
 import { PredictionIntervalBand } from "./prediction-interval-band";
-import type { PredictionInterval } from "@/lib/types";
+import { FreshnessBadge } from "./freshness-badge";
+import type { FreshnessStaleGroup, PredictionInterval } from "@/lib/types";
 import { cn, fmtEdge, fmtPercent, fmtPrice } from "@/lib/utils";
 
 export interface TradeSelection {
@@ -45,6 +46,16 @@ export interface TradeSelection {
    *  exists for this stat key, or when the artifact lookup failed —
    *  the band component gracefully renders nothing in that case. */
   predictionInterval?: PredictionInterval | null;
+  /** Smarter #22 PR A — Architecture #5 freshness diagnostics. List
+   *  of feature groups that went stale for this recommendation.
+   *  Empty / undefined when all groups are fresh (the common case);
+   *  the badge component renders nothing in that case. */
+  freshnessStaleGroups?: FreshnessStaleGroup[] | null;
+  /** Smarter #22 PR A — total confidence penalty applied by the
+   *  freshness layer for this recommendation. Sum of per-group
+   *  ``confidence_delta`` values; ``null`` when no penalty was
+   *  applied. */
+  freshnessConfidenceDelta?: number | null;
 }
 
 interface TradeTicketProps {
@@ -120,6 +131,19 @@ export function TradeTicket({
           <>
             <div className="ticket-section-divider" aria-hidden />
             <PredictionIntervalBand interval={selection.predictionInterval} />
+          </>
+        )}
+
+        {/* Same outer-guard pattern as the prediction-interval band:
+           controls the divider, NOT redundant with the component's
+           own empty-list guard. */}
+        {selection.freshnessStaleGroups && selection.freshnessStaleGroups.length > 0 && (
+          <>
+            <div className="ticket-section-divider" aria-hidden />
+            <FreshnessBadge
+              staleGroups={selection.freshnessStaleGroups}
+              confidenceDelta={selection.freshnessConfidenceDelta ?? null}
+            />
           </>
         )}
 

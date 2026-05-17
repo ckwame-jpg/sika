@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import get_settings
 from app.models import CurrentSlateSnapshot, Event, EventParticipant, Market, Prediction, Recommendation, Run
 from app.schemas import (
+    FreshnessStaleGroupRead,
     SportAvailabilityRead,
     TradeDeskArchivedSlateRead,
     TradeDeskEventRead,
@@ -218,6 +219,79 @@ def _time_to_close_minutes(market: Market, *, now: datetime | None = None) -> in
     if delta_seconds <= 0:
         return 0
     return int(delta_seconds // 60)
+
+
+def _extract_freshness_fields(
+    diagnostics: dict, *, market_ticker: str,
+) -> tuple[list[FreshnessStaleGroupRead], float | None]:
+    """Smarter #22 PR A — pull the Architecture #5 freshness
+    diagnostics off ``recommendation.scoring_diagnostics`` and shape
+    them for the trade-desk surfaces.
+
+    Reads two keys produced by ``apps/api/app/services/scoring/__init__.py``:
+    - ``freshness_stale_groups``: list of stale-group dicts
+      ``{group_key, severity, age_seconds, confidence_delta}``.
+    - ``feature_groups``: nested per-group serialized snapshots
+      ``{group_key: {values, fresh_at, source, completeness}}``.
+
+    Returns ``(stale_groups, confidence_delta)``:
+    - ``stale_groups`` is the parsed Pydantic list with the human-
+      readable ``source`` label enriched from ``feature_groups``.
+      Empty when no stale groups, or when every entry failed to
+      validate (drift safety — see below).
+    - ``confidence_delta`` is the total penalty from
+      ``freshness_confidence_delta`` (always ≤ 0 when nonzero).
+
+    Defensive: a malformed entry (e.g. unknown severity from a future
+    schema version) is logged and skipped rather than 500-ing the
+    whole trade-desk response. Mirrors the PR4 ``prediction_interval``
+    parse pattern.
+    """
+    raw_stale = diagnostics.get("freshness_stale_groups")
+    if not isinstance(raw_stale, list) or not raw_stale:
+        return [], _coerce_confidence_delta(diagnostics)
+
+    raw_groups = diagnostics.get("feature_groups")
+    sources: dict[str, str] = {}
+    if isinstance(raw_groups, dict):
+        for group_key, snapshot in raw_groups.items():
+            if isinstance(snapshot, dict):
+                source = snapshot.get("source")
+                if isinstance(source, str):
+                    sources[str(group_key)] = source
+
+    parsed: list[FreshnessStaleGroupRead] = []
+    for entry in raw_stale:
+        if not isinstance(entry, dict):
+            continue
+        enriched = dict(entry)
+        group_key = enriched.get("group_key")
+        if isinstance(group_key, str) and group_key in sources and "source" not in enriched:
+            enriched["source"] = sources[group_key]
+        try:
+            parsed.append(FreshnessStaleGroupRead.model_validate(enriched))
+        except Exception as exc:  # noqa: BLE001 — defensive at read boundary
+            # Same shape as the PR4 prediction_interval drift log:
+            # surface persistent drift in the API logs rather than
+            # silently dropping every stale-group row.
+            logger.warning(
+                "trade_desk.freshness_stale_groups_drift: "
+                "ticker=%s entry=%r error=%s",
+                market_ticker, enriched, exc,
+            )
+    return parsed, _coerce_confidence_delta(diagnostics)
+
+
+def _coerce_confidence_delta(diagnostics: dict) -> float | None:
+    """Pull ``freshness_confidence_delta`` out of diagnostics, defensively
+    cast to float. ``None`` when missing or unparseable."""
+    raw = diagnostics.get("freshness_confidence_delta")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def _signed_numeric_line(market_kind: str, raw_data: dict, selected_side: str) -> float | None:
@@ -739,6 +813,9 @@ def build_trade_desk_response(
                         market.ticker, exc,
                     )
                     prediction_interval_read = None
+            stale_groups, freshness_delta = _extract_freshness_fields(
+                diagnostics, market_ticker=market.ticker,
+            )
             thresholds.append(
                 TradeDeskThresholdRead(
                     ticker=market.ticker,
@@ -752,6 +829,8 @@ def build_trade_desk_response(
                     kalshi_url=kalshi_market_url(market),
                     time_to_close_minutes=_time_to_close_minutes(market),
                     prediction_interval=prediction_interval_read,
+                    freshness_stale_groups=stale_groups,
+                    freshness_confidence_delta=freshness_delta,
                 )
             )
             continue
@@ -759,7 +838,8 @@ def build_trade_desk_response(
         if family not in {"winner", "game_line"}:
             continue
 
-        selected_probability = dict(recommendation.scoring_diagnostics or {}).get("selected_side_probability")
+        diagnostics = dict(recommendation.scoring_diagnostics or {})
+        selected_probability = diagnostics.get("selected_side_probability")
         if selected_probability is None:
             continue
         game_lines = bucket["game_lines"]
@@ -767,6 +847,9 @@ def build_trade_desk_response(
         market_kind = str(raw_data.get("copilot_market_kind") or "")
         numeric_line = _signed_numeric_line(market_kind, raw_data, recommendation.side)
         total_direction = _effective_total_direction(market_kind, raw_data, recommendation.side)
+        stale_groups, freshness_delta = _extract_freshness_fields(
+            diagnostics, market_ticker=market.ticker,
+        )
         game_lines.append(
             TradeDeskGameLineRead(
                 ticker=market.ticker,
@@ -784,6 +867,8 @@ def build_trade_desk_response(
                 numeric_line=numeric_line,
                 total_direction=total_direction,
                 time_to_close_minutes=_time_to_close_minutes(market),
+                freshness_stale_groups=stale_groups,
+                freshness_confidence_delta=freshness_delta,
             )
         )
         game_line_market_id_by_ticker[market.ticker] = market.id

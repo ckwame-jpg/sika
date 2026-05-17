@@ -265,6 +265,8 @@ function buildGameLineSelection(event: TradeDeskEvent, line: TradeDeskGameLine):
     kalshiUrl: line.kalshi_url,
     numericLine: line.numeric_line,
     totalDirection: line.total_direction,
+    freshnessStaleGroups: line.freshness_stale_groups,
+    freshnessConfidenceDelta: line.freshness_confidence_delta,
   };
 }
 
@@ -296,6 +298,8 @@ function buildPlayerPropSelection(
     statKey,
     threshold: threshold.threshold,
     predictionInterval: threshold.prediction_interval,
+    freshnessStaleGroups: threshold.freshness_stale_groups,
+    freshnessConfidenceDelta: threshold.freshness_confidence_delta,
   };
 }
 
