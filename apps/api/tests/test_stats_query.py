@@ -449,6 +449,7 @@ class FakeEspnClient:
             "NBA": {"athlete_id": "3934672", "display_name": "Jalen Brunson", "team_name": "New York Knicks"},
             "NFL": {"athlete_id": "3139477", "display_name": "Patrick Mahomes", "team_name": "Kansas City Chiefs"},
             "MLB": {"athlete_id": "33192", "display_name": "Aaron Judge", "team_name": "New York Yankees"},
+            "WNBA": {"athlete_id": "4433403", "display_name": "Caitlin Clark", "team_name": "Indiana Fever"},
             "SOCCER": {
                 "athlete_id": "45843",
                 "display_name": "Lionel Messi",
@@ -471,6 +472,12 @@ class FakeEspnClient:
         if sport_key == "MLB":
             assert season == 2026
             return MLB_GAMELOG_PAYLOAD
+        if sport_key == "WNBA":
+            # WNBA shares NBA's ESPN gamelog payload shape exactly, so
+            # the fixture is reused. PR 3's _build_game_logs dispatches
+            # WNBA → _build_nba_game_logs so this round-trips cleanly.
+            assert season == 2026
+            return NBA_GAMELOG_PAYLOAD
         raise AssertionError("unexpected sport")
 
     def fetch_soccer_player_overview(self, athlete_id: str, page_slug: str | None = None):
@@ -540,6 +547,32 @@ def test_default_season_for_wnba_uses_calendar_year():
     assert default_season_for_sport("WNBA", reference_date=date(2026, 7, 15)) == 2026
 
 
+def test_default_season_for_wnba_rolls_back_in_offseason():
+    """PR 3 — offseason (Jan → Apr) references the previous season's
+    calendar year. WNBA seasons don't span calendar boundaries, so a
+    March-2026 reference belongs to the 2025 season (which ran
+    May–Sept 2025), not the not-yet-started 2026 season.
+
+    The rollover happens at month boundary (May 1), matching MLB's
+    month-granularity treatment. A few pre-tip-off days (May 1-7,
+    before the WNBA's May 8 opener) tag as the new season — this is
+    intentional, mirroring how MLB tags late-March pre-season days
+    as the upcoming season.
+    """
+    # Mid-offseason → previous season's year.
+    assert default_season_for_sport("WNBA", reference_date=date(2026, 3, 15)) == 2025
+    # April still offseason.
+    assert default_season_for_sport("WNBA", reference_date=date(2026, 4, 30)) == 2025
+    # May 1 — month rollover marks the new season tag even though
+    # tip-off is May 8.
+    assert default_season_for_sport("WNBA", reference_date=date(2026, 5, 1)) == 2026
+    assert default_season_for_sport("WNBA", reference_date=date(2026, 5, 8)) == 2026
+    # Late season + final regular-season day still 2026.
+    assert default_season_for_sport("WNBA", reference_date=date(2026, 9, 24)) == 2026
+    # Right into offseason → previous year.
+    assert default_season_for_sport("WNBA", reference_date=date(2027, 1, 5)) == 2026
+
+
 def test_stats_query_service_returns_nba_metric_map():
     service = StatsQueryService(espn_client=FakeEspnClient())
 
@@ -553,6 +586,44 @@ def test_stats_query_service_returns_nba_metric_map():
     assert result["game_logs"][0]["metrics"]["field_goal_pct"] == 57.9
     assert result["summary"]["stat_line"] == "29.5 points, 8.5 assists, 4.5 rebounds, 35.5 minutes"
     assert result["game_logs"][0]["stat_line"] == "32 points, 9 assists, 5 rebounds, 36.0 minutes"
+
+
+def test_stats_query_service_handles_wnba_query():
+    """Smarter WNBA PR 3 — end-to-end WNBA query through the service.
+
+    WNBA shares NBA's ESPN payload shape (verified at PR 3 design
+    time), so the same NBA_GAMELOG_PAYLOAD fixture round-trips. The
+    test pins:
+    - sport_key flows through to result as ``WNBA``
+    - _build_game_logs dispatches WNBA → NBA parser and returns rows
+    - _build_summary_metrics dispatches WNBA → NBA summary
+    - _METRIC_LABELS["WNBA"] provides the same display labels as NBA
+    - _STAT_LINE_SPECS["WNBA"] produces the same stat-line phrasing
+    """
+    service = StatsQueryService(espn_client=FakeEspnClient())
+
+    result = service.query("Caitlin Clark last 2 games", sport_key="WNBA", season=2026)
+
+    assert result["sport_key"] == "WNBA"
+    assert result["entity_name"] == "Caitlin Clark"
+    assert result["games_analyzed"] == 2
+    # Same payload as NBA → same per-game averages.
+    assert result["summary"]["metrics"]["points"] == 29.5
+    assert result["summary"]["metrics"]["assists"] == 8.5
+    assert result["metric_labels"]["field_goal_pct"] == "FG%"
+    assert result["summary"]["stat_line"] == "29.5 points, 8.5 assists, 4.5 rebounds, 35.5 minutes"
+
+
+def test_parse_stats_question_accepts_wnba_sport_key():
+    """SUPPORTED_STATS_SPORTS now includes WNBA — the parser must
+    accept ``sport_key="WNBA"`` without raising the
+    "Stats query currently supports NBA, NFL, MLB..." validation."""
+    parsed = parse_stats_question("Caitlin Clark last 5 games", sport_key="WNBA", season=2026)
+
+    assert parsed.sport_key == "WNBA"
+    assert parsed.player_name == "Caitlin Clark"
+    assert parsed.games_requested == 5
+    assert parsed.season == 2026
 
 
 def test_stats_query_service_returns_nfl_metric_map():

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.clients.espn import EspnPublicClient
 
 
-SUPPORTED_STATS_SPORTS = {"NBA", "NFL", "MLB", "SOCCER", "TENNIS", "UFC"}
+SUPPORTED_STATS_SPORTS = {"NBA", "NFL", "MLB", "WNBA", "SOCCER", "TENNIS", "UFC"}
 
 _QUESTION_PREFIX_RE = re.compile(r"^(?:what(?:'s| is| are)|show me|give me|tell me)\s+", re.IGNORECASE)
 _QUESTION_SUFFIX_RE = re.compile(r"[?.!]+\s*$")
@@ -33,20 +33,25 @@ _SEASON_PATTERNS = (
 )
 _TENNIS_SET_RE = re.compile(r"(?P<left>\d+)-(?P<right>\d+)(?:\s*\((?P<tiebreak_left>\d+)-(?P<tiebreak_right>\d+)\))?")
 
+_NBA_METRIC_LABELS = {
+    "minutes": "Minutes",
+    "points": "Points",
+    "rebounds": "Rebounds",
+    "assists": "Assists",
+    "made_threes": "3PM",
+    "steals": "Steals",
+    "blocks": "Blocks",
+    "turnovers": "Turnovers",
+    "field_goal_pct": "FG%",
+    "three_point_pct": "3P%",
+    "free_throw_pct": "FT%",
+}
+
 _METRIC_LABELS = {
-    "NBA": {
-        "minutes": "Minutes",
-        "points": "Points",
-        "rebounds": "Rebounds",
-        "assists": "Assists",
-        "made_threes": "3PM",
-        "steals": "Steals",
-        "blocks": "Blocks",
-        "turnovers": "Turnovers",
-        "field_goal_pct": "FG%",
-        "three_point_pct": "3P%",
-        "free_throw_pct": "FT%",
-    },
+    "NBA": _NBA_METRIC_LABELS,
+    # WNBA shares NBA's stat set 1:1. Distinct dict reference (not a
+    # mutation-shared alias) so future WNBA-only labels can land here.
+    "WNBA": dict(_NBA_METRIC_LABELS),
     "NFL": {
         "completions": "Completions",
         "passing_attempts": "Pass Attempts",
@@ -171,13 +176,17 @@ def _advanced_metric_labels(sport_key: str, metric_categories: dict[str, str]) -
     return {key: table[key] for key, category in metric_categories.items() if category == "advanced" and key in table}
 
 
+_NBA_STAT_LINE_SPEC = (
+    ("points", "point", "points"),
+    ("assists", "assist", "assists"),
+    ("rebounds", "rebound", "rebounds"),
+    ("minutes", "minute", "minutes"),
+)
+
 _STAT_LINE_SPECS = {
-    "NBA": (
-        ("points", "point", "points"),
-        ("assists", "assist", "assists"),
-        ("rebounds", "rebound", "rebounds"),
-        ("minutes", "minute", "minutes"),
-    ),
+    "NBA": _NBA_STAT_LINE_SPEC,
+    # WNBA mirrors NBA — same per-game metric shape, same stat-line phrasing.
+    "WNBA": _NBA_STAT_LINE_SPEC,
     "NFL": (
         ("passing_yards", "pass yard", "pass yards"),
         ("passing_touchdowns", "pass TD", "pass TD"),
@@ -633,6 +642,12 @@ def default_season_for_sport(sport_key: str, reference_date: date | None = None)
         return today.year if today.month >= 8 else today.year - 1
     if sport_key == "MLB":
         return today.year if today.month >= 3 else today.year - 1
+    # WNBA's regular season runs May → September of one calendar year
+    # (no multi-year span like NBA's). Offseason references (Oct → Apr)
+    # roll back to the previous season's calendar year, matching how
+    # MLB handles its winter offseason.
+    if sport_key == "WNBA":
+        return today.year if today.month >= 5 else today.year - 1
     if sport_key == "SOCCER":
         return today.year
     if sport_key == "TENNIS":
@@ -768,6 +783,13 @@ def _build_game_logs(sport_key: str, payload: dict[str, Any]) -> list[dict[str, 
         return _build_nfl_game_logs(payload)
     if sport_key == "MLB":
         return _build_mlb_game_logs(payload)
+    # WNBA shares NBA's ESPN gamelog payload shape exactly — same stat
+    # names, same seasonTypes / categories / events nesting, same
+    # made/attempted "11-19" string format. Reuse _build_nba_game_logs.
+    # If WNBA later adds a sport-unique stat (e.g. a hustle / drives
+    # endpoint), this dispatch is where the divergence lands.
+    if sport_key == "WNBA":
+        return _build_nba_game_logs(payload)
     if sport_key == "SOCCER":
         return _build_soccer_game_logs(payload)
     raise ValueError(f"Unsupported stats sport: {sport_key}")
@@ -1169,6 +1191,9 @@ def _build_summary_metrics(sport_key: str, game_logs: list[dict[str, Any]]) -> d
         return _nfl_summary_metrics(game_logs)
     if sport_key == "MLB":
         return _mlb_summary_metrics(game_logs)
+    # WNBA mirrors NBA — same per-game raw_metrics shape, same summary aggregates.
+    if sport_key == "WNBA":
+        return _nba_summary_metrics(game_logs)
     if sport_key == "SOCCER":
         return _soccer_summary_metrics(game_logs)
     if sport_key == "TENNIS":
@@ -1426,7 +1451,7 @@ def _build_explanation(
     if parsed.opponent:
         scope += f" against {parsed.opponent}"
 
-    if parsed.sport_key == "NBA":
+    if parsed.sport_key in {"NBA", "WNBA"}:
         return (
             f"{player_name} averaged {summary_metrics['points']:.1f} points, {summary_metrics['assists']:.1f} assists, "
             f"{summary_metrics['rebounds']:.1f} rebounds, and {summary_metrics['minutes']:.1f} minutes over {scope}."
