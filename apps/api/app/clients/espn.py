@@ -12,6 +12,7 @@ ESPN_SEARCH_SLUGS = {
     "NBA": "nba",
     "NFL": "nfl",
     "MLB": "mlb",
+    "WNBA": "wnba",
     "SOCCER": "soccer",
     "TENNIS": "tennis",
     "UFC": "mma",
@@ -20,16 +21,19 @@ ESPN_SCOREBOARD_URLS = {
     "NBA": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
     "NFL": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
     "MLB": "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard",
+    "WNBA": "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard",
 }
 ESPN_GAMELOG_URLS = {
     "NBA": "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/{athlete_id}/gamelog",
     "NFL": "https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/{athlete_id}/gamelog",
     "MLB": "https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb/athletes/{athlete_id}/gamelog",
+    "WNBA": "https://site.web.api.espn.com/apis/common/v3/sports/basketball/wnba/athletes/{athlete_id}/gamelog",
 }
 ESPN_TEAM_SCHEDULE_URLS = {
     "NBA": "https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}/schedule",
     "NFL": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/schedule",
     "MLB": "https://site.web.api.espn.com/apis/site/v2/sports/baseball/mlb/teams/{team_id}/schedule",
+    "WNBA": "https://site.web.api.espn.com/apis/site/v2/sports/basketball/wnba/teams/{team_id}/schedule",
 }
 
 
@@ -67,6 +71,22 @@ ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME: dict[str, dict[str, str]] = {
         "SFG": "San Francisco Giants", "SEA": "Seattle Mariners", "STL": "St. Louis Cardinals",
         "TB": "Tampa Bay Rays", "TBR": "Tampa Bay Rays", "TEX": "Texas Rangers",
         "TOR": "Toronto Blue Jays", "WSH": "Washington Nationals", "WSN": "Washington Nationals",
+    },
+    # WNBA — 2026 season (15 teams, including expansion Toronto Tempo +
+    # Portland Fire). ESPN uses 2-letter codes for NY / LV / LA / GS;
+    # Kalshi ticker conventions for those four aren't fully confirmed at
+    # the time of MVP scaffolding (per SMARTER_WNBA_PREP.md §2). The
+    # substring fallback in ``_team_hint_matches_subtitle`` handles
+    # remaining mismatch surface area at the resolver level.
+    "WNBA": {
+        "ATL": "Atlanta Dream", "CHI": "Chicago Sky", "CON": "Connecticut Sun",
+        "IND": "Indiana Fever", "NY": "New York Liberty", "NYL": "New York Liberty",
+        "TOR": "Toronto Tempo", "WSH": "Washington Mystics", "DAL": "Dallas Wings",
+        "GS": "Golden State Valkyries", "GSV": "Golden State Valkyries",
+        "LV": "Las Vegas Aces", "LVA": "Las Vegas Aces",
+        "LA": "Los Angeles Sparks", "LAS": "Los Angeles Sparks",
+        "MIN": "Minnesota Lynx", "PHX": "Phoenix Mercury",
+        "POR": "Portland Fire", "SEA": "Seattle Storm",
     },
 }
 
@@ -108,6 +128,7 @@ ESPN_LEAGUE_NAMES = {
     "NBA": "NBA",
     "NFL": "NFL",
     "MLB": "MLB",
+    "WNBA": "WNBA",
 }
 
 ESPN_SOCCER_PLAYER_PAGE_URL = "https://www.espn.com/soccer/player/_/id/{athlete_id}/{slug}"

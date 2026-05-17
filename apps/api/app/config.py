@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     espn_player_search_cache_hours: int = 168
     nba_prop_gamelog_cache_minutes: int = 30
     mlb_prop_gamelog_cache_minutes: int = 60
+    # WNBA shares NBA's payload shape + cadence; default to the NBA TTL.
+    wnba_prop_gamelog_cache_minutes: int = 30
     current_slate_lookback_days: int = 0
     current_slate_lookahead_days: int = 1
     watchlist_min_edge: float = 0.03
@@ -115,6 +117,15 @@ class Settings(BaseSettings):
     nba_clutch_cache_minutes: int = 1440
     nba_player_defense_cache_minutes: int = 1440
     nba_injury_report_cache_minutes: int = 60
+
+    # WNBA advanced stats — WNBA's ESPN payloads mirror NBA's shape, so
+    # the cache TTLs mirror NBA defaults as the starting point. Once
+    # WNBA-specific data sources land (Smarter follow-up — generalized
+    # stats client, RefMetrics for referees), the team_advanced /
+    # referee TTLs can diverge from NBA's.
+    wnba_advanced_cache_minutes: int = 240
+    wnba_team_advanced_cache_minutes: int = 1440
+    wnba_referee_assignments_cache_minutes: int = 240
 
     # MLB advanced stats
     mlb_batter_advanced_cache_minutes: int = 360

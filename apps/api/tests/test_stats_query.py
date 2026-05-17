@@ -529,6 +529,17 @@ def test_default_season_for_ufc_uses_calendar_year():
     assert default_season_for_sport("UFC", reference_date=date(2026, 3, 31)) == 2026
 
 
+def test_default_season_for_wnba_uses_calendar_year():
+    """WNBA's 2026 regular season runs May 8 → Sept 24. A reference date
+    in the middle of the season must return the calendar year of the
+    season's tip-off — same shape as the SOCCER / TENNIS / UFC fallback
+    today. PR 3 may add an explicit branch with offseason rollover
+    semantics; this test pins the in-season expectation regardless of
+    which code path serves it.
+    """
+    assert default_season_for_sport("WNBA", reference_date=date(2026, 7, 15)) == 2026
+
+
 def test_stats_query_service_returns_nba_metric_map():
     service = StatsQueryService(espn_client=FakeEspnClient())
 

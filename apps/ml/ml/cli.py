@@ -146,10 +146,14 @@ def _family_key_for_row(sport_key: str | None, market_family: str | None) -> str
             return "nba_props"
         if sport == "MLB":
             return "mlb_props"
+        if sport == "WNBA":
+            return "wnba_props"
     if sport == "NBA":
         return "nba_singles"
     if sport == "MLB":
         return "mlb_singles"
+    if sport == "WNBA":
+        return "wnba_singles"
     return f"{sport.lower()}_singles" if sport else "unknown_singles"
 
 

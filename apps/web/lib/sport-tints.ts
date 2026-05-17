@@ -10,6 +10,7 @@ export const SPORT_TINTS: Record<string, string> = {
   nba: "var(--sport-nba)",
   nfl: "var(--sport-nfl)",
   mlb: "var(--sport-mlb)",
+  wnba: "var(--sport-wnba)",
   soccer: "var(--sport-soccer)",
   tennis: "var(--sport-tennis)",
   ufc: "var(--sport-ufc)",

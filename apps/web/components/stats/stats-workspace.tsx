@@ -20,9 +20,19 @@ const EXAMPLES: Record<SportKey, string[]> = {
   NBA: ["Jalen Brunson last 10 games", "Jayson Tatum this season"],
   NFL: ["Patrick Mahomes this season", "Josh Allen last 5 games"],
   MLB: ["Aaron Judge this season", "Mookie Betts last 10 games"],
+  WNBA: ["Caitlin Clark last 10 games", "A'ja Wilson this season"],
   SOCCER: ["Lionel Messi last 5 matches", "Kylian Mbappe this season"],
   TENNIS: ["Novak Djokovic last 5 matches", "Carlos Alcaraz this season"],
 };
+
+// PR 1 scaffolding gates WNBA out of the Stats Assistant dropdown
+// until PR 3 ships the `/stats/query` backend WNBA branch
+// (`_METRIC_LABELS`, `_build_game_logs`, `_build_summary_metrics`).
+// Without this filter the dropdown would expose WNBA but the API
+// would 400 on every query. Remove this gate when PR 3 lands.
+const STATS_SUPPORTED_SPORTS: ReadonlySet<SportKey> = new Set([
+  "NBA", "NFL", "MLB", "SOCCER", "TENNIS",
+]);
 
 const SEASON_OPTIONS = ["2026-27", "2025-26", "2024-25", "2023-24", "2022-23"];
 
@@ -171,9 +181,11 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
               aria-label="Sport"
               data-testid="sa-sport"
             >
-              {(Object.entries(SPORT_LABELS) as Array<[SportKey, string]>).map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
+              {(Object.entries(SPORT_LABELS) as Array<[SportKey, string]>)
+                .filter(([key]) => STATS_SUPPORTED_SPORTS.has(key))
+                .map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
             </select>
           </div>
           <div className="sa-select">

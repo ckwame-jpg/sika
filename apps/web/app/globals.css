@@ -25,6 +25,7 @@
   --color-sport-nba: var(--sport-nba);
   --color-sport-nfl: var(--sport-nfl);
   --color-sport-mlb: var(--sport-mlb);
+  --color-sport-wnba: var(--sport-wnba);
   --color-sport-soccer: var(--sport-soccer);
   --color-sport-tennis: var(--sport-tennis);
   --color-sport-ufc: var(--sport-ufc);
@@ -111,6 +112,7 @@
   --sport-nba: hsl(248 80% 62%);
   --sport-nfl: hsl(218 75% 50%);
   --sport-mlb: hsl(285 70% 60%);
+  --sport-wnba: hsl(15 85% 58%);
   --sport-soccer: hsl(168 60% 42%);
   --sport-tennis: hsl(195 75% 50%);
   --sport-ufc: hsl(305 70% 58%);
@@ -289,6 +291,7 @@
   --sport-nba: hsl(248 85% 70%);
   --sport-nfl: hsl(218 80% 65%);
   --sport-mlb: hsl(285 75% 70%);
+  --sport-wnba: hsl(15 90% 68%);
   --sport-soccer: hsl(168 65% 55%);
   --sport-tennis: hsl(195 80% 62%);
   --sport-ufc: hsl(305 75% 68%);
