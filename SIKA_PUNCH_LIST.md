@@ -10,7 +10,7 @@ Merged from two independent audits (codex deep pass + claude deep pass, plus an 
 
 **Truly-open list as of the last reconciliation** (none block sport expansion):
 1. **Smarter #28 + #30 override registries** — mechanism shipped; populating needs Smarter #2 backtest data, not code.
-2. **Smarter #22 (feature freshness SLAs)** — Architecture #5 prerequisite shipped ([sika#169](https://github.com/ckwame-jpg/sika/pull/169)); now unblocked. Multi-PR design pass not yet started.
+2. **Smarter #22 (feature freshness SLAs)** — PR A shipped ([sika#186](https://github.com/ckwame-jpg/sika/pull/186)) — operator-facing badge surfaces stale-group + confidence-delta diagnostics on the trade ticket. PR B (policy registry expansion) gated on operator observation per [`SMARTER_22_TUNING_PLAYBOOK.md`](SMARTER_22_TUNING_PLAYBOOK.md).
 3. **WNBA sport expansion** — 3 of 8 PRs shipped ([sika#177](https://github.com/ckwame-jpg/sika/pull/177), [sika#178](https://github.com/ckwame-jpg/sika/pull/178), [sika#181](https://github.com/ckwame-jpg/sika/pull/181)); 5 remaining per `SMARTER_WNBA_PREP.md`.
 4. **Smarter #21 phase 2d coverage-band expansion** — phase 2d code is COMPLETE ([sika#179](https://github.com/ckwame-jpg/sika/pull/179) + [sika#180](https://github.com/ckwame-jpg/sika/pull/180)); only 2 of 7 trained stat keys are in the `ok` band that actually swaps probability. More should migrate naturally as games settle. **Not a coding task.**
 
