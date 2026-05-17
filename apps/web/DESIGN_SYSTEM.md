@@ -494,14 +494,16 @@ Concrete instances of inconsistency to fix (not blocking, but track).
 
 **Recommendation (future PR):** map the most-used cosmos surface tokens through `@theme inline` so consumers get `bg-surface-soft`, `border-surface-softer` utilities. Until then: **accept the literals for translucent surfaces** — refactoring without the utility mapping would just trade one inline value for another.
 
-### 5.3 Components built without the design system (queued for retro-design)
+### 5.3 Components built without the design system (resolved)
 
-These two were built ad-hoc and don't follow established patterns:
+**Resolved 2026-05-17** via [sika#196](https://github.com/ckwame-jpg/sika/pull/196). Both components were retro-redesigned through `/frontend-design` to adopt the cosmos eyebrow pattern (`ticket-stat-label` + small tonal signal chip), per-row left-rail accents lifted from `freshness-audit-panel.tsx`, and `font-mono tabular-nums tracking-tight` numerics. Behavior contracts (testid + role + data attributes) were preserved verbatim; visuals only.
 
-- [`components/trade/freshness-badge.tsx`](components/trade/freshness-badge.tsx) — Smarter #22 PR A. Doesn't use `.cosmos-panel`, `.stats-tile`, or `.outcome-pill`. Custom severity-toned container with inline Tailwind utilities. **Queued for /frontend-design retro-redesign.**
-- [`components/trade/prediction-interval-band.tsx`](components/trade/prediction-interval-band.tsx) — Smarter #21 PR 4. Custom SVG band with inline tokens. **Queued for /frontend-design retro-redesign.**
+Historical record:
 
-The just-shipped `freshness-audit-panel.tsx` was built via `/frontend-design` and uses `.stats-tile` as its root — that's the design quality bar these two need to match.
+- [`components/trade/freshness-badge.tsx`](components/trade/freshness-badge.tsx) — Smarter #22 PR A. Originally a custom severity-toned container with inline Tailwind utilities. Now uses the cosmos header rhythm + per-row severity rails (suppress red / penalize amber / ignore muted).
+- [`components/trade/prediction-interval-band.tsx`](components/trade/prediction-interval-band.tsx) — Smarter #21 PR 4. Originally a custom SVG band with inline tokens. Now wraps the (still load-bearing) SVG with the cosmos eyebrow + a three-column p10/p50/p90 landmark grid; coverage status moved to an `ok` / `bad` signal chip in the eyebrow.
+
+The audit-panel quality bar (`freshness-audit-panel.tsx`, built via `/frontend-design`) is what both now match — preserved as the canonical reference for the cosmos diagnostic-strip idiom.
 
 ### 5.4 Empty/loading/error states are inconsistent
 
