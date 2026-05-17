@@ -86,15 +86,17 @@ def test_initial_registry_has_expected_penalize_groups() -> None:
 def test_suppress_policies_match_consolidated_registry() -> None:
     """Architecture #5 follow-up 2 consolidated the Smarter #16
     (mlb_lineup) and Smarter #17 (nba_injury) bespoke gates into
-    SUPPRESS-policy registry entries. mlb_starter remains bespoke
-    (not suppression-shaped). Pin the exact set so adding a new
-    SUPPRESS group is an explicit test update — not a silent
+    SUPPRESS-policy registry entries. Smarter WNBA PR 7 added a
+    parallel ``wnba_injury`` SUPPRESS entry (separate group keyed by
+    sport, callback gated to ``wnba_props``). mlb_starter remains
+    bespoke (not suppression-shaped). Pin the exact set so adding a
+    new SUPPRESS group is an explicit test update — not a silent
     activation."""
     suppress_groups = {
         group: policy for group, policy in FEATURE_GROUP_POLICIES.items()
         if policy.severity is FeatureGroupSeverity.SUPPRESS
     }
-    assert set(suppress_groups) == {"mlb_lineup", "nba_injury"}
+    assert set(suppress_groups) == {"mlb_lineup", "nba_injury", "wnba_injury"}
     for policy in suppress_groups.values():
         assert policy.suppress_when is not None, (
             "SUPPRESS policy entries must declare a suppress_when callback"

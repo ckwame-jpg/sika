@@ -43,6 +43,7 @@ UPSTREAM_SOURCES: tuple[str, ...] = (
     "espn_player_search",
     "espn_player_gamelog",
     "espn_injuries",
+    "espn_wnba_injuries",
     "kalshi_markets",
     "kalshi_market_snapshots",
     "nba_stats",

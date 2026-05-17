@@ -761,6 +761,24 @@ class NbaInjuryReportCache(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
 
+class WnbaInjuryReportCache(Base):
+    """Smarter WNBA PR 7 — parallel of ``NbaInjuryReportCache`` for
+    the WNBA path. Per D1 in SMARTER_WNBA_PREP.md, the cache topology
+    is "parallel tables per sport" rather than a unified table with a
+    ``sport_key`` discriminator: smallest blast radius, separate
+    refresh cadences, no migration of existing NBA data."""
+    __tablename__ = "wnba_injury_report_cache"
+    __table_args__ = (
+        UniqueConstraint("fetched_date", name="uq_wnba_injury_report_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    fetched_date = Column(String, nullable=False, index=True)  # YYYY-MM-DD
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class NbaRefereeAssignmentCache(Base):
     """Smarter #13 phase 2a — cached NBA referee assignments per day.
 

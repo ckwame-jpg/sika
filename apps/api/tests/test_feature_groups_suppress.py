@@ -35,6 +35,7 @@ from app.services.scoring.feature_groups import (
     mlb_lineup_suppress_when,
     nba_injury_suppress_when,
     policy_for_group,
+    wnba_injury_suppress_when,
 )
 
 
@@ -64,6 +65,13 @@ def test_nba_injury_resolves_to_suppress_with_callback() -> None:
     policy = policy_for_group("nba_injury")
     assert policy.severity is FeatureGroupSeverity.SUPPRESS
     assert policy.suppress_when is nba_injury_suppress_when
+
+
+def test_wnba_injury_resolves_to_suppress_with_callback() -> None:
+    # Smarter WNBA PR 7 — parallel of nba_injury for the WNBA path.
+    policy = policy_for_group("wnba_injury")
+    assert policy.severity is FeatureGroupSeverity.SUPPRESS
+    assert policy.suppress_when is wnba_injury_suppress_when
 
 
 def test_default_group_still_resolves_to_ignore_with_no_callback() -> None:

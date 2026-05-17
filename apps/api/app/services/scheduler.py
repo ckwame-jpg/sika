@@ -296,6 +296,16 @@ def _queue_nba_injury_refresh_job() -> bool:
     return _queue_job(kind="nba_injury_refresh", scope="nba", reason="interval")
 
 
+def _queue_wnba_injury_refresh_job() -> bool:
+    """Smarter WNBA PR 7 — queue a WNBA injury-report refresh.
+
+    WNBA counterpart of :func:`_queue_nba_injury_refresh_job`. Same
+    near-tip TTL helper, separate cache table, separate scope so
+    operator dashboards can audit per-sport refresh cadence.
+    """
+    return _queue_job(kind="wnba_injury_refresh", scope="wnba", reason="interval")
+
+
 def _queue_nba_referee_refresh_job() -> bool:
     """Smarter #13 phase 2a-2 — queue an NBA referee-assignments refresh.
 
@@ -645,6 +655,21 @@ def start_scheduler() -> None:
         _queue_nba_injury_refresh_job,
         trigger=CronTrigger(hour="12-23,0-5", minute=15),
         id="nba_injury_refresh_hourly",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Smarter WNBA PR 7 — WNBA injury refresh. Offset 30 min from the
+    # NBA tick so the two ESPN injury fetches don't pile up in the
+    # same minute, and so a slow NBA fetch doesn't push the WNBA job
+    # behind near-tip cache expiry. Same hour window as the NBA cron
+    # (the WNBA season runs through fall, peak overlap with NBA in
+    # May–June 2026); the cache TTL self-tightens near tip-off via
+    # the shared ``_effective_injury_report_ttl_minutes`` helper.
+    scheduler.add_job(
+        _queue_wnba_injury_refresh_job,
+        trigger=CronTrigger(hour="12-23,0-5", minute=45),
+        id="wnba_injury_refresh_hourly",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

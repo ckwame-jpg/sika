@@ -131,6 +131,16 @@ ESPN_LEAGUE_NAMES = {
     "WNBA": "WNBA",
 }
 
+# ESPN's basketball-league URL slug per sport (used by the
+# generalized ``fetch_injury_report``). NBA was the only entry until
+# Smarter WNBA PR 7 added WNBA; ESPN's per-team injury response schema
+# is identical across both leagues, so the parser is shared in
+# ``services/nba_injury_report.py``.
+_INJURY_REPORT_LEAGUE_SLUGS: dict[str, str] = {
+    "NBA": "nba",
+    "WNBA": "wnba",
+}
+
 ESPN_SOCCER_PLAYER_PAGE_URL = "https://www.espn.com/soccer/player/_/id/{athlete_id}/{slug}"
 ESPN_MMA_FIGHTER_HISTORY_PAGE_URL = "https://www.espn.com/mma/fighter/history/_/id/{athlete_id}/{slug}"
 ESPN_TENNIS_ATHLETE_URL = "https://sports.core.api.espn.com/v2/sports/tennis/athletes/{athlete_id}?lang=en&region=us"
@@ -147,22 +157,43 @@ class EspnPublicClient:
             return self._http_client.get(url, **kwargs)
         return httpx.get(url, **kwargs)
 
-    def fetch_nba_injury_report(self) -> dict[str, Any]:
-        """Smarter #17 phase 2 — fetch ESPN's current NBA injury report.
+    def fetch_injury_report(self, sport_key: str = "NBA") -> dict[str, Any]:
+        """Fetch ESPN's current injury report for ``sport_key``.
 
-        Returns the raw JSON. ESPN's response wraps the per-team blocks
-        under ``injuries`` (a list of ``{team, injuries: [...]}`` entries);
-        the loader in ``services/nba_injury_report.py`` flattens that to
-        a player-keyed dict for the Smarter #17 consumer side.
+        Generalizes the Smarter #17 NBA fetcher to also cover WNBA
+        (Smarter WNBA PR 7). ESPN's per-team response shape is
+        identical across NBA / WNBA (verified in
+        ``SMARTER_WNBA_PREP.md`` §3) so the parser in
+        ``services/nba_injury_report.py`` is shared.
 
         Raises ``httpx.HTTPStatusError`` on 4xx/5xx so the loader's
-        exception path can fall back to the cached payload (and record
-        the failure once Smarter #23 wires ESPN into upstream-health).
+        exception path can fall back to the cached payload and record
+        the failure on the upstream-health board.
         """
-        url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
+        normalized = sport_key.upper()
+        if normalized not in _INJURY_REPORT_LEAGUE_SLUGS:
+            raise ValueError(
+                f"ESPN injury report is not configured for sport_key={sport_key!r}"
+            )
+        league_slug = _INJURY_REPORT_LEAGUE_SLUGS[normalized]
+        url = (
+            f"https://site.api.espn.com/apis/site/v2/sports/basketball/"
+            f"{league_slug}/injuries"
+        )
         response = self._get(url, timeout=20)
         response.raise_for_status()
         return response.json()
+
+    def fetch_nba_injury_report(self) -> dict[str, Any]:
+        """Smarter #17 phase 2 — thin wrapper around
+        :meth:`fetch_injury_report` preserved for backwards compat with
+        existing callers (Smarter #17's loader, upstream-health tests)."""
+        return self.fetch_injury_report("NBA")
+
+    def fetch_wnba_injury_report(self) -> dict[str, Any]:
+        """Smarter WNBA PR 7 — thin wrapper around
+        :meth:`fetch_injury_report` for the WNBA loader."""
+        return self.fetch_injury_report("WNBA")
 
     def search_player(
         self,
