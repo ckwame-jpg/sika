@@ -445,6 +445,84 @@ def test_stale_penalize_group_lowers_confidence_end_to_end(db_session) -> None:
     assert stale_diagnostics.get("freshness_confidence_delta") == pytest.approx(-0.05)
 
 
+def test_build_scored_recommendation_threads_events_fresh_at_to_player_prop(db_session, monkeypatch) -> None:
+    """Architecture #5 follow-up — ``_build_scored_recommendation`` must
+    pass its ``events_fresh_at`` kwarg through to ``_score_player_prop``.
+    Without this the batch-level computation in
+    ``_score_watchlist_markets_batch`` would be silently discarded and
+    the mlb_bullpen PENALIZE policy would revert to a per-market
+    ``_events_ingestion_fresh_at`` read (the perf bug this follow-up
+    closes)."""
+    from app.services import scoring as scoring_module
+
+    event, market, snapshot = _seed_mlb_event(db_session)
+
+    captured: dict[str, Any] = {}
+
+    def fake_score_player_prop(
+        db, event, market, snapshot, resolver, *, events_fresh_at=None,
+    ):
+        captured["events_fresh_at"] = events_fresh_at
+        return None  # short-circuit; we only care about the kwarg
+
+    monkeypatch.setattr(scoring_module, "_score_player_prop", fake_score_player_prop)
+
+    sentinel = _NOW - timedelta(hours=8)
+    scoring_module._build_scored_recommendation(
+        db_session, event, market, snapshot,
+        events_fresh_at=sentinel,
+    )
+    assert captured["events_fresh_at"] == sentinel
+
+
+def test_score_player_prop_threads_events_fresh_at_to_mlb_bullpen_group(db_session) -> None:
+    """Architecture #5 follow-up — the threaded ``events_fresh_at`` must
+    land as the ``mlb_bullpen`` group's ``fresh_at``. Pins that the
+    per-market ``_events_ingestion_fresh_at(db)`` read is retired and
+    the batch-level value is what reaches the freshness layer.
+
+    Patches ``emit_mlb_bullpen_features`` to force the bullpen emission
+    path (DB-free setup) so the threading is observable end-to-end at
+    the feature_groups boundary.
+    """
+    event, market, snapshot = _seed_mlb_event(db_session)
+    resolved = ResolvedPropSubject(
+        sport_key="MLB",
+        athlete_id="33944",
+        display_name="Bryce Harper",
+        team_name="Philadelphia Phillies",
+        season=2026,
+        game_logs=_mlb_game_logs(),
+        advanced_payload={},
+        advanced_cache_status="miss",
+    )
+    sentinel = _NOW - timedelta(hours=8)
+    with patch(
+        "app.services.mlb_advanced.load_weather",
+        return_value=AdvancedLoadResult(
+            payload={
+                "temp_f": 72.0, "wind_speed_mph": 0.0, "wind_dir_deg": 0.0,
+                "precip_pct": 0.0, "humidity_pct": 50.0, "is_dome": True,
+                "source": "dome",
+            },
+            cache_status="dome", complete=True, cached_at=None,
+        ),
+    ), patch(
+        "app.services.mlb_advanced.emit_mlb_bullpen_features",
+        return_value={"away_bullpen_rest_index_3d": 0.5},
+    ):
+        result = _score_player_prop(
+            db_session, event, market, snapshot, _FakeResolver(resolved),
+            events_fresh_at=sentinel,
+        )
+    assert result is not None
+    _, _, _, _, feature_groups = result
+    assert "mlb_bullpen" in feature_groups
+    bullpen = feature_groups["mlb_bullpen"]
+    assert bullpen.fresh_at == sentinel
+    assert bullpen.source == "Event+EventParticipant (espn_scoreboard refresh)"
+
+
 def test_feature_groups_round_trip_through_serialize(db_session) -> None:
     """The ``serialize_feature_groups`` → JSON →
     ``deserialize_feature_groups`` round-trip must restore the exact

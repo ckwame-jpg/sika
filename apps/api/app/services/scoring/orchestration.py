@@ -264,7 +264,7 @@ def _score_watchlist_markets_batch(
     # circular package init graph. A future kernel-extraction phase
     # can move it into ``scoring/kernel.py`` and switch to a normal
     # top-level import.
-    from app.services.scoring import _build_scored_recommendation
+    from app.services.scoring import _build_scored_recommendation, _events_ingestion_fresh_at
 
     summary = WatchlistGenerationSummary()
     captures: list[ScoredWatchlistCapture] = []
@@ -273,12 +273,21 @@ def _score_watchlist_markets_batch(
     active_resolver = resolver or PropStatsResolver(db, allow_network=False)
 
     latest_snapshots = latest_snapshot_by_market_id(db, [market.id for market in markets])
+    # Architecture #5 follow-up: hoist the espn_scoreboard freshness
+    # read out of the per-market hot path. Threaded through
+    # ``_build_scored_recommendation`` → ``_score_player_prop`` so the
+    # mlb_bullpen PENALIZE policy still has a freshness signal.
+    events_fresh_at = _events_ingestion_fresh_at(db)
     for market in markets:
         if not market.event:
             _record_scorer_outcome(summary, "mapping_failed")
             continue
         latest_snapshot = latest_snapshots.get(market.id)
-        scored = _build_scored_recommendation(db, market.event, market, latest_snapshot, resolver=active_resolver)
+        scored = _build_scored_recommendation(
+            db, market.event, market, latest_snapshot,
+            resolver=active_resolver,
+            events_fresh_at=events_fresh_at,
+        )
         if scored is None:
             _record_scorer_outcome(summary, _scoring_none_reason(market))
             continue
@@ -553,7 +562,7 @@ def regenerate_watchlist(
     candidate_markets: list[Market] | None = None,
 ) -> WatchlistGenerationSummary:
     # Same lazy-import escape as ``_score_watchlist_markets_batch``.
-    from app.services.scoring import _build_scored_recommendation
+    from app.services.scoring import _build_scored_recommendation, _events_ingestion_fresh_at
 
     if replace_all:
         db.query(Recommendation).delete()
@@ -588,11 +597,19 @@ def regenerate_watchlist(
             stmt = stmt.where(Market.id.in_(tuple(sorted(allowed_market_ids))))
         markets = db.scalars(stmt).all()
     latest_snapshots = latest_snapshot_by_market_id(db, [market.id for market in markets])
+    # Architecture #5 follow-up: see ``_score_watchlist_markets_batch``
+    # for the rationale — single read, threaded through the per-market
+    # _build_scored_recommendation calls.
+    events_fresh_at = _events_ingestion_fresh_at(db)
     for market in markets:
         if not market.event:
             continue
         latest_snapshot = latest_snapshots.get(market.id)
-        scored = _build_scored_recommendation(db, market.event, market, latest_snapshot, resolver=active_resolver)
+        scored = _build_scored_recommendation(
+            db, market.event, market, latest_snapshot,
+            resolver=active_resolver,
+            events_fresh_at=events_fresh_at,
+        )
         if scored:
             summary.scored_market_count += 1
             db.add(scored.signal)
