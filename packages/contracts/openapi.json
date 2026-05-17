@@ -349,6 +349,65 @@
         "title": "EventRead",
         "type": "object"
       },
+      "FreshnessAuditRowRead": {
+        "description": "Smarter #22 PR B prep \u2014 per-feature-group calibration audit.\n\nBuilt by ``apps/api/app/services/ml/freshness_audit.py`` from\nsettled ``Prediction`` rows joined with the\n``scoring_diagnostics[\"freshness_stale_groups\"]`` +\n``scoring_diagnostics[\"feature_groups\"]`` JSON that PR A\n(sika#186) and Architecture #5 (sika#169) already persist.\n\nEach row answers the tuning question\n`SMARTER_22_TUNING_PLAYBOOK.md` asks: *for this group, when it\nwas stale, did calibration suffer compared to when it was fresh?*\nA positive ``calibration_delta`` means staleness measurably\ndegraded prediction accuracy \u2014 candidate for promotion from\n``IGNORE`` to ``PENALIZE`` in ``FEATURE_GROUP_POLICIES``.\n\nCalibration miss = ``|avg_predicted_yes_probability - actual_yes_hit_rate|``.\nHit rate is computed from the YES side of the market regardless of\nwhich side the prediction picked (NO-side wins are inverted), so\nthe comparison against ``fair_yes_price`` is apples-to-apples.",
+        "properties": {
+          "calibration_delta": {
+            "title": "Calibration Delta",
+            "type": "number"
+          },
+          "fresh_avg_predicted": {
+            "title": "Fresh Avg Predicted",
+            "type": "number"
+          },
+          "fresh_calibration_miss": {
+            "title": "Fresh Calibration Miss",
+            "type": "number"
+          },
+          "fresh_count": {
+            "title": "Fresh Count",
+            "type": "integer"
+          },
+          "fresh_hit_rate": {
+            "title": "Fresh Hit Rate",
+            "type": "number"
+          },
+          "group_key": {
+            "title": "Group Key",
+            "type": "string"
+          },
+          "stale_avg_predicted": {
+            "title": "Stale Avg Predicted",
+            "type": "number"
+          },
+          "stale_calibration_miss": {
+            "title": "Stale Calibration Miss",
+            "type": "number"
+          },
+          "stale_count": {
+            "title": "Stale Count",
+            "type": "integer"
+          },
+          "stale_hit_rate": {
+            "title": "Stale Hit Rate",
+            "type": "number"
+          }
+        },
+        "required": [
+          "group_key",
+          "stale_count",
+          "fresh_count",
+          "stale_avg_predicted",
+          "fresh_avg_predicted",
+          "stale_hit_rate",
+          "fresh_hit_rate",
+          "stale_calibration_miss",
+          "fresh_calibration_miss",
+          "calibration_delta"
+        ],
+        "title": "FreshnessAuditRowRead",
+        "type": "object"
+      },
       "FreshnessStaleGroupRead": {
         "description": "Smarter #22 PR A \u2014 per-stale-feature-group operator surface.\n\nBuilt from ``recommendation.scoring_diagnostics[\"freshness_stale_groups\"]``\n(populated by the Architecture #5 freshness layer in\n``apps/api/app/services/scoring/__init__.py``) and enriched with\nthe human-readable ``source`` label from the per-group entry in\n``scoring_diagnostics[\"feature_groups\"]``. The trade-ticket\n``FreshnessBadge`` component reads this list to render which\ngroups are stale and what they cost the recommendation's\nconfidence.\n\n``severity`` mirrors ``FeatureGroupSeverity`` in\n``apps/api/app/services/scoring/feature_groups.py``:\n- ``\"suppress\"`` \u2014 recommendation was dropped (bespoke gate\n  callbacks fire from ``check_suppressions``; the row may not\n  reach this surface at all unless persisted retrospectively).\n- ``\"penalize\"`` \u2014 recommendation kept; confidence reduced by\n  ``confidence_delta`` (always negative when nonzero).\n- ``\"ignore\"`` \u2014 surfaced for visibility only; no scoring\n  impact. Today the kernel only writes stale groups whose\n  severity is SUPPRESS or PENALIZE into this list, so\n  ``\"ignore\"`` is rare here but allowed for future-proofing.",
         "properties": {
@@ -2516,6 +2575,13 @@
               "$ref": "#/components/schemas/ModelFamilyReadinessRead"
             },
             "title": "Families",
+            "type": "array"
+          },
+          "freshness_audit": {
+            "items": {
+              "$ref": "#/components/schemas/FreshnessAuditRowRead"
+            },
+            "title": "Freshness Audit",
             "type": "array"
           },
           "generated_at": {

@@ -832,6 +832,58 @@ class SettlementAgingRead(BaseModel):
     total_pending_past_close: int = 0
 
 
+class FreshnessAuditRowRead(BaseModel):
+    """Smarter #22 PR B prep — per-feature-group calibration audit.
+
+    Built by ``apps/api/app/services/ml/freshness_audit.py`` from
+    settled ``Prediction`` rows joined with the
+    ``scoring_diagnostics["freshness_stale_groups"]`` +
+    ``scoring_diagnostics["feature_groups"]`` JSON that PR A
+    (sika#186) and Architecture #5 (sika#169) already persist.
+
+    Each row answers the tuning question
+    `SMARTER_22_TUNING_PLAYBOOK.md` asks: *for this group, when it
+    was stale, did calibration suffer compared to when it was fresh?*
+    A positive ``calibration_delta`` means staleness measurably
+    degraded prediction accuracy — candidate for promotion from
+    ``IGNORE`` to ``PENALIZE`` in ``FEATURE_GROUP_POLICIES``.
+
+    Calibration miss = ``|avg_predicted_yes_probability - actual_yes_hit_rate|``.
+    Hit rate is computed from the YES side of the market regardless of
+    which side the prediction picked (NO-side wins are inverted), so
+    the comparison against ``fair_yes_price`` is apples-to-apples.
+    """
+
+    group_key: str
+    # Number of settled predictions in the audit window where this
+    # group was emitted AND in the freshness_stale_groups list.
+    stale_count: int
+    # Number of settled predictions in the audit window where this
+    # group was emitted AND NOT in the stale list (apples-to-apples
+    # baseline; we don't count predictions where the group wasn't
+    # emitted at all, since those reflect a different market shape).
+    fresh_count: int
+    # When the corresponding bucket count is zero, all four
+    # per-bucket fields below are 0.0 sentinels (no rows to average
+    # over). The ``calibration_delta`` will therefore equal the
+    # other bucket's miss outright, which looks misleadingly large.
+    # The frontend's classifier gates promotion on a 20-sample floor
+    # per bucket — see ``apps/web/components/predictions/freshness-
+    # audit-panel.tsx`` ``classify()``. Operators reading raw JSON
+    # should apply the same gate before acting.
+    stale_avg_predicted: float
+    fresh_avg_predicted: float
+    stale_hit_rate: float
+    fresh_hit_rate: float
+    stale_calibration_miss: float
+    fresh_calibration_miss: float
+    # ``stale_calibration_miss - fresh_calibration_miss``. Positive
+    # ⇒ staleness hurts; the bigger the delta the stronger the
+    # tuning signal. NOT meaningful when either bucket count is zero
+    # (see above).
+    calibration_delta: float
+
+
 class IntervalModelStatusRead(BaseModel):
     """Smarter #21 phase 2b operator UX — per-(family, stat_key)
     interval-model status. Same shape the
@@ -889,6 +941,13 @@ class ModelReadinessSummaryRead(BaseModel):
     # the field is always present on the response (stable schema for
     # the operator UI's TypeScript types).
     interval_models: list[IntervalModelStatusRead] = Field(default_factory=list)
+    # Smarter #22 PR B prep — empirical calibration audit per stale
+    # feature group. Empty list when no settled predictions in the
+    # audit window have any persisted freshness diagnostics (the
+    # common pre-PR-A state). Populated rows surface tuning signal
+    # for promoting groups from IGNORE to PENALIZE in the policy
+    # registry — see ``SMARTER_22_TUNING_PLAYBOOK.md``.
+    freshness_audit: list[FreshnessAuditRowRead] = Field(default_factory=list)
 
 
 class ModelReadinessSettingsUpdate(BaseModel):
