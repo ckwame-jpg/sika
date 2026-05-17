@@ -74,6 +74,13 @@ SINGLE_HEURISTIC_PROFILES = {
     "mlb_singles": HeuristicProfile("mlb_singles", 10, 0.10, 5, 0.05, 0.18, 0.05, 0.0),
     "nba_props": HeuristicProfile("nba_props", 8, 0.11, 5, 0.05, 0.16, 0.06, 0.09),
     "mlb_props": HeuristicProfile("mlb_props", 8, 0.11, 6, 0.05, 0.16, 0.06, 0.08),
+    # WNBA profiles ship with NBA values as the starting point (same
+    # game length, same per-game stat surface, similar variance
+    # characteristics). Once WNBA settled rows accumulate, Smarter #28
+    # backtest output can tune these per-family — same mechanism NBA
+    # and MLB use today.
+    "wnba_singles": HeuristicProfile("wnba_singles", 10, 0.10, 4, 0.04, 0.18, 0.05, 0.0),
+    "wnba_props": HeuristicProfile("wnba_props", 8, 0.11, 5, 0.05, 0.16, 0.06, 0.09),
 }
 
 
@@ -115,8 +122,14 @@ class PropStatsResolver:
 
     def _gamelog_ttl(self, sport_key: str) -> timedelta:
         settings = get_settings()
-        if sport_key.upper() == "NBA":
+        sport = sport_key.upper()
+        if sport == "NBA":
             return timedelta(minutes=settings.nba_prop_gamelog_cache_minutes)
+        # WNBA has its own TTL setting from PR 1; without this branch
+        # WNBA stale-context status would lag the MLB fallback (codex
+        # PR 4 review Medium).
+        if sport == "WNBA":
+            return timedelta(minutes=settings.wnba_prop_gamelog_cache_minutes)
         return timedelta(minutes=settings.mlb_prop_gamelog_cache_minutes)
 
     def _load_player_search(
