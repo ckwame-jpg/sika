@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     espn_player_search_cache_hours: int = 168
     nba_prop_gamelog_cache_minutes: int = 30
     mlb_prop_gamelog_cache_minutes: int = 60
+    # WNBA shares NBA's payload shape + cadence; default to the NBA TTL.
+    wnba_prop_gamelog_cache_minutes: int = 30
     current_slate_lookback_days: int = 0
     current_slate_lookahead_days: int = 1
     watchlist_min_edge: float = 0.03
@@ -60,7 +62,7 @@ class Settings(BaseSettings):
     parlay_max_legs: int = 6
     parlay_candidate_pool_size: int = 10
     parlay_max_output: int = 15
-    parlay_enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "MLB"])
+    parlay_enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "MLB", "WNBA"])
     lookback_days: int = 14
     lookahead_days: int = 2
     free_provider_lookback_days: int = 5
@@ -83,7 +85,7 @@ class Settings(BaseSettings):
     refresh_job_stale_minutes: int = 30
     market_snapshot_heartbeat_minutes: int = 30
     prefer_yes_side_props: bool = True
-    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "SOCCER", "TENNIS"])
+    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "WNBA", "SOCCER", "TENNIS"])
     soccer_leagues: list[str] = Field(
         default_factory=lambda: [
             "English Premier League",
@@ -115,6 +117,15 @@ class Settings(BaseSettings):
     nba_clutch_cache_minutes: int = 1440
     nba_player_defense_cache_minutes: int = 1440
     nba_injury_report_cache_minutes: int = 60
+
+    # WNBA advanced stats — WNBA's ESPN payloads mirror NBA's shape, so
+    # the cache TTLs mirror NBA defaults as the starting point. Once
+    # WNBA-specific data sources land (Smarter follow-up — generalized
+    # stats client, RefMetrics for referees), the team_advanced /
+    # referee TTLs can diverge from NBA's.
+    wnba_advanced_cache_minutes: int = 240
+    wnba_team_advanced_cache_minutes: int = 1440
+    wnba_referee_assignments_cache_minutes: int = 240
 
     # MLB advanced stats
     mlb_batter_advanced_cache_minutes: int = 360

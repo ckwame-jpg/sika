@@ -29,10 +29,14 @@ def _family_key(sport_key: str | None, market_family: str | None) -> str:
             return "nba_props"
         if sport == "MLB":
             return "mlb_props"
+        if sport == "WNBA":
+            return "wnba_props"
     if sport == "NBA":
         return "nba_singles"
     if sport == "MLB":
         return "mlb_singles"
+    if sport == "WNBA":
+        return "wnba_singles"
     return f"{sport.lower()}_singles" if sport else "unknown_singles"
 
 
@@ -66,6 +70,7 @@ def _enrich_prediction_features(row: dict[str, Any], base_features: dict[str, An
             "family_key": family_key,
             "sport_is_nba": 1.0 if sport == "NBA" else 0.0,
             "sport_is_mlb": 1.0 if sport == "MLB" else 0.0,
+            "sport_is_wnba": 1.0 if sport == "WNBA" else 0.0,
             "suggested_price": row.get("suggested_price"),
             "heuristic_fair_yes_price": row.get("fair_yes_price"),
             "heuristic_edge": row.get("edge"),
@@ -97,7 +102,7 @@ def _prepare_frame(rows: pd.DataFrame, *, drop_pushes: bool, dedupe_markets: boo
     frame = frame[frame["prediction_outcome"].isin(SETTLED_OUTCOMES)]
     if drop_pushes:
         frame = frame[frame["prediction_outcome"].isin({"won", "lost"})]
-    frame = frame[frame["sport_key"].astype(str).str.upper().isin({"NBA", "MLB"})]
+    frame = frame[frame["sport_key"].astype(str).str.upper().isin({"NBA", "MLB", "WNBA"})]
     # Target derivation below relies on side being "yes" or "no" — drop anything
     # else (null, empty, unknown values) before computing, so we never silently
     # mislabel a row whose side was missing.

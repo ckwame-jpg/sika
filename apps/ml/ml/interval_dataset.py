@@ -909,6 +909,20 @@ _ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME: dict[str, dict[str, str]] = {
         "TB": "Tampa Bay Rays", "TBR": "Tampa Bay Rays", "TEX": "Texas Rangers",
         "TOR": "Toronto Blue Jays", "WSH": "Washington Nationals", "WSN": "Washington Nationals",
     },
+    # WNBA — 2026 season (15 teams, including expansion Toronto Tempo +
+    # Portland Fire). Mirror of the apps/api copy in
+    # ``apps/api/app/clients/espn.py``; the drift-guard test below
+    # parses the apps/api source and asserts both copies agree.
+    "WNBA": {
+        "ATL": "Atlanta Dream", "CHI": "Chicago Sky", "CON": "Connecticut Sun",
+        "IND": "Indiana Fever", "NY": "New York Liberty", "NYL": "New York Liberty",
+        "TOR": "Toronto Tempo", "WSH": "Washington Mystics", "DAL": "Dallas Wings",
+        "GS": "Golden State Valkyries", "GSV": "Golden State Valkyries",
+        "LV": "Las Vegas Aces", "LVA": "Las Vegas Aces",
+        "LA": "Los Angeles Sparks", "LAS": "Los Angeles Sparks",
+        "MIN": "Minnesota Lynx", "PHX": "Phoenix Mercury",
+        "POR": "Portland Fire", "SEA": "Seattle Storm",
+    },
 }
 
 

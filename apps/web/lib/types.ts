@@ -2,12 +2,13 @@
 
 import type { Schema } from "@kalshi-sports-copilot/contracts";
 
-export type SportKey = "NBA" | "NFL" | "MLB" | "SOCCER" | "TENNIS";
+export type SportKey = "NBA" | "NFL" | "MLB" | "WNBA" | "SOCCER" | "TENNIS";
 
 export const SPORT_LABELS: Record<SportKey, string> = {
   NBA: "NBA",
   NFL: "NFL",
   MLB: "MLB",
+  WNBA: "WNBA",
   SOCCER: "Soccer",
   TENNIS: "Tennis",
 };

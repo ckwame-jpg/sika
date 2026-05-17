@@ -1117,7 +1117,7 @@ def test_sports_availability_reports_live_and_research_only_modes(client, db_ses
 
     assert response.status_code == 200
     payload = {row["sport_key"]: row for row in response.json()}
-    assert list(payload) == ["NBA", "NFL", "MLB", "SOCCER", "TENNIS"]
+    assert list(payload) == ["NBA", "NFL", "MLB", "WNBA", "SOCCER", "TENNIS"]
     assert payload["NBA"]["availability_mode"] == "live"
     assert payload["NBA"]["events_count"] == 1
     assert payload["NBA"]["recommendations_count"] == 1

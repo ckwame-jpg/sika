@@ -20,6 +20,7 @@ const EXAMPLES: Record<SportKey, string[]> = {
   NBA: ["Jalen Brunson last 10 games", "Jayson Tatum this season"],
   NFL: ["Patrick Mahomes this season", "Josh Allen last 5 games"],
   MLB: ["Aaron Judge this season", "Mookie Betts last 10 games"],
+  WNBA: ["Caitlin Clark last 10 games", "A'ja Wilson this season"],
   SOCCER: ["Lionel Messi last 5 matches", "Kylian Mbappe this season"],
   TENNIS: ["Novak Djokovic last 5 matches", "Carlos Alcaraz this season"],
 };
