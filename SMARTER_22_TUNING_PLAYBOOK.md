@@ -18,19 +18,29 @@ Before adding ANY policy entry to `FEATURE_GROUP_POLICIES`, answer these three q
 
 If your answer is "I'm not sure," the answer is `IGNORE` until you've observed the badge for at least 2-3 sessions and have a concrete failure case.
 
-## Observation discipline — what to look for in the badge
+## Observation — the audit panel does this for you
 
-After PR A, every recommendation in the trade ticket carries a freshness badge when at least one group is stale. Each session, scan the badge signals and ask:
+**Update (post-sika#190):** the `FreshnessAuditPanel` on `/ops/readiness` auto-captures the journaling step this playbook originally prescribed. It joins every settled prediction's persisted freshness diagnostics with the actual outcome and computes per-group calibration delta (stale-bucket miss minus fresh-bucket miss). You no longer need to jot anything down by hand.
 
-| Observation | What to write down |
+The panel ranks groups by tuning signal:
+
+- **`promote`** rows (left rail in negative tone) — calibration delta ≥ 5% AND both bucket counts ≥ 20. These are the actionable rows: the data says staleness measurably hurt accuracy for this group. Open a PR B entry promoting the group from `IGNORE` to `PENALIZE`, with a delta scaled to the magnitude (see the "How to choose a penalty delta" section below).
+- **`low_sample`** rows (muted at 60% opacity, callout naming the short bucket) — either bucket has fewer than 20 settled predictions. Don't tune off these; wait for more games to cycle through.
+- **`none`** rows (quiet border) — the baseline. The group went stale across enough predictions to count, but the calibration delta was small. Leave at `IGNORE`.
+
+**Recommended cadence:** check the panel weekly. With NBA + MLB volume the audit window should hit meaningful per-group sample sizes within ~1–2 weeks of a typical season. The panel renders an empty state with a timeline expectation when there isn't enough history yet.
+
+### Manual observation in the trade-ticket badge — still useful as a sanity check
+
+Even with the audit panel, the per-pick freshness badge on the trade ticket can flag patterns the audit misses:
+
+| Symptom in the badge | What to investigate |
 |---|---|
-| Group X showed up as stale on a pick that turned out to be a bad recommendation | "Stale X correlates with bad picks" — candidate for promotion |
-| Group X showed up as stale on a pick that turned out to be a good recommendation | "Stale X is benign" — leave at IGNORE |
-| Group X NEVER showed up stale even though the underlying data is obviously old | Either the freshness check is broken OR the group's TTL is too generous |
+| Group X NEVER shows up stale even though the underlying data is obviously old | Either the freshness check is broken OR the group's TTL is too generous |
 | Group X always shows up stale | Either the upstream refresh is broken OR the group's TTL is too aggressive |
 | A SUPPRESS rule fired but you would have wanted the pick anyway | The SUPPRESS gate is over-aggressive; consider downgrading to PENALIZE |
 
-Recommended cadence: **2-3 active scoring sessions** before opening PR B. That's enough to see each major group go stale at least once and form an opinion.
+These are signals about the *plumbing* (TTL choice, refresh-job health) rather than the *policy* (whether a group deserves promotion). The audit panel speaks to the latter; the trade-ticket badge speaks to the former.
 
 ## Concrete groups and their tuning candidates
 
@@ -143,7 +153,9 @@ When you've completed the observation pass and have concrete tunings:
 
 - [`apps/api/app/services/scoring/feature_groups.py`](apps/api/app/services/scoring/feature_groups.py) — the registry, the policy types, the existing SUPPRESS callbacks.
 - [`apps/api/app/services/scoring/__init__.py`](apps/api/app/services/scoring/__init__.py) — where `check_freshness` is called and how the penalty is applied to confidence.
-- [`apps/web/components/trade/freshness-badge.tsx`](apps/web/components/trade/freshness-badge.tsx) — the operator-facing badge.
-- [`apps/api/app/schemas.py`](apps/api/app/schemas.py) — `FreshnessStaleGroupRead` schema; surfaced on `TradeDeskThresholdRead` / `TradeDeskGameLineRead`.
+- [`apps/web/components/trade/freshness-badge.tsx`](apps/web/components/trade/freshness-badge.tsx) — the operator-facing per-pick badge (PR A).
+- [`apps/web/components/predictions/freshness-audit-panel.tsx`](apps/web/components/predictions/freshness-audit-panel.tsx) — the empirical calibration audit panel on `/ops/readiness` (sika#190). **This is where you read tuning signals.**
+- [`apps/api/app/services/ml/freshness_audit.py`](apps/api/app/services/ml/freshness_audit.py) — `compute_freshness_audit` query + aggregation logic.
+- [`apps/api/app/schemas.py`](apps/api/app/schemas.py) — `FreshnessStaleGroupRead` + `FreshnessAuditRowRead` schemas.
 - [`SIKA_SESSION_RULES.md`](SIKA_SESSION_RULES.md) — branching, codex fallback, worktree-vs-repo-root contracts package, research-first rule.
 - [`SIKA_PUNCH_LIST.md`](SIKA_PUNCH_LIST.md) — Smarter #22 entry and current truly-open list.
