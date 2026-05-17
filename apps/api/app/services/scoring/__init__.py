@@ -916,11 +916,16 @@ def _player_prop_participation_gate(sport_key: str, recent_logs: list[dict[str, 
     if len(recent_logs) < 5:
         return False, "Not enough recent appearances to trust the player-prop sample."
 
-    if sport_key == "NBA":
+    # WNBA shares NBA's basketball box-score shape (minutes-based
+    # participation signal). Same thresholds — 5 active games with ≥10
+    # minutes, recent-3 average ≥ 18 minutes. The WNBA-specific
+    # message is reused so operators see which sport the gate fired
+    # on.
+    if sport_key in {"NBA", "WNBA"}:
         active_games = [item for item in recent_logs if item["raw_metrics"].get("minutes", 0.0) >= 10]
         recent_minutes = _log_average(recent_logs[:3], sport_key, "minutes")
         if len(active_games) < 5 or recent_minutes < 18:
-            return False, "Player role looks unstable in recent NBA minutes."
+            return False, f"Player role looks unstable in recent {sport_key} minutes."
         return True, None
 
     recent_pa = [_plate_appearances(item["raw_metrics"]) for item in recent_logs[:5]]
@@ -1286,6 +1291,47 @@ def _score_player_prop(
                 source="NbaRefereeAssignmentCache+NbaRefereeTendenciesCache",
             )
 
+    elif resolved.sport_key.upper() == "WNBA":
+        # WNBA MVP branch (Smarter WNBA PR 4). The WNBA pipeline shares
+        # NBA's ESPN gamelog shape (PR 3 wired _build_game_logs +
+        # _nba_raw_metrics_from_stat_map for both) so the per-player
+        # box-score signals and the schedule-density / workload features
+        # all flow from the same code paths. What DOESN'T flow yet (PR 6+
+        # scope):
+        #
+        # - NBA advanced stats client (stats.nba.com) → no
+        #   ``nba_advanced`` / ``nba_opponent_team`` / ``nba_interaction``
+        #   / hustle / drives / clutch groups for WNBA. These require a
+        #   generalized stats client; documented as a separate WNBA
+        #   advanced-stats follow-up.
+        # - NBA injury report (ESPN endpoint is NBA-only) → no
+        #   ``nba_injury`` group, so Smarter #17's bespoke suppression
+        #   gate doesn't fire on WNBA.
+        # - basketball-reference referee tendencies (Smarter #13) → no
+        #   referee features for WNBA. RefMetrics has WNBA referee data
+        #   but requires a separate scraper PR.
+        #
+        # The MVP shipped here is intentional per SMARTER_WNBA_PREP.md
+        # §6 PR 4: "Skip long-tail features for WNBA (data unavailable;
+        # documented)". Operators see the resulting recommendations
+        # without the advanced-stats lift; once WNBA-specific data
+        # sources land the registry adds their groups in follow-up PRs.
+        from app.services.advanced_stats import emit_nba_workload_features
+
+        # ``wnba_workload`` is registered in feature_groups.py with the
+        # same PENALIZE (-3% / 24h) policy as nba_workload. The emitter
+        # is sport-agnostic (reads ``game_logs`` for ``minutes``); the
+        # group key is sport-prefixed so operator diagnostics stay clear
+        # about which sport the workload signal came from.
+        emit_to_group(
+            feature_groups,
+            features,
+            "wnba_workload",
+            emit_nba_workload_features(resolved.game_logs),
+            fresh_at=resolved.gamelog_cached_at,
+            source="EspnPlayerGamelogCache",
+        )
+
     elif resolved.sport_key.upper() == "MLB":
         from app.models import EspnPlayerSearchCache, MlbLineupCache, MlbWeatherCache  # noqa: F401
         from app.services.mlb_advanced import (
@@ -1540,7 +1586,16 @@ def _score_player_prop(
     # entirely (no replacement runs and the proxy is gone).
     from app.services.heuristic_factors import factor_applies
 
-    if sport_key == "NBA":
+    if sport_key in {"NBA", "WNBA"}:
+        # WNBA shares NBA's basketball box-score stat surface
+        # (field_goals_attempted, assists, turnovers, minutes), so the
+        # minute_factor + usage_factor proxies work unchanged for WNBA
+        # via _usage_proxy / _log_average. The advanced-data probes
+        # (recent_usage_pct, opponent_pace_recent_5) will always read
+        # None for WNBA today — the nba_advanced / nba_opponent_team
+        # groups are NBA-only (no WNBA data source) — so
+        # has_advanced_*_data resolves False and the gamelog-based
+        # proxy path runs for every WNBA prop.
         has_advanced_usage_data = (
             isinstance(features.get("recent_usage_pct"), (int, float))
             and isinstance(features.get("season_usage_pct"), (int, float))

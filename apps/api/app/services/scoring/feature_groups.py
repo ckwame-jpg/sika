@@ -259,6 +259,14 @@ FEATURE_GROUP_POLICIES: dict[str, FeatureGroupPolicy] = {
         ttl=timedelta(hours=24),
         penalty_confidence_delta=-0.03,
     ),
+    # PENALIZE: WNBA workload mirrors NBA — same emitter
+    # (``emit_nba_workload_features``) reading WNBA gamelog rows, same
+    # daily refresh cadence, same stale-data consequences.
+    "wnba_workload": FeatureGroupPolicy(
+        severity=FeatureGroupSeverity.PENALIZE,
+        ttl=timedelta(hours=24),
+        penalty_confidence_delta=-0.03,
+    ),
     # SUPPRESS (Architecture #5 follow-up 2): Smarter #16 — the bespoke
     # confirmed-and-scratched gate now lives in
     # ``mlb_lineup_suppress_when`` and the registry is the single

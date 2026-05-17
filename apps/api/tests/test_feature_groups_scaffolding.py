@@ -65,17 +65,22 @@ def test_registered_penalize_groups_have_nonzero_delta() -> None:
 
 
 def test_initial_registry_has_expected_penalize_groups() -> None:
-    """Pin the initial three PENALIZE groups so a typo in the
+    """Pin the exact PENALIZE-policy group set so a typo in the
     group_key (e.g. "mlb_weather" → "mlb_wether") fails CI instead
     of silently flipping a group to IGNORE.
 
     Update this test when the registry intentionally grows; the
-    failure is the whole point."""
+    failure is the whole point. Smarter WNBA PR 4 added
+    ``wnba_workload`` (mirror of nba_workload — same -3% / 24h
+    semantics, distinct group key so operator diagnostics stay clear
+    about which sport's workload signal is stale)."""
     penalize_groups = {
         group for group, policy in FEATURE_GROUP_POLICIES.items()
         if policy.severity is FeatureGroupSeverity.PENALIZE
     }
-    assert penalize_groups == {"mlb_weather", "mlb_bullpen", "nba_workload"}
+    assert penalize_groups == {
+        "mlb_weather", "mlb_bullpen", "nba_workload", "wnba_workload",
+    }
 
 
 def test_suppress_policies_match_consolidated_registry() -> None:

@@ -37,6 +37,14 @@ FAMILY_DEFINITIONS: tuple[ModelFamilyDefinition, ...] = (
     ModelFamilyDefinition(key="mlb_singles", label="MLB singles", scope="single", sport_scope="MLB", study_track="active"),
     ModelFamilyDefinition(key="nba_props", label="NBA props", scope="single", sport_scope="NBA", study_track="active"),
     ModelFamilyDefinition(key="mlb_props", label="MLB props", scope="single", sport_scope="MLB", study_track="active"),
+    # WNBA families — same shape as NBA. ``study_track="active"`` means
+    # the training pipeline picks them up automatically (PR 5 will add
+    # them to ``_DEFAULT_SERVE_FAMILY_KEYS`` so they're served in the
+    # weekly retrain workflow output). Until WNBA settled rows accumulate
+    # (needs PR 6 + several weeks of games), the readiness panel will
+    # surface them as ``insufficient_history``.
+    ModelFamilyDefinition(key="wnba_singles", label="WNBA singles", scope="single", sport_scope="WNBA", study_track="active"),
+    ModelFamilyDefinition(key="wnba_props", label="WNBA props", scope="single", sport_scope="WNBA", study_track="active"),
     ModelFamilyDefinition(
         key="nba_parlay_2leg",
         label="NBA 2-leg parlays",
@@ -191,10 +199,14 @@ def single_family_key(sport_key: str | None, market_family: str | None) -> str:
             return "nba_props"
         if sport == "MLB":
             return "mlb_props"
+        if sport == "WNBA":
+            return "wnba_props"
     if sport == "NBA":
         return "nba_singles"
     if sport == "MLB":
         return "mlb_singles"
+    if sport == "WNBA":
+        return "wnba_singles"
     return f"{sport.lower()}_singles" if sport else "unknown_singles"
 
 
