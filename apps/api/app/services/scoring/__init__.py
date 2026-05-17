@@ -1298,31 +1298,49 @@ def _score_player_prop(
             )
 
     elif resolved.sport_key.upper() == "WNBA":
-        # WNBA MVP branch (Smarter WNBA PR 4). The WNBA pipeline shares
-        # NBA's ESPN gamelog shape (PR 3 wired _build_game_logs +
-        # _nba_raw_metrics_from_stat_map for both) so the per-player
-        # box-score signals and the schedule-density / workload features
-        # all flow from the same code paths. What DOESN'T flow yet (PR 6+
-        # scope):
+        # WNBA branch. PR 4 shipped the workload signal; Smarter WNBA
+        # PR 7 layered the injury suppression gate on top — ESPN serves
+        # WNBA injuries at ``/basketball/wnba/injuries`` with the same
+        # schema as NBA, so the loader + emitter + feature-group policy
+        # all mirror NBA in lockstep. What still DOESN'T flow (separate
+        # follow-ups):
         #
         # - NBA advanced stats client (stats.nba.com) → no
         #   ``nba_advanced`` / ``nba_opponent_team`` / ``nba_interaction``
         #   / hustle / drives / clutch groups for WNBA. These require a
         #   generalized stats client; documented as a separate WNBA
         #   advanced-stats follow-up.
-        # - NBA injury report (ESPN endpoint is NBA-only) → no
-        #   ``nba_injury`` group, so Smarter #17's bespoke suppression
-        #   gate doesn't fire on WNBA.
         # - basketball-reference referee tendencies (Smarter #13) → no
         #   referee features for WNBA. RefMetrics has WNBA referee data
         #   but requires a separate scraper PR.
         #
-        # The MVP shipped here is intentional per SMARTER_WNBA_PREP.md
-        # §6 PR 4: "Skip long-tail features for WNBA (data unavailable;
-        # documented)". Operators see the resulting recommendations
-        # without the advanced-stats lift; once WNBA-specific data
-        # sources land the registry adds their groups in follow-up PRs.
-        from app.services.advanced_stats import emit_nba_workload_features
+        # See SMARTER_WNBA_PREP.md §6 for the MVP+1 sequence.
+        from app.services.advanced_stats import (
+            emit_nba_injury_features,
+            emit_nba_workload_features,
+        )
+        from app.services.wnba_injury_report import load_wnba_injury_report
+
+        # Smarter WNBA PR 7 — injury features for WNBA. ``emit_nba_injury_features``
+        # is sport-agnostic (keys are ``player_injury_status_*`` /
+        # ``injury_report_is_fresh`` / ``injury_data_complete``, no NBA
+        # in the schema). ``allow_network=False`` keeps scoring off the
+        # network: the daily ``wnba_injury_refresh`` job populates the
+        # cache out-of-band, and a cache miss yields an empty payload.
+        # The ``wnba_injury`` SUPPRESS-policy entry registered in
+        # ``feature_groups.py`` consumes these features via
+        # ``wnba_injury_suppress_when`` (family-key gated to
+        # ``wnba_props``).
+        wnba_injury_payload = load_wnba_injury_report(db, allow_network=False)
+        emit_to_group(
+            feature_groups,
+            features,
+            "wnba_injury",
+            emit_nba_injury_features(
+                wnba_injury_payload, player_name=resolved.display_name
+            ),
+            source="WnbaInjuryReportCache",
+        )
 
         # ``wnba_workload`` is registered in feature_groups.py with the
         # same PENALIZE (-3% / 24h) policy as nba_workload. The emitter
@@ -1808,10 +1826,10 @@ def _single_scoring_adjustments(
     missing_context: list[str] = []
     # Architecture #5 follow-up 2 — Smarter #16 / #17 bespoke gates
     # consolidated into the unified policy registry. ``check_suppressions``
-    # resolves SUPPRESS-policy groups (mlb_lineup, nba_injury) and
-    # returns ``{group_key: suppression_reason}``. The branches below
-    # consume the result and translate to the existing intermediate
-    # diagnostic keys (``lineup_suppression_reason``,
+    # resolves SUPPRESS-policy groups (mlb_lineup, nba_injury,
+    # wnba_injury) and returns ``{group_key: suppression_reason}``. The
+    # branches below consume the result and translate to the existing
+    # intermediate diagnostic keys (``lineup_suppression_reason``,
     # ``injury_suppression_reason``) so downstream readers see the same
     # shape they did pre-consolidation.
     suppressions = check_suppressions(
@@ -1823,9 +1841,17 @@ def _single_scoring_adjustments(
     # AND lineup data IS confirmed AND the player is NOT in the starting
     # lineup. Sourced from ``suppressions["mlb_lineup"]``.
     lineup_scratch_suppression = "mlb_lineup" in suppressions
-    # Smarter #17: ``"player_injury_out"`` or ``"player_injury_doubtful"``
-    # when the unified gate fires for nba_injury.
-    injury_suppression_reason: str | None = suppressions.get("nba_injury")
+    # Smarter #17 + WNBA PR 7: ``"player_injury_out"`` or
+    # ``"player_injury_doubtful"`` when the unified gate fires for
+    # either ``nba_injury`` or ``wnba_injury``. Per-sport callbacks
+    # are family-key gated so at most one fires per scoring pass; the
+    # ``or`` aggregator picks whichever did. The reason string itself
+    # is sport-agnostic — the downstream translation in
+    # ``_build_scored_recommendation`` only inspects the reason, not
+    # which group keyed it.
+    injury_suppression_reason: str | None = (
+        suppressions.get("nba_injury") or suppressions.get("wnba_injury")
+    )
 
     if "has_schedule_context" in features:
         feature_flags["schedule_context"] = bool(features.get("has_schedule_context"))

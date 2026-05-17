@@ -197,6 +197,33 @@ def mlb_lineup_suppress_when(ctx: SuppressionContext) -> str | None:
     return None
 
 
+def _injury_suppress_when(ctx: SuppressionContext, *, family_key: str) -> str | None:
+    """Shared OUT/DOUBTFUL-on-fresh-report suppression logic.
+
+    Both NBA (Smarter #17) and WNBA (Smarter WNBA PR 7) follow the
+    same gate: family-key gated to ``{nba,wnba}_props``, fresh report
+    within 12h, OUT > DOUBTFUL in priority. The per-sport wrappers
+    below pin the family-key check so each callback only fires on its
+    own sport's rows — keeping the diagnostics group-key clean and
+    matching the parallel ``nba_workload`` / ``wnba_workload``
+    registry layout.
+
+    Returns ``"player_injury_out"`` / ``"player_injury_doubtful"`` on
+    suppression, ``None`` otherwise.
+    """
+    if ctx.family_key != family_key:
+        return None
+    if not (float(ctx.features.get("injury_data_complete") or 0.0) >= 1.0):
+        return None
+    if not (float(ctx.features.get("injury_report_is_fresh") or 0.0) >= 1.0):
+        return None
+    if float(ctx.features.get("player_injury_status_out") or 0.0) >= 1.0:
+        return "player_injury_out"
+    if float(ctx.features.get("player_injury_status_doubtful") or 0.0) >= 1.0:
+        return "player_injury_doubtful"
+    return None
+
+
 def nba_injury_suppress_when(ctx: SuppressionContext) -> str | None:
     """Smarter #17 bespoke gate, unified callback form.
 
@@ -212,17 +239,15 @@ def nba_injury_suppress_when(ctx: SuppressionContext) -> str | None:
     Returns ``"player_injury_out"`` / ``"player_injury_doubtful"`` on
     suppression, ``None`` otherwise.
     """
-    if ctx.family_key != "nba_props":
-        return None
-    if not (float(ctx.features.get("injury_data_complete") or 0.0) >= 1.0):
-        return None
-    if not (float(ctx.features.get("injury_report_is_fresh") or 0.0) >= 1.0):
-        return None
-    if float(ctx.features.get("player_injury_status_out") or 0.0) >= 1.0:
-        return "player_injury_out"
-    if float(ctx.features.get("player_injury_status_doubtful") or 0.0) >= 1.0:
-        return "player_injury_doubtful"
-    return None
+    return _injury_suppress_when(ctx, family_key="nba_props")
+
+
+def wnba_injury_suppress_when(ctx: SuppressionContext) -> str | None:
+    """Smarter WNBA PR 7 — WNBA counterpart of
+    :func:`nba_injury_suppress_when`. Same fresh-report OUT/DOUBTFUL
+    semantics, gated to ``wnba_props`` so a stray injury feature on
+    an NBA / MLB row never reaches this branch (codex Pattern 9)."""
+    return _injury_suppress_when(ctx, family_key="wnba_props")
 
 
 # Default policy: ignore. Adding a new emitter without an explicit
@@ -286,6 +311,16 @@ FEATURE_GROUP_POLICIES: dict[str, FeatureGroupPolicy] = {
         severity=FeatureGroupSeverity.SUPPRESS,
         ttl=timedelta(hours=12),
         suppress_when=nba_injury_suppress_when,
+    ),
+    # SUPPRESS (Smarter WNBA PR 7): WNBA counterpart of ``nba_injury``,
+    # parallel to the ``wnba_workload`` PENALIZE entry above. Separate
+    # registry entry (rather than widening the NBA family-key gate)
+    # keeps diagnostics group-keyed by sport and matches D1 in
+    # SMARTER_WNBA_PREP.md (parallel cache tables, parallel groups).
+    "wnba_injury": FeatureGroupPolicy(
+        severity=FeatureGroupSeverity.SUPPRESS,
+        ttl=timedelta(hours=12),
+        suppress_when=wnba_injury_suppress_when,
     ),
     # IGNORE groups (registry entries omitted; fall through to
     # ``DEFAULT_POLICY``). Documented here for operator visibility:
@@ -596,6 +631,7 @@ __all__ = [
     "check_suppressions",
     "mlb_lineup_suppress_when",
     "nba_injury_suppress_when",
+    "wnba_injury_suppress_when",
     "serialize_feature_groups",
     "deserialize_feature_groups",
 ]

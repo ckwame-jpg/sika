@@ -36,6 +36,12 @@ REFRESH_JOB_KINDS = frozenset({
     # consumer-side ``emit_nba_injury_features`` (Smarter #17 phase 1)
     # has data to read.
     "nba_injury_refresh",
+    # Smarter WNBA PR 7 — WNBA counterpart of ``nba_injury_refresh``.
+    # Populates ``WnbaInjuryReportCache`` so the scoring-side
+    # ``wnba_injury`` SUPPRESS gate has data to suppress on. Separate
+    # kind (not a shared ``injury_refresh`` with a sport param) keeps
+    # operator visibility per-sport in the refresh-job table.
+    "wnba_injury_refresh",
     # Smarter #13 phase 2a-2 — populate ``NbaRefereeAssignmentCache``
     # ahead of the same-day consumer-side wiring (phase 2b/c/d).
     # Phase 2b-2 (2026-05-16) bundles the per-season tendency cache
@@ -63,6 +69,9 @@ ADVANCED_STATS_AUDIT_WORKER_TIMEOUT_SECONDS = 120.0
 # upsert. Generous-enough budget for a slow upstream.
 NBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
 NBA_REFEREE_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
+# Smarter WNBA PR 7 — same shape / cost profile as the NBA injury
+# refresh (single ESPN GET + upsert into ``WnbaInjuryReportCache``).
+WNBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
 PREDICTION_SETTLEMENT_BATCH_SIZE = 100
 PARLAY_SETTLEMENT_BATCH_SIZE = 50
 # Bug #22: cap the transient-error requeue loop so one persistent
@@ -301,6 +310,8 @@ def _worker_timeout_seconds(job: RefreshJob) -> float:
         return max(default_timeout, ADVANCED_STATS_AUDIT_WORKER_TIMEOUT_SECONDS)
     if job.kind == "nba_injury_refresh":
         return max(default_timeout, NBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "wnba_injury_refresh":
+        return max(default_timeout, WNBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS)
     if job.kind == "nba_referee_refresh":
         return max(default_timeout, NBA_REFEREE_REFRESH_WORKER_TIMEOUT_SECONDS)
     return default_timeout
@@ -1480,6 +1491,20 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 from app.services.nba_injury_report import load_nba_injury_report
 
                 payload = load_nba_injury_report(db, allow_network=True)
+                job.details = {
+                    **(job.details or {}),
+                    "players": len((payload or {}).get("players") or {}),
+                    "report_updated_at": (payload or {}).get("report_updated_at"),
+                }
+            elif job.kind == "wnba_injury_refresh":
+                # Smarter WNBA PR 7 — populates ``WnbaInjuryReportCache``
+                # so the scoring-side ``wnba_injury`` SUPPRESS gate has
+                # data to suppress on. Mirrors the NBA shape exactly;
+                # separate loader so per-sport cache races and upstream-
+                # health buckets stay isolated.
+                from app.services.wnba_injury_report import load_wnba_injury_report
+
+                payload = load_wnba_injury_report(db, allow_network=True)
                 job.details = {
                     **(job.details or {}),
                     "players": len((payload or {}).get("players") or {}),
