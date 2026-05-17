@@ -13,11 +13,11 @@ export type { FreshnessStaleGroup };
 
 interface FreshnessBadgeProps {
   staleGroups: FreshnessStaleGroup[] | null | undefined;
-  /** Total confidence penalty applied across all stale groups. Surfaced
-   *  in the summary line as ``-X%`` so the operator sees the aggregate
-   *  effect without summing individual deltas. ``null`` when no penalty
-   *  was applied (all stale groups were SUPPRESS severity, or no groups
-   *  are stale). */
+  /** Total confidence penalty applied across all stale groups.
+   *  Surfaced in the footnote so the operator sees the aggregate
+   *  effect without summing individual deltas. ``null`` when no
+   *  penalty was applied (all stale groups were SUPPRESS severity, or
+   *  no groups are stale). */
   confidenceDelta: number | null | undefined;
 }
 
@@ -47,12 +47,8 @@ function maxSeverity(staleGroups: FreshnessStaleGroup[]): Severity {
  *  current code paths don't produce this, but the schema allows it). */
 function formatAge(ageSeconds: number | null): string {
   if (ageSeconds == null) return "—";
-  if (ageSeconds < 3600) {
-    return `${Math.floor(ageSeconds / 60)}m`;
-  }
-  if (ageSeconds < 86400) {
-    return `${Math.floor(ageSeconds / 3600)}h`;
-  }
+  if (ageSeconds < 3600) return `${Math.floor(ageSeconds / 60)}m`;
+  if (ageSeconds < 86400) return `${Math.floor(ageSeconds / 3600)}h`;
   return `${Math.floor(ageSeconds / 86400)}d`;
 }
 
@@ -70,27 +66,35 @@ function formatPct(delta: number): string {
   return `${pct > 0 ? "+" : ""}${pct}%`;
 }
 
+const SEVERITY_CHIP_CLASS: Record<Severity, string> = {
+  suppress: "border-negative/40 bg-negative/10 text-negative",
+  penalize: "border-warning/40 bg-warning/10 text-warning",
+  ignore: "border-border/60 bg-surface-hover/40 text-muted-foreground",
+};
+
+const SEVERITY_RAIL_CLASS: Record<Severity, string> = {
+  suppress: "bg-negative/70",
+  penalize: "bg-warning/70",
+  ignore: "bg-muted-foreground/30",
+};
+
 /**
- * Smarter #22 PR A — operator-facing badge that surfaces which
- * feature groups went stale for this recommendation and what the
- * Architecture #5 freshness policy charged the confidence.
+ * Smarter #22 PR A (redesign 2026-05-17) — operator-facing badge that
+ * surfaces which feature groups went stale for this recommendation
+ * and what the Architecture #5 freshness policy charged the
+ * confidence.
  *
  * Reads from ``TradeDeskThresholdRead.freshness_stale_groups`` +
  * ``TradeDeskThresholdRead.freshness_confidence_delta`` (and the
- * matching fields on ``TradeDeskGameLineRead``). The diagnostics
- * are populated by the scoring kernel — see
+ * matching fields on ``TradeDeskGameLineRead``). The diagnostics are
+ * populated by the scoring kernel — see
  * ``apps/api/app/services/scoring/__init__.py`` around the
  * ``check_freshness`` call and the ``freshness_stale_groups`` write.
  *
- * The badge renders **only when at least one group is stale**. When
- * nothing is stale the trade ticket stays clean — operators don't
- * need an "all fresh" pill cluttering every pick.
- *
- * Coloring escalates with the maximum severity: SUPPRESS (red) for
- * groups that would suppress the recommendation, PENALIZE (amber) for
- * groups that only reduced confidence, IGNORE (muted) for
- * informational stale groups. The operator notices the worst signal
- * first.
+ * Renders only when at least one group is stale. The eyebrow chip
+ * carries the max severity; per-row left rails escalate per-group
+ * severity at a glance. Aggregate confidence delta appears in the
+ * footnote when nonzero.
  */
 export function FreshnessBadge({
   staleGroups,
@@ -100,6 +104,7 @@ export function FreshnessBadge({
 
   const severity = maxSeverity(staleGroups);
   const totalDelta = confidenceDelta ?? 0;
+
   // Aria-label always names the max severity so a screen-reader user
   // knows whether the badge represents a structural drop (suppress)
   // vs a numeric penalty (penalize) vs informational (ignore) —
@@ -113,60 +118,89 @@ export function FreshnessBadge({
       role="group"
       aria-label={ariaLabel}
       data-max-severity={severity}
-      className="space-y-1.5"
+      className="space-y-2"
     >
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-medium text-muted-foreground uppercase tracking-wider">
-          Stale data
-        </span>
+      <header className="flex items-baseline justify-between gap-2">
+        <span className="ticket-stat-label">Stale data</span>
         <span
           className={cn(
-            "rounded border px-1.5 py-px text-[10px] font-medium uppercase tracking-wider",
-            severity === "suppress"
-              ? "border-negative/30 bg-negative/10 text-negative"
-              : severity === "penalize"
-                ? "border-warning/30 bg-warning/10 text-warning"
-                : "border-muted-foreground/30 bg-surface-hover text-muted-foreground",
+            "rounded-sm border px-1 py-px text-[9px] font-medium uppercase tracking-[0.12em]",
+            SEVERITY_CHIP_CLASS[severity],
           )}
         >
           {severity}
         </span>
-      </div>
-      <ul className="space-y-1">
+      </header>
+
+      <ol className="space-y-1">
         {staleGroups.map((group) => (
-          <li
-            key={group.group_key}
-            className="flex items-center justify-between gap-2 text-[10px] font-mono text-muted-foreground"
-          >
-            <span className="capitalize text-foreground">
-              {humanizeGroupKey(group.group_key)}
-            </span>
-            <span className="text-[9px] tabular-nums">{formatAge(group.age_seconds)}</span>
-            {group.confidence_delta !== 0 && (
-              <span
-                className={cn(
-                  "tabular-nums",
-                  group.confidence_delta < 0 ? "text-negative" : "text-positive",
-                )}
-              >
-                {formatPct(group.confidence_delta)}
-              </span>
-            )}
-            {group.source && (
-              <span className="truncate text-[9px] opacity-60">{group.source}</span>
-            )}
-          </li>
+          <StaleGroupRow key={group.group_key} group={group} />
         ))}
-      </ul>
+      </ol>
+
       {totalDelta !== 0 && (
-        <p className="text-[10px] text-muted-foreground">
-          Confidence adjusted{" "}
-          <span className={totalDelta < 0 ? "text-negative" : "text-positive"}>
+        <p className="text-[10px] leading-relaxed text-muted-foreground/70">
+          Aggregate confidence{" "}
+          <span
+            className={cn(
+              "font-mono tabular-nums tracking-tight",
+              totalDelta < 0 ? "text-negative" : "text-positive",
+            )}
+          >
             {formatPct(totalDelta)}
           </span>{" "}
-          for stale data.
+          for stale data
         </p>
       )}
     </div>
+  );
+}
+
+interface StaleGroupRowProps {
+  group: FreshnessStaleGroup;
+}
+
+function StaleGroupRow({ group }: StaleGroupRowProps) {
+  const hasBackground = group.severity !== "ignore";
+  const hasDelta = group.confidence_delta !== 0;
+  return (
+    <li
+      data-severity={group.severity}
+      className={cn(
+        "relative rounded-sm py-1 pl-2.5 pr-1",
+        hasBackground && "bg-white/[0.018]",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-y-1 left-0 w-[2px] rounded-full",
+          SEVERITY_RAIL_CLASS[group.severity],
+        )}
+      />
+      <div className="grid grid-cols-[1fr_auto_auto] items-baseline gap-x-2 text-[10.5px]">
+        <span className="truncate font-mono capitalize text-foreground">
+          {humanizeGroupKey(group.group_key)}
+        </span>
+        <span className="font-mono tabular-nums text-muted-foreground/80">
+          {formatAge(group.age_seconds)}
+        </span>
+        <span
+          className={cn(
+            "font-mono tabular-nums tracking-tight",
+            !hasDelta && "text-muted-foreground/40",
+            hasDelta && group.confidence_delta < 0 && "text-negative",
+            hasDelta && group.confidence_delta > 0 && "text-positive",
+          )}
+        >
+          {hasDelta ? formatPct(group.confidence_delta) : "—"}
+        </span>
+      </div>
+      {group.source && (
+        <p className="mt-0.5 pl-px font-mono text-[9px] tracking-tight text-muted-foreground/55">
+          {group.source}
+        </p>
+      )}
+    </li>
   );
 }
