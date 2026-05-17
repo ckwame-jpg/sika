@@ -649,7 +649,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
                     : `No live trade-ready markets${sport ? ` for ${sportLabel(sport)}` : ""}.`}
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {data.blocking_reason || "NBA and MLB markets appear here when the current slate is populated."}
+                {data.blocking_reason || "Markets appear here when the current slate is populated."}
               </p>
               {(data.freshness_status === "degraded" || data.freshness_status === "empty") && (
                 <SlateHealthDetails data={data} />
