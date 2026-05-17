@@ -207,7 +207,6 @@ KALSHI_SPORT_CATEGORY_ROOTS = {
     "NBA": "https://kalshi.com/category/sports/basketball/pro-basketball-m",
     "MLB": "https://kalshi.com/category/sports/baseball/pro-baseball",
     "NFL": "https://kalshi.com/category/sports/football/pro-football",
-    "SOCCER": "https://kalshi.com/category/sports/soccer",
     "TENNIS": "https://kalshi.com/category/sports/tennis",
     # Smarter WNBA PR 6 — Kalshi groups WNBA under the women's pro
     # basketball slug (``pro-basketball-w``), distinct from NBA's
@@ -1125,8 +1124,8 @@ def get_product_sports() -> ProductSportsResponse:
 
     Sourced from ``config.py:enabled_sports`` so runtime configuration
     changes do not require a frontend redeploy. The list is uppercased and
-    filtered to match ``_visible_sports()`` — i.e. UFC is hidden even if it
-    is in ``enabled_sports`` — so all product surfaces agree on scope.
+    routed through ``_visible_sports()`` so all product surfaces agree on
+    scope.
     """
     return ProductSportsResponse(sports=_visible_sports())
 

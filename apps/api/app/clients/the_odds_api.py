@@ -31,8 +31,6 @@ _SPORT_KEY_TO_ODDS_API_KEY: dict[str, str] = {
     "NBA": "basketball_nba",
     "MLB": "baseball_mlb",
     "NFL": "americanfootball_nfl",
-    "SOCCER": "soccer_epl",  # placeholder; multi-league soccer is a follow-up
-    "UFC": "mma_mixed_martial_arts",
     "TENNIS": "tennis_atp_french_open",  # placeholder; tour-aware is a follow-up
     # Smarter WNBA PR 6 — The Odds API supports WNBA h2h / spreads /
     # totals / player props on the free tier with the ``basketball_wnba``

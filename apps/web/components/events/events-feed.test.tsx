@@ -110,12 +110,12 @@ describe("EventsFeed", () => {
     mockFetchEvents.mockResolvedValue([
       makeEvent({
         id: 1,
-        sport_key: "SOCCER",
-        name: "Arsenal vs Man City",
+        sport_key: "WNBA",
+        name: "Liberty vs Aces",
         status: "in_progress",
         starts_at: "2099-01-01T19:00:00Z",
-        home: { display_name: "Arsenal", score: 1 },
-        away: { display_name: "Man City", score: 2 },
+        home: { display_name: "Liberty", score: 1 },
+        away: { display_name: "Aces", score: 2 },
       }),
       makeEvent({
         id: 2,
@@ -130,7 +130,7 @@ describe("EventsFeed", () => {
       <EventsFeed mode="dashboard" />,
     );
 
-    await screen.findAllByText("Arsenal vs Man City");
+    await screen.findAllByText("Liberty vs Aces");
     expect(screen.getAllByText("Lakers at Celtics").length).toBeGreaterThan(0);
 
     // Live pill renders with the live variant and the pulsing dot.
@@ -158,7 +158,7 @@ describe("EventsFeed", () => {
     const sportPillTexts = Array.from(
       container.querySelectorAll(".sport-pill"),
     ).map((pill) => pill.textContent ?? "");
-    expect(sportPillTexts.some((text) => text.includes("Soccer"))).toBe(true);
+    expect(sportPillTexts.some((text) => text.includes("WNBA"))).toBe(true);
     expect(sportPillTexts.some((text) => text.includes("NBA"))).toBe(true);
   });
 

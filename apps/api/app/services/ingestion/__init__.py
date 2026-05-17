@@ -53,7 +53,6 @@ SPORT_LABELS = {
     "NBA": "NBA",
     "NFL": "NFL",
     "MLB": "MLB",
-    "SOCCER": "Soccer",
     "TENNIS": "TENNIS",
     "WNBA": "WNBA",
 }
@@ -352,7 +351,7 @@ def _upsert_event(db: Session, normalized: NormalizedEvent) -> Event:
                 sport_key=normalized.sport_key,
                 display_name=normalized_participant.display_name,
                 short_name=normalized_participant.short_name,
-                participant_type="team" if normalized.sport_key in {"NBA", "NFL", "MLB", "SOCCER", "WNBA"} else "competitor",
+                participant_type="team" if normalized.sport_key in {"NBA", "NFL", "MLB", "WNBA"} else "competitor",
                 raw_data=normalized_participant.raw_data,
             )
             db.add(participant)

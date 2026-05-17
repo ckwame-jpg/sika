@@ -26,9 +26,7 @@
   --color-sport-nfl: var(--sport-nfl);
   --color-sport-mlb: var(--sport-mlb);
   --color-sport-wnba: var(--sport-wnba);
-  --color-sport-soccer: var(--sport-soccer);
   --color-sport-tennis: var(--sport-tennis);
-  --color-sport-ufc: var(--sport-ufc);
 
   /* Fonts */
   --font-sans: var(--font-geist-sans), system-ui, sans-serif;
@@ -131,9 +129,7 @@
   --sport-nfl: hsl(218 75% 50%);
   --sport-mlb: hsl(285 70% 60%);
   --sport-wnba: hsl(15 85% 58%);
-  --sport-soccer: hsl(168 60% 42%);
   --sport-tennis: hsl(195 75% 50%);
-  --sport-ufc: hsl(305 70% 58%);
 
   /* Cosmos feature-surface tokens (shared by light/dark feature cards) */
   --color-cosmos-text-bright: hsl(258 100% 96%);
@@ -306,9 +302,7 @@
   --sport-nfl: hsl(218 80% 65%);
   --sport-mlb: hsl(285 75% 70%);
   --sport-wnba: hsl(15 90% 68%);
-  --sport-soccer: hsl(168 65% 55%);
   --sport-tennis: hsl(195 80% 62%);
-  --sport-ufc: hsl(305 75% 68%);
 }
 
 @layer base {

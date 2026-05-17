@@ -17,8 +17,8 @@ def test_fetch_events_for_day_builds_expected_request(monkeypatch):
     monkeypatch.setattr(httpx, "get", fake_get)
 
     client = TheSportsDBClient(base_url="https://example.test/api/v1/json", api_key="secret")
-    events = client.fetch_events_for_day("Soccer", date(2026, 3, 30))
+    events = client.fetch_events_for_day("Tennis", date(2026, 3, 30))
 
     assert events == [{"idEvent": "1"}]
     assert captured["url"] == "https://example.test/api/v1/json/secret/eventsday.php"
-    assert captured["params"] == {"d": "2026-03-30", "s": "Soccer"}
+    assert captured["params"] == {"d": "2026-03-30", "s": "Tennis"}

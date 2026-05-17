@@ -471,7 +471,7 @@ def _score_team_winner(
     left_avg_score = _avg_score(left_results)
     right_avg_score = _avg_score(right_results)
     score_gap = left_avg_score - right_avg_score
-    home_advantage = 0.03 if event.sport_key in {"NBA", "NFL", "MLB", "WNBA", "SOCCER"} and left.is_home else 0.0
+    home_advantage = 0.03 if event.sport_key in {"NBA", "NFL", "MLB", "WNBA"} and left.is_home else 0.0
     left_rest_days = float(left_schedule.get("days_rest") or 0.0)
     right_rest_days = float(right_schedule.get("days_rest") or 0.0)
     rest_edge = clamp((left_rest_days - right_rest_days) * 0.015, -0.05, 0.05)
@@ -498,7 +498,7 @@ def _score_team_winner(
     left_win_probability = clamp(raw_probability, 0.05, 0.95)
     sample_size = min(len(left_results), 10) + min(len(right_results), 10)
     confidence = clamp(0.2 + (sample_size / 20.0) + abs(left_win_probability - 0.5) * 0.5, 0.2, 0.95)
-    if event.sport_key in {"TENNIS", "UFC"}:
+    if event.sport_key == "TENNIS":
         confidence = clamp(confidence - 0.05, 0.2, 0.95)
 
     reasons = [

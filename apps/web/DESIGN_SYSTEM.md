@@ -78,9 +78,7 @@ background: hsl(var(--color-cosmos-violet-500-hsl) / 0.22);
 | `--sport-nfl` | … | NFL |
 | `--sport-mlb` | … | MLB |
 | `--sport-wnba` | … | WNBA |
-| `--sport-soccer` | … | Soccer |
 | `--sport-tennis` | … | Tennis |
-| `--sport-ufc` | … | UFC (out of active scope but tokens exist) |
 
 Used in `SportBadge` and via the `--sport-tint` CSS custom property pattern in `event-card` ([`events-feed.tsx:122`](components/events/events-feed.tsx#L122)) for per-sport accent coloring.
 

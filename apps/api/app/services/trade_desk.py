@@ -39,7 +39,6 @@ KALSHI_SPORT_CATEGORY_ROOTS = {
     "NBA": "https://kalshi.com/category/sports/basketball/pro-basketball-m",
     "MLB": "https://kalshi.com/category/sports/baseball/pro-baseball",
     "NFL": "https://kalshi.com/category/sports/football/pro-football",
-    "SOCCER": "https://kalshi.com/category/sports/soccer",
     "TENNIS": "https://kalshi.com/category/sports/tennis",
     # Smarter WNBA PR 6 — must mirror ``routes.py``; Bug #30 design
     # smell tracks deduping these two copies. WNBA lives under
@@ -97,7 +96,7 @@ PRODUCT_SLATE_UNSCORED_REASON = "Current slate markets exist, but none were scor
 
 
 def visible_sports() -> list[str]:
-    return [sport.upper() for sport in get_settings().enabled_sports if sport.upper() != "UFC"]
+    return [sport.upper() for sport in get_settings().enabled_sports]
 
 
 def sport_order(sport_key: str | None) -> int:

@@ -50,20 +50,6 @@ class FakeSportsProvider:
             )
             return games
 
-        if sport_name == "Mixed Martial Arts":
-            return [
-                {
-                    "idEvent": "ufc-1",
-                    "idLeague": "ufa",
-                    "strLeague": "UFC",
-                    "strEvent": "Jon Jones vs Stipe Miocic",
-                    "strTimestamp": "2026-04-01T03:00:00Z",
-                    "dateEvent": "2026-04-01",
-                    "strStatus": "scheduled",
-                    "intHomeScore": None,
-                    "intAwayScore": None,
-                }
-            ]
         return []
 
 
@@ -83,20 +69,6 @@ class FakeKalshiPublicClient:
                 "yes_ask_dollars": "0.42",
                 "no_ask_dollars": "0.62",
                 "last_price_dollars": "0.43",
-            },
-            {
-                "ticker": "KXUFCFIGHT-26APR01JONSTI-JON",
-                "event_ticker": "KXUFCFIGHT-26APR01JONSTI",
-                "title": "Jon Jones vs Stipe Miocic Winner?",
-                "subtitle": "UFC main event",
-                "status": "active",
-                "close_time": "2026-04-15T03:00:00Z",
-                "expected_expiration_time": "2026-04-01T02:55:00Z",
-                "yes_sub_title": "Jon Jones",
-                "no_sub_title": "Stipe Miocic",
-                "yes_ask_dollars": "0.58",
-                "no_ask_dollars": "0.47",
-                "last_price_dollars": "0.56",
             },
         ]
 
@@ -123,13 +95,13 @@ def test_mixed_sport_refresh_and_trading_flow(db_session, monkeypatch):
         db_session,
         provider=FakeSportsProvider(),
         public_client=FakeKalshiPublicClient(),
-        sports=["NBA", "UFC"],
+        sports=["NBA"],
     )
     db_session.commit()
 
     assert run.status == "completed"
     sport_keys = {item[0] for item in db_session.execute(select(Event.sport_key)).all()}
-    assert sport_keys == {"NBA", "UFC"}
+    assert sport_keys == {"NBA"}
 
     recommendations = db_session.scalars(select(Recommendation)).all()
     assert len(recommendations) >= 1

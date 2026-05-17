@@ -249,7 +249,7 @@ def test_market_filter_accepts_wnba_game_winner():
 def test_market_filter_accepts_wnba_spread_and_total_game_lines():
     """Spread + total game-line title regex must accept WNBA markets.
     Pre-PR 2 the dispatcher gated game_line metadata to
-    {NBA, NFL, MLB, SOCCER}; WNBA was added with this PR.
+    {NBA, NFL, MLB}; WNBA was added with this PR.
     """
     spread_payload = {
         "ticker": "KXWNBASPREAD-26MAY15INDNYL-NYL-5_5",
@@ -326,7 +326,7 @@ def test_persist_market_payload_records_skips_wnba_when_not_in_enabled_sports(
     from app.services.ingestion import _persist_market_payload_records
 
     settings = get_settings()
-    monkeypatch.setattr(settings, "enabled_sports", ["NBA", "NFL", "MLB", "SOCCER", "TENNIS"])
+    monkeypatch.setattr(settings, "enabled_sports", ["NBA", "NFL", "MLB", "TENNIS"])
 
     wnba_prop = {
         "ticker": "KXWNBAPTS-26MAY15INDNYL-INDCCLARK22-22",
