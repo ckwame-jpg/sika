@@ -70,8 +70,6 @@ _ODDS_API_SLUG_TO_SIKA_SPORT: dict[str, str] = {
     "basketball_nba": "NBA",
     "baseball_mlb": "MLB",
     "americanfootball_nfl": "NFL",
-    "soccer_epl": "SOCCER",
-    "mma_mixed_martial_arts": "UFC",
     "tennis_atp_french_open": "TENNIS",
 }
 

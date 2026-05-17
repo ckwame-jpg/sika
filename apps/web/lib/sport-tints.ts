@@ -11,9 +11,7 @@ export const SPORT_TINTS: Record<string, string> = {
   nfl: "var(--sport-nfl)",
   mlb: "var(--sport-mlb)",
   wnba: "var(--sport-wnba)",
-  soccer: "var(--sport-soccer)",
   tennis: "var(--sport-tennis)",
-  ufc: "var(--sport-ufc)",
 };
 
 export const DEFAULT_SPORT_TINT = "var(--color-cosmos-violet-default-tint)";

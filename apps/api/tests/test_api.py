@@ -927,7 +927,6 @@ def test_trade_desk_groups_game_lines_props_and_research_rows(client, db_session
     research_rows = {row["sport_key"]: row for row in payload["research_sports"]}
     assert research_rows["NFL"]["availability_mode"] == "research_only"
     assert research_rows["NFL"]["events_count"] == 1
-    assert "UFC" not in research_rows
 
 
 def test_trade_desk_clamps_non_monotonic_prop_ladders(client, db_session):
@@ -1119,8 +1118,9 @@ def test_sports_availability_reports_live_and_research_only_modes(client, db_ses
     payload = {row["sport_key"]: row for row in response.json()}
     # Smarter WNBA PR 6 added WNBA to ``enabled_sports`` (appended at the
     # end of the list) and to ``CURRENT_WATCHLIST_SPORTS`` — so WNBA
-    # appears here as a ``live`` row alongside NBA + MLB.
-    assert list(payload) == ["NBA", "NFL", "MLB", "SOCCER", "TENNIS", "WNBA"]
+    # appears here as a ``live`` row alongside NBA + MLB. Soccer + UFC
+    # were removed from scope on 2026-05-17.
+    assert list(payload) == ["NBA", "NFL", "MLB", "TENNIS", "WNBA"]
     assert payload["NBA"]["availability_mode"] == "live"
     assert payload["NBA"]["events_count"] == 1
     assert payload["NBA"]["recommendations_count"] == 1
@@ -1130,7 +1130,6 @@ def test_sports_availability_reports_live_and_research_only_modes(client, db_ses
     assert payload["WNBA"]["availability_mode"] == "live"
     assert payload["WNBA"]["events_count"] == 0
     assert payload["WNBA"]["recommendations_count"] == 0
-    assert "UFC" not in payload
 
 
 def _seed_snapshot(

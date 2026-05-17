@@ -85,24 +85,18 @@ class Settings(BaseSettings):
     refresh_job_stale_minutes: int = 30
     market_snapshot_heartbeat_minutes: int = 30
     prefer_yes_side_props: bool = True
-    # Smarter WNBA PR 6 flipped the default: WNBA is appended to the
-    # list (rather than slotting next to NBA) so the existing tuple
-    # ordering for NBA / NFL / MLB / SOCCER / TENNIS — load-bearing for
-    # operator-facing sport pickers and ``/sports/availability`` — is
-    # preserved. ``parlay_enabled_sports`` above deliberately stays
-    # NBA / MLB only; ``parlay_family_key`` has no WNBA-specific family
-    # yet, and adding WNBA without one would silently route WNBA combos
-    # into ``mixed_parlay_*`` and pollute mixed-family calibration.
-    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "SOCCER", "TENNIS", "WNBA"])
-    soccer_leagues: list[str] = Field(
-        default_factory=lambda: [
-            "English Premier League",
-            "UEFA Champions League",
-            "Major League Soccer",
-            "FIFA World Cup",
-            "UEFA European Championship",
-        ]
-    )
+    # Active ship target: NBA + MLB + WNBA (Smarter WNBA PR 6 added
+    # WNBA). NFL stays in the list as the next-up sport (research_only
+    # mode until the per-sport pipeline ships). Tennis remains
+    # research_only. ``parlay_enabled_sports`` above stays NBA / MLB
+    # only; ``parlay_family_key`` has no WNBA-specific family yet, and
+    # adding WNBA without one would silently route WNBA combos into
+    # ``mixed_parlay_*`` and pollute mixed-family calibration.
+    #
+    # Soccer + UFC were removed from scope on 2026-05-17 — their
+    # adapters, ESPN slugs, Odds API mappings, stats-query branches,
+    # and front-end UI surfaces are all deleted in the same change.
+    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "TENNIS", "WNBA"])
 
     advanced_stats_enabled: bool = True
     nba_stats_source: Literal["nba_stats", "basketball_reference"] = "basketball_reference"

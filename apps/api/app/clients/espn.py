@@ -13,9 +13,7 @@ ESPN_SEARCH_SLUGS = {
     "NFL": "nfl",
     "MLB": "mlb",
     "WNBA": "wnba",
-    "SOCCER": "soccer",
     "TENNIS": "tennis",
-    "UFC": "mma",
 }
 ESPN_SCOREBOARD_URLS = {
     "NBA": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
@@ -141,8 +139,6 @@ _INJURY_REPORT_LEAGUE_SLUGS: dict[str, str] = {
     "WNBA": "wnba",
 }
 
-ESPN_SOCCER_PLAYER_PAGE_URL = "https://www.espn.com/soccer/player/_/id/{athlete_id}/{slug}"
-ESPN_MMA_FIGHTER_HISTORY_PAGE_URL = "https://www.espn.com/mma/fighter/history/_/id/{athlete_id}/{slug}"
 ESPN_TENNIS_ATHLETE_URL = "https://sports.core.api.espn.com/v2/sports/tennis/athletes/{athlete_id}?lang=en&region=us"
 _ESPN_FITT_STATE_RE = re.compile(r"window\['__espnfitt__'\]=(\{.*?\});</script>", re.DOTALL)
 logger = logging.getLogger(__name__)
@@ -325,20 +321,6 @@ class EspnPublicClient:
         response.raise_for_status()
         return response.json()
 
-    def fetch_soccer_player_overview(self, athlete_id: str, page_slug: str | None = None) -> dict[str, Any]:
-        slug = page_slug or athlete_id
-        return self._fetch_fitt_page(
-            ESPN_SOCCER_PLAYER_PAGE_URL.format(athlete_id=athlete_id, slug=slug),
-            f"Could not extract soccer overview payload for athlete {athlete_id}",
-        )
-
-    def fetch_mma_fighter_history(self, athlete_id: str, page_slug: str | None = None) -> dict[str, Any]:
-        slug = page_slug or athlete_id
-        return self._fetch_fitt_page(
-            ESPN_MMA_FIGHTER_HISTORY_PAGE_URL.format(athlete_id=athlete_id, slug=slug),
-            f"Could not extract MMA history payload for athlete {athlete_id}",
-        )
-
     def fetch_tennis_athlete_profile(self, athlete_id: str) -> dict[str, Any]:
         return self.fetch_json_ref(ESPN_TENNIS_ATHLETE_URL.format(athlete_id=athlete_id))
 
@@ -494,9 +476,7 @@ class EspnPublicClient:
 
     @staticmethod
     def _matches_sport(player: dict[str, Any], sport_key: str) -> bool:
-        if sport_key in {"SOCCER", "TENNIS"}:
-            return (player.get("sport") or "").lower() == sport_key.lower()
-        if sport_key == "UFC":
-            return (player.get("sport") or "").lower() == "mma"
+        if sport_key == "TENNIS":
+            return (player.get("sport") or "").lower() == "tennis"
         expected_slug = ESPN_SEARCH_SLUGS[sport_key]
         return (player.get("defaultLeagueSlug") or "").lower() == expected_slug

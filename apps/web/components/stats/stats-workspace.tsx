@@ -21,7 +21,6 @@ const EXAMPLES: Record<SportKey, string[]> = {
   NFL: ["Patrick Mahomes this season", "Josh Allen last 5 games"],
   MLB: ["Aaron Judge this season", "Mookie Betts last 10 games"],
   WNBA: ["Caitlin Clark last 10 games", "A'ja Wilson this season"],
-  SOCCER: ["Lionel Messi last 5 matches", "Kylian Mbappe this season"],
   TENNIS: ["Novak Djokovic last 5 matches", "Carlos Alcaraz this season"],
 };
 
@@ -34,10 +33,10 @@ const SEASON_OPTIONS = ["2026-27", "2025-26", "2024-25", "2023-24", "2022-23"];
 
 // ESPN's `season` parameter is sport-specific:
 //   NBA + Tennis (multi-year span): use the END year (e.g. "2025-26" -> 2026).
-//   NFL + MLB + Soccer + UFC: use the START / single year (e.g. "2025-26" -> 2025).
-// The picker default is sport-aware so MLB/NFL/Soccer/UFC pick the
-// span whose start year is the active calendar season; NBA/Tennis pick
-// the span whose end year matches the active season.
+//   NFL + MLB: use the START / single year (e.g. "2025-26" -> 2025).
+// The picker default is sport-aware so MLB/NFL pick the span whose
+// start year is the active calendar season; NBA/Tennis pick the span
+// whose end year matches the active season.
 function defaultSeasonForSport(sport: SportKey, today: Date = new Date()): string {
   const year = today.getFullYear();
   const month = today.getMonth() + 1;
@@ -54,8 +53,8 @@ function defaultSeasonForSport(sport: SportKey, today: Date = new Date()): strin
     const startYear = month >= 5 ? year : year - 1;
     return `${startYear}-${String(startYear + 1).slice(2)}`;
   }
-  // MLB/NFL/Soccer/UFC: use the calendar-year start that's currently active.
-  // MLB starts in March; before March, the previous calendar year is still
+  // MLB/NFL: use the calendar-year start that's currently active. MLB
+  // starts in March; before March, the previous calendar year is still
   // the most recent completed season.
   const startYear = sport === "MLB" && month < 3 ? year - 1 : year;
   return `${startYear}-${String(startYear + 1).slice(2)}`;
@@ -128,7 +127,7 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
             <div className="sa-title">Stats Assistant</div>
             <div className="sa-sub">
               Cross-sport player query desk. Ask for recent form, season totals, or matchup context
-              across NBA, NFL, MLB, Soccer, and Tennis.
+              across NBA, NFL, MLB, WNBA, and Tennis.
             </div>
           </div>
           <span className="sa-status">

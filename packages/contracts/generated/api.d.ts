@@ -553,8 +553,8 @@ export interface paths {
          *
          *     Sourced from ``config.py:enabled_sports`` so runtime configuration
          *     changes do not require a frontend redeploy. The list is uppercased and
-         *     filtered to match ``_visible_sports()`` — i.e. UFC is hidden even if it
-         *     is in ``enabled_sports`` — so all product surfaces agree on scope.
+         *     routed through ``_visible_sports()`` so all product surfaces agree on
+         *     scope.
          */
         get: operations["get_product_sports_product_sports_get"];
         put?: never;

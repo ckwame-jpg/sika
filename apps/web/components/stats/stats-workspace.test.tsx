@@ -80,15 +80,14 @@ describe("StatsWorkspace — Phase 2 sa-* rewrite", () => {
     expect(screen.getByText(/Run a player stats query/i)).toBeInTheDocument();
   });
 
-  it("offers only the shipped sports (NBA/NFL/MLB/WNBA/SOCCER/TENNIS)", () => {
+  it("offers only the shipped sports (NBA/NFL/MLB/WNBA/TENNIS)", () => {
     render(<StatsWorkspace />);
     const sport = screen.getByTestId("sa-sport") as HTMLSelectElement;
     const values = Array.from(sport.options).map((o) => o.value);
     // Smarter WNBA PR 3 enabled WNBA after wiring the /stats/query
-    // backend branch. PR 1 had gated it out via STATS_SUPPORTED_SPORTS;
-    // that gate is gone now that the backend supports it.
-    expect(values).toEqual(["NBA", "NFL", "MLB", "WNBA", "SOCCER", "TENNIS"]);
-    expect(values).not.toContain("UFC");
+    // backend branch. Soccer + UFC were removed from scope on
+    // 2026-05-17.
+    expect(values).toEqual(["NBA", "NFL", "MLB", "WNBA", "TENNIS"]);
   });
 
   it("clicking a suggestion chip fires the query and renders the answer", async () => {
@@ -167,8 +166,8 @@ describe("StatsWorkspace — Phase 2 sa-* rewrite", () => {
   it("swapping sport also swaps the question to that sport's first example (case-exact keys)", () => {
     render(<StatsWorkspace />);
     const sport = screen.getByTestId("sa-sport") as HTMLSelectElement;
-    fireEvent.change(sport, { target: { value: "SOCCER" } });
+    fireEvent.change(sport, { target: { value: "TENNIS" } });
     const input = screen.getByTestId("sa-input") as HTMLInputElement;
-    expect(input.value).toBe("Lionel Messi last 5 matches");
+    expect(input.value).toBe("Novak Djokovic last 5 matches");
   });
 });

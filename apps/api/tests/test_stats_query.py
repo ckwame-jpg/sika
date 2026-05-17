@@ -156,104 +156,6 @@ MLB_GAMELOG_PAYLOAD = {
     ],
 }
 
-SOCCER_OVERVIEW_PAYLOAD = {
-    "page": {
-        "content": {
-            "player": {
-                "plyrHdr": {
-                    "statsBlck": {
-                        "hdr": "2026 MLS Stats",
-                        "vals": [
-                            {"name": "Starts-Substitute Appearances", "lbl": "START (SUB)", "val": "4 (0)"},
-                            {"name": "Total Goals", "lbl": "G", "val": "4"},
-                            {"name": "Assists", "lbl": "A", "val": "2"},
-                            {"name": "Shots", "lbl": "SH", "val": "15"},
-                        ],
-                    }
-                },
-                "stats": {
-                    "tm": "20232",
-                    "lg": "770",
-                    "splts": {
-                        "lbls": [
-                            {"data": "STRT", "ttl": "Starts"},
-                            {"data": "FC", "ttl": "Fouls Committed"},
-                            {"data": "FA", "ttl": "Fouls Suffered"},
-                            {"data": "YC", "ttl": "Yellow Cards"},
-                            {"data": "RC", "ttl": "Red Cards"},
-                            {"data": "G", "ttl": "Goals"},
-                            {"data": "A", "ttl": "Assists"},
-                            {"data": "SH", "ttl": "Shots"},
-                            {"data": "ST", "ttl": "Shots On Target"},
-                            {"data": "OF", "ttl": "Offsides"},
-                        ],
-                        "stats": {
-                            "770-20232": ["2026 MLS", "4", "1", "5", "1", "0", "4", "2", "15", "7", "2"]
-                        },
-                    },
-                },
-                "gmlg": {
-                    "stats": [
-                        {
-                            "title": "",
-                            "headings": [
-                                {"data": "APP", "ttl": "Appearances"},
-                                {"data": "G", "ttl": "Goals"},
-                                {"data": "A", "ttl": "Assists"},
-                                {"data": "SH", "ttl": "Shots"},
-                                {"data": "ST", "ttl": "Shots On Target"},
-                                {"data": "FC", "ttl": "Fouls Committed"},
-                                {"data": "FA", "ttl": "Fouls Suffered"},
-                                {"data": "OF", "ttl": "Offsides"},
-                                {"data": "YC", "ttl": "Yellow Cards"},
-                                {"data": "RC", "ttl": "Red Cards"},
-                            ],
-                            "rows": [
-                                {
-                                    "id": "soc4",
-                                    "dt": "2026-03-27T23:15:00.000+00:00",
-                                    "res": {"abbr": "W", "score": "2-1"},
-                                    "opp": {"abbr": "ORL", "name": "Orlando City SC", "atVs": "@"},
-                                    "stats": ["Started", "1", "1", "5", "2", "0", "2", "0", "0", "0"],
-                                    "comp": "MLS",
-                                    "tm": {"name": "MIA"},
-                                },
-                                {
-                                    "id": "soc3",
-                                    "dt": "2026-03-20T23:15:00.000+00:00",
-                                    "res": {"abbr": "D", "score": "1-1"},
-                                    "opp": {"abbr": "ATL", "name": "Atlanta United FC", "atVs": "vs"},
-                                    "stats": ["Started", "1", "0", "4", "2", "1", "1", "1", "0", "0"],
-                                    "comp": "MLS",
-                                    "tm": {"name": "MIA"},
-                                },
-                                {
-                                    "id": "soc2",
-                                    "dt": "2026-03-14T23:15:00.000+00:00",
-                                    "res": {"abbr": "W", "score": "3-0"},
-                                    "opp": {"abbr": "CLB", "name": "Columbus Crew", "atVs": "@"},
-                                    "stats": ["Started", "2", "1", "4", "2", "0", "1", "1", "1", "0"],
-                                    "comp": "MLS",
-                                    "tm": {"name": "MIA"},
-                                },
-                                {
-                                    "id": "soc1",
-                                    "dt": "2026-03-08T23:15:00.000+00:00",
-                                    "res": {"abbr": "L", "score": "0-1"},
-                                    "opp": {"abbr": "DC", "name": "D.C. United", "atVs": "vs"},
-                                    "stats": ["Started", "0", "0", "2", "1", "0", "1", "0", "0", "0"],
-                                    "comp": "MLS",
-                                    "tm": {"name": "MIA"},
-                                },
-                            ],
-                        }
-                    ]
-                },
-            }
-        }
-    }
-}
-
 TENNIS_ATHLETE_PROFILE = {
     "statistics": {"$ref": "https://example.test/tennis/296/statistics"},
     "eventLog": {"$ref": "https://example.test/tennis/296/eventlog"},
@@ -369,80 +271,6 @@ TENNIS_REF_PAYLOADS = {
     },
 }
 
-UFC_HISTORY_PAYLOAD = {
-    "page": {
-        "content": {
-            "player": {
-                "plyrHdr": {
-                    "statsBlck": {
-                        "hdr": "Stats",
-                        "vals": [
-                            {"lbl": "W-L-D", "val": "13-3-0"},
-                            {"lbl": "(T)KO", "val": "11-1"},
-                            {"lbl": "SUB", "val": "0-1"},
-                        ],
-                    }
-                },
-                "fghtHstr": [
-                    {
-                        "dcsn": "KO/TKO",
-                        "evnt": "UFC 320: Ankalaev vs. Pereira 2",
-                        "evntLnk": "https://www.espn.com/mma/fightcenter/_/id/600054473/league/ufc",
-                        "hdate": "2025-10-04T22:00:00.000+00:00",
-                        "htime": "1:20",
-                        "opp": "Magomed Ankalaev",
-                        "oppLnk": "https://www.espn.com/mma/fighter/_/id/4273399/magomed-ankalaev",
-                        "oppUid": "s:3301~a:4273399",
-                        "rnd": 1,
-                        "rslt": "W",
-                        "ttlFght": True,
-                    },
-                    {
-                        "dcsn": "Decision - Unanimous",
-                        "evnt": "UFC 313: Pereira vs. Ankalaev",
-                        "evntLnk": "https://www.espn.com/mma/fightcenter/_/id/600051447/league/ufc",
-                        "hdate": "2025-03-08T23:00:00.000+00:00",
-                        "htime": "5:00",
-                        "opp": "Magomed Ankalaev",
-                        "oppLnk": "https://www.espn.com/mma/fighter/_/id/4273399/magomed-ankalaev",
-                        "oppUid": "s:3301~a:4273399",
-                        "rnd": 5,
-                        "rslt": "L",
-                        "ttlFght": True,
-                    },
-                    {
-                        "dcsn": "KO/TKO",
-                        "evnt": "UFC 307: Pereira vs. Rountree Jr.",
-                        "evntLnk": "https://www.espn.com/mma/fightcenter/_/id/600048801/league/ufc",
-                        "hdate": "2024-10-05T22:30:00.000+00:00",
-                        "htime": "4:32",
-                        "opp": "Khalil Rountree Jr.",
-                        "oppLnk": "https://www.espn.com/mma/fighter/_/id/4028627/khalil-rountree-jr",
-                        "oppUid": "s:3301~a:4028627",
-                        "rnd": 4,
-                        "rslt": "W",
-                        "ttlFght": True,
-                    },
-                    {
-                        "dcsn": "KO/TKO",
-                        "evnt": "UFC 303: Pereira vs. Procházka 2",
-                        "evntLnk": "https://www.espn.com/mma/fightcenter/_/id/600043173/league/ufc",
-                        "hdate": "2024-06-29T22:00:00.000+00:00",
-                        "htime": "0:13",
-                        "opp": "Jiří Procházka",
-                        "oppLnk": "https://www.espn.com/mma/fighter/_/id/3156612/jiri-prochazka",
-                        "oppUid": "s:3301~a:3156612",
-                        "rnd": 2,
-                        "rslt": "W",
-                        "ttlFght": True,
-                    },
-                ],
-            }
-        }
-    }
-}
-
-
 class FakeEspnClient:
     def search_player(self, query: str, sport_key: str = "NBA", *, team_hint: str | None = None):
         player_map = {
@@ -450,14 +278,7 @@ class FakeEspnClient:
             "NFL": {"athlete_id": "3139477", "display_name": "Patrick Mahomes", "team_name": "Kansas City Chiefs"},
             "MLB": {"athlete_id": "33192", "display_name": "Aaron Judge", "team_name": "New York Yankees"},
             "WNBA": {"athlete_id": "4433403", "display_name": "Caitlin Clark", "team_name": "Indiana Fever"},
-            "SOCCER": {
-                "athlete_id": "45843",
-                "display_name": "Lionel Messi",
-                "team_name": "Inter Miami CF",
-                "page_slug": "lionel-messi",
-            },
             "TENNIS": {"athlete_id": "296", "display_name": "Novak Djokovic", "team_name": None},
-            "UFC": {"athlete_id": "4705658", "display_name": "Alex Pereira", "team_name": None, "page_slug": "alex-pereira"},
         }
         return player_map[sport_key]
 
@@ -480,23 +301,12 @@ class FakeEspnClient:
             return NBA_GAMELOG_PAYLOAD
         raise AssertionError("unexpected sport")
 
-    def fetch_soccer_player_overview(self, athlete_id: str, page_slug: str | None = None):
-        assert athlete_id == "45843"
-        assert page_slug == "lionel-messi"
-        return SOCCER_OVERVIEW_PAYLOAD
-
     def fetch_tennis_athlete_profile(self, athlete_id: str):
         assert athlete_id == "296"
         return TENNIS_ATHLETE_PROFILE
 
     def fetch_json_ref(self, ref_url: str):
         return TENNIS_REF_PAYLOADS[ref_url]
-
-    def fetch_mma_fighter_history(self, athlete_id: str, page_slug: str | None = None):
-        assert athlete_id == "4705658"
-        assert page_slug == "alex-pereira"
-        return UFC_HISTORY_PAYLOAD
-
 
 def test_parse_stats_question_last_n_games():
     parsed = parse_stats_question("What is Jalen Brunson's stats in the last 10 games?", season=2026)
@@ -508,22 +318,6 @@ def test_parse_stats_question_last_n_games():
     assert parsed.season == 2026
 
 
-def test_parse_stats_question_supports_soccer_matches_wording():
-    parsed = parse_stats_question("What is Lionel Messi's stats in the last 5 matches?", sport_key="SOCCER", season=2026)
-
-    assert parsed.sport_key == "SOCCER"
-    assert parsed.player_name == "Lionel Messi"
-    assert parsed.games_requested == 5
-
-
-def test_parse_stats_question_supports_ufc_fights_wording():
-    parsed = parse_stats_question("Alex Pereira last 5 fights", sport_key="UFC", season=2025)
-
-    assert parsed.sport_key == "UFC"
-    assert parsed.player_name == "Alex Pereira"
-    assert parsed.games_requested == 5
-
-
 def test_default_season_for_nfl_uses_previous_year_before_training_camp():
     assert default_season_for_sport("NFL", reference_date=date(2026, 3, 30)) == 2025
 
@@ -532,17 +326,13 @@ def test_default_season_for_tennis_uses_calendar_year():
     assert default_season_for_sport("TENNIS", reference_date=date(2026, 3, 31)) == 2026
 
 
-def test_default_season_for_ufc_uses_calendar_year():
-    assert default_season_for_sport("UFC", reference_date=date(2026, 3, 31)) == 2026
-
-
 def test_default_season_for_wnba_uses_calendar_year():
     """WNBA's 2026 regular season runs May 8 → Sept 24. A reference date
     in the middle of the season must return the calendar year of the
-    season's tip-off — same shape as the SOCCER / TENNIS / UFC fallback
-    today. PR 3 may add an explicit branch with offseason rollover
-    semantics; this test pins the in-season expectation regardless of
-    which code path serves it.
+    season's tip-off — same shape as the TENNIS fallback today. PR 3
+    may add an explicit branch with offseason rollover semantics; this
+    test pins the in-season expectation regardless of which code path
+    serves it.
     """
     assert default_season_for_sport("WNBA", reference_date=date(2026, 7, 15)) == 2026
 
@@ -680,43 +470,6 @@ def test_stats_query_service_returns_mlb_totals_and_rates():
     assert result["summary"]["stat_line"] == "3 hits, 1 HR, 4 RBI, 1.319 OPS"
 
 
-def test_stats_query_service_returns_soccer_recent_match_stats():
-    service = StatsQueryService(espn_client=FakeEspnClient())
-
-    result = service.query("Lionel Messi last 3 matches", sport_key="SOCCER", season=2026)
-
-    assert result["sport_key"] == "SOCCER"
-    assert result["games_analyzed"] == 3
-    assert result["summary"]["draws"] == 1
-    assert result["summary"]["metrics"]["goals"] == 4.0
-    assert result["summary"]["metrics"]["goal_contributions"] == 6.0
-    assert result["summary"]["metrics"]["shots_on_target"] == 6.0
-    assert result["game_logs"][0]["competition"] == "MLS"
-    assert result["game_logs"][0]["team_name"] == "MIA"
-    assert result["summary"]["stat_line"] == "4 goals, 2 assists, 13 shots, 6 shots on target"
-    assert result["game_logs"][0]["stat_line"] == "1 goal, 1 assist, 5 shots, 2 shots on target"
-    assert result["coverage_note"].startswith("Soccer beta uses ESPN's public player overview")
-    assert result["source"] == "espn_public_player_page"
-
-
-def test_stats_query_service_returns_soccer_season_summary():
-    service = StatsQueryService(espn_client=FakeEspnClient())
-
-    result = service.query("Lionel Messi this season", sport_key="SOCCER", season=2026)
-
-    assert result["sport_key"] == "SOCCER"
-    assert result["summary"]["games"] == 4
-    assert result["summary"]["wins"] == 2
-    assert result["summary"]["losses"] == 1
-    assert result["summary"]["draws"] == 1
-    assert result["summary"]["metrics"]["starts"] == 4.0
-    assert result["summary"]["metrics"]["sub_appearances"] == 0.0
-    assert result["summary"]["metrics"]["goals"] == 4.0
-    assert result["summary"]["metrics"]["assists"] == 2.0
-    assert result["summary"]["stat_line"] == "4 goals, 2 assists, 15 shots, 7 shots on target"
-    assert "2026 MLS Stats" in result["explanation"]
-
-
 def test_stats_query_service_returns_tennis_recent_match_stats():
     service = StatsQueryService(espn_client=FakeEspnClient())
 
@@ -753,44 +506,6 @@ def test_stats_query_service_returns_tennis_season_summary():
     assert result["summary"]["stat_line"] == "3-1 record, 7-3 in sets, 55-45 in games, 1 title"
     assert result["coverage_note"] == "Tennis beta uses ESPN's public core tennis refs for singles season totals and match logs."
     assert "won 1 title" in result["explanation"]
-
-
-def test_stats_query_service_returns_ufc_recent_fight_stats():
-    service = StatsQueryService(espn_client=FakeEspnClient())
-
-    result = service.query("Alex Pereira last 3 fights", sport_key="UFC", season=2025)
-
-    assert result["sport_key"] == "UFC"
-    assert result["games_analyzed"] == 3
-    assert result["summary"]["wins"] == 2
-    assert result["summary"]["losses"] == 1
-    assert result["summary"]["metrics"]["ko_tko_wins"] == 2.0
-    assert result["summary"]["metrics"]["finish_rate"] == 66.7
-    assert result["summary"]["metrics"]["avg_round"] == 3.3
-    assert result["summary"]["metrics"]["avg_fight_minutes"] == 3.6
-    assert result["summary"]["metrics"]["title_fights"] == 3.0
-    assert result["summary"]["stat_line"] == "2-1 record, 2 KO/TKO wins, 66.7% finish rate, 3.3 avg rounds"
-    assert result["game_logs"][0]["stat_line"] == "W vs Magomed Ankalaev, KO/TKO, R1 1:20 (UFC 320: Ankalaev vs. Pereira 2)"
-    assert result["coverage_note"].startswith("UFC beta uses ESPN's public fighter history page")
-    assert result["source"] == "espn_public_mma_history_page"
-
-
-def test_stats_query_service_returns_ufc_season_summary():
-    service = StatsQueryService(espn_client=FakeEspnClient())
-
-    result = service.query("Alex Pereira this season", sport_key="UFC", season=2025)
-
-    assert result["sport_key"] == "UFC"
-    assert result["summary"]["games"] == 2
-    assert result["summary"]["wins"] == 1
-    assert result["summary"]["losses"] == 1
-    assert result["summary"]["metrics"]["ko_tko_wins"] == 1.0
-    assert result["summary"]["metrics"]["decision_losses"] == 1.0
-    assert result["summary"]["metrics"]["finish_rate"] == 50.0
-    assert result["summary"]["metrics"]["avg_round"] == 3.0
-    assert result["summary"]["metrics"]["avg_fight_minutes"] == 3.2
-    assert result["summary"]["stat_line"] == "1-1 record, 1 KO/TKO wins, 50.0% finish rate, 3.0 avg rounds"
-    assert "2025 calendar year" in result["explanation"]
 
 
 def test_stats_query_endpoint(client):

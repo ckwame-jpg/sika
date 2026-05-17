@@ -8702,7 +8702,7 @@
     },
     "/product/sports": {
       "get": {
-        "description": "Runtime sport scope for product pickers (Slice 4).\n\nSourced from ``config.py:enabled_sports`` so runtime configuration\nchanges do not require a frontend redeploy. The list is uppercased and\nfiltered to match ``_visible_sports()`` \u2014 i.e. UFC is hidden even if it\nis in ``enabled_sports`` \u2014 so all product surfaces agree on scope.",
+        "description": "Runtime sport scope for product pickers (Slice 4).\n\nSourced from ``config.py:enabled_sports`` so runtime configuration\nchanges do not require a frontend redeploy. The list is uppercased and\nrouted through ``_visible_sports()`` so all product surfaces agree on\nscope.",
         "operationId": "get_product_sports_product_sports_get",
         "responses": {
           "200": {

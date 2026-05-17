@@ -87,7 +87,6 @@ export const SPORT_OPTIONS = [
   { value: "NFL", label: "NFL", colorClass: "text-sport-nfl" },
   { value: "MLB", label: "MLB", colorClass: "text-sport-mlb" },
   { value: "WNBA", label: "WNBA", colorClass: "text-sport-wnba" },
-  { value: "SOCCER", label: "Soccer", colorClass: "text-sport-soccer" },
   { value: "TENNIS", label: "Tennis", colorClass: "text-sport-tennis" },
 ] as const;
 

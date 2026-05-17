@@ -27,7 +27,6 @@ SUPPORTED_SPORT_HINTS = {
     "NBA": ("NBA",),
     "NFL": ("NFL",),
     "MLB": ("MLB",),
-    "SOCCER": ("SOCCER", "MLS", "EPL", "UEFA", "UCL", "FIFA", "EURO", "LALIGA", "SERIEA", "BUNDESLIGA", "LIGUE1"),
     "TENNIS": ("TENNIS", "ATP", "WTA", "ITF", "CHALLENGER"),
 }
 SUPPORTED_COMBO_PROP_FAMILIES = {
@@ -330,7 +329,7 @@ def _winner_market_metadata(payload: dict[str, Any], sport_key: str, lowered_tit
 
 
 def _game_line_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, Any] | None:
-    if sport_key not in {"NBA", "NFL", "MLB", "WNBA", "SOCCER"}:
+    if sport_key not in {"NBA", "NFL", "MLB", "WNBA"}:
         return None
 
     title = str(payload.get("title") or "").strip()

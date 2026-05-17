@@ -32,15 +32,15 @@ def test_team_adapter_preserves_in_progress_status_without_finalizing_event():
 
 
 def test_head_to_head_adapter_uses_upstream_status_instead_of_score_inference():
-    adapter = HeadToHeadSportAdapter("UFC", "Mixed Martial Arts")
+    adapter = HeadToHeadSportAdapter("TENNIS", "Tennis")
 
     event = adapter.normalize_event(
         {
             "source": "sportsdb",
-            "idEvent": "ufc-1",
-            "idLeague": "ufa",
-            "strLeague": "UFC",
-            "strEvent": "Jon Jones vs Stipe Miocic",
+            "idEvent": "tennis-1",
+            "idLeague": "atp",
+            "strLeague": "ATP Tour",
+            "strEvent": "Novak Djokovic vs Carlos Alcaraz",
             "strTimestamp": "2026-04-01T03:00:00Z",
             "dateEvent": "2026-04-01",
             "strStatus": "scheduled",
