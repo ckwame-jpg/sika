@@ -828,6 +828,50 @@ export interface components {
             status: string;
         };
         /**
+         * FreshnessAuditRowRead
+         * @description Smarter #22 PR B prep — per-feature-group calibration audit.
+         *
+         *     Built by ``apps/api/app/services/ml/freshness_audit.py`` from
+         *     settled ``Prediction`` rows joined with the
+         *     ``scoring_diagnostics["freshness_stale_groups"]`` +
+         *     ``scoring_diagnostics["feature_groups"]`` JSON that PR A
+         *     (sika#186) and Architecture #5 (sika#169) already persist.
+         *
+         *     Each row answers the tuning question
+         *     `SMARTER_22_TUNING_PLAYBOOK.md` asks: *for this group, when it
+         *     was stale, did calibration suffer compared to when it was fresh?*
+         *     A positive ``calibration_delta`` means staleness measurably
+         *     degraded prediction accuracy — candidate for promotion from
+         *     ``IGNORE`` to ``PENALIZE`` in ``FEATURE_GROUP_POLICIES``.
+         *
+         *     Calibration miss = ``|avg_predicted_yes_probability - actual_yes_hit_rate|``.
+         *     Hit rate is computed from the YES side of the market regardless of
+         *     which side the prediction picked (NO-side wins are inverted), so
+         *     the comparison against ``fair_yes_price`` is apples-to-apples.
+         */
+        FreshnessAuditRowRead: {
+            /** Calibration Delta */
+            calibration_delta: number;
+            /** Fresh Avg Predicted */
+            fresh_avg_predicted: number;
+            /** Fresh Calibration Miss */
+            fresh_calibration_miss: number;
+            /** Fresh Count */
+            fresh_count: number;
+            /** Fresh Hit Rate */
+            fresh_hit_rate: number;
+            /** Group Key */
+            group_key: string;
+            /** Stale Avg Predicted */
+            stale_avg_predicted: number;
+            /** Stale Calibration Miss */
+            stale_calibration_miss: number;
+            /** Stale Count */
+            stale_count: number;
+            /** Stale Hit Rate */
+            stale_hit_rate: number;
+        };
+        /**
          * FreshnessStaleGroupRead
          * @description Smarter #22 PR A — per-stale-feature-group operator surface.
          *
@@ -1467,6 +1511,8 @@ export interface components {
             auto_promotion_enabled: boolean;
             /** Families */
             families?: components["schemas"]["ModelFamilyReadinessRead"][];
+            /** Freshness Audit */
+            freshness_audit?: components["schemas"]["FreshnessAuditRowRead"][];
             /** Generated At */
             generated_at: string;
             /** Interval Models */

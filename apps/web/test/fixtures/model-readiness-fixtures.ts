@@ -158,4 +158,8 @@ export const modelReadinessSummaryFixture: ModelReadinessSummaryRead = {
   // Smarter #21 phase 2b — empty list by default mirrors the
   // pre-CLI-run state of the readiness API.
   interval_models: [],
+  // Smarter #22 PR B prep — empty list by default mirrors the
+  // pre-settled-history state. Tests that exercise the audit panel
+  // populated state override this.
+  freshness_audit: [],
 };

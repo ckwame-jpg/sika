@@ -14,6 +14,7 @@ import type {
 } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FreshnessAuditPanel } from "@/components/predictions/freshness-audit-panel";
 import { IntervalModelsBadge } from "@/components/predictions/interval-models-badge";
 import { SettlementAgingBadge } from "@/components/predictions/settlement-aging-badge";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
@@ -526,6 +527,13 @@ export function ModelReadinessPanel() {
           </div>
           <div className="mb-4">
             <IntervalModelsBadge intervals={summary.interval_models ?? []} />
+          </div>
+          {/* Smarter #22 PR B prep — calibration audit per stale
+             feature group. Operator reads the panel to decide which
+             IGNORE-default groups to promote in
+             FEATURE_GROUP_POLICIES per SMARTER_22_TUNING_PLAYBOOK.md. */}
+          <div className="mb-4">
+            <FreshnessAuditPanel rows={summary.freshness_audit ?? []} />
           </div>
           <div className="mb-4 grid gap-3 md:grid-cols-3">
             <div className="stats-tile">

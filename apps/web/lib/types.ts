@@ -82,6 +82,12 @@ export type SettlementAgingRead = Wire<Schema<"SettlementAgingRead">>;
 // bad / unknown) mirrors the ``python -m ml.cli inspect-intervals``
 // classification so the browser and the CLI agree byte-for-byte.
 export type IntervalModelStatusRead = Wire<Schema<"IntervalModelStatusRead">>;
+// Smarter #22 PR B prep — per-stale-feature-group calibration audit
+// row surfaced on the readiness panel so operators can see which
+// IGNORE-default groups have a real staleness penalty in the data
+// (positive ``calibration_delta``) before promoting them in the
+// scoring policy registry. See SMARTER_22_TUNING_PLAYBOOK.md.
+export type FreshnessAuditRowRead = Wire<Schema<"FreshnessAuditRowRead">>;
 export type ModelReadinessSummaryRead = Wire<Schema<"ModelReadinessSummaryRead">>;
 // Update DTOs use ``Partial<Schema<…>>`` instead of ``Wire<Schema<…>>``
 // because the partial-PATCH idiom (caller sends only the fields they

@@ -30,6 +30,7 @@ from app.services.operator_settings import (
     effective_sportsbook_disagreement_min_book_count,
     effective_sportsbook_disagreement_threshold,
 )
+from app.services.ml.freshness_audit import compute_freshness_audit
 from app.services.ml.interval_status import collect_interval_model_status
 from app.services.predictions import compute_settlement_aging
 
@@ -835,6 +836,20 @@ def build_model_readiness_summary(
     # clock comparison against pre-seeded close_times drifts over time.
     aging = compute_settlement_aging(db, now=now)
 
+    # Smarter #22 PR B prep — empirical calibration audit per stale
+    # feature group. Joins settled predictions with the freshness
+    # diagnostics (PR A) + feature_groups (Architecture #5) JSON and
+    # computes per-group calibration delta (stale-bucket miss vs
+    # fresh-bucket miss). Returns [] when no settled predictions in
+    # the window have freshness diagnostics (the common pre-PR-A
+    # state). Operator reads the delta to decide whether to promote
+    # a group from IGNORE → PENALIZE per SMARTER_22_TUNING_PLAYBOOK.md.
+    freshness_audit = compute_freshness_audit(db, now=now)
+    # ``model_dump()`` keeps the response in sync with the schema if
+    # a future PR adds a field — the manual field-by-field projection
+    # this replaced would silently drop new fields. Reviewer P2.
+    freshness_audit_payload = [row.model_dump() for row in freshness_audit]
+
     # Smarter #21 phase 2b — per-(family, stat_key) interval-model
     # status. Same source of truth as the ``inspect-intervals`` CLI
     # (PR #163): walks the active manifest + reads
@@ -884,6 +899,7 @@ def build_model_readiness_summary(
         "sportsbook_disagreement_threshold": effective_sportsbook_disagreement_threshold(db),
         "sportsbook_disagreement_min_book_count": effective_sportsbook_disagreement_min_book_count(db),
         "interval_models": interval_models,
+        "freshness_audit": freshness_audit_payload,
     }
 
 

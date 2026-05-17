@@ -156,4 +156,64 @@ describe("ModelReadinessPanel", () => {
     await waitFor(() => expect(mockFetchModelReadinessDetail).toHaveBeenCalledWith("nba_props"));
     expect(screen.getByRole("heading", { name: "NBA props" })).toBeInTheDocument();
   });
+
+  it("renders the freshness audit panel in its empty state by default", async () => {
+    // Smarter #22 PR B prep — the panel always mounts so operators
+    // can find it on the readiness page even pre-PR-A history. With
+    // freshness_audit=[] (the default fixture state) the panel
+    // renders an explanatory empty state, not nothing.
+    mockFetchModelReadinessSummary.mockResolvedValue(modelReadinessSummaryFixture);
+    mockFetchModelReadinessDetail.mockResolvedValue(activeStudyFamilyFixture);
+
+    renderWithProviders(<ModelReadinessPanel />);
+
+    const region = await screen.findByRole("region", {
+      name: /freshness calibration audit/i,
+    });
+    expect(region).toBeInTheDocument();
+    expect(screen.getByText(/no settled predictions/i)).toBeInTheDocument();
+  });
+
+  it("renders an audit row per group when the readiness summary carries freshness_audit data", async () => {
+    // When the API returns actual audit rows, each surfaces with
+    // its tuning signal so the operator can scan for actionable
+    // promote candidates without reading the rest of the panel.
+    mockFetchModelReadinessSummary.mockResolvedValue({
+      ...modelReadinessSummaryFixture,
+      freshness_audit: [
+        {
+          group_key: "mlb_weather",
+          stale_count: 24,
+          fresh_count: 156,
+          stale_avg_predicted: 0.62,
+          fresh_avg_predicted: 0.61,
+          stale_hit_rate: 0.45,
+          fresh_hit_rate: 0.58,
+          stale_calibration_miss: 0.17,
+          fresh_calibration_miss: 0.03,
+          calibration_delta: 0.14,
+        },
+        {
+          group_key: "nba_workload",
+          stale_count: 42,
+          fresh_count: 218,
+          stale_avg_predicted: 0.55,
+          fresh_avg_predicted: 0.56,
+          stale_hit_rate: 0.54,
+          fresh_hit_rate: 0.55,
+          stale_calibration_miss: 0.01,
+          fresh_calibration_miss: 0.01,
+          calibration_delta: 0.0,
+        },
+      ],
+    });
+    mockFetchModelReadinessDetail.mockResolvedValue(activeStudyFamilyFixture);
+
+    renderWithProviders(<ModelReadinessPanel />);
+
+    const promoteRow = await screen.findByTestId("freshness-audit-row-mlb_weather");
+    expect(promoteRow.getAttribute("data-tuning-signal")).toBe("promote");
+    const neutralRow = screen.getByTestId("freshness-audit-row-nba_workload");
+    expect(neutralRow.getAttribute("data-tuning-signal")).toBe("none");
+  });
 });
