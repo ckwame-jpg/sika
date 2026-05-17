@@ -115,7 +115,7 @@ export function SettlementAgingBadge({ aging }: SettlementAgingBadgeProps): Reac
               {cell.value}
               {cell.toneClass ? (
                 <span
-                  className={cn("outcome-pill ml-1 px-1.5 py-0.5 text-[10px]", cell.toneClass)}
+                  className={cn("outcome-pill ml-1 px-1.5 py-0.5 text-2xs", cell.toneClass)}
                   aria-hidden
                 >
                   •

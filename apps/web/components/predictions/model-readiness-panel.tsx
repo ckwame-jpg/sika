@@ -222,7 +222,7 @@ function CalibrationCurve({
     <div className="overflow-hidden rounded-[10px] border border-white/[0.06] bg-white/[0.03]">
       <div className="border-b border-white/[0.06] px-3 py-2">
         <p className="stats-tile-label">Reliability curve</p>
-        <p className="mt-0.5 text-[10px] text-muted-foreground">
+        <p className="mt-0.5 text-2xs text-muted-foreground">
           Diagonal = perfect calibration. Above = under-confident, below = over-confident. Dot
           size = settled rows.
         </p>
@@ -735,7 +735,7 @@ export function ModelReadinessPanel() {
                     ? `${selected.average_clv > 0 ? "+" : ""}${selected.average_clv.toFixed(3)}`
                     : "—"}
                 </p>
-                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                <p className="mt-0.5 text-2xs text-muted-foreground">
                   {selected.average_clv != null
                     ? "Closing-line value. Positive = line moved toward our picks (sharp)."
                     : selected.scope === "parlay"

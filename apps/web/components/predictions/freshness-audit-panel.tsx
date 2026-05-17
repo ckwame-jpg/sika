@@ -90,7 +90,7 @@ export function FreshnessAuditPanel({ rows }: FreshnessAuditPanelProps): ReactEl
             </p>
             <p className="opacity-75">
               The audit joins{" "}
-              <code className="rounded bg-white/[0.06] px-1 py-px font-mono text-[10px]">
+              <code className="rounded bg-white/[0.06] px-1 py-px font-mono text-2xs">
                 scoring_diagnostics.freshness_stale_groups
               </code>{" "}
               with settled outcomes. Rows appear after a slate cycles
@@ -130,7 +130,7 @@ function Header(): ReactElement {
           How stale features correlate with prediction accuracy
         </p>
       </div>
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60">
+      <span className="text-2xs uppercase tracking-wider text-muted-foreground/60">
         window 30d
       </span>
     </div>
@@ -214,7 +214,7 @@ function AuditRow({ row }: AuditRowProps): ReactElement {
       </div>
 
       {signal === "low_sample" && samplesShort !== null && (
-        <p className="mt-1.5 text-[10px] text-muted-foreground/70">
+        <p className="mt-1.5 text-2xs text-muted-foreground/70">
           {samplesShort} of {MIN_BUCKET_SAMPLES} samples in the
           smaller bucket — readings below the recommended floor; defer
           a tuning decision until more games settle.
@@ -234,7 +234,7 @@ interface BucketBarProps {
 
 function BucketBar({ label, widthPct, missPct, count, tone }: BucketBarProps): ReactElement {
   return (
-    <div className="grid grid-cols-[44px_1fr_44px_60px] items-center gap-2 text-[10.5px]">
+    <div className="grid grid-cols-[44px_1fr_44px_60px] items-center gap-2 text-2xs">
       <span className="font-mono uppercase tracking-[0.12em] text-muted-foreground/70">
         {label}
       </span>
@@ -281,7 +281,7 @@ function SignalChip({ signal }: SignalChipProps): ReactElement {
   return (
     <span
       className={cn(
-        "rounded-sm border px-1 py-px text-[9px] font-medium uppercase tracking-[0.1em]",
+        "rounded-sm border px-1 py-px text-3xs font-medium uppercase tracking-[0.1em]",
         signal === "promote" && "border-negative/40 bg-negative/10 text-negative",
         signal === "low_sample" && "border-border/60 bg-surface-hover/40 text-muted-foreground",
         signal === "none" && "border-border/40 bg-transparent text-muted-foreground/70",
@@ -294,11 +294,11 @@ function SignalChip({ signal }: SignalChipProps): ReactElement {
 
 function Legend(): ReactElement {
   return (
-    <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground/60">
+    <p className="mt-3 text-2xs leading-relaxed text-muted-foreground/60">
       Calibration miss = |predicted YES probability − actual YES rate|.
       Delta = stale − fresh; positive ⇒ staleness measurably degrades
       prediction accuracy. See{" "}
-      <code className="rounded bg-white/[0.06] px-1 font-mono text-[9px]">
+      <code className="rounded bg-white/[0.06] px-1 font-mono text-3xs">
         SMARTER_22_TUNING_PLAYBOOK.md
       </code>{" "}
       before promoting a group in the policy registry.

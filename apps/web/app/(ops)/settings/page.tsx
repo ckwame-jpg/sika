@@ -129,7 +129,7 @@ export default function SettingsPage() {
                       <span className="font-mono text-base font-medium tabular-nums tracking-tight text-foreground">
                         {formatMarketPrice(0.52, option.value)}
                       </span>
-                      <span className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
+                      <span className="text-2xs uppercase tracking-[0.12em] text-muted-foreground/60">
                         Example for 52%
                       </span>
                     </div>

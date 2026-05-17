@@ -34,6 +34,14 @@
   --font-sans: var(--font-geist-sans), system-ui, sans-serif;
   --font-mono: var(--font-geist-sans), system-ui, sans-serif;
 
+  /* Font sizes — `text-2xs` (10px) + `text-3xs` (9px) extend the
+     Tailwind default scale below `text-xs` (12px). Resolves
+     DESIGN_SYSTEM.md §5.1 drift: previously every eyebrow label,
+     signal chip, and footnote line used arbitrary `text-[10px]` /
+     `text-[10.5px]` / `text-[9px]` literals. */
+  --text-2xs: 10px;
+  --text-3xs: 9px;
+
   /* Border radius */
   --radius-sm: 4px;
   --radius: 6px;
