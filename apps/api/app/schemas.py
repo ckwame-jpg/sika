@@ -357,6 +357,52 @@ class SportAvailabilityRead(BaseModel):
     last_refresh_at: UTCDateTime | None = None
 
 
+class FreshnessStaleGroupRead(BaseModel):
+    """Smarter #22 PR A — per-stale-feature-group operator surface.
+
+    Built from ``recommendation.scoring_diagnostics["freshness_stale_groups"]``
+    (populated by the Architecture #5 freshness layer in
+    ``apps/api/app/services/scoring/__init__.py``) and enriched with
+    the human-readable ``source`` label from the per-group entry in
+    ``scoring_diagnostics["feature_groups"]``. The trade-ticket
+    ``FreshnessBadge`` component reads this list to render which
+    groups are stale and what they cost the recommendation's
+    confidence.
+
+    ``severity`` mirrors ``FeatureGroupSeverity`` in
+    ``apps/api/app/services/scoring/feature_groups.py``:
+    - ``"suppress"`` — recommendation was dropped (bespoke gate
+      callbacks fire from ``check_suppressions``; the row may not
+      reach this surface at all unless persisted retrospectively).
+    - ``"penalize"`` — recommendation kept; confidence reduced by
+      ``confidence_delta`` (always negative when nonzero).
+    - ``"ignore"`` — surfaced for visibility only; no scoring
+      impact. Today the kernel only writes stale groups whose
+      severity is SUPPRESS or PENALIZE into this list, so
+      ``"ignore"`` is rare here but allowed for future-proofing.
+    """
+
+    group_key: str
+    severity: Literal["suppress", "penalize", "ignore"]
+    # Time elapsed since the group's underlying cache was last
+    # refreshed. Almost always an int when the entry surfaces here
+    # (the kernel only appends ``is_stale=True`` rows to
+    # ``freshness_stale_groups``, and ``is_stale`` is only true when
+    # ``fresh_at`` is non-null). ``None`` matches the kernel's
+    # nominal contract — a defensive accommodation for hypothetical
+    # future code paths that might append a null-age stale row.
+    age_seconds: int | None
+    # Confidence delta applied by the freshness layer. ``0.0`` for
+    # SUPPRESS groups (their effect is structural, not numeric),
+    # negative for PENALIZE groups.
+    confidence_delta: float
+    # Free-form operator-facing source label (e.g. ``"load_weather"``,
+    # ``"NbaInjuryReportCache"``). Empty string when the row was
+    # persisted before the source-enrichment landed or the
+    # ``feature_groups`` map is missing.
+    source: str = ""
+
+
 class TradeDeskGameLineRead(BaseModel):
     ticker: str
     market_title: str
@@ -391,6 +437,13 @@ class TradeDeskGameLineRead(BaseModel):
     # close time; clamped at 0 if close_time is in the past. Operators
     # triage T-15min picks ahead of T-4h ones with the same edge.
     time_to_close_minutes: int | None = None
+    # Smarter #22 PR A — Architecture #5 freshness diagnostics surfaced
+    # for the trade-ticket FreshnessBadge. Empty list when no group
+    # is stale (the common case). Total penalty applied to the
+    # recommendation's confidence is exposed via
+    # ``freshness_confidence_delta`` for the summary line.
+    freshness_stale_groups: list[FreshnessStaleGroupRead] = Field(default_factory=list)
+    freshness_confidence_delta: float | None = None
 
 
 class PredictionIntervalRead(BaseModel):
@@ -445,6 +498,10 @@ class TradeDeskThresholdRead(BaseModel):
     # the artifact lookup fails. The trade-ticket UI band reads this
     # to render the [p10, p90] range with a threshold tick.
     prediction_interval: PredictionIntervalRead | None = None
+    # Smarter #22 PR A — Architecture #5 freshness diagnostics. See
+    # ``TradeDeskGameLineRead.freshness_stale_groups`` for the contract.
+    freshness_stale_groups: list[FreshnessStaleGroupRead] = Field(default_factory=list)
+    freshness_confidence_delta: float | None = None
 
 
 class TradeDeskStatGroupRead(BaseModel):

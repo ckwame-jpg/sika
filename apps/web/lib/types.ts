@@ -122,6 +122,10 @@ export type TradeDeskThreshold = Wire<Schema<"TradeDeskThresholdRead">>;
 // UI band can render the [p10, p90] range with a threshold tick
 // without parsing a generic dict blob.
 export type PredictionInterval = Wire<Schema<"PredictionIntervalRead">>;
+// Smarter #22 PR A — Architecture #5 freshness diagnostics surfaced
+// for the trade-ticket FreshnessBadge. One row per stale feature
+// group; severity mirrors ``FeatureGroupSeverity`` on the API side.
+export type FreshnessStaleGroup = Wire<Schema<"FreshnessStaleGroupRead">>;
 export type TradeDeskPlayerProp = Wire<Schema<"TradeDeskPlayerPropRead">>;
 export type TradeDeskEvent = Wire<Schema<"TradeDeskEventRead">>;
 export type TradeDeskArchivedSlate = Wire<Schema<"TradeDeskArchivedSlateRead">>;

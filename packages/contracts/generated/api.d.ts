@@ -827,6 +827,49 @@ export interface components {
             /** Status */
             status: string;
         };
+        /**
+         * FreshnessStaleGroupRead
+         * @description Smarter #22 PR A — per-stale-feature-group operator surface.
+         *
+         *     Built from ``recommendation.scoring_diagnostics["freshness_stale_groups"]``
+         *     (populated by the Architecture #5 freshness layer in
+         *     ``apps/api/app/services/scoring/__init__.py``) and enriched with
+         *     the human-readable ``source`` label from the per-group entry in
+         *     ``scoring_diagnostics["feature_groups"]``. The trade-ticket
+         *     ``FreshnessBadge`` component reads this list to render which
+         *     groups are stale and what they cost the recommendation's
+         *     confidence.
+         *
+         *     ``severity`` mirrors ``FeatureGroupSeverity`` in
+         *     ``apps/api/app/services/scoring/feature_groups.py``:
+         *     - ``"suppress"`` — recommendation was dropped (bespoke gate
+         *       callbacks fire from ``check_suppressions``; the row may not
+         *       reach this surface at all unless persisted retrospectively).
+         *     - ``"penalize"`` — recommendation kept; confidence reduced by
+         *       ``confidence_delta`` (always negative when nonzero).
+         *     - ``"ignore"`` — surfaced for visibility only; no scoring
+         *       impact. Today the kernel only writes stale groups whose
+         *       severity is SUPPRESS or PENALIZE into this list, so
+         *       ``"ignore"`` is rare here but allowed for future-proofing.
+         */
+        FreshnessStaleGroupRead: {
+            /** Age Seconds */
+            age_seconds: number | null;
+            /** Confidence Delta */
+            confidence_delta: number;
+            /** Group Key */
+            group_key: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "suppress" | "penalize" | "ignore";
+            /**
+             * Source
+             * @default
+             */
+            source: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -2750,6 +2793,10 @@ export interface components {
             edge: number;
             /** Entry Price */
             entry_price?: number | null;
+            /** Freshness Confidence Delta */
+            freshness_confidence_delta?: number | null;
+            /** Freshness Stale Groups */
+            freshness_stale_groups?: components["schemas"]["FreshnessStaleGroupRead"][];
             /** Kalshi Url */
             kalshi_url?: string | null;
             /** Market Kind */
@@ -2848,6 +2895,10 @@ export interface components {
             edge: number;
             /** Entry Price */
             entry_price?: number | null;
+            /** Freshness Confidence Delta */
+            freshness_confidence_delta?: number | null;
+            /** Freshness Stale Groups */
+            freshness_stale_groups?: components["schemas"]["FreshnessStaleGroupRead"][];
             /**
              * Is Best
              * @default false

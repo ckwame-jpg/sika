@@ -21,6 +21,10 @@ function threshold(overrides: Partial<TradeDeskThreshold>): TradeDeskThreshold {
     // Smarter #21 phase 2d — default to null (no trained sidecar);
     // tests that want to exercise the band can override.
     prediction_interval: overrides.prediction_interval ?? null,
+    // Smarter #22 PR A — default to empty / null (no stale groups);
+    // tests that want to exercise the freshness badge override.
+    freshness_stale_groups: overrides.freshness_stale_groups ?? [],
+    freshness_confidence_delta: overrides.freshness_confidence_delta ?? null,
   };
 }
 
@@ -114,6 +118,8 @@ export const tradeDeskFixture: TradeDeskResponse = {
       total_direction: null,
           price_history: [],
           time_to_close_minutes: null,
+          freshness_stale_groups: [],
+          freshness_confidence_delta: null,
         },
         {
           ticker: "KXNBASPREAD-RAPTORS-3_5",
@@ -132,6 +138,8 @@ export const tradeDeskFixture: TradeDeskResponse = {
       total_direction: null,
           price_history: [],
           time_to_close_minutes: null,
+          freshness_stale_groups: [],
+          freshness_confidence_delta: null,
         },
         {
           ticker: "KXNBATOTAL-219_5",
@@ -150,6 +158,8 @@ export const tradeDeskFixture: TradeDeskResponse = {
       total_direction: null,
           price_history: [],
           time_to_close_minutes: null,
+          freshness_stale_groups: [],
+          freshness_confidence_delta: null,
         },
       ],
       player_props: [davionMitchellProp],

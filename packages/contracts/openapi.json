@@ -349,6 +349,52 @@
         "title": "EventRead",
         "type": "object"
       },
+      "FreshnessStaleGroupRead": {
+        "description": "Smarter #22 PR A \u2014 per-stale-feature-group operator surface.\n\nBuilt from ``recommendation.scoring_diagnostics[\"freshness_stale_groups\"]``\n(populated by the Architecture #5 freshness layer in\n``apps/api/app/services/scoring/__init__.py``) and enriched with\nthe human-readable ``source`` label from the per-group entry in\n``scoring_diagnostics[\"feature_groups\"]``. The trade-ticket\n``FreshnessBadge`` component reads this list to render which\ngroups are stale and what they cost the recommendation's\nconfidence.\n\n``severity`` mirrors ``FeatureGroupSeverity`` in\n``apps/api/app/services/scoring/feature_groups.py``:\n- ``\"suppress\"`` \u2014 recommendation was dropped (bespoke gate\n  callbacks fire from ``check_suppressions``; the row may not\n  reach this surface at all unless persisted retrospectively).\n- ``\"penalize\"`` \u2014 recommendation kept; confidence reduced by\n  ``confidence_delta`` (always negative when nonzero).\n- ``\"ignore\"`` \u2014 surfaced for visibility only; no scoring\n  impact. Today the kernel only writes stale groups whose\n  severity is SUPPRESS or PENALIZE into this list, so\n  ``\"ignore\"`` is rare here but allowed for future-proofing.",
+        "properties": {
+          "age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Seconds"
+          },
+          "confidence_delta": {
+            "title": "Confidence Delta",
+            "type": "number"
+          },
+          "group_key": {
+            "title": "Group Key",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "suppress",
+              "penalize",
+              "ignore"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_key",
+          "severity",
+          "age_seconds",
+          "confidence_delta"
+        ],
+        "title": "FreshnessStaleGroupRead",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -6023,6 +6069,24 @@
             ],
             "title": "Entry Price"
           },
+          "freshness_confidence_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness Confidence Delta"
+          },
+          "freshness_stale_groups": {
+            "items": {
+              "$ref": "#/components/schemas/FreshnessStaleGroupRead"
+            },
+            "title": "Freshness Stale Groups",
+            "type": "array"
+          },
           "kalshi_url": {
             "anyOf": [
               {
@@ -6326,6 +6390,24 @@
               }
             ],
             "title": "Entry Price"
+          },
+          "freshness_confidence_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness Confidence Delta"
+          },
+          "freshness_stale_groups": {
+            "items": {
+              "$ref": "#/components/schemas/FreshnessStaleGroupRead"
+            },
+            "title": "Freshness Stale Groups",
+            "type": "array"
           },
           "is_best": {
             "default": false,

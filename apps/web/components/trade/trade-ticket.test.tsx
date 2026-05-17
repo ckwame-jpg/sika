@@ -70,4 +70,34 @@ describe("TradeTicket", () => {
 
     expect(screen.getByRole("group", { name: /prediction interval/i })).toBeInTheDocument();
   });
+
+  it("does NOT render the freshness badge when the selection has no stale groups", () => {
+    // Smarter #22 PR A — like the interval band, the badge must not
+    // appear for picks where all features are fresh (the common case).
+    renderWithProviders(<TradeTicket selection={selection} />);
+
+    expect(screen.queryByRole("group", { name: /stale feature/i })).not.toBeInTheDocument();
+  });
+
+  it("renders the freshness badge when the selection carries stale groups", () => {
+    renderWithProviders(
+      <TradeTicket
+        selection={{
+          ...selection,
+          freshnessStaleGroups: [
+            {
+              group_key: "mlb_weather",
+              severity: "penalize",
+              age_seconds: 7 * 3600,
+              confidence_delta: -0.05,
+              source: "load_weather",
+            },
+          ],
+          freshnessConfidenceDelta: -0.05,
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("group", { name: /stale feature/i })).toBeInTheDocument();
+  });
 });
