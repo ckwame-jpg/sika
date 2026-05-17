@@ -89,7 +89,7 @@ KALSHI_PROP_CATEGORY_SLUGS = {
 }
 SNAPSHOT_SCOPE_ALL = "all"
 PRODUCT_SLATE_EMPTY_REASON = "Current slate scored successfully, but no markets cleared recommendation thresholds."
-PRODUCT_SLATE_NO_CANDIDATES_REASON = "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+PRODUCT_SLATE_NO_CANDIDATES_REASON = "Current NBA/MLB/WNBA events exist, but no current Kalshi markets are mapped to them."
 PRODUCT_SLATE_FILTERED_BEFORE_SCORING_REASON = (
     "Current slate candidate markets were filtered before scoring; no current open supported markets reached the scorer."
 )

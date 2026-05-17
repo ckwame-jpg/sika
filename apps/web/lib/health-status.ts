@@ -184,8 +184,8 @@ export function getOperatorBanner(health?: HealthResponse | null) {
       message:
         activeRefreshScope === "current_slate"
           ? health.refresh_status === "queued"
-            ? "Current NBA/MLB slate refresh is queued."
-            : "Refreshing the current NBA/MLB slate in background."
+            ? "Current NBA/MLB/WNBA slate refresh is queued."
+            : "Refreshing the current NBA/MLB/WNBA slate in background."
           : health.prop_refresh_status === "queued" || health.prop_refresh_status === "running"
             ? "Refreshing markets and props in background."
             : "Refreshing market data in background.",

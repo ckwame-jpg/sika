@@ -1272,7 +1272,7 @@ def test_product_freshness_ranks_degraded_above_stale_and_empty(client, db_sessi
             "scored_market_count": 0,
             "recommendation_count": 0,
             "coverage_prediction_count": 0,
-            "blocking_reason": "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them.",
+            "blocking_reason": "Current NBA/MLB/WNBA events exist, but no current Kalshi markets are mapped to them.",
             "generated_from_run_id": 123,
         },
     )

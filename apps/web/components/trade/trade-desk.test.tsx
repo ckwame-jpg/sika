@@ -134,13 +134,13 @@ describe("TradeDesk", () => {
       scored_market_count: 0,
       recommendation_count: 0,
       coverage_prediction_count: 0,
-      blocking_reason: "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them.",
+      blocking_reason: "Current NBA/MLB/WNBA events exist, but no current Kalshi markets are mapped to them.",
     });
 
     renderWithProviders(<TradeDesk sport="NBA" />);
 
     await screen.findByText("Current slate is degraded for NBA.");
-    expect(screen.getByTestId("trade-desk-status-pill")).toHaveTextContent("Current NBA/MLB events exist");
+    expect(screen.getByTestId("trade-desk-status-pill")).toHaveTextContent("Current NBA/MLB/WNBA events exist");
     expect(screen.getByText("Current events")).toBeInTheDocument();
     // "Candidate markets" now appears both in SlateHealthDetails and the KPI quad label.
     expect(screen.getAllByText("Candidate markets").length).toBeGreaterThanOrEqual(2);
@@ -157,7 +157,7 @@ describe("TradeDesk", () => {
       scored_market_count: 0,
       recommendation_count: 0,
       coverage_prediction_count: 0,
-      blocking_reason: "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them.",
+      blocking_reason: "Current NBA/MLB/WNBA events exist, but no current Kalshi markets are mapped to them.",
       previous_slate: {
         events: tradeDeskFixture.events,
         generated_at: "2026-04-07T18:00:00Z",
