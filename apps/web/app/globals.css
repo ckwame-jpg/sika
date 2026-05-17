@@ -42,6 +42,17 @@
   --text-2xs: 10px;
   --text-3xs: 9px;
 
+  /* Translucent overlay tokens — `bg-surface-soft` / `border-surface-soft`
+     for the most-common ~6% white tint, `bg-surface-softer` /
+     `border-surface-softer` for the ~3% softer variant. Resolves
+     DESIGN_SYSTEM.md §5.2 drift: previously consumers used inline
+     opacity literals (`bg-white/[0.04]`, `border-white/[0.06]`) which
+     approximated cosmos-border tokens but weren't actually them, so
+     theme retones couldn't propagate. Mode-independent (white at fixed
+     alpha reads the same on light + dark backgrounds). */
+  --color-surface-soft: hsl(0 0% 100% / 0.06);
+  --color-surface-softer: hsl(0 0% 100% / 0.03);
+
   /* Border radius */
   --radius-sm: 4px;
   --radius: 6px;

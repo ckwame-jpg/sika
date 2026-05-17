@@ -289,7 +289,7 @@ function QueueRowButton({ row, active, onSelect }: QueueRowButtonProps) {
         "focus-visible:ring-focus",
         active
           ? "border-accent/30 bg-accent/[0.04]"
-          : "border-border/40 hover:border-border/80 hover:bg-white/[0.02]",
+          : "border-border/40 hover:border-border/80 hover:bg-surface-softer",
       )}
     >
       {/* Selection rail — audit-panel idiom. Only rendered when active

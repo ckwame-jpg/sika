@@ -168,7 +168,7 @@ function StaleGroupRow({ group }: StaleGroupRowProps) {
       data-severity={group.severity}
       className={cn(
         "relative rounded-sm py-1 pl-2.5 pr-1",
-        hasBackground && "bg-white/[0.018]",
+        hasBackground && "bg-surface-softer",
       )}
     >
       <span
