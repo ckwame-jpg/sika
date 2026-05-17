@@ -124,7 +124,7 @@ export function FreshnessBadge({
         <span className="ticket-stat-label">Stale data</span>
         <span
           className={cn(
-            "rounded-sm border px-1 py-px text-[9px] font-medium uppercase tracking-[0.12em]",
+            "rounded-sm border px-1 py-px text-3xs font-medium uppercase tracking-[0.12em]",
             SEVERITY_CHIP_CLASS[severity],
           )}
         >
@@ -139,7 +139,7 @@ export function FreshnessBadge({
       </ol>
 
       {totalDelta !== 0 && (
-        <p className="text-[10px] leading-relaxed text-muted-foreground/70">
+        <p className="text-2xs leading-relaxed text-muted-foreground/70">
           Aggregate confidence{" "}
           <span
             className={cn(
@@ -178,7 +178,7 @@ function StaleGroupRow({ group }: StaleGroupRowProps) {
           SEVERITY_RAIL_CLASS[group.severity],
         )}
       />
-      <div className="grid grid-cols-[1fr_auto_auto] items-baseline gap-x-2 text-[10.5px]">
+      <div className="grid grid-cols-[1fr_auto_auto] items-baseline gap-x-2 text-2xs">
         <span className="truncate font-mono capitalize text-foreground">
           {humanizeGroupKey(group.group_key)}
         </span>
@@ -197,7 +197,7 @@ function StaleGroupRow({ group }: StaleGroupRowProps) {
         </span>
       </div>
       {group.source && (
-        <p className="mt-0.5 pl-px font-mono text-[9px] tracking-tight text-muted-foreground/55">
+        <p className="mt-0.5 pl-px font-mono text-3xs tracking-tight text-muted-foreground/55">
           {group.source}
         </p>
       )}

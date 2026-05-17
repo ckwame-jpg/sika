@@ -37,7 +37,7 @@ export function IntervalModelsBadge({ intervals }: IntervalModelsBadgeProps): Re
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           No interval models trained yet. Run{" "}
-          <code className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-mono">
+          <code className="rounded bg-white/[0.06] px-1.5 py-0.5 text-2xs font-mono">
             python -m ml.cli train-intervals --family-key nba_props --stat-key points --manifest-path manifests/current.json
           </code>{" "}
           to fit the first (p10, p50, p90) regressors.
@@ -71,7 +71,7 @@ export function IntervalModelsBadge({ intervals }: IntervalModelsBadgeProps): Re
       <div className="mt-3 divide-y divide-white/[0.06]" role="table" aria-label="Interval models">
         <div
           role="row"
-          className="grid grid-cols-[1fr_1fr_72px_72px_88px] gap-2 pb-1.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+          className="grid grid-cols-[1fr_1fr_72px_72px_88px] gap-2 pb-1.5 text-2xs uppercase tracking-wide text-muted-foreground"
         >
           <div role="columnheader">Family</div>
           <div role="columnheader">Stat</div>
@@ -111,7 +111,7 @@ function IntervalRow({ entry }: IntervalRowProps): ReactElement {
       <div role="cell" className="text-right font-mono">{coverageDisplay}</div>
       <div role="cell" className="flex justify-end">
         <span
-          className={cn("outcome-pill px-1.5 py-0.5 text-[10px]", coverageToneClass(entry.coverage_status))}
+          className={cn("outcome-pill px-1.5 py-0.5 text-2xs", coverageToneClass(entry.coverage_status))}
           data-testid="interval-status-pill"
         >
           {entry.coverage_status}

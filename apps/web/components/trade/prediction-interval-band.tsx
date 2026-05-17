@@ -146,7 +146,7 @@ export function PredictionIntervalBand({
         <Landmark label="p90" value={p90} align="right" />
       </div>
 
-      <p className="text-[10px] leading-relaxed text-muted-foreground/70">
+      <p className="text-2xs leading-relaxed text-muted-foreground/70">
         Threshold{" "}
         <span className="font-mono tabular-nums tracking-tight text-foreground/80">
           {threshold}
@@ -178,7 +178,7 @@ function Landmark({ label, value, align, toneClass }: LandmarkProps) {
         align === "right" && "items-end",
       )}
     >
-      <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/70">
+      <span className="font-mono text-3xs uppercase tracking-[0.14em] text-muted-foreground/70">
         {label}
       </span>
       <span
@@ -204,7 +204,7 @@ function CoverageChip({ status, isOk }: CoverageChipProps) {
   return (
     <span
       className={cn(
-        "rounded-sm border px-1 py-px text-[9px] font-medium uppercase tracking-[0.12em]",
+        "rounded-sm border px-1 py-px text-3xs font-medium uppercase tracking-[0.12em]",
         isOk
           ? "border-positive/40 bg-positive/10 text-positive"
           : "border-border/60 bg-surface-hover/40 text-muted-foreground",

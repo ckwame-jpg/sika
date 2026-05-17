@@ -14,7 +14,7 @@ export function TimeToCloseBadge({ minutes }: { minutes: number | null }) {
   if (minutes === null) return null;
   if (minutes <= 0) {
     return (
-      <span className="ml-2 inline-flex items-center text-[10px] uppercase tracking-wide text-destructive">
+      <span className="ml-2 inline-flex items-center text-2xs uppercase tracking-wide text-destructive">
         · closing
       </span>
     );
@@ -22,7 +22,7 @@ export function TimeToCloseBadge({ minutes }: { minutes: number | null }) {
   if (minutes >= 24 * 60) {
     const days = Math.floor(minutes / (24 * 60));
     return (
-      <span className="ml-2 inline-flex items-center text-[10px] uppercase tracking-wide text-muted-foreground">
+      <span className="ml-2 inline-flex items-center text-2xs uppercase tracking-wide text-muted-foreground">
         · T-{days}d
       </span>
     );
@@ -35,7 +35,7 @@ export function TimeToCloseBadge({ minutes }: { minutes: number | null }) {
   return (
     <span
       className={cn(
-        "ml-2 inline-flex items-center text-[10px] uppercase tracking-wide",
+        "ml-2 inline-flex items-center text-2xs uppercase tracking-wide",
         urgent ? "text-destructive font-semibold" : "text-muted-foreground",
       )}
     >

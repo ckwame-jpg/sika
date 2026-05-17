@@ -119,7 +119,7 @@ function SlateHealthDetails({ data }: { data: TradeDeskResponse }) {
           key={label}
           className="rounded-xl border border-border bg-background/40 px-3 py-2"
         >
-          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+          <p className="text-2xs uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
           <p className="mt-1 font-mono text-base text-foreground">{value}</p>
         </div>
       ))}
@@ -677,7 +677,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
                   <div key={sportRow.sport_key} className="rounded-2xl border border-border bg-surface px-4 py-3">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium text-foreground">{sportLabel(sportRow.sport_key)}</p>
-                      <span className="rounded-full border border-border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                      <span className="rounded-full border border-border px-2 py-0.5 text-2xs uppercase tracking-[0.12em] text-muted-foreground">
                         Research
                       </span>
                     </div>

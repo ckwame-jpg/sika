@@ -304,7 +304,7 @@ function MarketDetailContent({ ticker }: { ticker: string }) {
                               className="leading-relaxed text-foreground/90"
                               data-testid={`narrator-text-${rec.id}`}
                             >
-                              <span className="mr-1 font-medium uppercase tracking-wider text-[10px] text-accent">
+                              <span className="mr-1 font-medium uppercase tracking-wider text-2xs text-accent">
                                 AI
                               </span>
                               {text}
