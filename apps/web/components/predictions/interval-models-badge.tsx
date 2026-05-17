@@ -37,7 +37,7 @@ export function IntervalModelsBadge({ intervals }: IntervalModelsBadgeProps): Re
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           No interval models trained yet. Run{" "}
-          <code className="rounded bg-white/[0.06] px-1.5 py-0.5 text-2xs font-mono">
+          <code className="rounded bg-surface-soft px-1.5 py-0.5 text-2xs font-mono">
             python -m ml.cli train-intervals --family-key nba_props --stat-key points --manifest-path manifests/current.json
           </code>{" "}
           to fit the first (p10, p50, p90) regressors.

@@ -90,7 +90,7 @@ export function FreshnessAuditPanel({ rows }: FreshnessAuditPanelProps): ReactEl
             </p>
             <p className="opacity-75">
               The audit joins{" "}
-              <code className="rounded bg-white/[0.06] px-1 py-px font-mono text-2xs">
+              <code className="rounded bg-surface-soft px-1 py-px font-mono text-2xs">
                 scoring_diagnostics.freshness_stale_groups
               </code>{" "}
               with settled outcomes. Rows appear after a slate cycles
@@ -154,7 +154,7 @@ function AuditRow({ row }: AuditRowProps): ReactElement {
   return (
     <li
       className={cn(
-        "relative rounded-md border bg-white/[0.015] pl-3 pr-3 py-2.5 transition-colors",
+        "relative rounded-md border bg-surface-softer pl-3 pr-3 py-2.5 transition-colors",
         // Left rail communicates tuning signal at a glance.
         signal === "promote" && "border-negative/40 bg-negative/[0.04]",
         signal === "low_sample" && "border-border/40 opacity-60",
@@ -238,7 +238,7 @@ function BucketBar({ label, widthPct, missPct, count, tone }: BucketBarProps): R
       <span className="font-mono uppercase tracking-[0.12em] text-muted-foreground/70">
         {label}
       </span>
-      <div className="relative h-[5px] overflow-hidden rounded-full bg-white/[0.04]">
+      <div className="relative h-[5px] overflow-hidden rounded-full bg-surface-soft">
         <span
           className={cn(
             "absolute inset-y-0 left-0 rounded-full",
@@ -298,7 +298,7 @@ function Legend(): ReactElement {
       Calibration miss = |predicted YES probability − actual YES rate|.
       Delta = stale − fresh; positive ⇒ staleness measurably degrades
       prediction accuracy. See{" "}
-      <code className="rounded bg-white/[0.06] px-1 font-mono text-3xs">
+      <code className="rounded bg-surface-soft px-1 font-mono text-3xs">
         SMARTER_22_TUNING_PLAYBOOK.md
       </code>{" "}
       before promoting a group in the policy registry.
