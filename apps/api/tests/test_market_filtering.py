@@ -307,3 +307,49 @@ def test_combo_leg_prefilter_blocks_wnba_winner_family():
 
     assert classification["supported"] is False
     assert classification["reason"] == "unsupported_market_family"
+
+
+def test_persist_market_payload_records_skips_wnba_when_not_in_enabled_sports(db_session):
+    """Codex caught the cross-PR cliff: PR 2's classifier change
+    enables WNBA recognition, but PR 1 left WNBA OUT of default
+    ``enabled_sports`` because PRs 4-6 still need to wire the
+    sport adapter / refresh job / scoring kernel. Without an
+    ingestion-level gate, classified WNBA markets would persist and
+    feed combo-prop warming despite WNBA being feature-disabled.
+
+    Pin: with ``enabled_sports`` defaulting to NBA / NFL / MLB /
+    SOCCER / TENNIS, an otherwise-supported WNBA market payload is
+    NOT persisted by ``_persist_market_payload_records``.
+    """
+    from app.models import Market
+    from app.services.ingestion import _persist_market_payload_records
+
+    wnba_prop = {
+        "ticker": "KXWNBAPTS-26MAY15INDNYL-INDCCLARK22-22",
+        "event_ticker": "KXWNBAPTS-26MAY15INDNYL",
+        "title": "Caitlin Clark: 22+ points?",
+        "yes_sub_title": "Caitlin Clark: 22+",
+        "rules_primary": "If Caitlin Clark records 22+ Points in the Indiana at New York professional basketball game, then the market resolves to Yes.",
+        "primary_participant_key": "basketball_player",
+        "status": "active",
+    }
+
+    summary = _persist_market_payload_records(
+        db_session,
+        [
+            {
+                "payload": wnba_prop,
+                "source_type": "standalone",
+                "source_payload": None,
+                "classification_override": None,
+            }
+        ],
+    )
+    db_session.commit()
+
+    # No Market row should have been created for the WNBA ticker.
+    market = db_session.query(Market).filter(Market.ticker == wnba_prop["ticker"]).one_or_none()
+    assert market is None, "WNBA market persisted while WNBA is not in enabled_sports"
+    # The summary's NBA / MLB counters should be unchanged.
+    assert summary.get("supported_nba_props", 0) == 0
+    assert summary.get("supported_mlb_props", 0) == 0
