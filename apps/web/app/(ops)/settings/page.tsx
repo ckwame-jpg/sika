@@ -6,8 +6,16 @@ import useSWR from "swr";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { PriceDisplayMode, formatMarketPrice, usePriceDisplay } from "@/lib/price-display";
-import { fetchModelReadinessSummary, keys, updateModelReadinessSettings } from "@/lib/api";
+import {
+  PriceDisplayMode,
+  formatMarketPrice,
+  usePriceDisplay,
+} from "@/lib/price-display";
+import {
+  fetchModelReadinessSummary,
+  keys,
+  updateModelReadinessSettings,
+} from "@/lib/api";
 import type { ModelReadinessSummaryRead } from "@/lib/types";
 
 const PICK_HISTORY_DEPTH_OPTIONS = [5, 10, 20] as const;
@@ -35,13 +43,27 @@ const DISPLAY_MODES: Array<{
   },
 ];
 
+/** Shared chip class string for the small toggle chips (pick-history,
+ *  narrator). Adopts the orphaned `.cosmos-chip` utility, sets text
+ *  tone via the Tailwind `data-[active=true]:` variant, and pulls in
+ *  the canonical `ring-focus` utility for keyboard-focus visibility.
+ *  Defined once so the depth + narrator sections stay perfectly in
+ *  sync — the only differences should be label + handler, not chrome. */
+const CHIP_CLASS = cn(
+  "cosmos-chip px-4 py-2 text-sm font-medium tracking-tight",
+  "text-muted-foreground transition-colors hover:text-foreground",
+  "data-[active=true]:text-foreground",
+  "focus-visible:ring-focus",
+);
+
 export default function SettingsPage() {
   const { mode, setMode } = usePriceDisplay();
-  const { data: settings, mutate: refreshSettings } = useSWR<ModelReadinessSummaryRead>(
-    keys.modelReadinessSummary,
-    fetchModelReadinessSummary,
-    { revalidateOnFocus: false, revalidateOnReconnect: false },
-  );
+  const { data: settings, mutate: refreshSettings } =
+    useSWR<ModelReadinessSummaryRead>(
+      keys.modelReadinessSummary,
+      fetchModelReadinessSummary,
+      { revalidateOnFocus: false, revalidateOnReconnect: false },
+    );
   const currentDepth = settings?.pick_history_default_n ?? 5;
   const narratorEnabled = settings?.narrator_enabled ?? false;
 
@@ -72,16 +94,18 @@ export default function SettingsPage() {
       <Header title="Settings" />
       <main className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-3xl space-y-4">
+          {/* Price Display — preview tiles using cosmos-chip chrome. */}
           <section className="cosmos-panel">
             <div className="cosmos-panel-head">
               <div className="cosmos-panel-head-text">
                 <h2 className="cosmos-panel-title">Price Display</h2>
                 <p className="cosmos-panel-desc">
-                  Choose how prices render across watchlist, markets, predictions, parlays, and trade dialogs.
+                  Choose how prices render across watchlist, markets,
+                  predictions, parlays, and trade dialogs.
                 </p>
               </div>
             </div>
-            <div className="cosmos-panel-body space-y-3">
+            <div className="cosmos-panel-body space-y-2">
               {DISPLAY_MODES.map((option) => {
                 const active = option.value === mode;
                 return (
@@ -89,24 +113,25 @@ export default function SettingsPage() {
                     key={option.value}
                     type="button"
                     onClick={() => setMode(option.value)}
-                    className={cn(
-                      "flex w-full items-start justify-between rounded-xl border px-4 py-4 text-left transition-colors",
-                      active
-                        ? "border-accent bg-accent/10"
-                        : "border-border bg-surface hover:bg-surface-hover",
-                    )}
+                    aria-pressed={active}
+                    data-active={active ? "true" : undefined}
+                    className="cosmos-chip flex w-full items-center justify-between gap-4 px-4 py-3.5 text-left focus-visible:ring-focus"
                   >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{option.title}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{option.description}</p>
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-sm font-medium text-foreground">
+                        {option.title}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {option.description}
+                      </p>
                     </div>
-                    <div className="text-right">
-                      <p className="font-mono text-sm text-foreground">
+                    <div className="flex shrink-0 flex-col items-end gap-0.5">
+                      <span className="font-mono text-base font-medium tabular-nums tracking-tight text-foreground">
                         {formatMarketPrice(0.52, option.value)}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
+                      </span>
+                      <span className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
                         Example for 52%
-                      </p>
+                      </span>
                     </div>
                   </button>
                 );
@@ -114,19 +139,28 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <section className="cosmos-panel" data-testid="pick-history-default-section">
+          {/* Pick History Depth — chip cluster. */}
+          <section
+            className="cosmos-panel"
+            data-testid="pick-history-default-section"
+          >
             <div className="cosmos-panel-head">
               <div className="cosmos-panel-head-text">
                 <h2 className="cosmos-panel-title">Pick History Depth</h2>
                 <p className="cosmos-panel-desc">
-                  Default number of past games shown in the trade-ticket pick-history strip.
-                  Per-pick toggles still override at runtime; this is the initial value when a
-                  new pick is selected.
+                  Default number of past games shown in the trade-ticket
+                  pick-history strip. Per-pick toggles still override at
+                  runtime; this is the initial value when a new pick is
+                  selected.
                 </p>
               </div>
             </div>
             <div className="cosmos-panel-body">
-              <div className="flex items-center gap-2">
+              <div
+                className="flex flex-wrap items-center gap-2"
+                role="group"
+                aria-label="Pick history depth"
+              >
                 {PICK_HISTORY_DEPTH_OPTIONS.map((option) => {
                   const active = option === currentDepth;
                   return (
@@ -134,12 +168,8 @@ export default function SettingsPage() {
                       key={option}
                       type="button"
                       onClick={() => void selectDepth(option)}
-                      className={cn(
-                        "rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
-                        active
-                          ? "border-accent bg-accent/10 text-foreground"
-                          : "border-border bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-                      )}
+                      className={CHIP_CLASS}
+                      data-active={active ? "true" : undefined}
                       data-testid={`pick-history-default-${option}`}
                       aria-pressed={active}
                     >
@@ -151,30 +181,36 @@ export default function SettingsPage() {
             </div>
           </section>
 
-          <section className="cosmos-panel" data-testid="narrator-toggle-section">
+          {/* AI Narrator — On/Off chip pair. */}
+          <section
+            className="cosmos-panel"
+            data-testid="narrator-toggle-section"
+          >
             <div className="cosmos-panel-head">
               <div className="cosmos-panel-head-text">
                 <h2 className="cosmos-panel-title">AI Narrator</h2>
                 <p className="cosmos-panel-desc">
-                  Adds a plain-English explanation under each recommendation, grounded in
-                  the same features the model uses. A verifier rejects any output that
-                  references injuries, refs, weather, trades, or numbers that aren't in
-                  the feature set. The mechanical rationale is always shown alongside, so
-                  flipping this off has no impact on what data you see.
+                  Adds a plain-English explanation under each
+                  recommendation, grounded in the same features the
+                  model uses. A verifier rejects any output that
+                  references injuries, refs, weather, trades, or numbers
+                  that aren't in the feature set. The mechanical
+                  rationale is always shown alongside, so flipping this
+                  off has no impact on what data you see.
                 </p>
               </div>
             </div>
             <div className="cosmos-panel-body">
-              <div className="flex items-center gap-2">
+              <div
+                className="flex items-center gap-2"
+                role="group"
+                aria-label="AI narrator toggle"
+              >
                 <button
                   type="button"
                   onClick={() => void toggleNarrator(true)}
-                  className={cn(
-                    "rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
-                    narratorEnabled
-                      ? "border-accent bg-accent/10 text-foreground"
-                      : "border-border bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-                  )}
+                  className={CHIP_CLASS}
+                  data-active={narratorEnabled ? "true" : undefined}
                   data-testid="narrator-toggle-on"
                   aria-pressed={narratorEnabled}
                 >
@@ -183,12 +219,8 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   onClick={() => void toggleNarrator(false)}
-                  className={cn(
-                    "rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
-                    !narratorEnabled
-                      ? "border-accent bg-accent/10 text-foreground"
-                      : "border-border bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-                  )}
+                  className={CHIP_CLASS}
+                  data-active={!narratorEnabled ? "true" : undefined}
                   data-testid="narrator-toggle-off"
                   aria-pressed={!narratorEnabled}
                 >
@@ -198,16 +230,22 @@ export default function SettingsPage() {
             </div>
           </section>
 
+          {/* Models — link panel, untouched but kept for visual
+              rhythm with the chip sections above. */}
           <section className="cosmos-panel">
             <div className="cosmos-panel-head">
               <div className="cosmos-panel-head-text">
                 <h2 className="cosmos-panel-title">Models</h2>
                 <p className="cosmos-panel-desc">
-                  Review ML family readiness, runtime health, shadow coverage, and fallback state.
+                  Review ML family readiness, runtime health, shadow
+                  coverage, and fallback state.
                 </p>
               </div>
               <Button variant="ghost" size="sm" asChild>
-                <Link href="/settings/models" className="flex items-center gap-1">
+                <Link
+                  href="/settings/models"
+                  className="flex items-center gap-1"
+                >
                   Open
                   <ArrowRight size={12} />
                 </Link>
