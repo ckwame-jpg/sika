@@ -116,6 +116,12 @@ export type MarketHistoryRead = Wire<Schema<"MarketHistoryRead">>;
 // hand-written names so consumers don't need to rename.
 export type TradeDeskGameLine = Wire<Schema<"TradeDeskGameLineRead">>;
 export type TradeDeskThreshold = Wire<Schema<"TradeDeskThresholdRead">>;
+// Smarter #21 phase 2d (PR 4) — operator-facing serialization of the
+// interval consumer's diagnostic dict. Surfaced on
+// ``TradeDeskThresholdRead.prediction_interval`` so the trade-ticket
+// UI band can render the [p10, p90] range with a threshold tick
+// without parsing a generic dict blob.
+export type PredictionInterval = Wire<Schema<"PredictionIntervalRead">>;
 export type TradeDeskPlayerProp = Wire<Schema<"TradeDeskPlayerPropRead">>;
 export type TradeDeskEvent = Wire<Schema<"TradeDeskEventRead">>;
 export type TradeDeskArchivedSlate = Wire<Schema<"TradeDeskArchivedSlateRead">>;

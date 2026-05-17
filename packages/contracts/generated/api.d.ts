@@ -1765,6 +1765,42 @@ export interface components {
              */
             paper_truncated: boolean;
         };
+        /**
+         * PredictionIntervalRead
+         * @description Smarter #21 phase 2d — operator-facing serialization of the
+         *     interval consumer's diagnostic dict (see
+         *     ``apps/api/app/services/scoring/interval_consumer.py``).
+         *
+         *     Surfaced on ``TradeDeskThresholdRead.prediction_interval`` so the
+         *     trade-ticket UI band can render the [p10, p90] range with a
+         *     threshold tick. The same payload also lives on
+         *     ``recommendation.scoring_diagnostics["prediction_interval"]`` for
+         *     the market-detail sheet; this schema gives the trade-desk surface
+         *     a strongly-typed contract instead of indexing into a generic dict.
+         */
+        PredictionIntervalRead: {
+            /**
+             * Coverage Status
+             * @enum {string}
+             */
+            coverage_status: "ok" | "warn" | "bad" | "unknown";
+            /** Delta */
+            delta: number;
+            /** P10 */
+            p10: number;
+            /** P50 */
+            p50: number;
+            /** P90 */
+            p90: number;
+            /** Source */
+            source: string;
+            /** Threshold */
+            threshold: number;
+            /** Yes Probability From Interval */
+            yes_probability_from_interval: number;
+            /** Yes Probability From Poisson */
+            yes_probability_from_poisson: number;
+        };
         /** PredictionRead */
         PredictionRead: {
             /** Action */
@@ -2819,6 +2855,7 @@ export interface components {
             is_best: boolean;
             /** Kalshi Url */
             kalshi_url?: string | null;
+            prediction_interval?: components["schemas"]["PredictionIntervalRead"] | null;
             /** Probability Yes */
             probability_yes: number;
             /** Selected Side */

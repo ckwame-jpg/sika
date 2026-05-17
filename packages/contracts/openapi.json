@@ -3519,6 +3519,66 @@
         "title": "PositionsRead",
         "type": "object"
       },
+      "PredictionIntervalRead": {
+        "description": "Smarter #21 phase 2d \u2014 operator-facing serialization of the\ninterval consumer's diagnostic dict (see\n``apps/api/app/services/scoring/interval_consumer.py``).\n\nSurfaced on ``TradeDeskThresholdRead.prediction_interval`` so the\ntrade-ticket UI band can render the [p10, p90] range with a\nthreshold tick. The same payload also lives on\n``recommendation.scoring_diagnostics[\"prediction_interval\"]`` for\nthe market-detail sheet; this schema gives the trade-desk surface\na strongly-typed contract instead of indexing into a generic dict.",
+        "properties": {
+          "coverage_status": {
+            "enum": [
+              "ok",
+              "warn",
+              "bad",
+              "unknown"
+            ],
+            "title": "Coverage Status",
+            "type": "string"
+          },
+          "delta": {
+            "title": "Delta",
+            "type": "number"
+          },
+          "p10": {
+            "title": "P10",
+            "type": "number"
+          },
+          "p50": {
+            "title": "P50",
+            "type": "number"
+          },
+          "p90": {
+            "title": "P90",
+            "type": "number"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "number"
+          },
+          "yes_probability_from_interval": {
+            "title": "Yes Probability From Interval",
+            "type": "number"
+          },
+          "yes_probability_from_poisson": {
+            "title": "Yes Probability From Poisson",
+            "type": "number"
+          }
+        },
+        "required": [
+          "p10",
+          "p50",
+          "p90",
+          "threshold",
+          "source",
+          "coverage_status",
+          "yes_probability_from_interval",
+          "yes_probability_from_poisson",
+          "delta"
+        ],
+        "title": "PredictionIntervalRead",
+        "type": "object"
+      },
       "PredictionRead": {
         "properties": {
           "action": {
@@ -6282,6 +6342,16 @@
               }
             ],
             "title": "Kalshi Url"
+          },
+          "prediction_interval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredictionIntervalRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "probability_yes": {
             "title": "Probability Yes",

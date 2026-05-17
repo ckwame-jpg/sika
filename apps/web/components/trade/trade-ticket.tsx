@@ -5,6 +5,8 @@ import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TradeDialog } from "@/components/positions/trade-dialog";
 import { PickHistoryStrip } from "./pick-history-strip";
+import { PredictionIntervalBand } from "./prediction-interval-band";
+import type { PredictionInterval } from "@/lib/types";
 import { cn, fmtEdge, fmtPercent, fmtPrice } from "@/lib/utils";
 
 export interface TradeSelection {
@@ -36,6 +38,13 @@ export interface TradeSelection {
    *  correctly for Under-direction total markets (codex round-1 P2 on
    *  PR #24). Null for non-total markets. */
   totalDirection?: "over" | "under" | null;
+  /** Smarter #21 phase 2d — prediction-interval diagnostic produced
+   *  by the scoring kernel's interval consumer (PR 3). Renders as a
+   *  horizontal band visualizing the [p10, p90] range with a tick at
+   *  the market threshold. ``null`` when no trained interval sidecar
+   *  exists for this stat key, or when the artifact lookup failed —
+   *  the band component gracefully renders nothing in that case. */
+  predictionInterval?: PredictionInterval | null;
 }
 
 interface TradeTicketProps {
@@ -102,6 +111,17 @@ export function TradeTicket({
             <p className="ticket-stat-value accent">{fmtPercent(selection.confidence)}</p>
           </div>
         </div>
+
+        {/* The outer guard is load-bearing — it controls whether the
+           divider renders. Without it, removing the inner component
+           guard wouldn't be enough; we'd still ship a divider with
+           no band underneath when prediction_interval is null. */}
+        {selection.predictionInterval && (
+          <>
+            <div className="ticket-section-divider" aria-hidden />
+            <PredictionIntervalBand interval={selection.predictionInterval} />
+          </>
+        )}
 
         <div className="ticket-section-divider" aria-hidden />
 

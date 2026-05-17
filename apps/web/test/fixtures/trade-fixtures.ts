@@ -18,6 +18,9 @@ function threshold(overrides: Partial<TradeDeskThreshold>): TradeDeskThreshold {
     is_best: overrides.is_best ?? false,
     kalshi_url: overrides.kalshi_url ?? null,
     time_to_close_minutes: overrides.time_to_close_minutes ?? null,
+    // Smarter #21 phase 2d — default to null (no trained sidecar);
+    // tests that want to exercise the band can override.
+    prediction_interval: overrides.prediction_interval ?? null,
   };
 }
 

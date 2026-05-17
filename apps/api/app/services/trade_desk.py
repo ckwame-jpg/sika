@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -11,6 +12,7 @@ from app.schemas import (
     SportAvailabilityRead,
     TradeDeskArchivedSlateRead,
     TradeDeskEventRead,
+    PredictionIntervalRead,
     TradeDeskGameLineRead,
     TradeDeskPlayerPropRead,
     TradeDeskResponse,
@@ -27,6 +29,10 @@ from app.services.watchlist_coverage import (
     recent_snapshots_by_market_id,
 )
 from app.sports.base import alias_tokens
+
+
+logger = logging.getLogger(__name__)
+
 
 KALSHI_SPORT_CATEGORY_ROOTS = {
     "NBA": "https://kalshi.com/category/sports/basketball/pro-basketball-m",
@@ -703,6 +709,36 @@ def build_trade_desk_response(
             assert isinstance(stat_map, dict)
             thresholds = stat_map.setdefault(stat_key, [])
             assert isinstance(thresholds, list)
+            # Smarter #21 phase 2d (PR 4) — surface the prediction-
+            # interval diagnostic the scoring kernel attached to
+            # ``recommendation.scoring_diagnostics["prediction_interval"]``
+            # (PR 3 + this PR's scoring/__init__.py copy). ``None`` when
+            # the consumer didn't fire (no trained sidecar, artifact load
+            # failed, etc.). Parsed defensively because
+            # ``scoring_diagnostics`` is ``Column(JSON)`` and an older
+            # row from before PR 3 won't have the key.
+            diagnostics = dict(recommendation.scoring_diagnostics or {})
+            interval_payload = diagnostics.get("prediction_interval")
+            prediction_interval_read: PredictionIntervalRead | None = None
+            if isinstance(interval_payload, dict):
+                try:
+                    prediction_interval_read = PredictionIntervalRead.model_validate(
+                        interval_payload
+                    )
+                except Exception as exc:  # noqa: BLE001 — defensive at the read boundary
+                    # Malformed payload (schema drift, unexpected
+                    # extra keys, etc.) — skip the band rather than
+                    # 500 the whole trade-desk response. Log so the
+                    # operator can see persistent drift in the API
+                    # logs; without this, every recommendation would
+                    # silently null out ``prediction_interval`` for
+                    # all surfaces with no trace.
+                    logger.warning(
+                        "trade_desk.prediction_interval_drift: "
+                        "ticker=%s error=%s",
+                        market.ticker, exc,
+                    )
+                    prediction_interval_read = None
             thresholds.append(
                 TradeDeskThresholdRead(
                     ticker=market.ticker,
@@ -715,6 +751,7 @@ def build_trade_desk_response(
                     confidence=recommendation.confidence,
                     kalshi_url=kalshi_market_url(market),
                     time_to_close_minutes=_time_to_close_minutes(market),
+                    prediction_interval=prediction_interval_read,
                 )
             )
             continue
