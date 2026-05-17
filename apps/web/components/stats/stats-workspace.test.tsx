@@ -80,12 +80,15 @@ describe("StatsWorkspace — Phase 2 sa-* rewrite", () => {
     expect(screen.getByText(/Run a player stats query/i)).toBeInTheDocument();
   });
 
-  it("offers only the shipped sports (NBA/NFL/MLB/WNBA/SOCCER/TENNIS)", () => {
+  it("offers only the shipped sports (NBA/NFL/MLB/SOCCER/TENNIS)", () => {
     render(<StatsWorkspace />);
     const sport = screen.getByTestId("sa-sport") as HTMLSelectElement;
     const values = Array.from(sport.options).map((o) => o.value);
-    expect(values).toEqual(["NBA", "NFL", "MLB", "WNBA", "SOCCER", "TENNIS"]);
+    expect(values).toEqual(["NBA", "NFL", "MLB", "SOCCER", "TENNIS"]);
     expect(values).not.toContain("UFC");
+    // PR 1 scaffolding intentionally gates WNBA out of this dropdown
+    // until PR 3 ships the /stats/query WNBA backend branch.
+    expect(values).not.toContain("WNBA");
   });
 
   it("clicking a suggestion chip fires the query and renders the answer", async () => {

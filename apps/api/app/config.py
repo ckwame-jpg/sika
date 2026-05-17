@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     parlay_max_legs: int = 6
     parlay_candidate_pool_size: int = 10
     parlay_max_output: int = 15
-    parlay_enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "MLB", "WNBA"])
+    parlay_enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "MLB"])
     lookback_days: int = 14
     lookahead_days: int = 2
     free_provider_lookback_days: int = 5
@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     refresh_job_stale_minutes: int = 30
     market_snapshot_heartbeat_minutes: int = 30
     prefer_yes_side_props: bool = True
-    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "WNBA", "SOCCER", "TENNIS"])
+    enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "NFL", "MLB", "SOCCER", "TENNIS"])
     soccer_leagues: list[str] = Field(
         default_factory=lambda: [
             "English Premier League",

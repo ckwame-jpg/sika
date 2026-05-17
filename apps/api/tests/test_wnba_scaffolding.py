@@ -62,10 +62,18 @@ def test_wnba_team_map_includes_all_15_teams() -> None:
     )
 
 
-def test_settings_include_wnba_in_enabled_sports_lists() -> None:
+def test_settings_default_enabled_sports_do_not_include_wnba_yet() -> None:
+    """PR 1 establishes the WNBA TYPE / config surface but does NOT
+    default-enable WNBA. The default refresh path (cycles.run_refresh_cycle
+    + ingestion.refresh_sports_data + ADAPTERS[sport_key]) would
+    KeyError on 'WNBA' until PR 6 wires the sport adapter + Kalshi
+    discovery. Operators can still opt WNBA in via env var override
+    once the adapter lands. Codex caught this on round 1; pin the
+    safe default explicitly.
+    """
     settings = Settings()
-    assert "WNBA" in settings.enabled_sports
-    assert "WNBA" in settings.parlay_enabled_sports
+    assert "WNBA" not in settings.enabled_sports
+    assert "WNBA" not in settings.parlay_enabled_sports
 
 
 def test_settings_include_wnba_cache_ttls() -> None:
