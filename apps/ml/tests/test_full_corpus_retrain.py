@@ -162,7 +162,14 @@ def test_train_and_package_advanced_only_false_keeps_all_rows(tmp_path):
 def test_cli_train_defaults_cover_all_active_families():
     parser = build_parser()
     args = parser.parse_args(["train"])
-    assert args.serve_family_keys == ("mlb_props", "nba_props", "mlb_singles", "nba_singles")
+    # Smarter WNBA PR 5 adds the WNBA families to the default. Order
+    # matters: the tuple here mirrors the comma-separated string in
+    # _DEFAULT_SERVE_FAMILY_KEYS — props first (NBA, MLB, WNBA), then
+    # singles in the same sport order.
+    assert args.serve_family_keys == (
+        "mlb_props", "nba_props", "wnba_props",
+        "mlb_singles", "nba_singles", "wnba_singles",
+    )
     assert args.advanced_only == "auto"
 
 
@@ -185,3 +192,52 @@ def test_cli_train_rejects_empty_serve_family_keys():
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["train", "--serve-family-keys", ", ,"])
+
+
+def test_default_serve_family_keys_include_wnba_props_and_singles():
+    """Smarter WNBA PR 5 — the weekly retrain CLI's default serve set
+    must include wnba_props + wnba_singles so the manifest auto-picks
+    them up alongside NBA + MLB families. Without this, the readiness
+    panel would never see WNBA models even after settled rows exist
+    (the operator would have to explicitly pass --serve-family-keys).
+    """
+    parser = build_parser()
+    args = parser.parse_args(["train"])
+    assert "wnba_props" in args.serve_family_keys
+    assert "wnba_singles" in args.serve_family_keys
+    # Pre-existing NBA / MLB defaults must still be present (regression
+    # pin — PR 5 adds WNBA, doesn't replace).
+    assert "nba_props" in args.serve_family_keys
+    assert "mlb_props" in args.serve_family_keys
+    assert "nba_singles" in args.serve_family_keys
+    assert "mlb_singles" in args.serve_family_keys
+
+
+def test_train_and_package_emits_wnba_family_entries_when_in_serve_set(tmp_path):
+    """End-to-end pin: when ``serve_family_keys`` includes the WNBA
+    families, the manifest output gets a ``serves_family_key`` entry
+    per WNBA family. The manifest consumer (apps/api readiness panel)
+    keys off these entries to decide which families to surface — so
+    a missing entry would silently drop WNBA from the panel.
+
+    Reuses the existing NBA / MLB fixture data — the training path is
+    sport-agnostic (one global artifact serving all families), so
+    WNBA families being present in the manifest is what matters at
+    this layer. Per-family WNBA rows accumulate in production once
+    PR 6 lands.
+    """
+    frame = settled_predictions_from_records(_mixed_records(total=240))
+    serve_keys = ("mlb_props", "nba_props", "wnba_props", "wnba_singles")
+
+    result = train_and_package(
+        frame,
+        artifact_root=tmp_path / "artifacts",
+        manifest_out=tmp_path / "manifests" / "current.json",
+        serve_family_keys=serve_keys,
+        model_version="2026-05-17",
+    )
+
+    assert result.manifest_path is not None
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    emitted_keys = {family["serves_family_key"] for family in manifest["families"]}
+    assert {"wnba_props", "wnba_singles"}.issubset(emitted_keys)

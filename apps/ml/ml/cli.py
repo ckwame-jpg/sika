@@ -29,7 +29,14 @@ from ml_features import FeatureSpec
 
 _ADVANCED_ONLY_MAP = {"auto": None, "yes": True, "no": False}
 
-_DEFAULT_SERVE_FAMILY_KEYS = "mlb_props,nba_props,mlb_singles,nba_singles"
+# Smarter WNBA PR 5 — WNBA families added to the default training set.
+# PR 4 registered ``wnba_props`` + ``wnba_singles`` in FAMILY_DEFINITIONS
+# with ``study_track="active"``; this keeps the weekly retrain CLI in
+# sync so the manifest auto-includes WNBA entries. Until WNBA settled
+# rows accumulate the readiness panel will mark them
+# ``insufficient_history`` — same shape NBA + MLB families used during
+# their cold-start windows.
+_DEFAULT_SERVE_FAMILY_KEYS = "mlb_props,nba_props,wnba_props,mlb_singles,nba_singles,wnba_singles"
 
 
 def _now() -> datetime:
