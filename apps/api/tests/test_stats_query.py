@@ -626,6 +626,33 @@ def test_parse_stats_question_accepts_wnba_sport_key():
     assert parsed.season == 2026
 
 
+def test_build_game_logs_tags_wnba_entries_with_wnba_sport_key():
+    """Codex round 1 (Low → fixed): pre-fix, ``_build_nba_game_logs``
+    hardcoded ``sport_key="NBA"`` in every per-game entry, so WNBA
+    queries produced game_logs internally labeled NBA. The public
+    ``_serialize_game_log`` strips sport_key so end users don't see
+    the wrong tag today, but PR 4's scoring resolver consumes these
+    dicts internally and would key off the wrong sport.
+
+    Fix: threaded ``sport_key`` through ``_build_nba_game_logs``;
+    ``_build_game_logs("WNBA", ...)`` passes "WNBA". Pin via the
+    pre-serialize internal dict directly.
+    """
+    from app.services.stats_query import _build_game_logs
+
+    wnba_logs = _build_game_logs("WNBA", NBA_GAMELOG_PAYLOAD)
+    nba_logs = _build_game_logs("NBA", NBA_GAMELOG_PAYLOAD)
+
+    assert wnba_logs, "expected at least one WNBA game log"
+    assert nba_logs, "expected at least one NBA game log"
+    for entry in wnba_logs:
+        assert entry["sport_key"] == "WNBA"
+    for entry in nba_logs:
+        assert entry["sport_key"] == "NBA"
+    # Same payload + same parser → same per-game metric values.
+    assert wnba_logs[0]["metrics"] == nba_logs[0]["metrics"]
+
+
 def test_stats_query_service_returns_nfl_metric_map():
     service = StatsQueryService(espn_client=FakeEspnClient())
 

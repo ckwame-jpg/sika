@@ -785,17 +785,26 @@ def _build_game_logs(sport_key: str, payload: dict[str, Any]) -> list[dict[str, 
         return _build_mlb_game_logs(payload)
     # WNBA shares NBA's ESPN gamelog payload shape exactly — same stat
     # names, same seasonTypes / categories / events nesting, same
-    # made/attempted "11-19" string format. Reuse _build_nba_game_logs.
-    # If WNBA later adds a sport-unique stat (e.g. a hustle / drives
-    # endpoint), this dispatch is where the divergence lands.
+    # made/attempted "11-19" string format. Reuse _build_nba_game_logs
+    # but pass sport_key="WNBA" so each game entry's per-row
+    # ``sport_key`` field is tagged correctly (cosmetic for the public
+    # response today; the resolver consumes these dicts in PR 4 and
+    # needs the right tag).
     if sport_key == "WNBA":
-        return _build_nba_game_logs(payload)
+        return _build_nba_game_logs(payload, sport_key="WNBA")
     if sport_key == "SOCCER":
         return _build_soccer_game_logs(payload)
     raise ValueError(f"Unsupported stats sport: {sport_key}")
 
 
-def _build_nba_game_logs(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _build_nba_game_logs(payload: dict[str, Any], *, sport_key: str = "NBA") -> list[dict[str, Any]]:
+    """Parse ESPN's NBA-shaped gamelog payload.
+
+    ``sport_key`` is threaded into the per-game entry's ``sport_key``
+    field so WNBA (which reuses this parser — same payload shape)
+    produces correctly-tagged game logs. Defaults to NBA for backward
+    compat with the bare ``_build_nba_game_logs(payload)`` callers.
+    """
     stat_names = payload.get("names") or []
     event_metadata = payload.get("events") or {}
     game_logs: dict[str, dict[str, Any]] = {}
@@ -824,7 +833,7 @@ def _build_nba_game_logs(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "free_throws_made": _parse_made_attempted(stat_map.get("freeThrowsMade-freeThrowsAttempted"))[0],
                     "free_throws_attempted": _parse_made_attempted(stat_map.get("freeThrowsMade-freeThrowsAttempted"))[1],
                 }
-                game_logs[event_id] = _build_game_entry("NBA", metadata, event_id, raw_metrics, _nba_metrics_for_game(raw_metrics))
+                game_logs[event_id] = _build_game_entry(sport_key, metadata, event_id, raw_metrics, _nba_metrics_for_game(raw_metrics))
 
     return sorted(game_logs.values(), key=lambda item: item["game_date"], reverse=True)
 

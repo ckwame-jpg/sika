@@ -45,6 +45,15 @@ function defaultSeasonForSport(sport: SportKey, today: Date = new Date()): strin
     const endYear = month >= 10 ? year + 1 : year;
     return `${endYear - 1}-${String(endYear).slice(2)}`;
   }
+  // WNBA mirrors the backend's ``default_season_for_sport`` rollover at
+  // month >= 5. May → Sept tag as the current calendar year; Jan → Apr
+  // roll back to the previous season's year. Without this, an offseason
+  // UI query would send next-year season to the API, which would 404
+  // against the not-yet-started season.
+  if (sport === "WNBA") {
+    const startYear = month >= 5 ? year : year - 1;
+    return `${startYear}-${String(startYear + 1).slice(2)}`;
+  }
   // MLB/NFL/Soccer/UFC: use the calendar-year start that's currently active.
   // MLB starts in March; before March, the previous calendar year is still
   // the most recent completed season.
