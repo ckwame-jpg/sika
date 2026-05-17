@@ -956,7 +956,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     run, completed = advance_current_slate_refresh_job(
                         db,
                         job=job,
-                        sports=["NBA", "MLB"],
+                        sports=["NBA", "MLB", "WNBA"],
                     )
                     job.run_id = run.id
                     if not completed:

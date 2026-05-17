@@ -41,10 +41,19 @@ KALSHI_SPORT_CATEGORY_ROOTS = {
     "NFL": "https://kalshi.com/category/sports/football/pro-football",
     "SOCCER": "https://kalshi.com/category/sports/soccer",
     "TENNIS": "https://kalshi.com/category/sports/tennis",
+    # Smarter WNBA PR 6 — must mirror ``routes.py``; Bug #30 design
+    # smell tracks deduping these two copies. WNBA lives under
+    # Kalshi's pro-basketball-w (women's) slug, distinct from NBA's
+    # pro-basketball-m.
+    "WNBA": "https://kalshi.com/category/sports/basketball/pro-basketball-w",
 }
 KALSHI_EVENT_SERIES = {
     "NBA": ("kxnbagame", "professional-basketball-game"),
     "MLB": ("kxmlbgame", "professional-baseball-game"),
+    # Smarter WNBA PR 6 — mirrors ``routes.py``. Per-game WNBA prop
+    # coverage was thin as of mid-May 2026 (only milestones +
+    # futures live); infrastructure ships ready for Kalshi's roll-out.
+    "WNBA": ("kxwnbagame", "professional-basketball-game"),
 }
 KALSHI_PROP_CATEGORY_SLUGS = {
     "NBA": {
@@ -64,6 +73,18 @@ KALSHI_PROP_CATEGORY_SLUGS = {
         "strikeouts": "strikeouts",
         "walks": "walks",
         "total_bases": "total-bases",
+    },
+    # Smarter WNBA PR 6 — mirrors ``routes.py``. WNBA shares NBA's
+    # prop stat vocabulary; slug values mirror NBA's because Kalshi
+    # has signaled WNBA parity with the NBA prop framework.
+    "WNBA": {
+        "points": "player-points",
+        "rebounds": "player-rebounds",
+        "assists": "player-assists",
+        "made_threes": "player-threes",
+        "steals": "player-steals",
+        "blocks": "player-blocks",
+        "turnovers": "player-turnovers",
     },
 }
 SNAPSHOT_SCOPE_ALL = "all"

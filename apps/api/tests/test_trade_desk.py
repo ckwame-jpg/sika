@@ -893,10 +893,13 @@ def test_persist_current_slate_snapshots_appends_new_rows_per_call(db_session):
     rows_per_scope: dict[str, int] = {}
     for row in db_session.scalars(select(CurrentSlateSnapshot)).all():
         rows_per_scope[row.scope] = rows_per_scope.get(row.scope, 0) + 1
-    # Expect 2 rows per scope (2 calls × {all, NBA, MLB} = 6 total rows)
+    # Expect 2 rows per scope (2 calls × {all, NBA, MLB, WNBA} = 8 total rows).
+    # Smarter WNBA PR 6 enrolled WNBA in ``CURRENT_WATCHLIST_SPORTS`` so the
+    # write loop now produces one snapshot row per WNBA call too.
     assert rows_per_scope.get("all") == 2
     assert rows_per_scope.get("NBA") == 2
     assert rows_per_scope.get("MLB") == 2
+    assert rows_per_scope.get("WNBA") == 2
 
 
 def test_prune_runtime_artifacts_keeps_last_n_snapshots_per_scope(db_session):

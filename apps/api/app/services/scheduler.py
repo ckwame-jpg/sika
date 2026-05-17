@@ -432,7 +432,7 @@ def run_refresh_cycle_now(*, reason: str = "manual", current_slate_only: bool = 
         run = run_refresh_cycle(
             db,
             current_slate_only=current_slate_only,
-            sports=["NBA", "MLB"] if current_slate_only else None,
+            sports=["NBA", "MLB", "WNBA"] if current_slate_only else None,
         )
         snapshot = RefreshRunSnapshot(
             run_id=run.id,

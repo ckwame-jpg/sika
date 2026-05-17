@@ -15,7 +15,10 @@ if TYPE_CHECKING:
     from app.services.scoring import PropStatsResolver
 
 
-CURRENT_WATCHLIST_SPORTS = frozenset({"NBA", "MLB"})
+# Smarter WNBA PR 6 — WNBA joins the current-slate watchlist scope so
+# KXWNBAGAME / KXWNBA player-prop markets surface in the trade desk and
+# the ``/product/freshness`` endpoint enumerates a per-WNBA scope row.
+CURRENT_WATCHLIST_SPORTS = frozenset({"NBA", "MLB", "WNBA"})
 CURRENT_WATCHLIST_MARKET_FAMILIES = frozenset({"winner", "game_line", "player_prop"})
 TERMINAL_EVENT_STATUSES = frozenset({"completed", "cancelled"})
 CURRENT_WATCHLIST_MAX_IN_PROGRESS_AGE = timedelta(hours=18)
