@@ -1,7 +1,7 @@
 # Sika Design System
 
 **Last reconciled:** 2026-05-17 · against `apps/web/app/globals.css` + every file in `apps/web/components/ui/` + a representative sample of composites.
-**Drift cleanup:** late 2026-05-17 batch closed §5.1, §5.2, §5.3, §5.4 (partially), §6.1 (partially), §6.2 (partially), §6.5, and §9 rec 7 across [sika#196](https://github.com/ckwame-jpg/sika/pull/196) – [sika#203](https://github.com/ckwame-jpg/sika/pull/203). See §5 Drift report for status of each item.
+**Drift cleanup:** late 2026-05-17 batch closed §5.1, §5.2, §5.3, §5.4 (partially), §5.5, §6.1 (partially), §6.2 (partially), §6.3 (audited; no fix needed), §6.4, §6.5, §1.6, and all 7 §9 open recommendations across [sika#196](https://github.com/ckwame-jpg/sika/pull/196) – sika#206. The entire 2026-05-17 audit doc is now resolved.
 
 This is an **audit + documentation** pass. It catalogs what exists, names the conventions, and flags drift. It does NOT propose new patterns — extension is a separate workflow.
 
@@ -584,13 +584,15 @@ A future a11y pass could add `role="status"` to these too, but they're not block
 | `.sa-result-loading` (stats assistant) | No role; bespoke sika idiom. Could add `role="status" aria-label="Scanning {sport} logs"` in a follow-up. |
 | `<RefreshCw className="animate-spin" />` inline button spinners (4 callers) | No role. These are action-button context — adding `aria-label` to the parent button (e.g. `aria-label="Refreshing"`) would close the gap. Scoped follow-up. |
 
-### 6.3 Status pills
+### 6.3 Status pills (audited; current state is OK)
 
-`.outcome-pill` and `Badge` are visual. The pill text IS the status, so when wrapped in a row the parent should describe the row + the status (e.g. "Run 123, status completed"). Most existing usages do this implicitly via the row's accessible name — but pills used in isolation (e.g. in a header) lack context.
+**Audited 2026-05-17.** The doc previously flagged a preventative concern that pills "in isolation" (e.g. floating in a header) would lack screen-reader context. A full inventory of `.outcome-pill` + `<Badge variant="…">` callers found **no truly-isolated cases**: every pill in the codebase sits inside a flex / grid / button parent that carries natural descriptive text on the same row (e.g. `<pill>Connected</pill> <span>Updated 5 minutes ago</span>` or `<button><span>Run #123</span> <pill>completed</pill></button>`). Sequential screen-reader reading picks up the surrounding context.
 
-### 6.4 Decorative orbs / cores
+**Rule going forward:** when adding a new pill, render it inside a row / button / labeled group that carries the descriptive text. If a future surface needs a pill in true isolation (e.g. a single status indicator in a topbar with no surrounding text), use `aria-label="<noun>: <status>"` on the pill itself to make it self-describing.
 
-Patterns: `.trade-ticket-empty-orb`, `.sa-result-orb`, `.trade-kpi-orb`, `.crumb-orb`, `.sync-orb`, the brand mark's `.lo-ring`/`.lo-core`/`.lo-sat`. All are decorative — they should use `aria-hidden` on every wrapper. Spot-check: most do via `aria-hidden`, but not consistently.
+### 6.4 Decorative orbs / cores (resolved)
+
+**Resolved 2026-05-17.** All decorative orb / ring / core / satellite elements now carry `aria-hidden` either directly or via an `aria-hidden` parent wrapper. The session audit found 2 missing cases — `.crumb-orb` in `header.tsx` and `.sync-orb` in `sidebar.tsx` — both fixed in this PR. The brand-mark `<OrbitMark>` already wraps its `lo-core` / `lo-ring` / `lo-sat` decorations in `<div className="brand-mark" aria-hidden>` (children inherit). All `.trade-kpi-orb`, `.trade-ticket-empty-orb`, `.sa-result-orb`, `.sa-prompt-mark` callers had `aria-hidden` already.
 
 ### 6.5 Focus styles (resolved)
 

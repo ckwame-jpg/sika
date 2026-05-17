@@ -13,7 +13,7 @@ export function Header({ title, actions }: HeaderProps) {
   return (
     <header className="topbar">
       <div className="crumbs">
-        <span className="crumb-orb" />
+        <span className="crumb-orb" aria-hidden />
         <Link href="/" className="crumb-root">
           sika
         </Link>
