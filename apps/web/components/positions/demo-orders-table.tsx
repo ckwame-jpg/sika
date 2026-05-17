@@ -55,7 +55,7 @@ function DemoOrderRow({
     <TableRow>
       <TableCell>
         <button
-          className="cursor-pointer font-mono text-xs text-accent hover:underline"
+          className="cursor-pointer font-mono text-xs text-accent hover:underline focus-visible:ring-focus"
           onClick={onViewMarket}
         >
           {order.ticker}
@@ -124,7 +124,7 @@ function DemoOrderCard({
     <article className="pred-card">
       <div className="pred-card-head">
         <button
-          className="min-w-0 cursor-pointer text-left"
+          className="min-w-0 cursor-pointer text-left focus-visible:ring-focus"
           onClick={onViewMarket}
         >
           <p className="truncate font-mono text-xs text-accent hover:underline">

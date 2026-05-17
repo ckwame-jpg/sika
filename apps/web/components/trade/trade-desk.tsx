@@ -148,7 +148,7 @@ function GameLineRow({
     <button
       type="button"
       onClick={onSelect}
-      className={cn("line-row", isSelected && "selected")}
+      className={cn("line-row focus-visible:ring-focus", isSelected && "selected")}
     >
       <div className="min-w-0">
         <div className="line-row-label truncate">{line.display_label}</div>
@@ -367,7 +367,7 @@ function TradeEventList({
           >
             <button
               type="button"
-              className="event-card-head event-card-toggle"
+              className="event-card-head event-card-toggle focus-visible:ring-focus"
               aria-expanded={isExpanded}
               aria-controls={marketsId}
               onClick={() => onToggleEvent(event.event_id)}
@@ -470,7 +470,7 @@ function ArchivedSlateSection({
     <section className={cn("archived-slate", expanded && "open")} data-testid="trade-previous-slate">
       <button
         type="button"
-        className="archived-slate-head"
+        className="archived-slate-head focus-visible:ring-focus"
         aria-expanded={expanded}
         aria-controls={panelId}
         onClick={onToggle}
@@ -717,7 +717,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
         <div className="relative flex items-center justify-center px-4 pb-1 pt-3">
           <div className="h-1 w-10 rounded-full bg-muted-foreground/30" />
           <button
-            className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+            className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:bg-surface-hover hover:text-foreground focus-visible:ring-focus"
             onClick={() => setSelected(null)}
             aria-label="Close"
           >

@@ -160,7 +160,7 @@ function PositionRow({
     <TableRow>
       <TableCell>
         <button
-          className="cursor-pointer font-mono text-xs text-accent hover:underline"
+          className="cursor-pointer font-mono text-xs text-accent hover:underline focus-visible:ring-focus"
           onClick={onViewMarket}
         >
           {position.ticker}
@@ -222,7 +222,7 @@ function PositionCard({
     <article className="pred-card">
       <div className="pred-card-head">
         <button
-          className="min-w-0 cursor-pointer text-left"
+          className="min-w-0 cursor-pointer text-left focus-visible:ring-focus"
           onClick={onViewMarket}
         >
           <p className="truncate font-mono text-xs text-accent hover:underline">
@@ -307,7 +307,7 @@ function CompactPositionList({
             : positions.map((position) => (
                 <button
                   key={position.id}
-                  className="flex w-full items-start justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-3 text-left transition-colors duration-[120ms] hover:bg-surface-hover"
+                  className="flex w-full items-start justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-3 text-left transition-colors duration-[120ms] hover:bg-surface-hover focus-visible:ring-focus"
                   onClick={() => onViewMarket(position.ticker)}
                 >
                   <div className="min-w-0">

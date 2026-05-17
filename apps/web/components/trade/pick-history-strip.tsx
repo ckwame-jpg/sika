@@ -509,7 +509,7 @@ function StripHeader({
             <button
               key={option}
               type="button"
-              className={`pick-history-strip-n-pill${controls.n === option ? " is-active" : ""}`}
+              className={`pick-history-strip-n-pill focus-visible:ring-focus${controls.n === option ? " is-active" : ""}`}
               onClick={() => controls.onN(option)}
               data-testid={`pick-history-strip-n-${option}`}
               aria-pressed={controls.n === option}
@@ -557,7 +557,7 @@ function FilterChip({
   return (
     <button
       type="button"
-      className={`pick-history-strip-chip${active ? " is-active" : ""}`}
+      className={`pick-history-strip-chip focus-visible:ring-focus${active ? " is-active" : ""}`}
       onClick={onClick}
       data-testid={testId}
       aria-pressed={active}
