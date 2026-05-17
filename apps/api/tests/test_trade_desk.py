@@ -17,12 +17,44 @@ from app.models import (
 from app.schemas import TradeDeskThresholdRead
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.trade_desk import (
+    PRODUCT_SLATE_NO_CANDIDATES_REASON,
     _signed_numeric_line,
     build_trade_desk_response,
     load_trade_desk_snapshot,
     persist_current_slate_snapshots,
     thresholds_are_monotonic,
 )
+
+
+# Smarter WNBA PR 8 — regression. The "no Kalshi candidates" reason
+# string names the sports it covers; the day we added WNBA to
+# ``enabled_sports`` (PR 6, sika#188) the copy began misleading
+# operators. Pin all three sports so a future rewrite can't silently
+# drop one.
+def test_product_slate_no_candidates_reason_mentions_all_enabled_sports() -> None:
+    for sport in ("NBA", "MLB", "WNBA"):
+        assert sport in PRODUCT_SLATE_NO_CANDIDATES_REASON, (
+            f"PRODUCT_SLATE_NO_CANDIDATES_REASON should mention {sport!r}: "
+            f"{PRODUCT_SLATE_NO_CANDIDATES_REASON!r}"
+        )
+
+
+# Smarter WNBA PR 8 — drift guard. The warming-side blocking-reason
+# generator (``_current_slate_blocking_reason`` in
+# ``services/ingestion/warming.py``) inlines a byte-identical copy of
+# ``PRODUCT_SLATE_NO_CANDIDATES_REASON`` rather than importing the
+# constant. Pin that they stay in sync so a future edit to one side
+# doesn't leave the operator-facing message divergent across surfaces.
+def test_warming_no_candidates_reason_matches_canonical_constant() -> None:
+    from app.services.ingestion.warming import _current_slate_blocking_reason
+    from app.services.scoring.types import WatchlistGenerationSummary
+
+    reason = _current_slate_blocking_reason(
+        event_count=1,
+        candidate_market_count=0,
+        summary=WatchlistGenerationSummary(),
+    )
+    assert reason == PRODUCT_SLATE_NO_CANDIDATES_REASON
 
 
 def _snapshot_event_payload(
@@ -580,7 +612,7 @@ def test_persist_current_slate_snapshots_marks_current_events_without_candidates
     assert response.freshness_status == "degraded"
     assert response.event_count == 1
     assert response.candidate_market_count == 0
-    assert response.blocking_reason == "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+    assert response.blocking_reason == "Current NBA/MLB/WNBA events exist, but no current Kalshi markets are mapped to them."
     assert response.previous_slate is None
 
 
@@ -733,7 +765,7 @@ def test_load_trade_desk_snapshot_serves_latest_sport_slate_when_latest_is_degra
                 "scored_market_count": 0,
                 "recommendation_count": 0,
                 "coverage_prediction_count": 0,
-                "blocking_reason": "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them.",
+                "blocking_reason": "Current NBA/MLB/WNBA events exist, but no current Kalshi markets are mapped to them.",
             },
         )
     )
@@ -750,7 +782,7 @@ def test_load_trade_desk_snapshot_serves_latest_sport_slate_when_latest_is_degra
     assert response.recommendation_count == 0
     assert response.coverage_prediction_count == 0
     assert response.events == []
-    assert response.blocking_reason == "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+    assert response.blocking_reason == "Current NBA/MLB/WNBA events exist, but no current Kalshi markets are mapped to them."
     assert response.previous_slate is not None
     assert response.previous_slate.generated_at == older_ts
     assert response.previous_slate.generated_from_run_id is None

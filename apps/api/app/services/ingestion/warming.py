@@ -86,7 +86,7 @@ def _current_slate_blocking_reason(
     if event_count <= 0:
         return None
     if candidate_market_count <= 0:
-        return "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them."
+        return "Current NBA/MLB/WNBA events exist, but no current Kalshi markets are mapped to them."
     if summary.loaded_candidate_market_count <= 0 and summary.filtered_candidate_market_count > 0:
         return "Current slate candidate markets were filtered before scoring; no current open supported markets reached the scorer."
     if summary.scored_market_count <= 0:

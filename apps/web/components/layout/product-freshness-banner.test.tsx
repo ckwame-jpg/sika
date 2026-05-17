@@ -29,7 +29,7 @@ describe("ProductFreshnessBanner", () => {
           scored_market_count: 0,
           recommendation_count: 0,
           coverage_prediction_count: 0,
-          blocking_reason: "Current NBA/MLB events exist, but no current Kalshi markets are mapped to them.",
+          blocking_reason: "Current NBA/MLB/WNBA events exist, but no current Kalshi markets are mapped to them.",
           generated_from_run_id: 1983,
         },
       ],
@@ -41,7 +41,7 @@ describe("ProductFreshnessBanner", () => {
     expect(banner).toHaveTextContent("Slate degraded");
     expect(banner).toHaveAttribute(
       "title",
-      expect.stringContaining("Current NBA/MLB events exist"),
+      expect.stringContaining("Current NBA/MLB/WNBA events exist"),
     );
   });
 

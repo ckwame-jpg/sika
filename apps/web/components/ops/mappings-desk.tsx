@@ -41,7 +41,7 @@ const CONFIDENCE_PRESETS: Array<{ label: string; value: number | undefined }> = 
   { label: "< 0.3", value: 0.3 },
 ];
 
-const SPORT_PRESETS = ["all", "NBA", "MLB"];
+const SPORT_PRESETS = ["all", "NBA", "MLB", "WNBA"];
 
 function confidencePillClass(value: number | null): string {
   if (value == null) return "pending";
