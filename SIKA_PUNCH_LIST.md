@@ -1,18 +1,18 @@
-# Sika Punch List — 2026-05-12 (audit base) · last reconciled 2026-05-16
+# Sika Punch List — 2026-05-12 (audit base) · last reconciled 2026-05-17
 
 Merged from two independent audits (codex deep pass + claude deep pass, plus an earlier capped codex pass). Three suspect single-agent findings were verified against the actual source before inclusion (marked **✓ verified**).
 
 ## ⚠️ Read this before scanning the checkboxes
 
-**The `[ ]` checkboxes below are stale relative to merged work.** Roughly 60+ items shipped after the audit base date without their checkbox being flipped.
+**The `[ ]` checkboxes below are stale relative to merged work.** Roughly 80+ items shipped after the audit base date without their checkbox being flipped.
 
-**Authoritative open-items list:** [`PUNCH_LIST_STATE_2026_05_16.md`](PUNCH_LIST_STATE_2026_05_16.md) — reconciled against `git log origin/main` as of late 2026-05-16. Read it first.
+**Authoritative open-items list:** [`PUNCH_LIST_STATE_2026_05_17.md`](PUNCH_LIST_STATE_2026_05_17.md) — reconciled against `git log origin/main` as of 2026-05-17. Read it first. (Prior snapshot: [`PUNCH_LIST_STATE_2026_05_16.md`](PUNCH_LIST_STATE_2026_05_16.md).)
 
 **Truly-open list as of the last reconciliation** (none block sport expansion):
-1. **Smarter #21 phase 2d** (consumer + UI band) — handed off in [sika#160](https://github.com/ckwame-jpg/sika/pull/160). Needs coverage-status gating design.
-2. **Architecture #5** (feature-freshness layer) — prerequisite for Smarter #22. Not started.
-3. **Smarter #13 phase 2b-2** (BR referee fetcher wiring) — operator-blocked on BR URL pattern.
-4. **Smarter #28 + #30 override registries** — mechanism shipped; populating needs Smarter #2 backtest data, not code.
+1. **Smarter #28 + #30 override registries** — mechanism shipped; populating needs Smarter #2 backtest data, not code.
+2. **Smarter #22 (feature freshness SLAs)** — Architecture #5 prerequisite shipped ([sika#169](https://github.com/ckwame-jpg/sika/pull/169)); now unblocked. Multi-PR design pass not yet started.
+3. **WNBA sport expansion** — 3 of 8 PRs shipped ([sika#177](https://github.com/ckwame-jpg/sika/pull/177), [sika#178](https://github.com/ckwame-jpg/sika/pull/178), [sika#181](https://github.com/ckwame-jpg/sika/pull/181)); 5 remaining per `SMARTER_WNBA_PREP.md`.
+4. **Smarter #21 phase 2d coverage-band expansion** — phase 2d code is COMPLETE ([sika#179](https://github.com/ckwame-jpg/sika/pull/179) + [sika#180](https://github.com/ckwame-jpg/sika/pull/180)); only 2 of 7 trained stat keys are in the `ok` band that actually swaps probability. More should migrate naturally as games settle. **Not a coding task.**
 
 **Sport expansion next up:** WNBA — see [`SMARTER_WNBA_PREP.md`](SMARTER_WNBA_PREP.md) for the 8-PR execution plan + [`SMARTER_WNBA_HANDOFF.md`](SMARTER_WNBA_HANDOFF.md) for the spawn-ready session brief.
 
@@ -21,7 +21,7 @@ Merged from two independent audits (codex deep pass + claude deep pass, plus an 
 - **Severity** — `CRITICAL` / `HIGH` / `MEDIUM` / `LOW`. When the two audits disagreed, the higher rating is preserved.
 - **Effort** — rough sizing: `S` (≤30 min) / `M` (a few hours) / `L` (a day or two) / `XL` (multi-day).
 - **Source** — `[both]` = both agents independently flagged; `[codex]` / `[claude]` = single-agent; `[✓]` = verified against source code before inclusion; `[user-surfaced]` = surfaced by user input rather than audit.
-- **Status** — `[x]` in front = shipped via PR. **Trust [`PUNCH_LIST_STATE_2026_05_16.md`](PUNCH_LIST_STATE_2026_05_16.md) over individual checkboxes — it's been reconciled.**
+- **Status** — `[x]` in front = shipped via PR. **Trust [`PUNCH_LIST_STATE_2026_05_17.md`](PUNCH_LIST_STATE_2026_05_17.md) over individual checkboxes — it's been reconciled.**
 - Sport scope: NBA + MLB are the active ship target. **WNBA is next** (prep doc + handoff above). NFL / Soccer / Tennis are planned later. UFC is removed from scope — see [Dead Code](#dead-code-to-remove).
 
 ---
