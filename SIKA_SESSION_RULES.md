@@ -49,7 +49,19 @@ The `[ ]` / `[x]` checkboxes in `SIKA_PUNCH_LIST.md` drift behind merged work. T
 ## 5. Codex review reality (as of 2026-05-16)
 
 - `gpt-5-codex` model errors on ChatGPT-account codex CLI usage. Default to `gpt-5.5` or just omit `--model`.
-- Codex hung 4× during the 2026-05-16 session reviewing apps/ml + apps/api changes. Self-review against the 9-point checklist (see `SMARTER_WNBA_HANDOFF.md`) is the documented fallback. When codex DOES respond, it catches things self-review misses (5 distinct P2s across PRs #154, #165, #166 in this session).
+- Codex hung 4× during the 2026-05-16 session reviewing apps/ml + apps/api changes (and 5× more across the 2026-05-17 WNBA PRs). Self-review against the 9-point checklist below is the documented fallback. When codex DOES respond, it catches things self-review misses; the `python-reviewer` / `typescript-reviewer` subagents are also responsive and have caught real Mediums when codex was hung.
+
+### 9-point self-review checklist (apply before every push)
+
+1. Does the test fail without the change and pass with it?
+2. Are types narrow (no `Any`, no `dict[str, Any]` at boundaries)?
+3. Are inputs validated at the boundary and errors surfaced explicitly?
+4. Any silent fallback that could mask a real bug?
+5. Does the on-disk / API contract match what existing sports established?
+6. Are imports / re-exports preserved for backward compat?
+7. Did I touch only files this PR requires?
+8. Is the PR description specific about scope, contract, and rollback?
+9. Did codex (or the reviewer subagent) flag anything I haven't addressed?
 
 ## 6. Worktree vs repo-root contracts package
 
