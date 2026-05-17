@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   eventStatusLabel,
   filterDashboardEvents,
@@ -178,15 +179,11 @@ export function EventsFeed({
 
   if (error) {
     return (
-      <div className="rounded-xl border border-negative/30 bg-negative-dim px-4 py-8 text-center">
-        <div className="mx-auto flex h-2 w-2 items-center justify-center">
-          <span className="h-2 w-2 rounded-full bg-negative shadow-[0_0_8px_0_var(--negative)]" />
-        </div>
-        <p className="mt-3 text-sm font-medium text-foreground">Couldn&rsquo;t reach the events feed.</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          The API didn&rsquo;t respond. Check that the backend is running, then try again.
-        </p>
-      </div>
+      <EmptyState
+        tone="error"
+        title="Couldn&rsquo;t reach the events feed."
+        description="The API didn&rsquo;t respond. Check that the backend is running, then try again."
+      />
     );
   }
 

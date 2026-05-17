@@ -31,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Badge, SportBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Sparkline } from "@/components/ui/sparkline";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
 import { ENTRY_LABEL, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
@@ -526,15 +527,14 @@ export function PredictionsDesk() {
             </div>
             <div className="cosmos-panel-body flush">
               {predsError ? (
-                <div className="rounded-xl border border-negative/30 bg-negative-dim px-4 py-8 text-center">
-                  <div className="mx-auto flex h-2 w-2 items-center justify-center">
-                    <span className="h-2 w-2 rounded-full bg-negative shadow-[0_0_8px_0_var(--negative)]" />
-                  </div>
-                  <p className="mt-3 text-sm font-medium text-foreground">Couldn&rsquo;t load the ledger.</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {predictionErrorMessage || "The prediction service didn\u2019t respond. Try again in a moment."}
-                  </p>
-                </div>
+                <EmptyState
+                  tone="error"
+                  title="Couldn&rsquo;t load the ledger."
+                  description={
+                    predictionErrorMessage ||
+                    "The prediction service didn\u2019t respond. Try again in a moment."
+                  }
+                />
               ) : (
                 <>
                   <div className="space-y-3 p-4 lg:hidden">
