@@ -3452,6 +3452,142 @@
   .topbar-chip.chip-utc { display: none; }
 }
 
+/* PAPER_PARLAY_SCOPE.md step 5 — operator-built parlay tray docked at
+   bottom of trade-desk. Fixed-position so it survives selection
+   changes; z-index sits BELOW the mobile-only ticket sheet (z-50)
+   so a sheet drag-up covers the tray cleanly. Hidden when empty
+   (component returns null). */
+.parlay-tray {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 40;
+  pointer-events: none;
+  padding: 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+.parlay-tray-inner {
+  pointer-events: auto;
+  max-width: 720px;
+  margin: 0 auto;
+  border-radius: 14px;
+  border: 1px solid var(--color-cosmos-border-soft);
+  background: color-mix(in oklab, var(--color-surface) 92%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  padding: 12px 14px;
+  display: grid;
+  gap: 10px;
+}
+.parlay-tray-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.parlay-tray-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.parlay-tray-label {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: lowercase;
+  color: var(--color-cosmos-text-muted);
+}
+.parlay-tray-count {
+  font-size: 11px;
+  color: var(--color-cosmos-text-bright);
+  font-variant-numeric: tabular-nums;
+}
+.parlay-tray-clear {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--color-cosmos-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+.parlay-tray-clear:hover {
+  color: var(--color-cosmos-text-bright);
+  background: rgba(255, 255, 255, 0.05);
+}
+.parlay-tray-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.parlay-tray-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-cosmos-border-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.parlay-tray-chip-label {
+  color: var(--color-cosmos-text-bright);
+}
+.parlay-tray-chip-side {
+  color: var(--color-cosmos-text-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.parlay-tray-chip-remove {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.04);
+  border: none;
+  border-radius: 999px;
+  color: var(--color-cosmos-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  width: 18px;
+  cursor: pointer;
+}
+.parlay-tray-chip-remove:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--color-cosmos-text-bright);
+}
+.parlay-tray-quote {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-cosmos-border-soft);
+}
+.parlay-tray-quote-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.parlay-tray-quote-label {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--color-cosmos-text-muted);
+}
+.parlay-tray-quote-value {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-cosmos-text-bright);
+}
+.parlay-tray-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 body,
 body *,
 body ::placeholder {

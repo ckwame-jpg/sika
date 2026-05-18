@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useParlayTray } from "@/components/parlays/parlay-tray-store";
 import { TradeDialog } from "@/components/positions/trade-dialog";
 import { PickHistoryStrip } from "./pick-history-strip";
 import { PredictionIntervalBand } from "./prediction-interval-band";
@@ -166,6 +167,7 @@ export function TradeTicket({
           <Button variant="primary" size="sm" onClick={() => setTradeDialogOpen(true)}>
             Paper trade
           </Button>
+          <ParlayTrayButton selection={selection} />
           {selection.kalshiUrl && (
             <Button variant="ghost" size="sm" asChild>
               <a href={selection.kalshiUrl} target="_blank" rel="noreferrer noopener">
@@ -197,5 +199,47 @@ export function TradeTicket({
         description="Open a paper trade for this pick without leaving the trade desk."
       />
     </>
+  );
+}
+
+/**
+ * PAPER_PARLAY_SCOPE.md step 5 — "Add to parlay" button on the trade
+ * ticket. Calls into the module-level tray store from
+ * ``components/parlays/parlay-tray-store.ts``. Disabled when the leg
+ * is already in the tray (idempotent reassurance) or when the tray
+ * has hit the MAX_TRAY_LEGS cap.
+ *
+ * Extracted as a sub-component so the parent ticket doesn't have to
+ * subscribe to tray state — only this button (and the tray itself)
+ * re-render on tray changes.
+ */
+function ParlayTrayButton({ selection }: { selection: TradeSelection }) {
+  const { addLeg, removeLeg, contains, isFull } = useParlayTray();
+  const alreadyInTray = contains(selection.ticker);
+  // Toggle UX: if the leg is already in the tray, the button removes
+  // it. Otherwise it adds — unless the tray is full, in which case
+  // the button disables itself with a helpful label.
+  if (alreadyInTray) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => removeLeg(selection.ticker)}
+        data-testid="ticket-parlay-toggle"
+      >
+        Remove from parlay
+      </Button>
+    );
+  }
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => addLeg(selection)}
+      disabled={isFull}
+      data-testid="ticket-parlay-toggle"
+    >
+      {isFull ? "Parlay full" : "Add to parlay"}
+    </Button>
   );
 }

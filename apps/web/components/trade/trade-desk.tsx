@@ -14,6 +14,7 @@ import type {
 import { cn, fmtDatetime, fmtEdge, fmtPercent, fmtPrice, fmtRelative, fmtStartsAt, sportLabel } from "@/lib/utils";
 import { PlayerPropGroup } from "@/components/trade/player-prop-group";
 import { TimeToCloseBadge } from "@/components/trade/time-to-close-badge";
+import { ParlayTray } from "@/components/parlays/parlay-tray";
 import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
 import { ProbabilitySurfaceHero } from "@/components/trade/probability-surface-hero";
 import { Sparkline } from "@/components/ui/sparkline";
@@ -743,6 +744,13 @@ export function TradeDesk({ sport }: { sport?: string }) {
           <TradeTicket selection={selected} onClose={() => setSelected(null)} />
         </div>
       </div>
+
+      {/* PAPER_PARLAY_SCOPE.md step 5 — operator-built parlay tray.
+          Hidden when empty (returns null). Mounted at the page level
+          so it survives selection changes. Step 6 will pass onSave to
+          open the save dialog; step 5 leaves the button disabled
+          until then. */}
+      <ParlayTray />
     </div>
   );
 }
