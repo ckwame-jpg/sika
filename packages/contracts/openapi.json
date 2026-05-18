@@ -2528,6 +2528,18 @@
         "title": "ModelFamilyRuntimeHealthRead",
         "type": "object"
       },
+      "ModelReadinessSettingsApplied": {
+        "description": "Lightweight ack for ``PATCH /ops/models/readiness/settings``.\n\nBug #235 \u2014 the previous response returned the full\n``ModelReadinessSummaryRead`` payload, which forced the route to\ncall ``build_model_readiness_summary`` after the write. That helper\ntakes ~22s in production, blowing past the 15s client timeout in\n``apps/web/lib/api.ts`` and surfacing a \"request timed out\"\noverlay to operators even though the write itself completed in\nmilliseconds.\n\nThe fix is to split the response: PATCH returns only an\nacknowledgement, and the caller re-fetches the summary via\n``GET /ops/models/readiness`` (already cached by SWR) to render\nthe updated value. Always ``applied=True`` on a 200 \u2014 failures\nsurface as 4xx/5xx with the standard FastAPI error envelope.",
+        "properties": {
+          "applied": {
+            "default": true,
+            "title": "Applied",
+            "type": "boolean"
+          }
+        },
+        "title": "ModelReadinessSettingsApplied",
+        "type": "object"
+      },
       "ModelReadinessSettingsUpdate": {
         "properties": {
           "enqueue_shadow_backfill": {
@@ -8475,6 +8487,7 @@
     },
     "/ops/models/readiness/settings": {
       "patch": {
+        "description": "Apply a partial PATCH of operator settings.\n\nBug #235 \u2014 split-response design. The previous version returned\nthe full ``ModelReadinessSummaryRead`` after the write, which\nforced ``build_model_readiness_summary(db)`` (~22s in production)\nto run inside the PATCH handler. That blew past the 15s client\ntimeout in ``apps/web/lib/api.ts`` and surfaced a misleading\n\"request timed out\" overlay on every settings-page click even\nthough the write itself completed in milliseconds.\n\nThis route now returns only ``{\"applied\": true}`` once the\npersisted writes commit. Callers that need the refreshed summary\n(the settings page chip cluster, the model-readiness panel) GET\n``/ops/models/readiness`` afterwards \u2014 typically by ``mutate``-ing\nthe SWR key so the cached value re-fetches in the background.\n``GET`` and ``PATCH`` are no longer coupled, so the slow summary\nno longer gates the write acknowledgement.\n\nEach field is independently optional (partial-PATCH idiom): a\npayload that touches only one knob leaves the others alone. The\nsetters themselves remain idempotent \u2014 re-applying the same value\nis a no-op write.",
         "operationId": "update_model_readiness_settings_ops_models_readiness_settings_patch",
         "requestBody": {
           "content": {
@@ -8491,7 +8504,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ModelReadinessSummaryRead"
+                  "$ref": "#/components/schemas/ModelReadinessSettingsApplied"
                 }
               }
             },

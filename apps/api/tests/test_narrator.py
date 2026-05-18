@@ -315,6 +315,8 @@ def test_readiness_settings_patch_accepts_narrator_enabled(client, db_session) -
         "/ops/models/readiness/settings",
         json={"narrator_enabled": True, "enqueue_shadow_backfill": False},
     )
+    # Bug #235 — PATCH returns a lightweight ack; the persisted toggle
+    # surfaces on the next GET (and via the writer assertion below).
     assert response.status_code == 200
-    assert response.json()["narrator_enabled"] is True
+    assert response.json() == {"applied": True}
     assert effective_narrator_enabled(db_session) is True

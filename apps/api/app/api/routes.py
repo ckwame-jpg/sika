@@ -42,6 +42,7 @@ from app.schemas import (
     MarketMappingStateRead,
     MarketSnapshotRead,
     ModelFamilyReadinessRead,
+    ModelReadinessSettingsApplied,
     ModelReadinessSettingsUpdate,
     ModelReadinessSummaryRead,
     CurrentUserRead,
@@ -1473,11 +1474,37 @@ def model_readiness_summary(db: Session = Depends(get_db)) -> ModelReadinessSumm
     return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
 
 
-@ops_router.patch("/models/readiness/settings", response_model=ModelReadinessSummaryRead)
+@ops_router.patch(
+    "/models/readiness/settings",
+    response_model=ModelReadinessSettingsApplied,
+)
 def update_model_readiness_settings(
     payload: ModelReadinessSettingsUpdate,
     db: Session = Depends(get_db),
-) -> ModelReadinessSummaryRead:
+) -> ModelReadinessSettingsApplied:
+    """Apply a partial PATCH of operator settings.
+
+    Bug #235 — split-response design. The previous version returned
+    the full ``ModelReadinessSummaryRead`` after the write, which
+    forced ``build_model_readiness_summary(db)`` (~22s in production)
+    to run inside the PATCH handler. That blew past the 15s client
+    timeout in ``apps/web/lib/api.ts`` and surfaced a misleading
+    "request timed out" overlay on every settings-page click even
+    though the write itself completed in milliseconds.
+
+    This route now returns only ``{"applied": true}`` once the
+    persisted writes commit. Callers that need the refreshed summary
+    (the settings page chip cluster, the model-readiness panel) GET
+    ``/ops/models/readiness`` afterwards — typically by ``mutate``-ing
+    the SWR key so the cached value re-fetches in the background.
+    ``GET`` and ``PATCH`` are no longer coupled, so the slow summary
+    no longer gates the write acknowledgement.
+
+    Each field is independently optional (partial-PATCH idiom): a
+    payload that touches only one knob leaves the others alone. The
+    setters themselves remain idempotent — re-applying the same value
+    is a no-op write.
+    """
     # Codex round-4 P2 on PR #24: ``ml_serving_mode`` is now optional;
     # skip the write (and the shadow-backfill side effect) when the
     # caller didn't include it. This lets partial PATCHes (e.g.
@@ -1499,7 +1526,7 @@ def update_model_readiness_settings(
     if payload.sportsbook_disagreement_min_book_count is not None:
         set_sportsbook_disagreement_min_book_count(db, payload.sportsbook_disagreement_min_book_count)
     db.commit()
-    return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
+    return ModelReadinessSettingsApplied(applied=True)
 
 
 @ops_router.get("/models/readiness/{family_key}", response_model=ModelFamilyReadinessRead)

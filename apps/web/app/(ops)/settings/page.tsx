@@ -74,6 +74,19 @@ export default function SettingsPage() {
     // would silently revert it. Send only the field we're actually
     // changing — the API now treats the mode as optional and leaves
     // it untouched when omitted.
+    //
+    // Bug #235 — PATCH now returns a lightweight ``{applied: true}``
+    // ack instead of the full summary (which used to force ~22s of
+    // server-side aggregation inside the request handler, blowing
+    // past the 15s client timeout). The chip flips instantly via
+    // SWR optimistic mutate so the user gets feedback immediately;
+    // ``refreshSettings()`` re-fetches the canonical summary from
+    // the GET endpoint to overwrite the optimistic value once the
+    // server confirms.
+    await refreshSettings(
+      settings ? { ...settings, pick_history_default_n: next } : undefined,
+      { revalidate: false },
+    );
     await updateModelReadinessSettings({
       pick_history_default_n: next,
     });
@@ -83,6 +96,12 @@ export default function SettingsPage() {
   async function toggleNarrator(next: boolean): Promise<void> {
     // Smarter #31 — partial-PATCH idiom (same as depth above) so
     // flipping the narrator doesn't clobber other operator settings.
+    // Bug #235 — same optimistic-update pattern as ``selectDepth``;
+    // see that handler's comment for the full rationale.
+    await refreshSettings(
+      settings ? { ...settings, narrator_enabled: next } : undefined,
+      { revalidate: false },
+    );
     await updateModelReadinessSettings({
       narrator_enabled: next,
     });

@@ -79,8 +79,12 @@ def test_readiness_settings_endpoint_round_trips_pick_history_default_n(client):
             "pick_history_default_n": 10,
         },
     )
+    # Bug #235 — PATCH returns a lightweight ack; the GET endpoint is
+    # the canonical source for the refreshed summary.
     assert response.status_code == 200
-    assert response.json()["pick_history_default_n"] == 10
+    assert response.json() == {"applied": True}
+    summary = client.get("/ops/models/readiness")
+    assert summary.json()["pick_history_default_n"] == 10
 
 
 def test_readiness_settings_endpoint_omits_pick_history_default_n_means_no_change(client):
@@ -93,7 +97,8 @@ def test_readiness_settings_endpoint_omits_pick_history_default_n_means_no_chang
             "pick_history_default_n": 20,
         },
     )
-    assert pinned.json()["pick_history_default_n"] == 20
+    assert pinned.status_code == 200
+    assert client.get("/ops/models/readiness").json()["pick_history_default_n"] == 20
 
     # Then PATCH without it — the pinned value should survive.
     response = client.patch(
@@ -101,7 +106,8 @@ def test_readiness_settings_endpoint_omits_pick_history_default_n_means_no_chang
         json={"ml_serving_mode": "heuristic", "enqueue_shadow_backfill": False},
     )
     assert response.status_code == 200
-    assert response.json()["pick_history_default_n"] == 20
+    assert response.json() == {"applied": True}
+    assert client.get("/ops/models/readiness").json()["pick_history_default_n"] == 20
 
 
 def test_readiness_settings_endpoint_422_on_out_of_range_n(client):
@@ -128,7 +134,8 @@ def test_readiness_settings_endpoint_depth_only_does_not_clobber_serving_mode(cl
         "/ops/models/readiness/settings",
         json={"ml_serving_mode": "shadow", "enqueue_shadow_backfill": False},
     )
-    assert pinned.json()["ml_serving_mode"] == "shadow"
+    assert pinned.status_code == 200
+    assert client.get("/ops/models/readiness").json()["ml_serving_mode"] == "shadow"
 
     # Depth-only PATCH must NOT clobber the pinned mode.
     response = client.patch(
@@ -136,6 +143,7 @@ def test_readiness_settings_endpoint_depth_only_does_not_clobber_serving_mode(cl
         json={"pick_history_default_n": 10},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["pick_history_default_n"] == 10
-    assert body["ml_serving_mode"] == "shadow"
+    assert response.json() == {"applied": True}
+    summary = client.get("/ops/models/readiness").json()
+    assert summary["pick_history_default_n"] == 10
+    assert summary["ml_serving_mode"] == "shadow"

@@ -978,6 +978,26 @@ class ModelReadinessSettingsUpdate(BaseModel):
     sportsbook_disagreement_min_book_count: int | None = Field(default=None, ge=1)
 
 
+class ModelReadinessSettingsApplied(BaseModel):
+    """Lightweight ack for ``PATCH /ops/models/readiness/settings``.
+
+    Bug #235 — the previous response returned the full
+    ``ModelReadinessSummaryRead`` payload, which forced the route to
+    call ``build_model_readiness_summary`` after the write. That helper
+    takes ~22s in production, blowing past the 15s client timeout in
+    ``apps/web/lib/api.ts`` and surfacing a "request timed out"
+    overlay to operators even though the write itself completed in
+    milliseconds.
+
+    The fix is to split the response: PATCH returns only an
+    acknowledgement, and the caller re-fetches the summary via
+    ``GET /ops/models/readiness`` (already cached by SWR) to render
+    the updated value. Always ``applied=True`` on a 200 — failures
+    surface as 4xx/5xx with the standard FastAPI error envelope."""
+
+    applied: bool = True
+
+
 class MarketHistoryPointRead(BaseModel):
     timestamp: UTCDateTime
     yes_bid: float | None = None

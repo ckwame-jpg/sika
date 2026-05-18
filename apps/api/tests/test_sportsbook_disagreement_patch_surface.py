@@ -124,10 +124,10 @@ def test_patch_writes_threshold_and_min_book_count(client, db_session) -> None:
             "sportsbook_disagreement_min_book_count": 7,
         },
     )
+    # Bug #235 — PATCH returns a lightweight ack; values surface on
+    # the next GET.
     assert response.status_code == 200
-    body = response.json()
-    assert body["sportsbook_disagreement_threshold"] == 0.08
-    assert body["sportsbook_disagreement_min_book_count"] == 7
+    assert response.json() == {"applied": True}
     # And the values are actually persisted (next read returns them).
     assert effective_sportsbook_disagreement_threshold(db_session) == 0.08
     assert effective_sportsbook_disagreement_min_book_count(db_session) == 7
@@ -145,10 +145,8 @@ def test_patch_partial_leaves_other_sportsbook_setting_untouched(
         json={"sportsbook_disagreement_min_book_count": 8},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["sportsbook_disagreement_min_book_count"] == 8
-    # threshold untouched.
-    assert body["sportsbook_disagreement_threshold"] == 0.10
+    assert response.json() == {"applied": True}
+    # threshold untouched, min_book_count updated.
     assert effective_sportsbook_disagreement_threshold(db_session) == 0.10
     assert effective_sportsbook_disagreement_min_book_count(db_session) == 8
 
@@ -167,6 +165,7 @@ def test_patch_omitting_sportsbook_fields_doesnt_clobber_existing_values(
         json={"pick_history_default_n": 10},
     )
     assert response.status_code == 200
-    body = response.json()
-    assert body["sportsbook_disagreement_threshold"] == 0.07
-    assert body["sportsbook_disagreement_min_book_count"] == 6
+    assert response.json() == {"applied": True}
+    # And the GET still reflects the un-touched sportsbook knobs.
+    assert effective_sportsbook_disagreement_threshold(db_session) == 0.07
+    assert effective_sportsbook_disagreement_min_book_count(db_session) == 6
