@@ -926,6 +926,29 @@ def _cancel_check_before_commit(session: Session) -> None:
         )
 
 
+def _apply_worker_statement_timeout(db: Session) -> None:
+    """Bug #51: bound any individual DB statement issued by the refresh
+    worker so a single slow query can't pin the worker thread (and its
+    pooled connection) indefinitely.
+
+    SET LOCAL applies only to the current transaction, so the value
+    follows the session lifetime managed by ``with SessionLocal()`` and
+    won't leak across pool checkouts. No-op for non-Postgres dialects
+    (SQLite has no equivalent; tests use SQLite and remain unaffected).
+    """
+    bind = db.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    timeout_seconds = int(get_settings().refresh_worker_statement_timeout_seconds)
+    if timeout_seconds <= 0:
+        return
+    # SET LOCAL takes integer milliseconds. Use parameter binding on the
+    # SET value via a literal — Postgres' SET syntax doesn't accept bind
+    # params, but the value is operator-controlled config (not user input)
+    # so f-string interpolation of an int is safe.
+    db.execute(text(f"SET LOCAL statement_timeout = {timeout_seconds * 1000}"))
+
+
 def _execute_job_in_thread(
     job_id: int,
     done_event: threading.Event,
@@ -948,6 +971,13 @@ def _execute_job_in_thread(
 
 def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
     with SessionLocal() as db:
+        # Bug #51: bound the main-thread DB statements too. The advisory
+        # lock in ``_claim_next_job`` and the iteration in
+        # ``reconcile_stale_jobs`` both run on the scheduler's calling
+        # thread; if either hangs (lock contention, slow scan) the
+        # APScheduler tick never completes and ``max_instances=1``
+        # silently skips every subsequent tick.
+        _apply_worker_statement_timeout(db)
         reconciled = reconcile_stale_jobs(db)
         claimed = _claim_next_job(db)
         if claimed is None:
@@ -984,6 +1014,9 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
     cancel_event.set()
 
     with SessionLocal() as db:
+        # Bug #51: bound the cleanup-path statements too — see the
+        # equivalent comment at the top of this function.
+        _apply_worker_statement_timeout(db)
         timed_out = _guarded_fail_job(db, job_id, WORKER_TIMEOUT_ERROR)
         snapshot = _refresh_job_snapshot(db, job_id)
         if timed_out and snapshot is not None:
@@ -999,6 +1032,11 @@ def process_refresh_job_queue_once() -> RefreshJobSnapshot | None:
 
 def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
     with SessionLocal() as db:
+        # Bug #51: cap individual DB statements so a slow query can't
+        # pin this worker thread (and its pooled connection)
+        # indefinitely. Must be applied BEFORE any other DB work so the
+        # very first query (``db.get`` below) is also bounded.
+        _apply_worker_statement_timeout(db)
         job = db.get(RefreshJob, job_id)
         if job is None:
             return None
