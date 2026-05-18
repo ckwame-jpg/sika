@@ -305,7 +305,7 @@ export function DemoOrdersTable({ maxHeight }: DemoOrdersTableProps) {
 /**
  * Two-click delete affordance — mirrors the DeletePositionButton +
  * paper-parlay DeleteButton. First click swaps the trash icon for a
- * "sure?" pill; second click commits. Auto-disarms after 3s. Does
+ * "sure?" pill; second click commits. Auto-disarms after 5s. Does
  * NOT call /cancel on the Kalshi sandbox side; that's a separate
  * "Cancel" button. Delete is local-state cleanup only.
  */
@@ -316,7 +316,7 @@ function DeleteOrderButton({ orderId }: { orderId: number }) {
   async function handleClick() {
     if (!armed) {
       setArmed(true);
-      setTimeout(() => setArmed(false), 3000);
+      setTimeout(() => setArmed(false), 5000);
       return;
     }
     setDeleting(true);

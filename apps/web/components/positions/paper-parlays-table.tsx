@@ -214,7 +214,7 @@ function legSummary(leg: PaperParlayRead["legs"][number]): string {
 /**
  * Two-click delete affordance: first click swaps the trash icon for
  * a "Sure?" pill; second click commits the DELETE. Click outside or
- * wait ~3s and it resets. Stops accidental deletions without forcing
+ * wait ~5s and it resets. Stops accidental deletions without forcing
  * a full modal for a small action.
  */
 function DeleteButton({ parlayId }: { parlayId: number }) {
@@ -225,8 +225,8 @@ function DeleteButton({ parlayId }: { parlayId: number }) {
     e.stopPropagation(); // Don't toggle the expand panel.
     if (!armed) {
       setArmed(true);
-      // Auto-disarm after 3s so the trash icon reappears.
-      setTimeout(() => setArmed(false), 3000);
+      // Auto-disarm after 5s so the trash icon reappears.
+      setTimeout(() => setArmed(false), 5000);
       return;
     }
     setDeleting(true);
