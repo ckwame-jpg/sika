@@ -1,9 +1,16 @@
-"""Operator-built paper parlay service (PAPER_PARLAY_SCOPE.md step 2).
+"""Operator-built paper parlay service.
 
-``create_paper_parlay`` resolves each operator-supplied leg against the
-live market + latest prediction data, computes the combined market
-price / joint probability / edge / American odds, and persists a
-``PaperParlay`` + ``PaperParlayLeg`` set atomically.
+PAPER_PARLAY_SCOPE.md step 2 — ``create_paper_parlay``: resolves each
+operator-supplied leg against the live market + latest prediction
+data, computes the combined market price / joint probability / edge /
+American odds, and persists a ``PaperParlay`` + ``PaperParlayLeg``
+set atomically.
+
+PAPER_PARLAY_SCOPE.md step 4 — ``settle_paper_parlays``: rolls up the
+outcomes of each leg's source ``Prediction`` once they've all
+settled. Mirrors the ``settle_parlay_predictions`` semantics from the
+auto-generator (parlays.py) so paper parlays and prediction parlays
+settle by the same rules.
 
 Locked decisions from PAPER_PARLAY_SCOPE.md (see "Operator decisions"):
 
@@ -32,6 +39,7 @@ independent product and the correlation lift) will catch it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from math import prod
 
 from fastapi import HTTPException
@@ -42,6 +50,10 @@ from app.models import Market, PaperParlay, PaperParlayLeg, Prediction
 from app.schemas import PaperParlayCreate, PaperParlayLegCreate
 from app.services.parlays import american_odds_from_probability
 from app.services.predictions import OPEN_MARKET_STATUSES
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 MIN_LEG_COUNT = 2
@@ -372,3 +384,170 @@ def _safe_float(value: object) -> float | None:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+
+
+# -----------------------------------------------------------------------------
+# Settlement (PAPER_PARLAY_SCOPE.md step 4)
+# -----------------------------------------------------------------------------
+
+# Terminal outcome values written to ``PaperParlay.outcome``. Mirrors
+# the auto-generator's parlay-prediction vocabulary (parlays.py) so a
+# single set of UI display logic can render both surfaces.
+OUTCOME_PENDING = "pending"
+OUTCOME_WON = "won"
+OUTCOME_LOST = "lost"
+OUTCOME_PUSH = "push"
+OUTCOME_CANCELLED = "cancelled"
+OUTCOME_UNRESOLVED = "unresolved"
+
+
+def _empty_settlement_summary() -> dict[str, int]:
+    return {
+        "processed": 0,
+        "updated": 0,
+        "pending": 0,
+        "won": 0,
+        "lost": 0,
+        "cancelled": 0,
+        "unresolved": 0,
+    }
+
+
+def settle_paper_parlays(db: Session) -> dict[str, int]:
+    """Roll up settlement on every pending paper parlay.
+
+    For each parlay still in ``settlement_status == "pending"``:
+
+    - If any leg's ``source_prediction`` is missing (e.g. the prediction
+      row was pruned), mark the parlay ``unresolved`` with a note.
+    - If every leg's source prediction has a ``won`` outcome →
+      ``outcome=won``, ``realized_pnl = stake * (1/combined_market_price - 1)``.
+    - If ANY leg lost → ``outcome=lost``, ``realized_pnl = -stake``.
+    - If any leg pushed/cancelled (but none lost) → ``outcome=cancelled``,
+      ``realized_pnl=0`` (sportsbook convention varies; treating the
+      whole parlay as cancelled is the conservative paper choice).
+    - If any source prediction is itself ``unresolved`` → mirror that.
+    - Otherwise (at least one leg still pending) → leave pending.
+
+    Codex pattern 4 (reduction reuse): the same ``any() / all()``
+    aggregation the auto-generator uses, applied here so paper +
+    prediction parlays settle by identical rules. If the auto-
+    generator's rollup changes (e.g. adds a "half-won" outcome), the
+    regression tests below will surface the divergence loudly.
+    """
+    summary = _empty_settlement_summary()
+    pending_parlays = db.scalars(
+        select(PaperParlay)
+        .where(PaperParlay.settlement_status == "pending")
+        .order_by(PaperParlay.created_at.asc(), PaperParlay.id.asc())
+    ).all()
+    summary["processed"] = len(pending_parlays)
+    if not pending_parlays:
+        return summary
+
+    now = _now_utc()
+    for parlay in pending_parlays:
+        source_predictions = [
+            leg.source_prediction for leg in parlay.legs if leg.source_prediction is not None
+        ]
+        # Codex pattern 5 (reset edge cases): if any leg lost its
+        # source prediction (the row was pruned, the FK was nulled),
+        # we can't settle. Mark unresolved with a note. Same pattern
+        # as parlays._settle_parlay_rows.
+        if len(source_predictions) != len(parlay.legs):
+            _apply_unresolved(
+                parlay,
+                summary,
+                notes="One or more source leg predictions are missing.",
+            )
+            continue
+
+        outcomes = [pred.prediction_outcome for pred in source_predictions]
+        statuses = [pred.settlement_status for pred in source_predictions]
+
+        if any(outcome == "lost" for outcome in outcomes):
+            parlay.settlement_status = "settled"
+            parlay.outcome = OUTCOME_LOST
+            parlay.realized_pnl = round(-parlay.stake, 4)
+            parlay.settled_at = now
+            parlay.settlement_notes = "At least one leg settled as a loss."
+            summary["updated"] += 1
+            summary["lost"] += 1
+            continue
+
+        if outcomes and all(outcome == "won" for outcome in outcomes):
+            parlay.settlement_status = "settled"
+            parlay.outcome = OUTCOME_WON
+            # Decision #1 (dollar stake): payout on win =
+            # ``stake * (1 / combined_market_price - 1)``. The "1/p - 1"
+            # factor is the parlay's decimal-odds profit per unit
+            # wagered (decimal odds = 1/p; profit = odds - 1).
+            #
+            # Codex pattern 6 (implicit data shape): combined_market_price
+            # comes from the saved snapshot which is bounded (0, 1)
+            # by the schema; no division-by-zero guard needed at
+            # runtime as long as that invariant holds. If a future
+            # caller bypasses the schema and writes 0, this will
+            # raise ZeroDivisionError and surface in the cron logs
+            # rather than silently producing infinity.
+            profit = parlay.stake * (1.0 / parlay.combined_market_price - 1.0)
+            parlay.realized_pnl = round(profit, 4)
+            parlay.settled_at = now
+            parlay.settlement_notes = "Every leg settled as a win."
+            summary["updated"] += 1
+            summary["won"] += 1
+            continue
+
+        if any(outcome in {"cancelled", "push"} for outcome in outcomes):
+            parlay.settlement_status = "settled"
+            parlay.outcome = OUTCOME_CANCELLED
+            parlay.realized_pnl = 0.0
+            parlay.settled_at = now
+            parlay.settlement_notes = (
+                "At least one leg cancelled or pushed, so the parlay was cancelled."
+            )
+            summary["updated"] += 1
+            summary["cancelled"] += 1
+            continue
+
+        if any(
+            status == "unresolved" or outcome == "unresolved"
+            for status, outcome in zip(statuses, outcomes, strict=False)
+        ):
+            _apply_unresolved(
+                parlay,
+                summary,
+                notes="One or more legs left the open state without a final settlement result.",
+            )
+            continue
+
+        # At least one leg still pending → don't touch the parlay.
+        summary["pending"] += 1
+
+    db.flush()
+    return summary
+
+
+def _apply_unresolved(
+    parlay: PaperParlay, summary: dict[str, int], *, notes: str
+) -> None:
+    """Apply the ``unresolved`` outcome, but only count the row as
+    updated when its state actually changed. Codex pattern 5 / bug
+    #27 framing: a parlay already in ``unresolved`` from a prior
+    settlement pass shouldn't re-bump the operator-facing
+    ``updated`` counter on every cron tick."""
+    needs_update = (
+        parlay.settlement_status != "pending"  # already settled means no-op
+        or parlay.outcome != OUTCOME_UNRESOLVED
+        or parlay.settlement_notes != notes
+    )
+    # NOTE: pending parlays move TO unresolved here; we keep
+    # ``settlement_status = "pending"`` so the next cron tick re-evaluates
+    # if the upstream prediction rows reappear / re-settle. That mirrors
+    # the auto-generator's behavior (parlays.py:719-728): unresolved is
+    # a soft state, not a terminal one.
+    if needs_update:
+        parlay.outcome = OUTCOME_UNRESOLVED
+        parlay.settlement_notes = notes
+        summary["updated"] += 1
+    summary["unresolved"] += 1
