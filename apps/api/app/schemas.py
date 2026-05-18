@@ -1253,6 +1253,12 @@ class PositionsRead(BaseModel):
     # consumers that don't read these fields working unchanged.
     paper_truncated: bool = False
     demo_truncated: bool = False
+    # PAPER_PARLAY_SCOPE.md step 3: portfolio aggregator surfaces
+    # paper parlays alongside paper positions. Defaults to an empty
+    # list + False so existing consumers (e.g. snapshot fixtures from
+    # before step 3 landed) keep deserializing without change.
+    paper_parlays: list[PaperParlayRead] = []
+    paper_parlays_truncated: bool = False
     # Smarter #32 — drawdown brake snapshot. ``None`` when bankroll
     # resolution fails (operator hasn't configured
     # ``kelly_sizing_bankroll_dollars`` and the Kalshi opt-in is off

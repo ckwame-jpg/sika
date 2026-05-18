@@ -2665,6 +2665,355 @@
         "title": "ModelReadinessSummaryRead",
         "type": "object"
       },
+      "PaperParlayCreate": {
+        "description": "Operator's paper-parlay save payload.\n\nStake is a freeform dollar amount (decision #1). Min/max leg\nconstraints are enforced at both the schema layer (here) and the\nservice layer (``create_paper_parlay``) \u2014 schema catches obvious\nbad payloads at the boundary; the service-side check is the\nauthoritative guard against a future caller bypassing the schema.",
+        "properties": {
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/PaperParlayLegCreate"
+            },
+            "maxItems": 6,
+            "minItems": 2,
+            "title": "Legs",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "stake": {
+            "description": "Dollar amount wagered.",
+            "exclusiveMinimum": 0.0,
+            "title": "Stake",
+            "type": "number"
+          }
+        },
+        "required": [
+          "legs",
+          "stake"
+        ],
+        "title": "PaperParlayCreate",
+        "type": "object"
+      },
+      "PaperParlayLegCreate": {
+        "description": "One leg of an operator-built paper parlay (PAPER_PARLAY_SCOPE.md\ndecision #3): ``suggested_price`` is the operator's snapshot of the\nleg's entry price at tray-add time \u2014 NOT the current market price.\nThe save endpoint trusts this value as the locked entry price for\nthe parlay's combined_market_price calculation.",
+        "properties": {
+          "side": {
+            "enum": [
+              "yes",
+              "no"
+            ],
+            "title": "Side",
+            "type": "string"
+          },
+          "suggested_price": {
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Suggested Price",
+            "type": "number"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "side",
+          "suggested_price"
+        ],
+        "title": "PaperParlayLegCreate",
+        "type": "object"
+      },
+      "PaperParlayLegRead": {
+        "properties": {
+          "event_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Name"
+          },
+          "fair_no_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair No Price"
+          },
+          "fair_yes_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fair Yes Price"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "leg_index": {
+            "title": "Leg Index",
+            "type": "integer"
+          },
+          "market_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Id"
+          },
+          "market_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Kind"
+          },
+          "market_title": {
+            "title": "Market Title",
+            "type": "string"
+          },
+          "side": {
+            "title": "Side",
+            "type": "string"
+          },
+          "source_prediction_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Prediction Id"
+          },
+          "sport_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sport Key"
+          },
+          "stat_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Key"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "subject_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Team"
+          },
+          "suggested_price": {
+            "title": "Suggested Price",
+            "type": "number"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "leg_index",
+          "ticker",
+          "market_title",
+          "side",
+          "suggested_price"
+        ],
+        "title": "PaperParlayLegRead",
+        "type": "object"
+      },
+      "PaperParlayRead": {
+        "properties": {
+          "american_odds": {
+            "title": "American Odds",
+            "type": "string"
+          },
+          "combined_market_price": {
+            "title": "Combined Market Price",
+            "type": "number"
+          },
+          "combined_model_probability": {
+            "title": "Combined Model Probability",
+            "type": "number"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "leg_count": {
+            "title": "Leg Count",
+            "type": "integer"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/PaperParlayLegRead"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "participating_sports": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Participating Sports",
+            "type": "array"
+          },
+          "realized_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl"
+          },
+          "settled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled At"
+          },
+          "settlement_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Notes"
+          },
+          "settlement_status": {
+            "title": "Settlement Status",
+            "type": "string"
+          },
+          "sport_scope": {
+            "title": "Sport Scope",
+            "type": "string"
+          },
+          "stake": {
+            "title": "Stake",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "created_at",
+          "stake",
+          "leg_count",
+          "sport_scope",
+          "participating_sports",
+          "combined_market_price",
+          "combined_model_probability",
+          "american_odds",
+          "edge",
+          "settlement_status",
+          "outcome",
+          "legs"
+        ],
+        "title": "PaperParlayRead",
+        "type": "object"
+      },
       "PaperPositionCreate": {
         "properties": {
           "entry_price": {
@@ -3609,6 +3958,19 @@
           },
           "kalshi_account": {
             "$ref": "#/components/schemas/KalshiAccountRead"
+          },
+          "paper_parlays": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PaperParlayRead"
+            },
+            "title": "Paper Parlays",
+            "type": "array"
+          },
+          "paper_parlays_truncated": {
+            "default": false,
+            "title": "Paper Parlays Truncated",
+            "type": "boolean"
           },
           "paper_positions": {
             "items": {
@@ -8056,6 +8418,108 @@
         "tags": [
           "ops"
         ]
+      }
+    },
+    "/paper-parlays": {
+      "get": {
+        "description": "List paper parlays, newest first.\n\nMirrors the ``/positions`` paper-position pattern (capped at\n``limit + 1`` rows so truncation is observable; the cap defaults\nto 200 with a 500 hard ceiling). When ``settlement_status`` is\nsupplied, only matching rows are returned \u2014 useful for the\nportfolio's \"pending parlays\" tab.",
+        "operationId": "list_paper_parlays_paper_parlays_get",
+        "parameters": [
+          {
+            "description": "Optional filter: 'pending' (default behavior is to return all). Currently only ``pending`` and ``settled`` are valid; other values yield 400.",
+            "in": "query",
+            "name": "settlement_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional filter: 'pending' (default behavior is to return all). Currently only ``pending`` and ``settled`` are valid; other values yield 400.",
+              "title": "Settlement Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PaperParlayRead"
+                  },
+                  "title": "Response List Paper Parlays Paper Parlays Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Paper Parlays"
+      },
+      "post": {
+        "description": "PAPER_PARLAY_SCOPE.md step 3: create a paper parlay from the\noperator's tray submission. Validation lives in the service layer\n(``create_paper_parlay``); this endpoint just wires the request\nthrough and commits.",
+        "operationId": "open_paper_parlay_paper_parlays_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperParlayCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperParlayRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Open Paper Parlay"
       }
     },
     "/paper-positions": {

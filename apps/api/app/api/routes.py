@@ -13,6 +13,7 @@ from app.models import (
     Market,
     MarketSnapshot,
     NarratorOutputCache,
+    PaperParlay,
     PaperPosition,
     ParlayPrediction,
     ParlayRecommendation,
@@ -42,6 +43,8 @@ from app.schemas import (
     ModelFamilyReadinessRead,
     ModelReadinessSettingsUpdate,
     ModelReadinessSummaryRead,
+    PaperParlayCreate,
+    PaperParlayRead,
     PaperPositionCreate,
     PaperPositionExit,
     PaperPositionRead,
@@ -95,6 +98,7 @@ from app.services.operator_settings import (
     set_sportsbook_disagreement_threshold,
 )
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
+from app.services.paper_parlays import create_paper_parlay
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
 from app.services.refresh_jobs import enqueue_refresh_job, enqueue_shadow_capture_job, get_refresh_job, reconcile_stale_jobs as reconcile_stale_refresh_jobs
@@ -1512,6 +1516,19 @@ def get_positions(
     demo_truncated = len(demo_rows) > demo_limit
     demo_orders = demo_rows[:demo_limit]
 
+    # PAPER_PARLAY_SCOPE.md step 3: paper parlays surface alongside
+    # paper positions on the portfolio page. Same fetch shape as
+    # ``paper_rows`` above — ``limit + 1`` so the truncation flag is
+    # exact at the boundary, cap reused from ``paper_limit`` so the
+    # operator only has one knob to raise.
+    paper_parlay_rows = db.scalars(
+        select(PaperParlay)
+        .order_by(PaperParlay.created_at.desc(), PaperParlay.id.desc())
+        .limit(paper_limit + 1)
+    ).all()
+    paper_parlays_truncated = len(paper_parlay_rows) > paper_limit
+    paper_parlays = paper_parlay_rows[:paper_limit]
+
     kalshi_account = build_kalshi_account_snapshot(db)
     # Smarter #32 — drawdown brake snapshot. Composes the same
     # bankroll + rolling-PnL inputs the per-recommendation
@@ -1540,6 +1557,8 @@ def get_positions(
         kalshi_account=kalshi_account,
         paper_truncated=paper_truncated,
         demo_truncated=demo_truncated,
+        paper_parlays=[PaperParlayRead.model_validate(item) for item in paper_parlays],
+        paper_parlays_truncated=paper_parlays_truncated,
         drawdown_brake=drawdown_brake,
     )
 
@@ -1698,6 +1717,56 @@ def open_paper_position(payload: PaperPositionCreate, db: Session = Depends(get_
     db.commit()
     db.refresh(position)
     return PaperPositionRead.model_validate(position)
+
+
+@router.post("/paper-parlays", response_model=PaperParlayRead)
+def open_paper_parlay(
+    payload: PaperParlayCreate, db: Session = Depends(get_db)
+) -> PaperParlayRead:
+    """PAPER_PARLAY_SCOPE.md step 3: create a paper parlay from the
+    operator's tray submission. Validation lives in the service layer
+    (``create_paper_parlay``); this endpoint just wires the request
+    through and commits."""
+    parlay = create_paper_parlay(db, payload)
+    db.commit()
+    db.refresh(parlay)
+    return PaperParlayRead.model_validate(parlay)
+
+
+@router.get("/paper-parlays", response_model=list[PaperParlayRead])
+def list_paper_parlays(
+    settlement_status: str | None = Query(
+        None,
+        description=(
+            "Optional filter: 'pending' (default behavior is to return all). "
+            "Currently only ``pending`` and ``settled`` are valid; other "
+            "values yield 400."
+        ),
+    ),
+    limit: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> list[PaperParlayRead]:
+    """List paper parlays, newest first.
+
+    Mirrors the ``/positions`` paper-position pattern (capped at
+    ``limit + 1`` rows so truncation is observable; the cap defaults
+    to 200 with a 500 hard ceiling). When ``settlement_status`` is
+    supplied, only matching rows are returned — useful for the
+    portfolio's "pending parlays" tab.
+    """
+    if settlement_status is not None and settlement_status not in {"pending", "settled"}:
+        raise HTTPException(
+            status_code=400,
+            detail="settlement_status must be 'pending' or 'settled'.",
+        )
+    statement = select(PaperParlay).order_by(
+        PaperParlay.created_at.desc(), PaperParlay.id.desc()
+    )
+    if settlement_status is not None:
+        statement = statement.where(PaperParlay.settlement_status == settlement_status)
+    statement = statement.limit(limit)
+    parlays = db.scalars(statement).all()
+    return [PaperParlayRead.model_validate(item) for item in parlays]
 
 
 @router.post("/paper-positions/{position_id}/exit", response_model=PaperPositionRead)
