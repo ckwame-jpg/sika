@@ -31,6 +31,9 @@ function emptyPositions(): PositionsRead {
     demo_truncated: false,
     paper_parlays: [],
     paper_parlays_truncated: false,
+    legacy_paper_positions: [],
+    legacy_demo_orders: [],
+    legacy_paper_parlays: [],
     drawdown_brake: null,
   };
 }

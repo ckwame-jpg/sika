@@ -40,6 +40,35 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
+class UserKalshiCredentials(Base):
+    """Per-user Kalshi credentials (multi-user batch PR 4).
+
+    One row per user that has connected their Kalshi account. Stores
+    the API key ID + the RSA private key PEM as a string column. The
+    key is stored in plaintext per the operator's locked decision in
+    the multi-user planning round (threat model: Tailscale is the
+    perimeter; this DB is no more exposed than the .env that holds
+    Kalshi creds today). If that threat model changes, the column can
+    be migrated to encrypted-at-rest in a separate PR.
+
+    ``base_url`` lets a user point at either kalshi_public_base_url
+    (prod) or kalshi_demo_base_url (sandbox). The /settings/kalshi UI
+    in PR 5 surfaces this as a "prod / demo" toggle.
+    """
+
+    __tablename__ = "user_kalshi_credentials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    key_id = Column(String, nullable=False)
+    private_key_pem = Column(Text, nullable=False)
+    base_url = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+    user = relationship("User")
+
+
 class Sport(Base):
     __tablename__ = "sports"
 

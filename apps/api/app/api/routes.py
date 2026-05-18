@@ -52,6 +52,8 @@ from app.schemas import (
     PaperPositionRead,
     ParlayPredictionRead,
     SwitchUserPayload,
+    UserKalshiCredentialsCreate,
+    UserKalshiCredentialsRead,
     UserRead,
     ParlayPredictionSummaryRead,
     ParlayRecommendationRead,
@@ -103,11 +105,17 @@ from app.services.operator_settings import (
 )
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.paper_parlays import create_paper_parlay
+from app.services.user_kalshi import (
+    delete_user_credentials,
+    get_user_credentials,
+    upsert_user_credentials,
+)
 from app.services.users import LEGACY_USERNAME, get_user_by_username, list_active_users
 from app.api.current_user import (
     COOKIE_MAX_AGE_SECONDS,
     CURRENT_USER_COOKIE,
     get_current_user_optional,
+    require_current_user,
 )
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
@@ -1108,6 +1116,64 @@ def switch_user(
     return CurrentUserRead(user=UserRead.model_validate(user))
 
 
+@router.get("/me/kalshi-credentials", response_model=UserKalshiCredentialsRead)
+def get_my_kalshi_credentials(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> UserKalshiCredentialsRead:
+    """Metadata for the current user's Kalshi credentials. Does NOT
+    echo the private key — only configured/key_id/base_url/updated_at
+    so the /settings/kalshi UI (PR 5) can show "Connected as <key_id>"
+    without re-displaying the key material."""
+    row = get_user_credentials(db, current_user.id)
+    if row is None:
+        return UserKalshiCredentialsRead(configured=False)
+    return UserKalshiCredentialsRead(
+        configured=True,
+        key_id=row.key_id,
+        base_url=row.base_url,
+        updated_at=row.updated_at,
+    )
+
+
+@router.post("/me/kalshi-credentials", response_model=UserKalshiCredentialsRead)
+def set_my_kalshi_credentials(
+    payload: UserKalshiCredentialsCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> UserKalshiCredentialsRead:
+    """Insert or update the current user's Kalshi credentials.
+    Idempotent — same inputs overwrite the existing row's
+    updated_at timestamp."""
+    row = upsert_user_credentials(
+        db,
+        user_id=current_user.id,
+        key_id=payload.key_id.strip(),
+        private_key_pem=payload.private_key_pem,
+        base_url=payload.base_url.strip(),
+    )
+    db.commit()
+    db.refresh(row)
+    return UserKalshiCredentialsRead(
+        configured=True,
+        key_id=row.key_id,
+        base_url=row.base_url,
+        updated_at=row.updated_at,
+    )
+
+
+@router.delete("/me/kalshi-credentials", response_model=UserKalshiCredentialsRead)
+def delete_my_kalshi_credentials(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> UserKalshiCredentialsRead:
+    """Disconnect the current user's Kalshi account. Returns the
+    not-configured shape so the UI flips to the connect-account state."""
+    delete_user_credentials(db, current_user.id)
+    db.commit()
+    return UserKalshiCredentialsRead(configured=False)
+
+
 @router.post("/users/sign-out", response_model=CurrentUserRead)
 def sign_out(response: Response) -> CurrentUserRead:
     """Clear the ``sika.userId`` cookie. Returns ``{user: null}``.
@@ -1659,7 +1725,14 @@ def get_positions(
             ).all()
         )
 
-    kalshi_account = build_kalshi_account_snapshot(db)
+    # Multi-user batch PR 4 — per-user Kalshi snapshot. Owner falls
+    # back to the env var (cached); other users use their own DB
+    # credentials (uncached); not-connected users get the
+    # not_configured shape so KalshiAccountPanel hides cleanly.
+    kalshi_account = build_kalshi_account_snapshot(
+        db,
+        user_id=current_user.id if current_user is not None else None,
+    )
     # Smarter #32 — drawdown brake snapshot. Composes the same
     # bankroll + rolling-PnL inputs the per-recommendation
     # ``kelly_sizing`` block uses, so the portfolio panel can render

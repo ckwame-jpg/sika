@@ -288,16 +288,39 @@ class KalshiAuthenticatedClient:
         key_id: str | None = None,
         private_key_path: str | Path | None = None,
         base_url: str | None = None,
+        private_key_pem: bytes | None = None,
     ) -> None:
+        """Build a Kalshi client.
+
+        Multi-user batch PR 4 — ``private_key_pem`` accepts the PEM
+        contents directly (for per-user credentials stored in the
+        ``user_kalshi_credentials`` table). The legacy path-based
+        flow (env var → file) still works for single-tenant
+        deployments that haven't migrated. Exactly one of
+        ``private_key_pem`` or ``private_key_path`` should be set;
+        if both are None, the env-var path is used as the fallback.
+        """
         settings = get_settings()
         self.key_id = key_id or settings.kalshi_key_id
-        self.private_key_path = Path(private_key_path or settings.kalshi_private_key_path)
+        self.private_key_pem = private_key_pem
+        self.private_key_path = (
+            Path(private_key_path) if private_key_path is not None else Path(settings.kalshi_private_key_path)
+        )
         self.base_url = (base_url or settings.kalshi_public_base_url).rstrip("/")
 
     def is_configured(self) -> bool:
-        return bool(self.key_id.strip()) and self.private_key_path.exists()
+        if not self.key_id.strip():
+            return False
+        if self.private_key_pem is not None:
+            return True
+        return self.private_key_path.exists()
 
     def _load_private_key(self):
+        # Prefer in-memory PEM (per-user credentials from the DB) over
+        # the on-disk file path. The path is the legacy single-tenant
+        # fallback.
+        if self.private_key_pem is not None:
+            return serialization.load_pem_private_key(self.private_key_pem, password=None)
         if not self.private_key_path.exists():
             raise FileNotFoundError(f"Kalshi private key not found at {self.private_key_path}")
         return serialization.load_pem_private_key(self.private_key_path.read_bytes(), password=None)
@@ -390,9 +413,11 @@ class KalshiDemoClient(KalshiAuthenticatedClient):
         key_id: str | None = None,
         private_key_path: str | Path | None = None,
         base_url: str | None = None,
+        private_key_pem: bytes | None = None,
     ) -> None:
         settings = get_settings()
         super().__init__(
+            private_key_pem=private_key_pem,
             key_id=key_id,
             private_key_path=private_key_path,
             base_url=base_url or settings.kalshi_demo_base_url,

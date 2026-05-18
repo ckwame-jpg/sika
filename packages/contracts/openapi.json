@@ -7019,6 +7019,80 @@
         "title": "UpstreamSourceHealthRead",
         "type": "object"
       },
+      "UserKalshiCredentialsCreate": {
+        "description": "POST body for /me/kalshi-credentials. ``base_url`` defaults to\nthe prod Kalshi URL; the UI offers a 'demo / prod' toggle.",
+        "properties": {
+          "base_url": {
+            "minLength": 1,
+            "title": "Base Url",
+            "type": "string"
+          },
+          "key_id": {
+            "minLength": 1,
+            "title": "Key Id",
+            "type": "string"
+          },
+          "private_key_pem": {
+            "minLength": 1,
+            "title": "Private Key Pem",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key_id",
+          "private_key_pem",
+          "base_url"
+        ],
+        "title": "UserKalshiCredentialsCreate",
+        "type": "object"
+      },
+      "UserKalshiCredentialsRead": {
+        "description": "Status payload for the /settings/kalshi page. Does NOT echo the\nprivate key \u2014 only metadata (configured / when / which base URL).",
+        "properties": {
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "configured"
+        ],
+        "title": "UserKalshiCredentialsRead",
+        "type": "object"
+      },
       "UserRead": {
         "properties": {
           "display_name": {
@@ -7936,6 +8010,79 @@
           }
         },
         "summary": "Get Me"
+      }
+    },
+    "/me/kalshi-credentials": {
+      "delete": {
+        "description": "Disconnect the current user's Kalshi account. Returns the\nnot-configured shape so the UI flips to the connect-account state.",
+        "operationId": "delete_my_kalshi_credentials_me_kalshi_credentials_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserKalshiCredentialsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Delete My Kalshi Credentials"
+      },
+      "get": {
+        "description": "Metadata for the current user's Kalshi credentials. Does NOT\necho the private key \u2014 only configured/key_id/base_url/updated_at\nso the /settings/kalshi UI (PR 5) can show \"Connected as <key_id>\"\nwithout re-displaying the key material.",
+        "operationId": "get_my_kalshi_credentials_me_kalshi_credentials_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserKalshiCredentialsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get My Kalshi Credentials"
+      },
+      "post": {
+        "description": "Insert or update the current user's Kalshi credentials.\nIdempotent \u2014 same inputs overwrite the existing row's\nupdated_at timestamp.",
+        "operationId": "set_my_kalshi_credentials_me_kalshi_credentials_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserKalshiCredentialsCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserKalshiCredentialsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set My Kalshi Credentials"
       }
     },
     "/ops/jobs/market-discovery": {
