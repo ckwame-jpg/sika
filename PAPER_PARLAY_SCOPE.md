@@ -99,8 +99,12 @@ recommendation lineage):
 | `event_name`              | str             |                                                                      |
 | `sport_key`               | str             |                                                                      |
 
-**Alembic migration**: one revision adding both tables + indexes on
-`(settlement_status, created_at)` and `(paper_parlay_id, leg_index)`.
+**Schema deploy**: this project uses SQLAlchemy `Base.metadata.create_all`
+(see `apps/api/app/database.py:134`) rather than alembic. Adding new tables
+to `models.py` is sufficient — they're created automatically on next API
+start. Composite indexes (`ix_paper_parlays_status_created`,
+`ix_paper_parlay_legs_parlay_index`) are declared inline next to the
+models so they ship as part of the same create_all sweep.
 
 ## Backend changes
 
@@ -163,23 +167,28 @@ recommendation lineage):
   saves parlay → navigates to /positions → sees the row → simulates leg
   settlement → row updates to "won" with realized_pnl.
 
-## Open questions for the operator
+## Operator decisions (locked 2026-05-17)
 
-1. **Stake denomination**: are paper parlays denominated in dollars (fake) or
-   contract units? Paper positions use `quantity * entry_price` semantics —
-   should parlays match (`stake = quantity * combined_price`) or be a
-   freeform dollar amount? **Recommendation**: dollar amount, since the
-   typical parlay UX (DraftKings/FanDuel) takes a dollar wager.
-2. **Tray persistence across page reloads**: should the tray persist in
-   localStorage? **Recommendation**: yes — losing 4 legs of work on a tab
-   refresh is awful.
-3. **Edit a leg's entry price**: when a leg's market price has moved since
-   the operator first added it to the tray, do we re-snapshot on save or
-   warn? **Recommendation**: warn and let the operator re-pick if they care;
-   default to "save with current market price."
-4. **Correlation explanation**: should the tray surface WHY the joint
-   probability lifted (e.g. "+4% from shared subject")? **Recommendation**:
-   v1 ship without; v2 add a tooltip on the joint-prob number.
+1. **Stake denomination**: **dollar amount** (freeform). Payout on win =
+   `stake * (1/combined_market_price - 1)`; loss = `-stake`. Matches
+   standard sportsbook UX. Slight semantic divergence from paper
+   positions (which use `quantity * entry_price`) is acceptable — parlay
+   UX is its own mental model.
+2. **Tray persistence**: **persist to localStorage**. Refreshing a tab
+   shouldn't nuke 4 legs of work. Implementation note: cap staleness at
+   ~30 minutes — drop tray entirely on load if `tray.savedAt` is older
+   than that, so the operator doesn't resume a half-built parlay from
+   yesterday with stale market prices.
+3. **Mid-build price drift**: **save with the original snapshot**. When
+   the operator hits save, the parlay is stored at the entry prices
+   they saw when each leg was added to the tray, NOT the current
+   market price. This is the "what you saw is what you wagered"
+   guarantee — paper parlay is its own snapshot, decoupled from live
+   market quotes after creation.
+4. **Correlation lift breakdown**: **v1 without**. Joint probability
+   number is rendered but no "why" tooltip. Add the breakdown in v2 if
+   operators ask why a parlay's joint prob differs from the product of
+   leg probabilities.
 
 ## Phasing
 
