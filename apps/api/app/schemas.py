@@ -1259,6 +1259,13 @@ class PositionsRead(BaseModel):
     # before step 3 landed) keep deserializing without change.
     paper_parlays: list[PaperParlayRead] = []
     paper_parlays_truncated: bool = False
+    # Multi-user batch PR 3 — legacy buckets. Rows with no clear
+    # owner (created before multi-user landed) live here and render
+    # in a read-only section of the portfolio. Empty in single-tenant
+    # mode (no current user) — everything stays in the primary lists.
+    legacy_paper_positions: list[PaperPositionRead] = []
+    legacy_demo_orders: list[DemoOrderRead] = []
+    legacy_paper_parlays: list[PaperParlayRead] = []
     # Smarter #32 — drawdown brake snapshot. ``None`` when bankroll
     # resolution fails (operator hasn't configured
     # ``kelly_sizing_bankroll_dollars`` and the Kalshi opt-in is off

@@ -16,12 +16,25 @@ from app.services.outbox import (
 )
 
 
-def create_paper_position(db: Session, payload: PaperPositionCreate) -> PaperPosition:
+def create_paper_position(
+    db: Session,
+    payload: PaperPositionCreate,
+    *,
+    user_id: int | None = None,
+) -> PaperPosition:
+    """Persist a new paper position, attributed to ``user_id``.
+
+    Multi-user batch PR 3: ``user_id`` is keyword-only for safety —
+    the endpoint passes it explicitly, and a future caller that
+    forgets it will produce a NULL user_id row (visible only in the
+    legacy bucket; not a silent leak into another user's view).
+    """
     market = db.scalar(select(Market).where(Market.ticker == payload.ticker))
     if not market:
         raise HTTPException(status_code=404, detail="Market not found for ticker")
 
     position = PaperPosition(
+        user_id=user_id,
         market_id=market.id,
         ticker=payload.ticker,
         side=payload.side.lower(),
@@ -34,12 +47,42 @@ def create_paper_position(db: Session, payload: PaperPositionCreate) -> PaperPos
     return position
 
 
-def close_paper_position(db: Session, position_id: int, payload: PaperPositionExit) -> PaperPosition:
+def close_paper_position(
+    db: Session,
+    position_id: int,
+    payload: PaperPositionExit,
+    *,
+    user_id: int | None = None,
+) -> PaperPosition:
+    """Exit a paper position.
+
+    Multi-user batch PR 3 — ownership check: a position can only be
+    closed by the user who created it. Legacy-bucket positions
+    (created before multi-user landed) are read-only for everyone;
+    nobody can exit them. ``user_id=None`` skips the check for
+    single-tenant deployments + the system itself.
+    """
     position = db.get(PaperPosition, position_id)
     if not position:
         raise HTTPException(status_code=404, detail="Paper position not found")
     if position.status != "open":
         raise HTTPException(status_code=400, detail="Paper position already closed")
+    if user_id is not None:
+        if position.user_id is None or (
+            position.user and position.user.is_legacy_bucket
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Legacy paper positions are read-only — they were created "
+                    "before multi-user landed and have no clear owner."
+                ),
+            )
+        if position.user_id != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only exit positions you opened.",
+            )
 
     position.exit_price = payload.exit_price
     position.closed_at = datetime.now(timezone.utc)
@@ -49,7 +92,12 @@ def close_paper_position(db: Session, position_id: int, payload: PaperPositionEx
     return position
 
 
-def create_demo_order(db: Session, payload: DemoOrderCreate) -> DemoOrder:
+def create_demo_order(
+    db: Session,
+    payload: DemoOrderCreate,
+    *,
+    user_id: int | None = None,
+) -> DemoOrder:
     """Submit a demo order via the bug-#31 transactional outbox.
 
     The local ``DemoOrder`` row is written together with an
@@ -69,6 +117,7 @@ def create_demo_order(db: Session, payload: DemoOrderCreate) -> DemoOrder:
 
     client_order_id = str(uuid4())
     order = DemoOrder(
+        user_id=user_id,
         market_id=market.id,
         ticker=payload.ticker,
         client_order_id=client_order_id,
@@ -103,8 +152,18 @@ def create_demo_order(db: Session, payload: DemoOrderCreate) -> DemoOrder:
     return order
 
 
-def cancel_demo_order(db: Session, order_id: int) -> DemoOrder:
+def cancel_demo_order(
+    db: Session,
+    order_id: int,
+    *,
+    user_id: int | None = None,
+) -> DemoOrder:
     """Cancel a demo order via the outbox (bug #31).
+
+    Multi-user batch PR 3 — ownership check: an order can only be
+    cancelled by the user who submitted it. Legacy-bucket orders
+    are read-only. ``user_id=None`` skips the check for single-tenant
+    deployments + system callers.
 
     Cancel is enqueued for the worker so the local state shift is
     atomic with the recorded intent. The DemoOrder must already have a
@@ -115,6 +174,17 @@ def cancel_demo_order(db: Session, order_id: int) -> DemoOrder:
     order = db.get(DemoOrder, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Demo order not found")
+    if user_id is not None:
+        if order.user_id is None or (order.user and order.user.is_legacy_bucket):
+            raise HTTPException(
+                status_code=403,
+                detail="Legacy demo orders are read-only.",
+            )
+        if order.user_id != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only cancel orders you submitted.",
+            )
     if not order.kalshi_order_id:
         raise HTTPException(status_code=400, detail="Demo order was not accepted by Kalshi")
 

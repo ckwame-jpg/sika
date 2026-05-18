@@ -408,11 +408,9 @@ export interface paths {
          * List Paper Parlays
          * @description List paper parlays, newest first.
          *
-         *     Mirrors the ``/positions`` paper-position pattern (capped at
-         *     ``limit + 1`` rows so truncation is observable; the cap defaults
-         *     to 200 with a 500 hard ceiling). When ``settlement_status`` is
-         *     supplied, only matching rows are returned — useful for the
-         *     portfolio's "pending parlays" tab.
+         *     Multi-user batch PR 3: scoped to ``current_user`` when set. In
+         *     single-tenant mode (no current user), returns every row — preserves
+         *     pre-multi-user behavior for deployments that haven't opted in.
          */
         get: operations["list_paper_parlays_paper_parlays_get"];
         put?: never;
@@ -422,6 +420,9 @@ export interface paths {
          *     operator's tray submission. Validation lives in the service layer
          *     (``create_paper_parlay``); this endpoint just wires the request
          *     through and commits.
+         *
+         *     Multi-user batch PR 3: attribute to ``current_user`` so the
+         *     portfolio table can filter by ownership.
          */
         post: operations["open_paper_parlay_paper_parlays_post"];
         delete?: never;
@@ -439,7 +440,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Open Paper Position */
+        /**
+         * Open Paper Position
+         * @description Multi-user batch PR 3: attribute the new row to the current
+         *     user. ``current_user=None`` in single-tenant mode → user_id stays
+         *     NULL (existing single-tenant behavior preserved).
+         */
         post: operations["open_paper_position_paper_positions_post"];
         delete?: never;
         options?: never;
@@ -456,7 +462,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Exit Paper Position */
+        /**
+         * Exit Paper Position
+         * @description Multi-user batch PR 3: only the position's owner can close it
+         *     (service raises 403 otherwise). Legacy positions are read-only —
+         *     no one can exit them.
+         */
         post: operations["exit_paper_position_paper_positions__position_id__exit_post"];
         delete?: never;
         options?: never;
@@ -2092,6 +2103,21 @@ export interface components {
             demo_truncated: boolean;
             drawdown_brake?: components["schemas"]["DrawdownBrakeRead"] | null;
             kalshi_account: components["schemas"]["KalshiAccountRead"];
+            /**
+             * Legacy Demo Orders
+             * @default []
+             */
+            legacy_demo_orders: components["schemas"]["DemoOrderRead"][];
+            /**
+             * Legacy Paper Parlays
+             * @default []
+             */
+            legacy_paper_parlays: components["schemas"]["PaperParlayRead"][];
+            /**
+             * Legacy Paper Positions
+             * @default []
+             */
+            legacy_paper_positions: components["schemas"]["PaperPositionRead"][];
             /**
              * Paper Parlays
              * @default []
