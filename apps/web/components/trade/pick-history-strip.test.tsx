@@ -328,6 +328,65 @@ describe("PickHistoryStrip — game line variants", () => {
       expect(screen.getByTestId("pick-history-strip-empty")).toBeInTheDocument(),
     );
     expect(screen.getByTestId("pick-history-strip-filter-home")).toBeInTheDocument();
+    // Data-driven empty state — a retry wouldn't change the outcome,
+    // so the retry button is intentionally absent.
+    expect(screen.queryByTestId("pick-history-strip-retry")).toBeNull();
+  });
+
+  it("offers a retry button when the player history fetch fails, and clicking it refetches", async () => {
+    // SWR caches errors; with revalidateOnFocus off the operator
+    // would otherwise be stuck on "Couldn't load history" until a
+    // hard page refresh. The retry button is the recovery affordance.
+    mockFetchPlayerHistory
+      .mockRejectedValueOnce(new Error("503"))
+      .mockResolvedValueOnce(playerHistoryFixture([28, 19, 25, 31, 22]));
+    renderWithProviders(<PickHistoryStrip selection={makePlayerSelection()} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pick-history-strip-retry")).toBeInTheDocument(),
+    );
+    expect(screen.getByText("Couldn't load history.")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("pick-history-strip-retry"));
+
+    await waitFor(() => expect(screen.getByTestId("pick-history-strip")).toBeInTheDocument());
+    expect(mockFetchPlayerHistory.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("offers a retry button when the team history fetch fails", async () => {
+    mockFetchTeamHistory
+      .mockRejectedValueOnce(new Error("503"))
+      .mockResolvedValueOnce(teamHistoryFixture([{ result: "W", team: 116, opp: 109 }]));
+    renderWithProviders(<PickHistoryStrip selection={makeGameLineSelection()} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pick-history-strip-retry")).toBeInTheDocument(),
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("pick-history-strip-retry"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pick-history-strip-pills")).toBeInTheDocument(),
+    );
+  });
+
+  it("does NOT offer a retry button when a location filter returns zero rows", async () => {
+    // The filter is the operator's choice; a retry would just refetch
+    // and land back in the same empty state, which would feel like a
+    // broken button. The fix is to clear the filter, not retry.
+    mockFetchTeamHistory.mockResolvedValue(teamHistoryFixture([]));
+    renderWithProviders(<PickHistoryStrip selection={makeGameLineSelection()} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("pick-history-strip-empty")).toBeInTheDocument(),
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("pick-history-strip-filter-home"));
+
+    await waitFor(() => expect(mockFetchTeamHistory).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("pick-history-strip-retry")).toBeNull();
   });
 
   it("hides itself for first_five_winner picks without firing a fetch (codex P2)", async () => {

@@ -49,10 +49,21 @@ async function request<T>(
   const delays = [1000, 2000, 4000];
   let lastError: Error | undefined;
 
+  // Distinguish operator-initiated cancellations (e.g. component
+  // unmount via ``AbortController``) from this request's own 15s
+  // timeout so the catch handler can produce an actionable error
+  // message instead of the browser's ``"signal is aborted without
+  // reason"`` default.
+  const TIMEOUT_MS = 15_000;
+
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    let timedOut = false;
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15_000);
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, TIMEOUT_MS);
       const res = await fetch(`${BASE}${path}`, {
         headers: { "Content-Type": "application/json", ...fetchInit.headers },
         ...fetchInit,
@@ -74,9 +85,22 @@ async function request<T>(
       }
       return res.json() as Promise<T>;
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
+      // Rewrite the browser's "signal is aborted without reason"
+      // AbortError into something the operator can act on. Keep the
+      // original error attached so debug logging can still see it.
+      let normalized = error instanceof Error ? error : new Error(String(error));
+      if (timedOut && normalized.name === "AbortError") {
+        const timeoutErr = new Error(
+          `Request timed out after ${TIMEOUT_MS / 1000}s. The API didn't respond — it may be restarting or overloaded.`,
+        );
+        timeoutErr.name = "TimeoutError";
+        (timeoutErr as Error & { cause?: unknown }).cause = normalized;
+        normalized = timeoutErr;
+      }
+      lastError = normalized;
       const isNetworkError =
         lastError.name === "AbortError" ||
+        lastError.name === "TimeoutError" ||
         lastError.name === "TypeError" ||
         lastError.message.includes("fetch");
       if (isNetworkError && attempt < maxAttempts - 1) {
