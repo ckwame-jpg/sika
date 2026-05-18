@@ -161,6 +161,10 @@ export type PositionsRead = Wire<Schema<"PositionsRead">>;
 export type PaperPositionCreate = Schema<"PaperPositionCreate">;
 export type PaperPositionExit = Schema<"PaperPositionExit">;
 export type DemoOrderCreate = Schema<"DemoOrderCreate">;
+export type PaperParlayCreate = Schema<"PaperParlayCreate">;
+export type PaperParlayLegCreate = Schema<"PaperParlayLegCreate">;
+export type PaperParlayRead = Wire<Schema<"PaperParlayRead">>;
+export type PaperParlayLegRead = Wire<Schema<"PaperParlayLegRead">>;
 
 // ── /stats-query + /team-history endpoint family ──
 export type StatsSummaryRead = Wire<Schema<"StatsSummaryRead">>;

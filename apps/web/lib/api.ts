@@ -12,6 +12,8 @@ import type {
   ModelFamilyReadinessRead,
   ModelReadinessSettingsUpdate,
   ModelReadinessSummaryRead,
+  PaperParlayCreate,
+  PaperParlayRead,
   PaperPositionCreate,
   PaperPositionExit,
   PaperPositionRead,
@@ -168,6 +170,19 @@ export const submitDemoOrder = (body: DemoOrderCreate) =>
     method: "POST",
     body: JSON.stringify(body),
   });
+
+export const openPaperParlay = (body: PaperParlayCreate) =>
+  request<PaperParlayRead>("/paper-parlays", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const fetchPaperParlays = (settlementStatus?: "pending" | "settled") => {
+  const qs = settlementStatus
+    ? `?settlement_status=${encodeURIComponent(settlementStatus)}`
+    : "";
+  return request<PaperParlayRead[]>(`/paper-parlays${qs}`);
+};
 
 export const cancelDemoOrder = (id: number) =>
   request<DemoOrderRead>(`/demo-orders/${id}/cancel`, { method: "POST" });

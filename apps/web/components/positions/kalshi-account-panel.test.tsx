@@ -74,6 +74,11 @@ const connectedPositions: PositionsRead = {
   // brake).
   paper_truncated: false,
   demo_truncated: false,
+  // PAPER_PARLAY_SCOPE.md step 3 added these to PositionsRead. The
+  // Wire<> type marks them required even though the backend defaults
+  // them to empty/false at serialization time.
+  paper_parlays: [],
+  paper_parlays_truncated: false,
   drawdown_brake: null,
 };
 

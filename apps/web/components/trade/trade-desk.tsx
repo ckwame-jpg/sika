@@ -14,6 +14,7 @@ import type {
 import { cn, fmtDatetime, fmtEdge, fmtPercent, fmtPrice, fmtRelative, fmtStartsAt, sportLabel } from "@/lib/utils";
 import { PlayerPropGroup } from "@/components/trade/player-prop-group";
 import { TimeToCloseBadge } from "@/components/trade/time-to-close-badge";
+import { PaperParlayDialog } from "@/components/parlays/paper-parlay-dialog";
 import { ParlayTray } from "@/components/parlays/parlay-tray";
 import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
 import { ProbabilitySurfaceHero } from "@/components/trade/probability-surface-hero";
@@ -507,6 +508,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
   const [expandedEventIds, setExpandedEventIds] = useState<Set<number>>(() => new Set());
   const [archivedExpandedEventIds, setArchivedExpandedEventIds] = useState<Set<number>>(() => new Set());
   const [archiveState, setArchiveState] = useState<{ key: string | null; expanded: boolean } | null>(null);
+  const [parlayDialogOpen, setParlayDialogOpen] = useState(false);
   const { data, error, isLoading, mutate } = useSWR<TradeDeskResponse>(
     keys.tradeDesk(sport),
     () => fetchTradeDesk(sport),
@@ -745,12 +747,16 @@ export function TradeDesk({ sport }: { sport?: string }) {
         </div>
       </div>
 
-      {/* PAPER_PARLAY_SCOPE.md step 5 — operator-built parlay tray.
+      {/* PAPER_PARLAY_SCOPE.md step 5/6 — operator-built parlay tray.
           Hidden when empty (returns null). Mounted at the page level
-          so it survives selection changes. Step 6 will pass onSave to
-          open the save dialog; step 5 leaves the button disabled
-          until then. */}
-      <ParlayTray />
+          so it survives selection changes. Step 6's dialog hooks
+          onSave so the "Save paper parlay" button opens the save
+          confirmation form. */}
+      <ParlayTray onSave={() => setParlayDialogOpen(true)} />
+      <PaperParlayDialog
+        open={parlayDialogOpen}
+        onOpenChange={setParlayDialogOpen}
+      />
     </div>
   );
 }
