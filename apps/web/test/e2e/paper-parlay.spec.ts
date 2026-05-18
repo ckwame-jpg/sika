@@ -79,7 +79,10 @@ const SAVED_PARLAY = {
   ],
 };
 
-const POSITIONS_EMPTY = {
+// Explicit ``any`` type — Playwright's TS config infers ``never[]`` for
+// the empty array literals below, which would prevent the
+// ``POSITIONS_WITH_PARLAY`` spread from widening to a populated list.
+const POSITIONS_EMPTY: Record<string, unknown> = {
   paper_positions: [],
   demo_orders: [],
   kalshi_account: {
@@ -97,7 +100,7 @@ const POSITIONS_EMPTY = {
   drawdown_brake: null,
 };
 
-const POSITIONS_WITH_PARLAY = {
+const POSITIONS_WITH_PARLAY: Record<string, unknown> = {
   ...POSITIONS_EMPTY,
   paper_parlays: [SAVED_PARLAY],
 };
