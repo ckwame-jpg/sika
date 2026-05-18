@@ -21,6 +21,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/demo-orders/{order_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Demo Order
+         * @description Permanently delete a demo order + its fills (cascade).
+         *     Owner-only; legacy rows are read-only (403); 404 on unknown id.
+         *
+         *     Does NOT cancel on the Kalshi sandbox side — that's a separate
+         *     /cancel call. Delete is local-state cleanup only; an orphaned
+         *     Kalshi sandbox order doesn't affect anything real.
+         */
+        delete: operations["remove_demo_order_demo_orders__order_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/demo-orders/{order_id}/cancel": {
         parameters: {
             query?: never;
@@ -465,6 +490,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/paper-parlays/{parlay_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Paper Parlay
+         * @description Permanently delete a paper parlay + its legs. Owner-only;
+         *     legacy rows are read-only (403); 404 on unknown id. Pending
+         *     + settled parlays both qualify.
+         */
+        delete: operations["remove_paper_parlay_paper_parlays__parlay_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/paper-positions": {
         parameters: {
             query?: never;
@@ -482,6 +529,28 @@ export interface paths {
          */
         post: operations["open_paper_position_paper_positions_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/paper-positions/{position_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Paper Position
+         * @description Permanently delete a paper position. Owner-only; legacy
+         *     rows are read-only (403); 404 on unknown id. Closed + open
+         *     positions both qualify.
+         */
+        delete: operations["remove_paper_position_paper_positions__position_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3594,6 +3663,39 @@ export interface operations {
             };
         };
     };
+    remove_demo_order_demo_orders__order_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cancel_order_demo_orders__order_id__cancel_post: {
         parameters: {
             query?: never;
@@ -4328,6 +4430,39 @@ export interface operations {
             };
         };
     };
+    remove_paper_parlay_paper_parlays__parlay_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                parlay_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     open_paper_position_paper_positions_post: {
         parameters: {
             query?: never;
@@ -4348,6 +4483,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaperPositionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_paper_position_paper_positions__position_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                position_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */

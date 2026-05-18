@@ -1,7 +1,8 @@
 "use client";
 
 import useSWR, { mutate } from "swr";
-import { fetchPositions, cancelDemoOrder, keys } from "@/lib/api";
+import { Trash2 } from "lucide-react";
+import { cancelDemoOrder, deleteDemoOrder, fetchPositions, keys } from "@/lib/api";
 import type { PositionsRead, DemoOrderRead } from "@/lib/types";
 import {
   Table,
@@ -98,11 +99,14 @@ function DemoOrderRow({
         </span>
       </TableCell>
       <TableCell>
-        {canCancel && (
-          <Button variant="danger" size="xs" onClick={onCancel}>
-            Cancel
-          </Button>
-        )}
+        <div className="flex items-center justify-end gap-1.5">
+          {canCancel && (
+            <Button variant="danger" size="xs" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+          <DeleteOrderButton orderId={order.id} />
+        </div>
       </TableCell>
     </TableRow>
   );
@@ -295,5 +299,59 @@ export function DemoOrdersTable({ maxHeight }: DemoOrdersTableProps) {
         onClose={() => setSelectedTicker(null)}
       />
     </>
+  );
+}
+
+/**
+ * Two-click delete affordance — mirrors the DeletePositionButton +
+ * paper-parlay DeleteButton. First click swaps the trash icon for a
+ * "sure?" pill; second click commits. Auto-disarms after 3s. Does
+ * NOT call /cancel on the Kalshi sandbox side; that's a separate
+ * "Cancel" button. Delete is local-state cleanup only.
+ */
+function DeleteOrderButton({ orderId }: { orderId: number }) {
+  const [armed, setArmed] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleClick() {
+    if (!armed) {
+      setArmed(true);
+      setTimeout(() => setArmed(false), 3000);
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deleteDemoOrder(orderId);
+      await mutate(keys.positions);
+    } catch {
+      setArmed(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  if (armed) {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={deleting}
+        data-testid={`demo-order-confirm-delete-${orderId}`}
+        className="rounded-md border border-negative/40 bg-negative/10 px-2 py-0.5 text-2xs font-medium text-negative focus-visible:ring-focus hover:bg-negative/20"
+      >
+        {deleting ? "…" : "sure?"}
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      aria-label="Delete demo order"
+      data-testid={`demo-order-delete-${orderId}`}
+      className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-surface-hover hover:text-negative focus-visible:ring-focus"
+    >
+      <Trash2 size={12} />
+    </button>
   );
 }

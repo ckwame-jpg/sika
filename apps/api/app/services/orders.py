@@ -93,6 +93,67 @@ def close_paper_position(
     return position
 
 
+def delete_paper_position(
+    db: Session, position_id: int, *, user_id: int | None = None
+) -> None:
+    """Permanently remove a paper position. Owner-only.
+
+    Multi-user follow-up: applies the same ownership check as
+    ``close_paper_position`` (cross-user → 403, legacy → 403). When
+    ``user_id`` is None (single-tenant), the check is skipped.
+    Returns nothing on success; raises HTTPException on miss/refused.
+
+    Deletes regardless of status — open + closed + settled all
+    qualify (operator decision: "I typo'd a trade" / "this was a
+    test"). Codex pattern 5: explicit close set on the side of
+    legacy / cross-user / missing row.
+    """
+    position = db.get(PaperPosition, position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Paper position not found")
+    if user_id is not None:
+        if position.user_id is None or (
+            position.user and position.user.is_legacy_bucket
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Legacy paper positions are read-only.",
+            )
+        if position.user_id != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only delete positions you opened.",
+            )
+    db.delete(position)
+    db.flush()
+
+
+def delete_demo_order(
+    db: Session, order_id: int, *, user_id: int | None = None
+) -> None:
+    """Permanently remove a demo order + its fills (cascade). Owner-only.
+
+    Mirrors ``cancel_demo_order``'s ownership check but doesn't
+    bother with the outbox — delete is a local-only operation
+    (orphans the Kalshi-side row, which the operator can clean up
+    via the sandbox UI if they care)."""
+    order = db.get(DemoOrder, order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Demo order not found")
+    if user_id is not None:
+        if order.user_id is None or (order.user and order.user.is_legacy_bucket):
+            raise HTTPException(
+                status_code=403, detail="Legacy demo orders are read-only.",
+            )
+        if order.user_id != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only delete orders you submitted.",
+            )
+    db.delete(order)
+    db.flush()
+
+
 def create_demo_order(
     db: Session,
     payload: DemoOrderCreate,

@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import useSWR from "swr";
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { fetchPositions, keys } from "@/lib/api";
+import useSWR, { mutate } from "swr";
+import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { deletePaperParlay, fetchPositions, keys } from "@/lib/api";
 import type { PaperParlayRead, PositionsRead } from "@/lib/types";
 import {
   Table,
@@ -69,6 +69,7 @@ export function PaperParlaysTable() {
             <TableHead className="text-right">Stake</TableHead>
             <TableHead className="text-right">Status</TableHead>
             <TableHead className="text-right">PnL</TableHead>
+            <TableHead className="w-10 text-right" aria-label="Actions" />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -136,10 +137,13 @@ function ParlayRow({ parlay, expanded, onToggle }: ParlayRowProps) {
         <TableCell className="text-right">
           <PnlCell pnl={parlay.realized_pnl} outcome={parlay.outcome} />
         </TableCell>
+        <TableCell className="w-10 text-right">
+          <DeleteButton parlayId={parlay.id} />
+        </TableCell>
       </TableRow>
       {expanded && (
         <TableRow data-testid={`paper-parlay-detail-${parlay.id}`}>
-          <TableCell colSpan={9} className="bg-surface/40 px-6 py-4">
+          <TableCell colSpan={10} className="bg-surface/40 px-6 py-4">
             <ParlayDetail parlay={parlay} />
           </TableCell>
         </TableRow>
@@ -205,4 +209,60 @@ function legSummary(leg: PaperParlayRead["legs"][number]): string {
     return `${leg.subject_name} ${leg.threshold}+ ${leg.stat_key.replace(/_/g, " ")}`;
   }
   return leg.market_title || leg.ticker;
+}
+
+/**
+ * Two-click delete affordance: first click swaps the trash icon for
+ * a "Sure?" pill; second click commits the DELETE. Click outside or
+ * wait ~3s and it resets. Stops accidental deletions without forcing
+ * a full modal for a small action.
+ */
+function DeleteButton({ parlayId }: { parlayId: number }) {
+  const [armed, setArmed] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleClick(e: React.MouseEvent<HTMLButtonElement>) {
+    e.stopPropagation(); // Don't toggle the expand panel.
+    if (!armed) {
+      setArmed(true);
+      // Auto-disarm after 3s so the trash icon reappears.
+      setTimeout(() => setArmed(false), 3000);
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deletePaperParlay(parlayId);
+      await mutate(keys.positions);
+    } catch {
+      // SWR re-fetch will show the row again if the delete failed.
+      setArmed(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  if (armed) {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={deleting}
+        data-testid={`paper-parlay-confirm-delete-${parlayId}`}
+        className="rounded-md border border-negative/40 bg-negative/10 px-2 py-0.5 text-2xs font-medium text-negative focus-visible:ring-focus hover:bg-negative/20"
+      >
+        {deleting ? "…" : "sure?"}
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      aria-label="Delete parlay"
+      data-testid={`paper-parlay-delete-${parlayId}`}
+      className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-surface-hover hover:text-negative focus-visible:ring-focus"
+    >
+      <Trash2 size={12} />
+    </button>
+  );
 }

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import useSWR, { mutate } from "swr";
-import { fetchPositions, exitPaperPosition, keys } from "@/lib/api";
+import { Trash2 } from "lucide-react";
+import { deletePaperPosition, fetchPositions, exitPaperPosition, keys } from "@/lib/api";
 import type { PositionsRead, PaperPositionRead } from "@/lib/types";
 import {
   Table,
@@ -196,11 +197,14 @@ function PositionRow({
         </span>
       </TableCell>
       <TableCell>
-        {isOpen && (
-          <Button variant="danger" size="xs" onClick={onExit}>
-            Exit
-          </Button>
-        )}
+        <div className="flex items-center justify-end gap-1.5">
+          {isOpen && (
+            <Button variant="danger" size="xs" onClick={onExit}>
+              Exit
+            </Button>
+          )}
+          <DeletePositionButton positionId={position.id} />
+        </div>
       </TableCell>
     </TableRow>
   );
@@ -465,5 +469,58 @@ export function PaperPositionsTable({ maxHeight }: PaperPositionsTableProps) {
         />
       )}
     </>
+  );
+}
+
+/**
+ * Two-click delete affordance — mirrors the DeleteButton on the
+ * paper-parlays table. First click swaps the trash icon for a
+ * "sure?" pill; second click commits the DELETE. Auto-disarms after
+ * 3s.
+ */
+function DeletePositionButton({ positionId }: { positionId: number }) {
+  const [armed, setArmed] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleClick() {
+    if (!armed) {
+      setArmed(true);
+      setTimeout(() => setArmed(false), 3000);
+      return;
+    }
+    setDeleting(true);
+    try {
+      await deletePaperPosition(positionId);
+      await mutate(keys.positions);
+    } catch {
+      setArmed(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  if (armed) {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={deleting}
+        data-testid={`paper-position-confirm-delete-${positionId}`}
+        className="rounded-md border border-negative/40 bg-negative/10 px-2 py-0.5 text-2xs font-medium text-negative focus-visible:ring-focus hover:bg-negative/20"
+      >
+        {deleting ? "…" : "sure?"}
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      aria-label="Delete position"
+      data-testid={`paper-position-delete-${positionId}`}
+      className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-surface-hover hover:text-negative focus-visible:ring-focus"
+    >
+      <Trash2 size={12} />
+    </button>
   );
 }

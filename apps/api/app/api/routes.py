@@ -104,8 +104,15 @@ from app.services.operator_settings import (
     set_sportsbook_disagreement_min_book_count,
     set_sportsbook_disagreement_threshold,
 )
-from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
-from app.services.paper_parlays import create_paper_parlay
+from app.services.orders import (
+    cancel_demo_order,
+    close_paper_position,
+    create_demo_order,
+    create_paper_position,
+    delete_demo_order,
+    delete_paper_position,
+)
+from app.services.paper_parlays import create_paper_parlay, delete_paper_parlay
 from app.services.user_kalshi import (
     delete_user_credentials,
     get_user_credentials,
@@ -2051,6 +2058,54 @@ def exit_paper_position(
     db.commit()
     db.refresh(position)
     return PaperPositionRead.model_validate(position)
+
+
+@router.delete("/paper-positions/{position_id}", response_model=dict)
+def remove_paper_position(
+    position_id: int,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+) -> dict:
+    """Permanently delete a paper position. Owner-only; legacy
+    rows are read-only (403); 404 on unknown id. Closed + open
+    positions both qualify."""
+    user_id = current_user.id if current_user is not None else None
+    delete_paper_position(db, position_id, user_id=user_id)
+    db.commit()
+    return {"deleted": True}
+
+
+@router.delete("/paper-parlays/{parlay_id}", response_model=dict)
+def remove_paper_parlay(
+    parlay_id: int,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+) -> dict:
+    """Permanently delete a paper parlay + its legs. Owner-only;
+    legacy rows are read-only (403); 404 on unknown id. Pending
+    + settled parlays both qualify."""
+    user_id = current_user.id if current_user is not None else None
+    delete_paper_parlay(db, parlay_id, user_id=user_id)
+    db.commit()
+    return {"deleted": True}
+
+
+@router.delete("/demo-orders/{order_id}", response_model=dict)
+def remove_demo_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+) -> dict:
+    """Permanently delete a demo order + its fills (cascade).
+    Owner-only; legacy rows are read-only (403); 404 on unknown id.
+
+    Does NOT cancel on the Kalshi sandbox side — that's a separate
+    /cancel call. Delete is local-state cleanup only; an orphaned
+    Kalshi sandbox order doesn't affect anything real."""
+    user_id = current_user.id if current_user is not None else None
+    delete_demo_order(db, order_id, user_id=user_id)
+    db.commit()
+    return {"deleted": True}
 
 
 @router.post("/demo-orders", response_model=DemoOrderRead)

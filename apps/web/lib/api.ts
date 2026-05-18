@@ -171,6 +171,15 @@ export const exitPaperPosition = (id: number, body: PaperPositionExit) =>
     body: JSON.stringify(body),
   });
 
+export const deletePaperPosition = (id: number) =>
+  request<{ deleted: boolean }>(`/paper-positions/${id}`, { method: "DELETE" });
+
+export const deletePaperParlay = (id: number) =>
+  request<{ deleted: boolean }>(`/paper-parlays/${id}`, { method: "DELETE" });
+
+export const deleteDemoOrder = (id: number) =>
+  request<{ deleted: boolean }>(`/demo-orders/${id}`, { method: "DELETE" });
+
 export const submitDemoOrder = (body: DemoOrderCreate) =>
   request<DemoOrderRead>("/demo-orders", {
     method: "POST",
