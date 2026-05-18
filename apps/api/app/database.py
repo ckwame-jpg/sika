@@ -93,6 +93,19 @@ SCHEMA_PATCHES: dict[str, dict[str, str]] = {
     "refresh_jobs": {
         "details": "JSON",
     },
+    # Multi-user batch PR 3 — add user_id to per-user tables. Nullable
+    # so the column lands cleanly on existing databases; the legacy
+    # backfill in ``seed_users_from_settings`` fills NULLs the first
+    # time a multi-user-configured API boots.
+    "paper_positions": {
+        "user_id": "INTEGER",
+    },
+    "paper_parlays": {
+        "user_id": "INTEGER",
+    },
+    "demo_orders": {
+        "user_id": "INTEGER",
+    },
     "markets": {
         # Bug #17 — surface fuzzy-mapping confidence + candidates plus
         # the manual-override stamp so ops can review ambiguous Kalshi

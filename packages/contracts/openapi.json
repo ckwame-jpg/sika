@@ -3976,6 +3976,30 @@
           "kalshi_account": {
             "$ref": "#/components/schemas/KalshiAccountRead"
           },
+          "legacy_demo_orders": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DemoOrderRead"
+            },
+            "title": "Legacy Demo Orders",
+            "type": "array"
+          },
+          "legacy_paper_parlays": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PaperParlayRead"
+            },
+            "title": "Legacy Paper Parlays",
+            "type": "array"
+          },
+          "legacy_paper_positions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PaperPositionRead"
+            },
+            "title": "Legacy Paper Positions",
+            "type": "array"
+          },
           "paper_parlays": {
             "default": [],
             "items": {
@@ -8505,7 +8529,7 @@
     },
     "/paper-parlays": {
       "get": {
-        "description": "List paper parlays, newest first.\n\nMirrors the ``/positions`` paper-position pattern (capped at\n``limit + 1`` rows so truncation is observable; the cap defaults\nto 200 with a 500 hard ceiling). When ``settlement_status`` is\nsupplied, only matching rows are returned \u2014 useful for the\nportfolio's \"pending parlays\" tab.",
+        "description": "List paper parlays, newest first.\n\nMulti-user batch PR 3: scoped to ``current_user`` when set. In\nsingle-tenant mode (no current user), returns every row \u2014 preserves\npre-multi-user behavior for deployments that haven't opted in.",
         "operationId": "list_paper_parlays_paper_parlays_get",
         "parameters": [
           {
@@ -8568,7 +8592,7 @@
         "summary": "List Paper Parlays"
       },
       "post": {
-        "description": "PAPER_PARLAY_SCOPE.md step 3: create a paper parlay from the\noperator's tray submission. Validation lives in the service layer\n(``create_paper_parlay``); this endpoint just wires the request\nthrough and commits.",
+        "description": "PAPER_PARLAY_SCOPE.md step 3: create a paper parlay from the\noperator's tray submission. Validation lives in the service layer\n(``create_paper_parlay``); this endpoint just wires the request\nthrough and commits.\n\nMulti-user batch PR 3: attribute to ``current_user`` so the\nportfolio table can filter by ownership.",
         "operationId": "open_paper_parlay_paper_parlays_post",
         "requestBody": {
           "content": {
@@ -8607,6 +8631,7 @@
     },
     "/paper-positions": {
       "post": {
+        "description": "Multi-user batch PR 3: attribute the new row to the current\nuser. ``current_user=None`` in single-tenant mode \u2192 user_id stays\nNULL (existing single-tenant behavior preserved).",
         "operationId": "open_paper_position_paper_positions_post",
         "requestBody": {
           "content": {
@@ -8645,6 +8670,7 @@
     },
     "/paper-positions/{position_id}/exit": {
       "post": {
+        "description": "Multi-user batch PR 3: only the position's owner can close it\n(service raises 403 otherwise). Legacy positions are read-only \u2014\nno one can exit them.",
         "operationId": "exit_paper_position_paper_positions__position_id__exit_post",
         "parameters": [
           {

@@ -50,7 +50,11 @@ def test_seed_users_is_noop_in_single_tenant_mode(db_session: Session) -> None:
     Lets existing deployments boot without any multi-user behavior
     until the operator opts in."""
     summary = seed_users_from_settings(db_session, _settings())
-    assert summary == {"inserted": 0, "owner_set": "", "legacy_ensured": 0}
+    assert summary["inserted"] == 0
+    assert summary["owner_set"] == ""
+    assert summary["legacy_ensured"] == 0
+    # PR 3 added backfill counts; they should be 0 in single-tenant
+    # mode since the function bails early before the backfill runs.
     assert db_session.query(User).count() == 0
 
 

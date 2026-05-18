@@ -901,6 +901,12 @@ class PaperPosition(Base):
     __tablename__ = "paper_positions"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Multi-user batch PR 3 — operator who created the row. Nullable
+    # so the migration can backfill existing rows to the synthetic
+    # ``legacy`` user without a schema-blocking NOT NULL. New rows
+    # always carry a user_id (enforced at the service layer in
+    # ``create_paper_position``).
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     market_id = Column(Integer, ForeignKey("markets.id"), nullable=False, index=True)
     ticker = Column(String, nullable=False, index=True)
     side = Column(String, nullable=False)
@@ -914,12 +920,15 @@ class PaperPosition(Base):
     notes = Column(Text, nullable=True)
 
     market = relationship("Market")
+    user = relationship("User")
 
 
 class DemoOrder(Base):
     __tablename__ = "demo_orders"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Multi-user batch PR 3 — see PaperPosition.user_id rationale.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     market_id = Column(Integer, ForeignKey("markets.id"), nullable=True, index=True)
     ticker = Column(String, nullable=False, index=True)
     client_order_id = Column(String, unique=True, nullable=False, index=True)
@@ -937,6 +946,7 @@ class DemoOrder(Base):
 
     market = relationship("Market")
     fills = relationship("DemoFill", back_populates="order", cascade="all, delete-orphan")
+    user = relationship("User")
 
 
 class PaperParlay(Base):
@@ -961,6 +971,8 @@ class PaperParlay(Base):
     __tablename__ = "paper_parlays"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Multi-user batch PR 3 — see PaperPosition.user_id rationale.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
     stake = Column(Float, nullable=False)
     leg_count = Column(Integer, nullable=False, index=True)
@@ -983,6 +995,7 @@ class PaperParlay(Base):
         cascade="all, delete-orphan",
         order_by="PaperParlayLeg.leg_index",
     )
+    user = relationship("User")
 
 
 class PaperParlayLeg(Base):

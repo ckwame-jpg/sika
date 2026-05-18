@@ -90,7 +90,12 @@ class _ResolvedLeg:
     fair_no_price: float | None
 
 
-def create_paper_parlay(db: Session, payload: PaperParlayCreate) -> PaperParlay:
+def create_paper_parlay(
+    db: Session,
+    payload: PaperParlayCreate,
+    *,
+    user_id: int | None = None,
+) -> PaperParlay:
     """Persist an operator-built paper parlay.
 
     Validation order is intentional: market existence and status are
@@ -139,6 +144,7 @@ def create_paper_parlay(db: Session, payload: PaperParlayCreate) -> PaperParlay:
     )
 
     parlay = PaperParlay(
+        user_id=user_id,
         stake=payload.stake,
         leg_count=len(resolved_legs),
         sport_scope=sport_scope,

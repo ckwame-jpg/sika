@@ -21,17 +21,17 @@ another in the env var produces the correct flag on both rows.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import User
+from app.models import DemoOrder, PaperParlay, PaperPosition, User
 
 
 LEGACY_USERNAME = "legacy"
 
 
-def seed_users_from_settings(db: Session, settings: Settings) -> dict[str, int]:
+def seed_users_from_settings(db: Session, settings: Settings) -> dict[str, object]:
     """Sync the ``users`` table with ``SIKA_USERS`` + ``SIKA_KALSHI_OWNER``.
 
     Returns a small summary dict for the startup log:
@@ -40,7 +40,17 @@ def seed_users_from_settings(db: Session, settings: Settings) -> dict[str, int]:
     Safe to call when ``SIKA_USERS`` is empty (single-tenant mode): no
     rows are inserted and the function returns zeros.
     """
-    summary = {"inserted": 0, "owner_set": "", "legacy_ensured": 0}
+    summary: dict[str, object] = {
+        "inserted": 0,
+        "owner_set": "",
+        "legacy_ensured": 0,
+        # PR 3: per-table backfill counts (NULL user_id rows pointed at
+        # the legacy bucket). Reported in the startup log so the
+        # operator sees the one-time backfill happen.
+        "backfilled_paper_positions": 0,
+        "backfilled_paper_parlays": 0,
+        "backfilled_demo_orders": 0,
+    }
     requested = settings.users
     if not requested:
         # Single-tenant mode — nothing to seed. Existing rows (if any)
@@ -70,6 +80,27 @@ def seed_users_from_settings(db: Session, settings: Settings) -> dict[str, int]:
         db.add(legacy)
         summary["legacy_ensured"] = 1
         db.flush()
+
+    # PR 3 — one-time backfill of NULL user_id rows to the legacy
+    # bucket. Subsequent runs are no-ops (no rows match the WHERE).
+    # Codex pattern 8 (migration compat): this is the only place that
+    # writes to the legacy user_id; new rows always carry a real user.
+    summary["backfilled_paper_positions"] = db.execute(
+        update(PaperPosition)
+        .where(PaperPosition.user_id.is_(None))
+        .values(user_id=legacy.id)
+    ).rowcount or 0
+    summary["backfilled_paper_parlays"] = db.execute(
+        update(PaperParlay)
+        .where(PaperParlay.user_id.is_(None))
+        .values(user_id=legacy.id)
+    ).rowcount or 0
+    summary["backfilled_demo_orders"] = db.execute(
+        update(DemoOrder)
+        .where(DemoOrder.user_id.is_(None))
+        .values(user_id=legacy.id)
+    ).rowcount or 0
+    db.flush()
 
     # Sync the kalshi-owner flag — set on the named user, clear on
     # everyone else. Codex pattern 1 (state-machine compat): a previous
