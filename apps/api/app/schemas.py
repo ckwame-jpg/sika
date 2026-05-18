@@ -1069,6 +1069,77 @@ class PaperPositionRead(BaseModel):
     closed_at: UTCDateTime | None = None
 
 
+class PaperParlayLegCreate(BaseModel):
+    """One leg of an operator-built paper parlay (PAPER_PARLAY_SCOPE.md
+    decision #3): ``suggested_price`` is the operator's snapshot of the
+    leg's entry price at tray-add time — NOT the current market price.
+    The save endpoint trusts this value as the locked entry price for
+    the parlay's combined_market_price calculation."""
+
+    ticker: str
+    side: LowercaseSide
+    suggested_price: float = Field(gt=0, lt=1)
+
+
+class PaperParlayCreate(BaseModel):
+    """Operator's paper-parlay save payload.
+
+    Stake is a freeform dollar amount (decision #1). Min/max leg
+    constraints are enforced at both the schema layer (here) and the
+    service layer (``create_paper_parlay``) — schema catches obvious
+    bad payloads at the boundary; the service-side check is the
+    authoritative guard against a future caller bypassing the schema.
+    """
+
+    legs: list[PaperParlayLegCreate] = Field(min_length=2, max_length=6)
+    stake: float = Field(gt=0, description="Dollar amount wagered.")
+    notes: str | None = None
+
+
+class PaperParlayLegRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    leg_index: int
+    source_prediction_id: int | None = None
+    market_id: int | None = None
+    ticker: str
+    sport_key: str | None = None
+    event_name: str | None = None
+    market_title: str
+    market_kind: str | None = None
+    stat_key: str | None = None
+    threshold: float | None = None
+    subject_name: str | None = None
+    subject_team: str | None = None
+    side: str
+    suggested_price: float
+    fair_yes_price: float | None = None
+    fair_no_price: float | None = None
+
+
+class PaperParlayRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: UTCDateTime
+    stake: float
+    leg_count: int
+    sport_scope: str
+    participating_sports: list[str]
+    combined_market_price: float
+    combined_model_probability: float
+    american_odds: str
+    edge: float
+    notes: str | None = None
+    settlement_status: str
+    outcome: str
+    realized_pnl: float | None = None
+    settled_at: UTCDateTime | None = None
+    settlement_notes: str | None = None
+    legs: list[PaperParlayLegRead]
+
+
 class DemoOrderCreate(BaseModel):
     ticker: str
     # Bug #15: lock the trade-action vocabulary at the boundary. Was
