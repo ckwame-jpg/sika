@@ -476,7 +476,7 @@ export function PaperPositionsTable({ maxHeight }: PaperPositionsTableProps) {
  * Two-click delete affordance — mirrors the DeleteButton on the
  * paper-parlays table. First click swaps the trash icon for a
  * "sure?" pill; second click commits the DELETE. Auto-disarms after
- * 3s.
+ * 5s.
  */
 function DeletePositionButton({ positionId }: { positionId: number }) {
   const [armed, setArmed] = useState(false);
@@ -485,7 +485,7 @@ function DeletePositionButton({ positionId }: { positionId: number }) {
   async function handleClick() {
     if (!armed) {
       setArmed(true);
-      setTimeout(() => setArmed(false), 3000);
+      setTimeout(() => setArmed(false), 5000);
       return;
     }
     setDeleting(true);
