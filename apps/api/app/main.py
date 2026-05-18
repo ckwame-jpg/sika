@@ -17,6 +17,7 @@ from app.services.scheduler import (
     stop_scheduler,
     sync_refresh_runtime_state_from_db,
 )
+from app.services.user_kalshi import migrate_env_var_credentials_to_owner
 from app.services.users import seed_users_from_settings
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,15 @@ async def lifespan(_: FastAPI):
             logger.info(
                 "Seeded users from SIKA_USERS: %s",
                 users_summary,
+            )
+        # Multi-user batch PR 4 — if the operator has env-var Kalshi
+        # creds and is named in SIKA_KALSHI_OWNER, copy them into
+        # user_kalshi_credentials so the per-user code path picks
+        # them up. Idempotent — skips when the owner already has a row.
+        if migrate_env_var_credentials_to_owner(db, settings):
+            logger.info(
+                "Migrated env-var Kalshi credentials to user '%s'",
+                settings.kalshi_owner,
             )
         sync_family_runtime_health(db)
         reconcile_stale_jobs(db)

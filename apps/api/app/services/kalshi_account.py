@@ -328,7 +328,43 @@ def build_kalshi_account_snapshot(
     db: Session,
     *,
     client: KalshiAccountClient | None = None,
+    user_id: int | None = None,
 ) -> KalshiAccountRead:
+    """Build (or fetch cached) Kalshi account snapshot.
+
+    Multi-user batch PR 4 — when ``user_id`` is supplied, the
+    function tries the per-user credentials path first. The cache
+    (which is a singleton, shared across users) is BYPASSED for
+    per-user clients to avoid one user's snapshot leaking into
+    another's response. The env-var / single-tenant path still
+    uses the cache for the portfolio page's 15s polling. This is
+    the conservative v1; a follow-up can add per-user caching if
+    Canaan's polling pattern justifies it.
+    """
+    if user_id is not None and client is None:
+        # Late import to avoid circular dep (user_kalshi imports
+        # kalshi clients, which would re-enter kalshi_account on
+        # eager import).
+        from app.services.user_kalshi import build_account_client_for_user
+
+        per_user_client = build_account_client_for_user(db, user_id)
+        if per_user_client is not None and per_user_client.is_configured():
+            # Per-user path — bypass cache. Build directly.
+            return _build_kalshi_account_snapshot_uncached(db, client=per_user_client)
+        # No per-user creds and user isn't the kalshi_owner → return
+        # the not-configured shape so the panel hides without an error.
+        if per_user_client is None:
+            return KalshiAccountRead(
+                configured=False,
+                status="not_configured",
+                error_message=None,
+                balance=None,
+                market_positions=[],
+                recent_fills=[],
+            )
+        # is_kalshi_owner with per-user-client falling through to env
+        # var — keep going to the cached env-var path below.
+
     # Bug #6: cache the production path (no explicit client) so the
     # portfolio page's ~15 s polling doesn't fan out 3+ Kalshi calls
     # per request. Tests that pass an explicit ``client`` bypass the

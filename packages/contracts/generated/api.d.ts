@@ -145,6 +145,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/kalshi-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get My Kalshi Credentials
+         * @description Metadata for the current user's Kalshi credentials. Does NOT
+         *     echo the private key — only configured/key_id/base_url/updated_at
+         *     so the /settings/kalshi UI (PR 5) can show "Connected as <key_id>"
+         *     without re-displaying the key material.
+         */
+        get: operations["get_my_kalshi_credentials_me_kalshi_credentials_get"];
+        put?: never;
+        /**
+         * Set My Kalshi Credentials
+         * @description Insert or update the current user's Kalshi credentials.
+         *     Idempotent — same inputs overwrite the existing row's
+         *     updated_at timestamp.
+         */
+        post: operations["set_my_kalshi_credentials_me_kalshi_credentials_post"];
+        /**
+         * Delete My Kalshi Credentials
+         * @description Disconnect the current user's Kalshi account. Returns the
+         *     not-configured shape so the UI flips to the connect-account state.
+         */
+        delete: operations["delete_my_kalshi_credentials_me_kalshi_credentials_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/jobs/market-discovery": {
         parameters: {
             query?: never;
@@ -3269,6 +3303,34 @@ export interface components {
             /** Source */
             source: string;
         };
+        /**
+         * UserKalshiCredentialsCreate
+         * @description POST body for /me/kalshi-credentials. ``base_url`` defaults to
+         *     the prod Kalshi URL; the UI offers a 'demo / prod' toggle.
+         */
+        UserKalshiCredentialsCreate: {
+            /** Base Url */
+            base_url: string;
+            /** Key Id */
+            key_id: string;
+            /** Private Key Pem */
+            private_key_pem: string;
+        };
+        /**
+         * UserKalshiCredentialsRead
+         * @description Status payload for the /settings/kalshi page. Does NOT echo the
+         *     private key — only metadata (configured / when / which base URL).
+         */
+        UserKalshiCredentialsRead: {
+            /** Base Url */
+            base_url?: string | null;
+            /** Configured */
+            configured: boolean;
+            /** Key Id */
+            key_id?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
         /** UserRead */
         UserRead: {
             /** Display Name */
@@ -3687,6 +3749,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CurrentUserRead"];
+                };
+            };
+        };
+    };
+    get_my_kalshi_credentials_me_kalshi_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserKalshiCredentialsRead"];
+                };
+            };
+        };
+    };
+    set_my_kalshi_credentials_me_kalshi_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserKalshiCredentialsCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserKalshiCredentialsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_my_kalshi_credentials_me_kalshi_credentials_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserKalshiCredentialsRead"];
                 };
             };
         };

@@ -79,6 +79,10 @@ const connectedPositions: PositionsRead = {
   // them to empty/false at serialization time.
   paper_parlays: [],
   paper_parlays_truncated: false,
+  // Multi-user batch PR 3 added the legacy buckets.
+  legacy_paper_positions: [],
+  legacy_demo_orders: [],
+  legacy_paper_parlays: [],
   drawdown_brake: null,
 };
 

@@ -14,6 +14,7 @@ from app.services.outbox import (
     enqueue as enqueue_outbox,
     register_intent_handler,
 )
+from app.services.user_kalshi import build_demo_client_for_user
 
 
 def create_paper_position(
@@ -214,7 +215,12 @@ def _kalshi_submit_handler(db: Session, entry: OutboxEntry) -> None:
     if order is None:
         raise RuntimeError(f"DemoOrder id={entry.target_id} not found for outbox entry {entry.id}")
 
-    client = KalshiDemoClient()
+    # Multi-user batch PR 4 — build the Kalshi client from the
+    # ORDER's user_id so each operator's Kalshi creds drive their own
+    # demo orders. Falls back to the env-var client when the order
+    # has no user (single-tenant / pre-multi-user rows in the
+    # outbox).
+    client = build_demo_client_for_user(db, order.user_id) or KalshiDemoClient()
     response = client.create_order(
         ticker=payload["ticker"],
         side=payload["side"],
@@ -245,7 +251,9 @@ def _kalshi_cancel_handler(db: Session, entry: OutboxEntry) -> None:
     if order is None:
         raise RuntimeError(f"DemoOrder id={entry.target_id} not found for outbox entry {entry.id}")
 
-    client = KalshiDemoClient()
+    # Multi-user batch PR 4 — same per-order client construction as
+    # the submit handler.
+    client = build_demo_client_for_user(db, order.user_id) or KalshiDemoClient()
     response = client.cancel_order(payload["kalshi_order_id"])
     order.status = (response.get("order") or {}).get("status") or "cancelled"
     order.response_body = response

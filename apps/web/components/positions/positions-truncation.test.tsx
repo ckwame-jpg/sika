@@ -69,6 +69,11 @@ function buildResponse(overrides: Partial<PositionsRead> = {}): PositionsRead {
     // backend defaults them to empty/false; fixtures must supply them.
     paper_parlays: [],
     paper_parlays_truncated: false,
+    // Multi-user batch PR 3 added legacy buckets. Same fixture-must-
+    // supply pattern as the paper_parlays addition above.
+    legacy_paper_positions: [],
+    legacy_demo_orders: [],
+    legacy_paper_parlays: [],
     drawdown_brake: null,
     ...overrides,
   };

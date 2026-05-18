@@ -1551,3 +1551,25 @@ class CurrentUserRead(BaseModel):
 
 class SwitchUserPayload(BaseModel):
     username: str
+
+
+# Multi-user batch PR 4 — per-user Kalshi credentials.
+class UserKalshiCredentialsRead(BaseModel):
+    """Status payload for the /settings/kalshi page. Does NOT echo the
+    private key — only metadata (configured / when / which base URL)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    configured: bool
+    key_id: str | None = None
+    base_url: str | None = None
+    updated_at: UTCDateTime | None = None
+
+
+class UserKalshiCredentialsCreate(BaseModel):
+    """POST body for /me/kalshi-credentials. ``base_url`` defaults to
+    the prod Kalshi URL; the UI offers a 'demo / prod' toggle."""
+
+    key_id: str = Field(min_length=1)
+    private_key_pem: str = Field(min_length=1)
+    base_url: str = Field(min_length=1)
