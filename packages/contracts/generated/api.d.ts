@@ -375,6 +375,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/paper-parlays": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Paper Parlays
+         * @description List paper parlays, newest first.
+         *
+         *     Mirrors the ``/positions`` paper-position pattern (capped at
+         *     ``limit + 1`` rows so truncation is observable; the cap defaults
+         *     to 200 with a 500 hard ceiling). When ``settlement_status`` is
+         *     supplied, only matching rows are returned — useful for the
+         *     portfolio's "pending parlays" tab.
+         */
+        get: operations["list_paper_parlays_paper_parlays_get"];
+        put?: never;
+        /**
+         * Open Paper Parlay
+         * @description PAPER_PARLAY_SCOPE.md step 3: create a paper parlay from the
+         *     operator's tray submission. Validation lives in the service layer
+         *     (``create_paper_parlay``); this endpoint just wires the request
+         *     through and commits.
+         */
+        post: operations["open_paper_parlay_paper_parlays_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/paper-positions": {
         parameters: {
             query?: never;
@@ -1575,6 +1608,120 @@ export interface components {
              */
             sportsbook_disagreement_threshold: number;
         };
+        /**
+         * PaperParlayCreate
+         * @description Operator's paper-parlay save payload.
+         *
+         *     Stake is a freeform dollar amount (decision #1). Min/max leg
+         *     constraints are enforced at both the schema layer (here) and the
+         *     service layer (``create_paper_parlay``) — schema catches obvious
+         *     bad payloads at the boundary; the service-side check is the
+         *     authoritative guard against a future caller bypassing the schema.
+         */
+        PaperParlayCreate: {
+            /** Legs */
+            legs: components["schemas"]["PaperParlayLegCreate"][];
+            /** Notes */
+            notes?: string | null;
+            /**
+             * Stake
+             * @description Dollar amount wagered.
+             */
+            stake: number;
+        };
+        /**
+         * PaperParlayLegCreate
+         * @description One leg of an operator-built paper parlay (PAPER_PARLAY_SCOPE.md
+         *     decision #3): ``suggested_price`` is the operator's snapshot of the
+         *     leg's entry price at tray-add time — NOT the current market price.
+         *     The save endpoint trusts this value as the locked entry price for
+         *     the parlay's combined_market_price calculation.
+         */
+        PaperParlayLegCreate: {
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "yes" | "no";
+            /** Suggested Price */
+            suggested_price: number;
+            /** Ticker */
+            ticker: string;
+        };
+        /** PaperParlayLegRead */
+        PaperParlayLegRead: {
+            /** Event Name */
+            event_name?: string | null;
+            /** Fair No Price */
+            fair_no_price?: number | null;
+            /** Fair Yes Price */
+            fair_yes_price?: number | null;
+            /** Id */
+            id: number;
+            /** Leg Index */
+            leg_index: number;
+            /** Market Id */
+            market_id?: number | null;
+            /** Market Kind */
+            market_kind?: string | null;
+            /** Market Title */
+            market_title: string;
+            /** Side */
+            side: string;
+            /** Source Prediction Id */
+            source_prediction_id?: number | null;
+            /** Sport Key */
+            sport_key?: string | null;
+            /** Stat Key */
+            stat_key?: string | null;
+            /** Subject Name */
+            subject_name?: string | null;
+            /** Subject Team */
+            subject_team?: string | null;
+            /** Suggested Price */
+            suggested_price: number;
+            /** Threshold */
+            threshold?: number | null;
+            /** Ticker */
+            ticker: string;
+        };
+        /** PaperParlayRead */
+        PaperParlayRead: {
+            /** American Odds */
+            american_odds: string;
+            /** Combined Market Price */
+            combined_market_price: number;
+            /** Combined Model Probability */
+            combined_model_probability: number;
+            /** Created At */
+            created_at: string;
+            /** Edge */
+            edge: number;
+            /** Id */
+            id: number;
+            /** Leg Count */
+            leg_count: number;
+            /** Legs */
+            legs: components["schemas"]["PaperParlayLegRead"][];
+            /** Notes */
+            notes?: string | null;
+            /** Outcome */
+            outcome: string;
+            /** Participating Sports */
+            participating_sports: string[];
+            /** Realized Pnl */
+            realized_pnl?: number | null;
+            /** Settled At */
+            settled_at?: string | null;
+            /** Settlement Notes */
+            settlement_notes?: string | null;
+            /** Settlement Status */
+            settlement_status: string;
+            /** Sport Scope */
+            sport_scope: string;
+            /** Stake */
+            stake: number;
+        };
         /** PaperPositionCreate */
         PaperPositionCreate: {
             /** Entry Price */
@@ -1846,6 +1993,16 @@ export interface components {
             demo_truncated: boolean;
             drawdown_brake?: components["schemas"]["DrawdownBrakeRead"] | null;
             kalshi_account: components["schemas"]["KalshiAccountRead"];
+            /**
+             * Paper Parlays
+             * @default []
+             */
+            paper_parlays: components["schemas"]["PaperParlayRead"][];
+            /**
+             * Paper Parlays Truncated
+             * @default false
+             */
+            paper_parlays_truncated: boolean;
             /** Paper Positions */
             paper_positions: components["schemas"]["PaperPositionRead"][];
             /**
@@ -3759,6 +3916,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WatchlistDiagnosticsRead"];
+                };
+            };
+        };
+    };
+    list_paper_parlays_paper_parlays_get: {
+        parameters: {
+            query?: {
+                /** @description Optional filter: 'pending' (default behavior is to return all). Currently only ``pending`` and ``settled`` are valid; other values yield 400. */
+                settlement_status?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperParlayRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_paper_parlay_paper_parlays_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperParlayCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperParlayRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
