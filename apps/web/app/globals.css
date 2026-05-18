@@ -3662,6 +3662,35 @@
   border-radius: 6px;
 }
 
+/* PAPER_PARLAY_SCOPE.md step 7 — outcome pill in the parlay table. */
+.paper-parlay-status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--color-cosmos-border-soft);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-cosmos-text-muted);
+}
+.paper-parlay-status-pill.won {
+  color: var(--color-positive);
+  background: color-mix(in oklab, var(--color-positive) 12%, transparent);
+  border-color: color-mix(in oklab, var(--color-positive) 40%, transparent);
+}
+.paper-parlay-status-pill.lost {
+  color: var(--color-negative);
+  background: color-mix(in oklab, var(--color-negative) 12%, transparent);
+  border-color: color-mix(in oklab, var(--color-negative) 40%, transparent);
+}
+.paper-parlay-status-pill.cancelled,
+.paper-parlay-status-pill.unresolved {
+  color: var(--color-cosmos-text-bright);
+  background: rgba(255, 255, 255, 0.06);
+}
+
 body,
 body *,
 body ::placeholder {
