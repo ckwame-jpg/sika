@@ -909,6 +909,112 @@ class DemoOrder(Base):
     fills = relationship("DemoFill", back_populates="order", cascade="all, delete-orphan")
 
 
+class PaperParlay(Base):
+    """Operator-built paper parlay (no real money).
+
+    Mirrors ``ParlayPrediction`` shape so the settlement rollup can reuse
+    ``_settle_parlay_rows``'s leg-outcome aggregation logic, but the
+    stake/payout semantics are dollar-denominated to match standard
+    sportsbook UX (per PAPER_PARLAY_SCOPE.md decision #1: stake is a
+    freeform dollar amount, payout = stake * (1/combined_market_price -
+    1) on win, -stake on loss).
+
+    Snapshot semantics (per PAPER_PARLAY_SCOPE.md decision #3): the
+    ``combined_market_price`` / ``combined_model_probability`` /
+    ``american_odds`` / ``edge`` fields are frozen at save time. If the
+    underlying markets reprice afterward, the parlay still settles
+    against the snapshot the operator saw — this is the "what you saw
+    is what you wagered" guarantee that separates a paper parlay from
+    a live market quote.
+    """
+
+    __tablename__ = "paper_parlays"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    stake = Column(Float, nullable=False)
+    leg_count = Column(Integer, nullable=False, index=True)
+    sport_scope = Column(String, nullable=False, default="MIXED", index=True)
+    participating_sports = Column(JSON, default=list)
+    combined_market_price = Column(Float, nullable=False)
+    combined_model_probability = Column(Float, nullable=False)
+    american_odds = Column(String, nullable=False)
+    edge = Column(Float, nullable=False)
+    notes = Column(Text, nullable=True)
+    settlement_status = Column(String, nullable=False, default="pending", index=True)
+    outcome = Column(String, nullable=False, default="pending", index=True)
+    realized_pnl = Column(Float, nullable=True)
+    settled_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    settlement_notes = Column(Text, nullable=True)
+
+    legs = relationship(
+        "PaperParlayLeg",
+        back_populates="parlay",
+        cascade="all, delete-orphan",
+        order_by="PaperParlayLeg.leg_index",
+    )
+
+
+class PaperParlayLeg(Base):
+    """Single leg of an operator-built paper parlay.
+
+    ``source_prediction_id`` is the settlement bridge — when the source
+    Prediction row settles (via the standard prediction-settlement cron),
+    the paper-parlay settlement job reads each leg's source_prediction
+    outcome and rolls up the parlay (any leg lost → parlay lost; all
+    won → won; etc.). FK is nullable because a prediction row may be
+    pruned over time; the denormalized fields below preserve display
+    state even if the source row is gone.
+
+    All display fields (``ticker``, ``market_title``, ``subject_name``,
+    etc.) are denormalized at save time so the parlay renders correctly
+    even after the underlying market/event is no longer in the active
+    slate.
+    """
+
+    __tablename__ = "paper_parlay_legs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    paper_parlay_id = Column(Integer, ForeignKey("paper_parlays.id"), nullable=False, index=True)
+    leg_index = Column(Integer, nullable=False)
+    source_prediction_id = Column(Integer, ForeignKey("predictions.id"), nullable=True, index=True)
+    market_id = Column(Integer, ForeignKey("markets.id"), nullable=True, index=True)
+    ticker = Column(String, nullable=False, index=True)
+    sport_key = Column(String, nullable=True, index=True)
+    event_name = Column(String, nullable=True)
+    market_title = Column(String, nullable=False)
+    market_kind = Column(String, nullable=True)
+    stat_key = Column(String, nullable=True)
+    threshold = Column(Float, nullable=True)
+    subject_name = Column(String, nullable=True)
+    subject_team = Column(String, nullable=True)
+    side = Column(String, nullable=False)
+    suggested_price = Column(Float, nullable=False)
+    fair_yes_price = Column(Float, nullable=True)
+    fair_no_price = Column(Float, nullable=True)
+
+    parlay = relationship("PaperParlay", back_populates="legs")
+    source_prediction = relationship("Prediction")
+    market = relationship("Market")
+
+
+# Composite indexes for the two paper-parlay tables. Settlement query
+# pulls rows by (settlement_status='pending', created_at) so the cron
+# job doesn't full-scan; leg lookup by (paper_parlay_id, leg_index) is
+# the natural sort order for display + settlement aggregation.
+Index(
+    "ix_paper_parlays_status_created",
+    PaperParlay.settlement_status,
+    PaperParlay.created_at,
+)
+Index(
+    "ix_paper_parlay_legs_parlay_index",
+    PaperParlayLeg.paper_parlay_id,
+    PaperParlayLeg.leg_index,
+    unique=True,
+)
+
+
 class OutboxEntry(Base):
     """Transactional outbox for side-effecting work (bug #31).
 
