@@ -17,6 +17,7 @@ from app.models import RefreshJob, Run
 from app.services.ingestion import advance_current_slate_refresh_job, advance_prop_refresh_job, run_refresh_cycle
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.ml.shadow import capture_shadow_artifacts_batch
+from app.services.paper_parlays import settle_paper_parlays
 from app.services.parlays import settle_parlay_predictions_batch
 from app.services.predictions import settle_predictions_batch
 
@@ -752,8 +753,24 @@ def _merge_settlement_summaries(*summaries: dict[str, int]) -> dict[str, int]:
     return merged
 
 
-def _settlement_processed_so_far(*, single_summary: dict[str, int], parlay_summary: dict[str, int]) -> int:
-    return int(single_summary.get("processed") or 0) + int(parlay_summary.get("processed") or 0)
+def _settlement_processed_so_far(
+    *,
+    single_summary: dict[str, int],
+    parlay_summary: dict[str, int],
+    paper_parlay_summary: dict[str, int] | None = None,
+) -> int:
+    # PAPER_PARLAY_SCOPE.md step 9: include paper-parlay rows in the
+    # processed-so-far counter so the operator-facing progress metric
+    # reflects all three phases. ``paper_parlay_summary`` defaults to
+    # ``None`` so older job rows (queued before this PR) still
+    # deserialize correctly via ``_coerce_settlement_summary``.
+    base = (
+        int(single_summary.get("processed") or 0)
+        + int(parlay_summary.get("processed") or 0)
+    )
+    if paper_parlay_summary is None:
+        return base
+    return base + int(paper_parlay_summary.get("processed") or 0)
 
 
 def _ensure_settlement_run(
@@ -782,6 +799,9 @@ def advance_settlement_job(db: Session, *, job: RefreshJob) -> tuple[Run, bool]:
     cursor = dict(details.get("cursor") or {}) or None
     single_summary = _coerce_settlement_summary(details.get("single_settlement_summary"))
     parlay_summary = _coerce_settlement_summary(details.get("parlay_settlement_summary"))
+    paper_parlay_summary = _coerce_settlement_summary(
+        details.get("paper_parlay_settlement_summary")
+    )
     run = _ensure_settlement_run(db, job=job)
     batch_started = perf_counter()
     batch_size = 0
@@ -809,16 +829,34 @@ def advance_settlement_job(db: Session, *, job: RefreshJob) -> tuple[Run, bool]:
         parlay_summary = _merge_settlement_summaries(parlay_summary, batch_summary)
         batch_size = PARLAY_SETTLEMENT_BATCH_SIZE
         if next_cursor is None:
-            completed = True
+            # PAPER_PARLAY_SCOPE.md step 9 — after auto-generated
+            # parlays settle, sweep operator-built paper parlays.
+            # Paper parlays don't have cursor batching (volume is
+            # tens-per-day, not thousands), so one phase, one pass.
+            phase = "paper_parlays"
             cursor = None
         else:
             cursor = next_cursor
+    elif phase == "paper_parlays":
+        # Single-pass: settle_paper_parlays processes every pending
+        # row in one go. Codex pattern 6 (implicit data shape): an
+        # operator-built parlay surface is small enough not to need
+        # batching for the next few months; revisit when volume
+        # justifies a cursor.
+        paper_batch_summary = settle_paper_parlays(db)
+        paper_parlay_summary = _merge_settlement_summaries(
+            paper_parlay_summary, paper_batch_summary
+        )
+        batch_size = int(paper_batch_summary.get("processed", 0))
+        completed = True
+        cursor = None
     else:
         raise ValueError(f"Unsupported settlement phase: {phase}")
 
     processed_so_far = _settlement_processed_so_far(
         single_summary=single_summary,
         parlay_summary=parlay_summary,
+        paper_parlay_summary=paper_parlay_summary,
     )
     details.update(
         {
@@ -826,6 +864,7 @@ def advance_settlement_job(db: Session, *, job: RefreshJob) -> tuple[Run, bool]:
             "cursor": cursor or {},
             "single_settlement_summary": single_summary,
             "parlay_settlement_summary": parlay_summary,
+            "paper_parlay_settlement_summary": paper_parlay_summary,
             "processed_so_far": processed_so_far,
             "batch_size": batch_size,
             "last_batch_seconds": round(perf_counter() - batch_started, 3),
@@ -840,6 +879,7 @@ def advance_settlement_job(db: Session, *, job: RefreshJob) -> tuple[Run, bool]:
         "cursor": cursor or {},
         "single_settlement_summary": single_summary,
         "parlay_settlement_summary": parlay_summary,
+        "paper_parlay_settlement_summary": paper_parlay_summary,
         "processed_so_far": processed_so_far,
         "batch_size": batch_size,
         "last_batch_seconds": details["last_batch_seconds"],
@@ -851,6 +891,7 @@ def advance_settlement_job(db: Session, *, job: RefreshJob) -> tuple[Run, bool]:
             "refresh_scope": "settlement",
             "single_settlement_summary": single_summary,
             "parlay_settlement_summary": parlay_summary,
+            "paper_parlay_settlement_summary": paper_parlay_summary,
             "processed_so_far": processed_so_far,
         }
     db.flush()
