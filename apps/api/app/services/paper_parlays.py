@@ -1,0 +1,374 @@
+"""Operator-built paper parlay service (PAPER_PARLAY_SCOPE.md step 2).
+
+``create_paper_parlay`` resolves each operator-supplied leg against the
+live market + latest prediction data, computes the combined market
+price / joint probability / edge / American odds, and persists a
+``PaperParlay`` + ``PaperParlayLeg`` set atomically.
+
+Locked decisions from PAPER_PARLAY_SCOPE.md (see "Operator decisions"):
+
+- **Stake is a dollar amount** (decision #1). Payout on win =
+  ``stake * (1 / combined_market_price - 1)``; on loss = ``-stake``.
+  Stake validation lives at the schema layer (``PaperParlayCreate``).
+- **Original entry-price snapshot** (decision #3). The
+  ``suggested_price`` the operator supplies per leg is what gets saved
+  — even if the live market has repriced between the tray and the
+  save click. Model probabilities are re-resolved from the latest
+  ``Prediction`` row at save time (the operator's tray probability is
+  not trusted, but the entry price they CHOSE is honored).
+
+Settlement runs separately in step 4 (``settle_paper_parlays``); this
+service only handles creation.
+
+The correlation-adjusted joint probability re-uses the same math the
+auto-parlay generator uses (``_correlation_adjusted_joint_probability``
+in ``parlays.py``). To avoid a fragile private-import coupling, the
+formula is reproduced locally with a comment pointing at the
+authoritative source. If the auto-generator updates its formula and
+this copy drifts, the regression tests below (which pin both the
+independent product and the correlation lift) will catch it.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import prod
+
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import Market, PaperParlay, PaperParlayLeg, Prediction
+from app.schemas import PaperParlayCreate, PaperParlayLegCreate
+from app.services.parlays import american_odds_from_probability
+from app.services.predictions import OPEN_MARKET_STATUSES
+
+
+MIN_LEG_COUNT = 2
+MAX_LEG_COUNT = 6  # Hard cap mirroring the auto-generator's parlay_max_output.
+
+# Same per-pair weights the auto-generator uses (parlays.py
+# ``_pair_weight`` theoretical priors). Duplicated here to avoid
+# importing the underscore-prefixed helper. If you change one, change
+# both — the regression test pins these by value.
+_PAIR_WEIGHT_SHARED_SUBJECT = 0.7
+_PAIR_WEIGHT_SAME_TEAM = 0.3
+_PAIR_WEIGHT_SHARED_OPPONENT = 0.2
+_CORRELATION_CAP = 0.85
+
+
+@dataclass(slots=True)
+class _ResolvedLeg:
+    """A leg input enriched with the live market + prediction lookups
+    needed to compute joint prob and persist the row."""
+
+    request: PaperParlayLegCreate
+    market: Market
+    source_prediction: Prediction | None
+    model_probability: float
+    subject_name: str | None
+    subject_team: str | None
+    opponent: str | None
+    sport_key: str | None
+    event_name: str | None
+    market_kind: str | None
+    stat_key: str | None
+    threshold: float | None
+    fair_yes_price: float | None
+    fair_no_price: float | None
+
+
+def create_paper_parlay(db: Session, payload: PaperParlayCreate) -> PaperParlay:
+    """Persist an operator-built paper parlay.
+
+    Validation order is intentional: market existence and status are
+    cheaper than prediction resolution and joint-probability math, so
+    bail early to give the operator a fast 4xx if the parlay can't be
+    placed at all.
+    """
+    if len(payload.legs) < MIN_LEG_COUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Paper parlay requires at least {MIN_LEG_COUNT} legs.",
+        )
+    if len(payload.legs) > MAX_LEG_COUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Paper parlay accepts at most {MAX_LEG_COUNT} legs.",
+        )
+
+    # Duplicate-ticker check happens here, before any DB lookups, so a
+    # bad payload is rejected before we spend round trips on it.
+    tickers = [leg.ticker for leg in payload.legs]
+    if len(set(tickers)) != len(tickers):
+        raise HTTPException(
+            status_code=400,
+            detail="Paper parlay legs must reference distinct tickers.",
+        )
+
+    resolved_legs = [_resolve_leg(db, leg) for leg in payload.legs]
+
+    combined_market_price = round(
+        prod(leg.request.suggested_price for leg in resolved_legs),
+        6,
+    )
+    combined_model_probability = round(
+        _correlation_adjusted_joint(resolved_legs),
+        6,
+    )
+    edge = round(combined_model_probability - combined_market_price, 6)
+    american_odds = american_odds_from_probability(combined_market_price)
+
+    participating_sports = sorted(
+        {leg.sport_key.upper() for leg in resolved_legs if leg.sport_key}
+    )
+    sport_scope = (
+        participating_sports[0] if len(participating_sports) == 1 else "MIXED"
+    )
+
+    parlay = PaperParlay(
+        stake=payload.stake,
+        leg_count=len(resolved_legs),
+        sport_scope=sport_scope,
+        participating_sports=participating_sports,
+        combined_market_price=combined_market_price,
+        combined_model_probability=combined_model_probability,
+        american_odds=american_odds,
+        edge=edge,
+        notes=payload.notes,
+    )
+    parlay.legs = [
+        PaperParlayLeg(
+            leg_index=index,
+            source_prediction_id=(
+                leg.source_prediction.id if leg.source_prediction else None
+            ),
+            market_id=leg.market.id,
+            ticker=leg.market.ticker,
+            sport_key=leg.sport_key,
+            event_name=leg.event_name,
+            market_title=leg.market.title or leg.market.ticker,
+            market_kind=leg.market_kind,
+            stat_key=leg.stat_key,
+            threshold=leg.threshold,
+            subject_name=leg.subject_name,
+            subject_team=leg.subject_team,
+            side=leg.request.side,
+            suggested_price=leg.request.suggested_price,
+            fair_yes_price=leg.fair_yes_price,
+            fair_no_price=leg.fair_no_price,
+        )
+        for index, leg in enumerate(resolved_legs)
+    ]
+    db.add(parlay)
+    db.flush()
+    return parlay
+
+
+def _resolve_leg(db: Session, leg: PaperParlayLegCreate) -> _ResolvedLeg:
+    market = db.scalar(select(Market).where(Market.ticker == leg.ticker))
+    if market is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Market not found for ticker '{leg.ticker}'.",
+        )
+    if market.status not in OPEN_MARKET_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Market '{leg.ticker}' is not open for trading "
+                f"(status={market.status})."
+            ),
+        )
+
+    # Latest unsettled Prediction for this (market, side) gives us the
+    # model's current view — even though the operator's tray ENTRY
+    # PRICE is locked, the joint-probability snapshot uses the live
+    # model probability at save time. If no prediction row exists for
+    # this leg's side (e.g. the model only generated a YES rec and the
+    # operator picked NO), we treat fair_{side}_price as 1 - other_side
+    # — same fallback the persistence layer uses elsewhere.
+    source_prediction = db.scalar(
+        select(Prediction)
+        .where(
+            Prediction.market_id == market.id,
+            Prediction.side == leg.side,
+            Prediction.settlement_status == "pending",
+        )
+        .order_by(Prediction.captured_at.desc())
+        .limit(1)
+    )
+    fair_yes_price: float | None = None
+    fair_no_price: float | None = None
+    if source_prediction is not None:
+        fair_yes_price = (
+            float(source_prediction.fair_yes_price)
+            if source_prediction.fair_yes_price is not None
+            else None
+        )
+        fair_no_price = (
+            float(source_prediction.fair_no_price)
+            if source_prediction.fair_no_price is not None
+            else None
+        )
+    # If the picked side has no fair price available, the joint prob
+    # can't be meaningfully computed. Refuse rather than silently
+    # falling back to 0.5 (which would pollute the edge calculation).
+    model_probability = _model_probability_for_side(
+        side=leg.side,
+        fair_yes_price=fair_yes_price,
+        fair_no_price=fair_no_price,
+    )
+    if model_probability is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No model probability available for '{leg.ticker}' "
+                f"{leg.side.upper()}. The operator's tray must have been "
+                "built from a stale slate — refresh and re-pick."
+            ),
+        )
+
+    metadata = dict(market.raw_data or {})
+    subject_name = (
+        str(metadata.get("copilot_subject_name") or "").strip() or None
+    )
+    subject_team = (
+        str(metadata.get("copilot_subject_team") or "").strip().upper() or None
+    )
+
+    event = market.event
+    sport_key = (
+        (market.sport_key or (event.sport_key if event else None) or "").upper()
+        or None
+    )
+    event_name = event.name if event else None
+
+    opponent: str | None = None
+    if event is not None and subject_team:
+        for participant_link in event.participants:
+            participant = participant_link.participant
+            full_name = (participant.display_name or "").upper()
+            short_name = (participant.short_name or "").upper()
+            if subject_team in {full_name, short_name}:
+                continue
+            opponent = short_name or full_name or None
+            if opponent:
+                break
+
+    return _ResolvedLeg(
+        request=leg,
+        market=market,
+        source_prediction=source_prediction,
+        model_probability=model_probability,
+        subject_name=subject_name,
+        subject_team=subject_team,
+        opponent=opponent,
+        sport_key=sport_key,
+        event_name=event_name,
+        market_kind=metadata.get("copilot_market_kind"),
+        stat_key=metadata.get("copilot_stat_key"),
+        threshold=_safe_float(metadata.get("copilot_threshold")),
+        fair_yes_price=fair_yes_price,
+        fair_no_price=fair_no_price,
+    )
+
+
+def _model_probability_for_side(
+    *,
+    side: str,
+    fair_yes_price: float | None,
+    fair_no_price: float | None,
+) -> float | None:
+    """Return P(picked side) using the side-aware fair price.
+
+    Mirrors ``parlays._selected_model_probability``. The fallback when
+    one side is missing reads from the complement of the other — same
+    pattern the scoring layer's ``_signal_snapshot_from_prediction``
+    uses for predictions that only store one side's fair price.
+    """
+    if side == "yes":
+        if fair_yes_price is not None:
+            return fair_yes_price
+        if fair_no_price is not None:
+            return 1.0 - fair_no_price
+        return None
+    if side == "no":
+        if fair_no_price is not None:
+            return fair_no_price
+        if fair_yes_price is not None:
+            return 1.0 - fair_yes_price
+        return None
+    return None
+
+
+def _correlation_adjusted_joint(legs: list[_ResolvedLeg]) -> float:
+    """Joint probability with positive-correlation lift.
+
+    Mirrors ``parlays._correlation_adjusted_joint_probability``:
+    independent product as the lower bound, ``min(leg_probs)`` as the
+    upper bound, lifted by a per-pair-weighted blend capped at
+    ``_CORRELATION_CAP``. The formula's rationale is in the
+    auto-generator docstring; the regression tests here pin the
+    expected lift behavior so a drift between the two implementations
+    is caught at test time.
+    """
+    leg_probs = [leg.model_probability for leg in legs]
+    independent = prod(leg_probs)
+    if len(leg_probs) <= 1:
+        return float(independent)
+    min_leg = min(leg_probs)
+
+    pairs = _count_correlation_pairs(legs)
+    total_pairs = len(leg_probs) * (len(leg_probs) - 1) // 2
+    weighted = (
+        _PAIR_WEIGHT_SHARED_SUBJECT * pairs["shared_subject"]
+        + _PAIR_WEIGHT_SAME_TEAM * pairs["same_team"]
+        + _PAIR_WEIGHT_SHARED_OPPONENT * pairs["shared_opponent"]
+    ) / max(total_pairs, 1)
+    correlation_factor = min(weighted, _CORRELATION_CAP)
+    return float(independent + correlation_factor * (min_leg - independent))
+
+
+def _count_correlation_pairs(legs: list[_ResolvedLeg]) -> dict[str, int]:
+    """Count pairwise correlation overlaps across legs.
+
+    A leg pair counts toward at most ONE correlation category — same
+    subject (strongest) > same team > shared opponent — so we don't
+    double-count a pair where multiple keys overlap. Mirrors the
+    pairwise reduction in ``parlays._count_correlation_pairs``.
+    """
+    counts = {"shared_subject": 0, "same_team": 0, "shared_opponent": 0}
+    n = len(legs)
+    for i in range(n):
+        for j in range(i + 1, n):
+            left = legs[i]
+            right = legs[j]
+            if (
+                left.subject_name
+                and right.subject_name
+                and left.subject_name.lower() == right.subject_name.lower()
+            ):
+                counts["shared_subject"] += 1
+            elif (
+                left.subject_team
+                and right.subject_team
+                and left.subject_team == right.subject_team
+            ):
+                counts["same_team"] += 1
+            elif (
+                left.opponent
+                and right.opponent
+                and left.opponent == right.opponent
+            ):
+                counts["shared_opponent"] += 1
+    return counts
+
+
+def _safe_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
