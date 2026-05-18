@@ -168,6 +168,9 @@ export type PaperParlayLegRead = Wire<Schema<"PaperParlayLegRead">>;
 export type UserRead = Wire<Schema<"UserRead">>;
 export type CurrentUserRead = Wire<Schema<"CurrentUserRead">>;
 export type SwitchUserPayload = Schema<"SwitchUserPayload">;
+export type CreateUserPayload = Schema<"CreateUserPayload">;
+export type UserKalshiCredentialsCreate = Schema<"UserKalshiCredentialsCreate">;
+export type UserKalshiCredentialsRead = Wire<Schema<"UserKalshiCredentialsRead">>;
 
 // ── /stats-query + /team-history endpoint family ──
 export type StatsSummaryRead = Wire<Schema<"StatsSummaryRead">>;

@@ -21,6 +21,8 @@ another in the env var produces the correct flag on both rows.
 
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
@@ -119,6 +121,68 @@ def seed_users_from_settings(db: Session, settings: Settings) -> dict[str, objec
         db.flush()
 
     return summary
+
+
+_USERNAME_PATTERN = re.compile(r"^[a-z0-9_-]+$")
+
+
+def create_user(
+    db: Session, *, username: str, display_name: str | None = None
+) -> User:
+    """In-app user creation (multi-user PR 5).
+
+    Mirrors the env-var seeding contract: username must be a
+    cookie-safe identifier; the legacy bucket name is reserved;
+    re-adding an existing user is a no-op (returns the existing row
+    so the caller can render "already added" rather than 409).
+    """
+    cleaned = (username or "").strip().lower()
+    if not cleaned:
+        raise ValueError("Username is required.")
+    if cleaned == LEGACY_USERNAME:
+        raise ValueError(
+            f"'{LEGACY_USERNAME}' is reserved for the historical-data bucket."
+        )
+    if not _USERNAME_PATTERN.match(cleaned):
+        raise ValueError(
+            "Username must contain only lowercase letters, digits, '_' or '-'."
+        )
+    existing = db.scalar(select(User).where(User.username == cleaned))
+    if existing is not None:
+        return existing
+    user = User(
+        username=cleaned,
+        display_name=(display_name or "").strip() or cleaned,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def delete_user(db: Session, username: str) -> bool:
+    """Remove a user. Returns True if a row was deleted, False if the
+    user didn't exist (idempotent).
+
+    Codex pattern 5 (reset edge cases): the legacy bucket and the
+    kalshi_owner can never be deleted via the in-app path. Legacy
+    holds historical data; the owner has env-var creds wired up.
+    """
+    cleaned = (username or "").strip().lower()
+    if cleaned == LEGACY_USERNAME:
+        raise ValueError(
+            "The legacy bucket can't be deleted — it holds historical data."
+        )
+    user = db.scalar(select(User).where(User.username == cleaned))
+    if user is None:
+        return False
+    if user.is_kalshi_owner:
+        raise ValueError(
+            "The Kalshi-owner user can't be deleted from the UI — "
+            "update SIKA_KALSHI_OWNER in .env first."
+        )
+    db.delete(user)
+    db.flush()
+    return True
 
 
 def get_user_by_username(db: Session, username: str) -> User | None:

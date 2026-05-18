@@ -51,6 +51,7 @@ from app.schemas import (
     PaperPositionExit,
     PaperPositionRead,
     ParlayPredictionRead,
+    CreateUserPayload,
     SwitchUserPayload,
     UserKalshiCredentialsCreate,
     UserKalshiCredentialsRead,
@@ -110,7 +111,13 @@ from app.services.user_kalshi import (
     get_user_credentials,
     upsert_user_credentials,
 )
-from app.services.users import LEGACY_USERNAME, get_user_by_username, list_active_users
+from app.services.users import (
+    LEGACY_USERNAME,
+    create_user,
+    delete_user,
+    get_user_by_username,
+    list_active_users,
+)
 from app.api.current_user import (
     COOKIE_MAX_AGE_SECONDS,
     CURRENT_USER_COOKIE,
@@ -1077,6 +1084,39 @@ def list_users(db: Session = Depends(get_db)) -> list[UserRead]:
     Excludes the synthetic ``legacy`` bucket (operators can't
     impersonate the historical-data shared user)."""
     return [UserRead.model_validate(user) for user in list_active_users(db)]
+
+
+@router.post("/users", response_model=UserRead)
+def add_user(payload: CreateUserPayload, db: Session = Depends(get_db)) -> UserRead:
+    """Multi-user batch PR 5 — in-app user creation. Lets the operator
+    add (e.g.) Canaan without editing .env + restarting the API. Any
+    current user can add new users (trust model: Tailscale perimeter,
+    operators trust each other)."""
+    try:
+        user = create_user(
+            db,
+            username=payload.username,
+            display_name=payload.display_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(user)
+    return UserRead.model_validate(user)
+
+
+@router.delete("/users/{username}", response_model=dict)
+def remove_user(username: str, db: Session = Depends(get_db)) -> dict:
+    """Multi-user batch PR 5 — in-app user deletion. Legacy bucket
+    and the kalshi_owner are protected (service raises ValueError).
+    Idempotent: deleting a missing user is a 200 with ``deleted=False``
+    rather than a 404."""
+    try:
+        deleted = delete_user(db, username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return {"deleted": deleted}
 
 
 @router.post("/users/switch", response_model=CurrentUserRead)
