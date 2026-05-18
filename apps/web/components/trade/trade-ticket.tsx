@@ -189,7 +189,6 @@ export function TradeTicket({
         open={tradeDialogOpen}
         onOpenChange={setTradeDialogOpen}
         defaults={{
-          destination: "paper",
           ticker: selection.ticker,
           // Bug #40 phase 7 — TradeDialogDefaults.side narrowed to "yes" | "no".
           // selection.selectedSide is typed string upstream; lowercase and cast.

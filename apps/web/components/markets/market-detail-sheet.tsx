@@ -364,7 +364,6 @@ function MarketDetailContent({ ticker }: { ticker: string }) {
           if (!open) setTradeRec(null);
         }}
         defaults={tradeRec != null ? {
-          destination: "paper",
           ticker: tradeRec.ticker,
           // Bug #40 phase 7 — TradeDialogDefaults.side narrowed to "yes" | "no"
           // to match the migrated PaperPositionCreate / DemoOrderCreate

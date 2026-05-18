@@ -100,8 +100,7 @@ export default function PaperPositionsPage() {
       <TradeDialog
         open={showNew}
         onOpenChange={setShowNew}
-        defaults={{ destination: "paper" }}
-        description="Create a new single-market trade and choose whether to send it to paper or demo."
+        description="Open a paper trade for a single market."
       />
     </>
   );
