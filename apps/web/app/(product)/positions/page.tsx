@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Header } from "@/components/layout/header";
 import { DemoOrdersTable } from "@/components/positions/demo-orders-table";
 import { KalshiAccountPanel } from "@/components/positions/kalshi-account-panel";
+import { PaperParlaysTable } from "@/components/positions/paper-parlays-table";
 import { PaperPositionsTable } from "@/components/positions/paper-positions-table";
 import { TradeDialog } from "@/components/positions/trade-dialog";
 import { Button } from "@/components/ui/button";
@@ -66,6 +67,25 @@ export default function PaperPositionsPage() {
               </div>
             </section>
           </div>
+
+          {/* PAPER_PARLAY_SCOPE.md step 7 — full-width section below the
+              positions grid. Multi-leg parlays need more horizontal
+              room than single positions; the full-width slot also
+              gives the expanded leg-detail panel enough breathing
+              room to read cleanly. */}
+          <section className="cosmos-panel">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">Paper Parlays</h2>
+                <p className="cosmos-panel-desc">
+                  Operator-built multi-leg paper wagers. Settle when every leg's underlying prediction resolves.
+                </p>
+              </div>
+            </div>
+            <div className="cosmos-panel-body flush">
+              <PaperParlaysTable />
+            </div>
+          </section>
         </div>
       </main>
 
