@@ -45,22 +45,24 @@ interface PaperParlayDialogProps {
  * are operator-readable as-is and don't need translation).
  */
 export function PaperParlayDialog({ open, onOpenChange }: PaperParlayDialogProps) {
-  const { legs, clear } = useParlayTray();
+  const { legs, stake: trayStake, setStake, clear } = useParlayTray();
   const quote = useMemo(() => computePaperParlayQuote(legs), [legs]);
   const [stakeInput, setStakeInput] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset the form whenever the dialog opens. Codex pattern 5: stale
-  // state from a previous open shouldn't leak into the next save.
+  // Inherit the stake the operator already typed in the tray. They
+  // shouldn't have to retype it just to hit "Save". Reset every open
+  // so a previous save's notes don't bleed into the next attempt
+  // (codex pattern 5).
   useEffect(() => {
     if (!open) return;
-    setStakeInput("");
+    setStakeInput(trayStake != null ? String(trayStake) : "");
     setNotes("");
     setError(null);
     setSubmitting(false);
-  }, [open]);
+  }, [open, trayStake]);
 
   const parsedStake = parseStake(stakeInput);
   const canSubmit =
@@ -139,7 +141,13 @@ export function PaperParlayDialog({ open, onOpenChange }: PaperParlayDialogProps
               type="text"
               inputMode="decimal"
               value={stakeInput}
-              onChange={(e) => setStakeInput(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setStakeInput(next);
+                // Mirror back to the tray so the operator's working
+                // stake survives a cancel + reopen.
+                setStake(parseStake(next));
+              }}
               placeholder="100"
               autoFocus
             />

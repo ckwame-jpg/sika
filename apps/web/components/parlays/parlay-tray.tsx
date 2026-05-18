@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { useParlayTray, MAX_TRAY_LEGS } from "./parlay-tray-store";
 import { computePaperParlayQuote } from "./paper-parlay-quote";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,13 +28,30 @@ interface ParlayTrayProps {
 }
 
 export function ParlayTray({ onSave }: ParlayTrayProps) {
-  const { legs, removeLeg, clear } = useParlayTray();
+  const { legs, stake, removeLeg, setStake, clear } = useParlayTray();
   const quote = useMemo(() => computePaperParlayQuote(legs), [legs]);
+
+  // Local input string mirrors the store's parsed stake so the user
+  // can type "$2" without the cursor jumping every keystroke. Sync
+  // back to the store on each keystroke that parses cleanly.
+  const [stakeInput, setStakeInput] = useState(stake != null ? String(stake) : "");
 
   if (legs.length === 0) return null;
 
   const canSave = legs.length >= 2 && Boolean(onSave);
   const edgePositive = quote.edge > 0;
+
+  // Live projection — uses the live tray combined price (a sweep over
+  // the chips), so the operator sees their projected payout shift in
+  // real time as they add or drop legs.
+  const parsedStake = parseStake(stakeInput);
+  const projection =
+    parsedStake != null && Number.isFinite(quote.combinedMarketPrice) && quote.combinedMarketPrice > 0
+      ? {
+          payout: parsedStake / quote.combinedMarketPrice,
+          profit: parsedStake / quote.combinedMarketPrice - parsedStake,
+        }
+      : null;
 
   return (
     <section
@@ -92,6 +110,46 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
             value={formatEdge(quote.edge)}
             tone={edgePositive ? "positive" : "negative"}
           />
+        </div>
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+              $
+            </span>
+            <Input
+              mono
+              className="pl-6"
+              inputMode="decimal"
+              placeholder="Stake"
+              value={stakeInput}
+              onChange={(event) => {
+                const value = event.target.value;
+                setStakeInput(value);
+                setStake(parseStake(value));
+              }}
+              data-testid="parlay-tray-stake"
+              aria-label="Stake (USD, paper)"
+            />
+          </div>
+          <div
+            className="rounded-md border border-border/40 bg-surface-hover/30 px-3 py-1.5 sm:min-w-[180px]"
+            data-testid="parlay-tray-projection"
+          >
+            <span className="block text-2xs uppercase tracking-wide text-muted-foreground/70">
+              Projected payout
+            </span>
+            {projection ? (
+              <span className="mt-0.5 flex items-baseline justify-between gap-2 font-mono text-xs">
+                <span className="text-foreground">${projection.payout.toFixed(2)}</span>
+                <span className={cn(projection.profit >= 0 ? "text-positive" : "text-negative")}>
+                  {projection.profit >= 0 ? "+" : ""}${projection.profit.toFixed(2)}
+                </span>
+              </span>
+            ) : (
+              <span className="mt-0.5 block font-mono text-xs text-muted-foreground/60">—</span>
+            )}
+          </div>
         </div>
 
         <div className="parlay-tray-actions">
@@ -164,4 +222,11 @@ function formatEdge(value: number): string {
   const pct = value * 100;
   const prefix = pct >= 0 ? "+" : "";
   return `${prefix}${pct.toFixed(1)}%`;
+}
+
+function parseStake(raw: string): number | null {
+  if (!raw.trim()) return null;
+  const value = Number(raw.replace(/[$,\s]/g, ""));
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value;
 }
