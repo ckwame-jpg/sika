@@ -67,7 +67,13 @@ export function TradeTicket({
   selection,
   onClose,
 }: TradeTicketProps) {
-  const [tradeDestination, setTradeDestination] = useState<"paper" | "demo" | null>(null);
+  // Demo-order entry was removed from the trade ticket on 2026-05-18 —
+  // demo order is really a Kalshi-integration testing tool, not a daily
+  // operator workflow, and it competed for attention with paper trade on
+  // every card. The /demo-orders endpoint stays for ops + scripted use;
+  // the dedicated /positions/demo page and the market-detail sheet still
+  // surface it. See PAPER_PARLAY_SCOPE.md sibling discussion.
+  const [tradeDialogOpen, setTradeDialogOpen] = useState(false);
 
   if (!selection) {
     return (
@@ -157,11 +163,8 @@ export function TradeTicket({
         <div className="ticket-section-divider" aria-hidden />
 
         <div className="grid gap-2">
-          <Button variant="primary" size="sm" onClick={() => setTradeDestination("paper")}>
+          <Button variant="primary" size="sm" onClick={() => setTradeDialogOpen(true)}>
             Paper trade
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setTradeDestination("demo")}>
-            Demo order
           </Button>
           {selection.kalshiUrl && (
             <Button variant="ghost" size="sm" asChild>
@@ -181,21 +184,17 @@ export function TradeTicket({
       </div>
 
       <TradeDialog
-        open={tradeDestination !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setTradeDestination(null);
-          }
-        }}
+        open={tradeDialogOpen}
+        onOpenChange={setTradeDialogOpen}
         defaults={{
-          destination: tradeDestination ?? "paper",
+          destination: "paper",
           ticker: selection.ticker,
           // Bug #40 phase 7 — TradeDialogDefaults.side narrowed to "yes" | "no".
           // selection.selectedSide is typed string upstream; lowercase and cast.
           side: selection.selectedSide.toLowerCase() as "yes" | "no",
           price: selection.entryPrice ?? undefined,
         }}
-        description="Route this pick to paper or demo without leaving the trade desk."
+        description="Open a paper trade for this pick without leaving the trade desk."
       />
     </>
   );

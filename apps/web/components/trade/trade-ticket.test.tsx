@@ -100,4 +100,14 @@ describe("TradeTicket", () => {
 
     expect(screen.getByRole("group", { name: /stale feature/i })).toBeInTheDocument();
   });
+
+  it("shows the Paper trade button but NOT the Demo order button", () => {
+    // Demo order was removed from the ticket on 2026-05-18 — it's a
+    // Kalshi-integration testing tool, not an operator workflow. The
+    // /demo-orders endpoint and the dedicated /positions/demo page
+    // still exist, but the trade ticket only surfaces paper.
+    renderWithProviders(<TradeTicket selection={selection} />);
+    expect(screen.getByRole("button", { name: /paper trade/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /demo order/i })).toBeNull();
+  });
 });
