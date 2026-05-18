@@ -199,6 +199,22 @@ class Settings(BaseSettings):
     # per prediction once sizing lands in the schema.
     kelly_sizing_assumed_notional_dollars: float = 100.0
 
+    # Multi-user identity (PAPER_PARLAY_SCOPE.md / multi-user batch step 1).
+    # SIKA_USERS is a comma-separated list of usernames that get seeded
+    # into the ``users`` table on API startup. New user = edit .env,
+    # restart. SIKA_KALSHI_OWNER names the user whose user_id should
+    # be attached to the existing env-var Kalshi credentials when the
+    # per-user Kalshi migration (PR 4) runs. Both default to empty;
+    # an empty users list means single-tenant (no auth, legacy
+    # behavior).
+    users_csv: str = Field(default="", validation_alias="SIKA_USERS")
+    kalshi_owner: str = Field(default="", validation_alias="SIKA_KALSHI_OWNER")
+
+    @property
+    def users(self) -> list[str]:
+        """Parsed list of usernames from SIKA_USERS=chris,canaan."""
+        return [name.strip() for name in self.users_csv.split(",") if name.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:

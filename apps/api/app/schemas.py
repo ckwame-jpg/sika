@@ -1523,3 +1523,24 @@ class TeamHistoryRead(BaseModel):
     team_name: str
     sport_key: str
     results: list[TeamGameResultRead]
+
+
+# Multi-user identity (multi-user batch PR 1).
+class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    display_name: str | None = None
+    is_kalshi_owner: bool = False
+
+
+class CurrentUserRead(BaseModel):
+    """Wire shape for ``GET /me``. ``user`` is ``None`` when the
+    operator hasn't picked one yet (or the cookie is invalid)."""
+
+    user: UserRead | None = None
+
+
+class SwitchUserPayload(BaseModel):
+    username: str

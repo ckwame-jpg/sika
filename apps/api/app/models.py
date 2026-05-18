@@ -10,6 +10,36 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class User(Base):
+    """Multi-user identity (multi-user batch PR 1).
+
+    The threat model here is "Canaan accidentally sees my Kalshi balance"
+    rather than authenticated multi-tenancy — Tailscale is the perimeter,
+    and users are trusted to not impersonate each other. Identity is
+    selector-only (no PIN, no password); the cookie ``sika.userId`` holds
+    the chosen username and the session middleware (api/middleware.py)
+    maps it to a row here on every request.
+
+    Users are seeded from the ``SIKA_USERS`` env var on API startup. The
+    ``is_kalshi_owner`` flag marks who inherits the env-var Kalshi
+    credentials when the per-user Kalshi migration runs in PR 4 — usually
+    the operator who set up the .env file in the first place.
+
+    The synthetic ``legacy`` user holds paper data created before
+    multi-user landed (PR 3 backfill). It's visible read-only to every
+    user so the historical ledger isn't lost.
+    """
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, nullable=False, index=True)
+    display_name = Column(String, nullable=True)
+    is_kalshi_owner = Column(Boolean, nullable=False, default=False)
+    is_legacy_bucket = Column(Boolean, nullable=False, default=False, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 class Sport(Base):
     __tablename__ = "sports"
 

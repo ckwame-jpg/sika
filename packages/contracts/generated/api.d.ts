@@ -123,6 +123,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Me
+         * @description Who am I right now? Returns ``{user: null}`` when no cookie is
+         *     set (single-tenant or fresh browser). Frontend uses this to render
+         *     the topbar selector + decide whether to redirect to a user picker.
+         */
+        get: operations["get_me_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ops/jobs/market-discovery": {
         parameters: {
             query?: never;
@@ -683,6 +705,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Users
+         * @description Users available for selection in the topbar dropdown.
+         *     Excludes the synthetic ``legacy`` bucket (operators can't
+         *     impersonate the historical-data shared user).
+         */
+        get: operations["list_users_users_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/sign-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign Out
+         * @description Clear the ``sika.userId`` cookie. Returns ``{user: null}``.
+         *
+         *     Useful when handing off the tab to another operator (Canaan picks up
+         *     the laptop, hits sign-out, picks his own name from the dropdown).
+         */
+        post: operations["sign_out_users_sign_out_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch User
+         * @description Set the ``sika.userId`` cookie to the chosen username.
+         *
+         *     400 on unknown username; 400 on attempting to impersonate the
+         *     legacy bucket (codex pattern 6 — explicit close-set on the side
+         *     of the choice).
+         */
+        post: operations["switch_user_users_switch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/watchlist": {
         parameters: {
             query?: never;
@@ -739,6 +830,14 @@ export interface components {
             miscalibration?: number | null;
             /** Settled Count */
             settled_count: number;
+        };
+        /**
+         * CurrentUserRead
+         * @description Wire shape for ``GET /me``. ``user`` is ``None`` when the
+         *     operator hasn't picked one yet (or the cookie is invalid).
+         */
+        CurrentUserRead: {
+            user?: components["schemas"]["UserRead"] | null;
         };
         /** DemoOrderCreate */
         DemoOrderCreate: {
@@ -2865,6 +2964,11 @@ export interface components {
             /** Wins */
             wins?: number | null;
         };
+        /** SwitchUserPayload */
+        SwitchUserPayload: {
+            /** Username */
+            username: string;
+        };
         /** TeamGameResultRead */
         TeamGameResultRead: {
             /** Game Date */
@@ -3138,6 +3242,20 @@ export interface components {
             last_success_at?: string | null;
             /** Source */
             source: string;
+        };
+        /** UserRead */
+        UserRead: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Id */
+            id: number;
+            /**
+             * Is Kalshi Owner
+             * @default false
+             */
+            is_kalshi_owner: boolean;
+            /** Username */
+            username: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -3523,6 +3641,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_me_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentUserRead"];
                 };
             };
         };
@@ -4422,6 +4560,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TradeDeskResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_users_users_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRead"][];
+                };
+            };
+        };
+    };
+    sign_out_users_sign_out_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentUserRead"];
+                };
+            };
+        };
+    };
+    switch_user_users_switch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchUserPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentUserRead"];
                 };
             };
             /** @description Validation Error */
