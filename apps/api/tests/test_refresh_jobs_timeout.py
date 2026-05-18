@@ -1196,3 +1196,137 @@ def test_prop_refresh_successful_batch_resets_transient_attempts(db_session, mon
     )
     assert "last_transient_error" not in details
     assert "last_transient_backoff_seconds" not in details
+
+
+# -----------------------------------------------------------------------------
+# Bug #51: refresh-worker statement_timeout bounds slow DB queries so a
+# wedged query can't pin the worker thread (and its pooled connection)
+# indefinitely. Symptom in prod: the first ``_process_refresh_queue_job``
+# tick never returned, every subsequent tick was skipped with
+# ``maximum number of running instances reached (1)``, and the
+# SQLAlchemy pool eventually exhausted after ~90min of zombie workers.
+# -----------------------------------------------------------------------------
+
+
+def test_apply_worker_statement_timeout_emits_set_local_on_postgres(monkeypatch):
+    """On Postgres, the helper issues ``SET LOCAL statement_timeout``
+    with the configured millisecond value so any individual query is
+    bounded."""
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(refresh_worker_statement_timeout_seconds=30),
+    )
+    mock_db = unittest.mock.MagicMock()
+    mock_db.get_bind.return_value.dialect.name = "postgresql"
+
+    refresh_jobs._apply_worker_statement_timeout(mock_db)
+
+    executed_sql = [str(call.args[0]) for call in mock_db.execute.call_args_list]
+    assert any(
+        "SET LOCAL statement_timeout = 30000" in sql for sql in executed_sql
+    ), f"expected SET LOCAL statement_timeout=30000 in executed SQL, got: {executed_sql}"
+
+
+def test_apply_worker_statement_timeout_is_noop_on_sqlite(monkeypatch):
+    """SQLite has no ``statement_timeout`` GUC; the helper must
+    short-circuit so the SQLite test suite (and dev mode) stays
+    unaffected."""
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(refresh_worker_statement_timeout_seconds=30),
+    )
+    mock_db = unittest.mock.MagicMock()
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
+    refresh_jobs._apply_worker_statement_timeout(mock_db)
+
+    assert mock_db.execute.call_count == 0
+
+
+def test_apply_worker_statement_timeout_is_noop_when_setting_disabled(monkeypatch):
+    """Operators can disable the cap by setting the value to 0; the
+    helper must respect that without issuing a no-op ``SET LOCAL`` that
+    Postgres would otherwise interpret as "no limit"."""
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(refresh_worker_statement_timeout_seconds=0),
+    )
+    mock_db = unittest.mock.MagicMock()
+    mock_db.get_bind.return_value.dialect.name = "postgresql"
+
+    refresh_jobs._apply_worker_statement_timeout(mock_db)
+
+    assert mock_db.execute.call_count == 0
+
+
+def test_slow_worker_query_raising_does_not_leak_session(db_session, monkeypatch):
+    """Bug #51 end-to-end: simulate a long DB query hitting
+    ``statement_timeout`` mid-worker by having ``advance_prop_refresh_job``
+    raise a generic exception (psycopg surfaces this as ``OperationalError``
+    on a real timeout). The worker's ``except Exception`` path must fail
+    the job, commit the failure, and close the session — i.e. the
+    function must return within bounded time AND no orphan ``running``
+    job is left behind.
+
+    Before the fix, a slow query had nothing to bound it, the worker
+    sat in psycopg waiting forever, and ``done_event.wait`` returned
+    False after the worker-level timeout (300s for current_slate) —
+    but the worker thread kept holding its pooled connection. Every
+    subsequent tick spawned another zombie. After 15 cycles the
+    SQLAlchemy pool was exhausted (5 base + 10 overflow) and every API
+    request 30s-timed-out at session checkout.
+    """
+    _install_threaded_session_factory(db_session, monkeypatch)
+    _fast_timeout_settings(monkeypatch)
+    job = _queued_prop_job(db_session)
+
+    advance_invocations: list[int] = []
+
+    def _advance(db, job):
+        advance_invocations.append(job.id)
+        # Simulate the exception psycopg raises when the Postgres
+        # statement_timeout GUC fires mid-query. The worker's
+        # ``except Exception`` path catches this, fails the job, and
+        # commits. The ``with SessionLocal()`` block then closes the
+        # session and returns the connection to the pool.
+        raise RuntimeError("simulated statement_timeout firing mid-query")
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance)
+
+    started = monotonic()
+    result = refresh_jobs.process_refresh_job_queue_once()
+    elapsed = monotonic() - started
+
+    # Function must return promptly — the worker's exception path
+    # closes its session synchronously, no timeout-wait dance involved.
+    assert elapsed < 1.0
+    assert result is not None
+    assert result.job_id == job.id
+    assert result.status == "failed"
+    assert advance_invocations == [job.id]
+
+    db_session.expire_all()
+    persisted = db_session.get(RefreshJob, job.id)
+    assert persisted.status == "failed", (
+        "the job row must NOT remain in ``running`` after the worker "
+        "raises — otherwise reconcile_stale_jobs would have to clean "
+        "it up and the next scheduler tick is blocked until then"
+    )
+    assert persisted.error_message  # any non-empty error message
+
+    # The follow-up tick must be able to claim a fresh job — no
+    # zombie worker is hogging the singleton invariant.
+    second_job = _queued_prop_job(db_session, reason="post-error")
+
+    def _advance_ok(db, job):
+        return _completed_run(db), True
+
+    monkeypatch.setattr(refresh_jobs, "advance_prop_refresh_job", _advance_ok)
+
+    second_result = refresh_jobs.process_refresh_job_queue_once()
+    assert second_result is not None
+    assert second_result.job_id == second_job.id
+    assert second_result.status == "completed"

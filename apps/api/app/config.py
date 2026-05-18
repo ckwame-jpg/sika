@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     maintenance_claim_budget_seconds: int = 25
     cleanup_interval_hours: int = 6
     startup_refresh_stale_after_minutes: int = 15
+    # Bug #51: cap individual DB statements issued by the refresh worker
+    # on Postgres so a slow query (lock contention, missing index, table
+    # bloat) can't pin a worker thread indefinitely and leak its pool
+    # connection. SQLite has no equivalent — the setting is a no-op there.
+    # 30s is well under the smallest per-kind worker timeout (60s for
+    # injury/referee refresh) so the worker's exception path still has
+    # time to fail the job cleanly when the statement_timeout fires.
+    refresh_worker_statement_timeout_seconds: int = 30
     # Smarter #14 — event-aware scheduler bursts. When ANY event has a
     # tip-off within ``near_tip_off_window_minutes`` in the future, OR
     # started within ``live_game_window_hours`` in the past (i.e. is
