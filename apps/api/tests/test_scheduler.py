@@ -320,12 +320,15 @@ def test_process_refresh_job_queue_once_enqueues_shadow_follow_up_for_current_sl
 
 
 def test_claim_next_job_prioritizes_current_slate_over_maintenance_continuation(db_session):
+    # Bug #52: keep the prop_refresh age below
+    # ``STARVATION_PRIORITY_ESCALATION_SECONDS`` (600s) so this test
+    # covers the by-kind ladder rather than the anti-starvation path.
     maintenance = RefreshJob(
         kind="prop_refresh",
         scope="maintenance",
         reason="interval",
         status="queued",
-        queued_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=2),
         details={"phase": "watchlist_score_batch"},
     )
     current_slate = RefreshJob(
@@ -333,7 +336,7 @@ def test_claim_next_job_prioritizes_current_slate_over_maintenance_continuation(
         scope="current_slate",
         reason="interval",
         status="queued",
-        queued_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        queued_at=datetime.now(timezone.utc) - timedelta(seconds=30),
     )
     db_session.add_all([maintenance, current_slate])
     db_session.commit()
@@ -347,26 +350,31 @@ def test_claim_next_job_prioritizes_current_slate_over_maintenance_continuation(
 
 
 def test_claim_next_job_prioritizes_settlement_after_current_shadow_before_prop_refresh(db_session):
+    # Bug #52: keep all ages well below
+    # ``STARVATION_PRIORITY_ESCALATION_SECONDS`` (600s) so this test
+    # exercises the by-kind base ladder without the anti-starvation
+    # escalation kicking in — the escalation is covered separately by
+    # ``test_claim_next_job_escalates_starved_lower_priority_job``.
     prop_refresh = RefreshJob(
         kind="prop_refresh",
         scope="maintenance",
         reason="interval",
         status="queued",
-        queued_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=2),
     )
     settlement = RefreshJob(
         kind="settlement",
         scope="predictions",
         reason="interval",
         status="queued",
-        queued_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=1),
     )
     shadow_capture = RefreshJob(
         kind="shadow_capture",
         scope="current_slate",
         reason="follow_up",
         status="queued",
-        queued_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        queued_at=datetime.now(timezone.utc) - timedelta(seconds=30),
     )
     db_session.add_all([prop_refresh, settlement, shadow_capture])
     db_session.commit()
@@ -385,19 +393,21 @@ def test_claim_next_job_prioritizes_settlement_after_current_shadow_before_prop_
 
 
 def test_claim_next_job_prioritizes_shadow_backfill_before_prop_refresh(db_session):
+    # Bug #52: keep ages below the starvation-escalation cutoff so the
+    # by-kind base ladder is what's exercised here.
     prop_refresh = RefreshJob(
         kind="prop_refresh",
         scope="maintenance",
         reason="interval",
         status="queued",
-        queued_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=2),
     )
     shadow_backfill = RefreshJob(
         kind="shadow_capture",
         scope="backfill",
         reason="maintenance_follow_up",
         status="queued",
-        queued_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        queued_at=datetime.now(timezone.utc) - timedelta(seconds=30),
     )
     db_session.add_all([prop_refresh, shadow_backfill])
     db_session.commit()
@@ -407,6 +417,79 @@ def test_claim_next_job_prioritizes_shadow_backfill_before_prop_refresh(db_sessi
     assert claimed is not None
     assert claimed.id == shadow_backfill.id
     assert claimed.kind == "shadow_capture"
+
+
+def test_claim_next_job_escalates_starved_lower_priority_job(db_session):
+    """Bug #52: when a lower-priority queued job ages past the starvation
+    cutoff, ``_claim_next_job`` must claim it before any newer
+    higher-priority queued row. This is the fix for ``prop_refresh``
+    being failed with ``queue_processor_wedged`` while a long-running
+    settlement backlog dominated the queue.
+    """
+    starved_prop_refresh = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+        # 11 min > STARVATION_PRIORITY_ESCALATION_SECONDS (10 min).
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=11),
+    )
+    fresh_settlement = RefreshJob(
+        kind="settlement",
+        scope="predictions",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([starved_prop_refresh, fresh_settlement])
+    db_session.commit()
+
+    claimed = refresh_jobs._claim_next_job(db_session)
+
+    assert claimed is not None
+    assert claimed.id == starved_prop_refresh.id, (
+        "starved prop_refresh (queued 11 min ago) must beat fresh settlement"
+    )
+
+    # After the escalated job requeues (fresh queued_at = now), the
+    # by-kind ladder takes over again so settlement reclaims dominance.
+    refresh_jobs._guarded_requeue_job(db_session, starved_prop_refresh.id)
+    db_session.commit()
+
+    next_claimed = refresh_jobs._claim_next_job(db_session)
+    assert next_claimed is not None
+    assert next_claimed.id == fresh_settlement.id, (
+        "after requeue clears starvation, settlement reclaims priority"
+    )
+
+
+def test_claim_next_job_starvation_escalation_orders_oldest_first(db_session):
+    """Bug #52: when multiple jobs are starved past the cutoff, the
+    oldest one wins (priority is tied at -1; ``queued_at ASC`` is the
+    next sort key). Without this, two starved rows could thrash on the
+    same tick if their relative ages weren't honored.
+    """
+    older_starved = RefreshJob(
+        kind="cleanup",
+        scope="retention",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=20),
+    )
+    newer_starved = RefreshJob(
+        kind="prop_refresh",
+        scope="maintenance",
+        reason="interval",
+        status="queued",
+        queued_at=datetime.now(timezone.utc) - timedelta(minutes=12),
+    )
+    db_session.add_all([older_starved, newer_starved])
+    db_session.commit()
+
+    claimed = refresh_jobs._claim_next_job(db_session)
+
+    assert claimed is not None
+    assert claimed.id == older_starved.id
 
 
 def test_process_refresh_job_queue_once_requeues_and_completes_settlement_batches(db_session, monkeypatch):

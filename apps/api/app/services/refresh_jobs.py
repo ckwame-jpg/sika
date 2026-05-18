@@ -99,6 +99,17 @@ PROP_REFRESH_DEAD_LETTER_COOLDOWN_SECONDS = 300.0
 # ``int.from_bytes(sha256(b"sika:refresh_job_claim").digest()[:8], "big",
 # signed=True)``; stable across processes and DB restarts.
 REFRESH_JOB_CLAIM_LOCK_KEY = -5064315184726640939
+# Bug #52: anti-starvation. A long-running settlement (priority 3) that
+# re-queues itself every ~40s for hours blocked every prop_refresh (priority
+# 5) from being claimed, so the queued prop_refresh aged past
+# ``refresh_job_stale_minutes`` (30 min) and was failed with
+# ``queue_processor_wedged`` — even though the processor was never wedged;
+# it was just busy with higher-priority work. Once a queued job ages past
+# this threshold, ``_job_priority_order`` escalates it above all normal
+# kind priorities so the next claim picks it. The escalation self-clears
+# on requeue (fresh ``queued_at = now``), so settlement still dominates
+# steady-state — this is a fairness floor, not a priority inversion.
+STARVATION_PRIORITY_ESCALATION_SECONDS = 600.0
 logger = logging.getLogger(__name__)
 SETTLEMENT_SUMMARY_KEYS = ("processed", "updated", "won", "lost", "push", "cancelled", "pending", "unresolved", "errors")
 
@@ -512,8 +523,29 @@ def enqueue_shadow_capture_job(
     return job, created
 
 
-def _job_priority_order():
-    return case(
+def _job_priority_order(starvation_cutoff: datetime | None = None):
+    """Return the SQL priority expression for the claim ``order_by``.
+
+    Smaller value = higher priority. The base ladder is by-kind so
+    operator-facing pipelines (``refresh`` / ``shadow_capture`` current
+    slate, then ``settlement``) lead background work (``prop_refresh``,
+    ``cleanup``, etc.).
+
+    Bug #52: an unbounded backlog on a single higher-priority kind (the
+    observed case: 16k+ pending predictions feeding a settlement that
+    re-queues itself every ~40s for hours) would otherwise starve every
+    lower-priority queued job — eventually tripping ``reconcile_stale_jobs``
+    to fail them with ``queue_processor_wedged``. When
+    ``starvation_cutoff`` is supplied, any job whose ``queued_at`` is
+    older than it is escalated to priority ``-1`` so a starved row gets
+    one claim cycle. The escalation self-clears on requeue (workers
+    stamp a fresh ``queued_at = now``), so the steady-state ladder is
+    unchanged — this is a fairness floor, not a priority inversion.
+    """
+    branches: list[tuple[Any, int]] = []
+    if starvation_cutoff is not None:
+        branches.append((RefreshJob.queued_at < starvation_cutoff, -1))
+    branches.extend([
         (
             (RefreshJob.kind == "refresh") & (RefreshJob.scope == "current_slate"),
             0,
@@ -542,8 +574,8 @@ def _job_priority_order():
             RefreshJob.kind == "cleanup",
             6,
         ),
-        else_=99,
-    )
+    ])
+    return case(*branches, else_=99)
 
 
 def _claim_next_job(db: Session) -> RefreshJob | None:
@@ -571,13 +603,23 @@ def _claim_next_job(db: Session) -> RefreshJob | None:
     # eligible yet" — the same row will be picked up on a later tick
     # once the back-off has elapsed.
     now = datetime.now(timezone.utc)
+    # Bug #52: any job queued for longer than this cutoff is escalated
+    # above all kind priorities so a long-running higher-priority kind
+    # (e.g. settlement chewing a 16k-prediction backlog at 40s/batch)
+    # can't perpetually starve a lower-priority one. See
+    # ``_job_priority_order`` for details.
+    starvation_cutoff = now - timedelta(seconds=STARVATION_PRIORITY_ESCALATION_SECONDS)
     queued = db.scalar(
         select(RefreshJob)
         .where(
             RefreshJob.status == "queued",
             RefreshJob.queued_at <= now,
         )
-        .order_by(_job_priority_order(), RefreshJob.queued_at.asc(), RefreshJob.id.asc())
+        .order_by(
+            _job_priority_order(starvation_cutoff=starvation_cutoff),
+            RefreshJob.queued_at.asc(),
+            RefreshJob.id.asc(),
+        )
         .limit(1)
         .with_for_update(skip_locked=True)
     )
