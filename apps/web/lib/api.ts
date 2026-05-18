@@ -44,7 +44,7 @@ const BASE = "/api";
 
 async function request<T>(
   path: string,
-  init?: RequestInit & { noRetry?: boolean },
+  init?: RequestInit & { noRetry?: boolean; timeoutMs?: number },
 ): Promise<T> {
   // Bug #6, codex round-15 P2 on PR #40: callers can opt out of the
   // GET retry behavior. Used by ``fetchPositions({ force: true })``
@@ -52,18 +52,20 @@ async function request<T>(
   // ``expire_kalshi_account_cache`` the freshly-populated cache and
   // trigger another Kalshi fetch. From one user click that could be
   // 3× upstream calls; opt out so a single click is a single fetch.
-  const { noRetry, ...fetchInit } = init ?? {};
+  const { noRetry, timeoutMs, ...fetchInit } = init ?? {};
   const maxAttempts =
     noRetry || (fetchInit.method && fetchInit.method !== "GET") ? 1 : 3;
   const delays = [1000, 2000, 4000];
   let lastError: Error | undefined;
 
   // Distinguish operator-initiated cancellations (e.g. component
-  // unmount via ``AbortController``) from this request's own 15s
+  // unmount via ``AbortController``) from this request's own
   // timeout so the catch handler can produce an actionable error
   // message instead of the browser's ``"signal is aborted without
-  // reason"`` default.
-  const TIMEOUT_MS = 15_000;
+  // reason"`` default. Default 15s; callers can override for
+  // intrinsically slow endpoints (e.g. ``fetchModelReadinessSummary``
+  // which runs a heavy server-side aggregation).
+  const TIMEOUT_MS = timeoutMs ?? 15_000;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     let timedOut = false;
@@ -362,7 +364,12 @@ export const fetchPredictionSummary = (
 };
 
 export const fetchModelReadinessSummary = () =>
-  request<ModelReadinessSummaryRead>("/ops/models/readiness");
+  // Bug #235 follow-up: this endpoint runs the full
+  // ``build_model_readiness_summary`` server-side aggregation,
+  // which can take 20-30s under load. The default 15s timeout
+  // is too tight — bumping to 60s so the page can load. The
+  // proper fix is to make the aggregation fast (separate task).
+  request<ModelReadinessSummaryRead>("/ops/models/readiness", { timeoutMs: 60_000 });
 
 export const fetchModelReadinessDetail = (familyKey: string) =>
   request<ModelFamilyReadinessRead>(`/ops/models/readiness/${encodeURIComponent(familyKey)}`);
