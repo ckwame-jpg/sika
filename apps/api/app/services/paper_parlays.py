@@ -183,6 +183,33 @@ def create_paper_parlay(
     return parlay
 
 
+def delete_paper_parlay(
+    db: Session, parlay_id: int, *, user_id: int | None = None
+) -> None:
+    """Permanently remove a paper parlay + its legs (cascade). Owner-only.
+
+    Multi-user follow-up: same ownership check as the close /
+    cancel flows. ``user_id=None`` skips the check for single-
+    tenant deployments. Deletes regardless of settlement status —
+    pending parlays, settled wins/losses, all qualify.
+    """
+    parlay = db.get(PaperParlay, parlay_id)
+    if parlay is None:
+        raise HTTPException(status_code=404, detail="Paper parlay not found")
+    if user_id is not None:
+        if parlay.user_id is None or (parlay.user and parlay.user.is_legacy_bucket):
+            raise HTTPException(
+                status_code=403, detail="Legacy paper parlays are read-only.",
+            )
+        if parlay.user_id != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You can only delete parlays you saved.",
+            )
+    db.delete(parlay)
+    db.flush()
+
+
 def _resolve_leg(db: Session, leg: PaperParlayLegCreate) -> _ResolvedLeg:
     market = db.scalar(select(Market).where(Market.ticker == leg.ticker))
     if market is None:

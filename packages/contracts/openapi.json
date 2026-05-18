@@ -7698,6 +7698,48 @@
         "summary": "Submit Demo Order"
       }
     },
+    "/demo-orders/{order_id}": {
+      "delete": {
+        "description": "Permanently delete a demo order + its fills (cascade).\nOwner-only; legacy rows are read-only (403); 404 on unknown id.\n\nDoes NOT cancel on the Kalshi sandbox side \u2014 that's a separate\n/cancel call. Delete is local-state cleanup only; an orphaned\nKalshi sandbox order doesn't affect anything real.",
+        "operationId": "remove_demo_order_demo_orders__order_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "title": "Order Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove Demo Order Demo Orders  Order Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Demo Order"
+      }
+    },
     "/demo-orders/{order_id}/cancel": {
       "post": {
         "operationId": "cancel_order_demo_orders__order_id__cancel_post",
@@ -8803,6 +8845,48 @@
         "summary": "Open Paper Parlay"
       }
     },
+    "/paper-parlays/{parlay_id}": {
+      "delete": {
+        "description": "Permanently delete a paper parlay + its legs. Owner-only;\nlegacy rows are read-only (403); 404 on unknown id. Pending\n+ settled parlays both qualify.",
+        "operationId": "remove_paper_parlay_paper_parlays__parlay_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "parlay_id",
+            "required": true,
+            "schema": {
+              "title": "Parlay Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove Paper Parlay Paper Parlays  Parlay Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Paper Parlay"
+      }
+    },
     "/paper-positions": {
       "post": {
         "description": "Multi-user batch PR 3: attribute the new row to the current\nuser. ``current_user=None`` in single-tenant mode \u2192 user_id stays\nNULL (existing single-tenant behavior preserved).",
@@ -8840,6 +8924,48 @@
           }
         },
         "summary": "Open Paper Position"
+      }
+    },
+    "/paper-positions/{position_id}": {
+      "delete": {
+        "description": "Permanently delete a paper position. Owner-only; legacy\nrows are read-only (403); 404 on unknown id. Closed + open\npositions both qualify.",
+        "operationId": "remove_paper_position_paper_positions__position_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "position_id",
+            "required": true,
+            "schema": {
+              "title": "Position Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove Paper Position Paper Positions  Position Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Paper Position"
       }
     },
     "/paper-positions/{position_id}/exit": {
