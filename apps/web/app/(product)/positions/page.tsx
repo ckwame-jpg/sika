@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Header } from "@/components/layout/header";
 import { DemoOrdersTable } from "@/components/positions/demo-orders-table";
 import { KalshiAccountPanel } from "@/components/positions/kalshi-account-panel";
+import { LegacyBucketPanel } from "@/components/positions/legacy-bucket-panel";
 import { PaperParlaysTable } from "@/components/positions/paper-parlays-table";
 import { PaperPositionsTable } from "@/components/positions/paper-positions-table";
 import { TradeDialog } from "@/components/positions/trade-dialog";
@@ -86,6 +87,13 @@ export default function PaperPositionsPage() {
               <PaperParlaysTable />
             </div>
           </section>
+
+          {/* Multi-user batch follow-up — pre-multi-user historical data
+              (paper trades / demo orders / parlays with no owner).
+              The component renders nothing when every legacy list is
+              empty, so single-tenant deployments + fresh operators
+              see no extra section. */}
+          <LegacyBucketPanel />
         </div>
       </main>
 
