@@ -3353,6 +3353,107 @@
   font-family: var(--font-sans, system-ui, sans-serif);
 }
 
+/* Multi-user batch PR 2 — topbar user switcher. Visually rhymes with
+   .topbar-chip (rounded pill, muted background) but is a button +
+   dropdown rather than an inert badge. */
+.user-switcher {
+  position: relative;
+  display: inline-flex;
+}
+.user-switcher-trigger {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-cosmos-border-soft);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-cosmos-text-bright);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.user-switcher-trigger:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.user-switcher-trigger-label {
+  font-variant-numeric: tabular-nums;
+}
+.user-switcher-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 180px;
+  background: color-mix(in oklab, var(--color-surface) 95%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--color-cosmos-border-soft);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+  display: grid;
+  gap: 2px;
+}
+.user-switcher-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.user-switcher-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-cosmos-text-bright);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.user-switcher-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.user-switcher-item.is-current {
+  background: rgba(120, 210, 200, 0.14);
+  color: var(--color-positive);
+}
+.user-switcher-kalshi-badge {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: lowercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(120, 210, 200, 0.18);
+  color: var(--color-positive);
+}
+.user-switcher-signout {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-cosmos-text-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  margin-top: 2px;
+  border-top: 1px solid var(--color-cosmos-border-soft);
+}
+.user-switcher-signout:hover {
+  color: var(--color-negative);
+  background: color-mix(in oklab, var(--color-negative) 8%, transparent);
+}
+
 @keyframes pulse {
   0% { transform: scale(0.9); opacity: 1; }
   100% { transform: scale(1.8); opacity: 0; }

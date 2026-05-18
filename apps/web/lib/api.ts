@@ -12,9 +12,12 @@ import type {
   ModelFamilyReadinessRead,
   ModelReadinessSettingsUpdate,
   ModelReadinessSummaryRead,
+  CurrentUserRead,
   PaperParlayCreate,
   PaperParlayRead,
   PaperPositionCreate,
+  SwitchUserPayload,
+  UserRead,
   PaperPositionExit,
   PaperPositionRead,
   ParlayPredictionRead,
@@ -170,6 +173,24 @@ export const submitDemoOrder = (body: DemoOrderCreate) =>
     method: "POST",
     body: JSON.stringify(body),
   });
+
+// -----------------------------------------------------------------------------
+// Multi-user identity (multi-user PR 1 + 2)
+// -----------------------------------------------------------------------------
+
+export const fetchMe = () => request<CurrentUserRead>("/me");
+
+export const fetchUsers = () => request<UserRead[]>("/users");
+
+export const switchUser = (body: SwitchUserPayload) =>
+  request<CurrentUserRead>("/users/switch", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const signOut = () =>
+  request<CurrentUserRead>("/users/sign-out", { method: "POST" });
+
 
 export const openPaperParlay = (body: PaperParlayCreate) =>
   request<PaperParlayRead>("/paper-parlays", {
@@ -448,6 +469,8 @@ function pathWithQuery(path: string, qs: string): string {
 }
 
 export const keys = {
+  me: "/me",
+  users: "/users",
   health: "/health",
   sports: "/sports",
   sportAvailability: "/sports/availability",
