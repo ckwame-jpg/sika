@@ -53,6 +53,33 @@
         "title": "CalibrationBucketRead",
         "type": "object"
       },
+      "CreateUserPayload": {
+        "description": "POST /users body. Username must be a lowercase identifier\n(letters, digits, underscore, hyphen) \u2014 keeps cookies clean and\navoids ambiguity with the synthetic legacy bucket. Display name\ndefaults to the username if omitted.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "username": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "title": "CreateUserPayload",
+        "type": "object"
+      },
       "CurrentUserRead": {
         "description": "Wire shape for ``GET /me``. ``user`` is ``None`` when the\noperator hasn't picked one yet (or the cookie is invalid).",
         "properties": {
@@ -9632,6 +9659,43 @@
           }
         },
         "summary": "List Users"
+      },
+      "post": {
+        "description": "Multi-user batch PR 5 \u2014 in-app user creation. Lets the operator\nadd (e.g.) Canaan without editing .env + restarting the API. Any\ncurrent user can add new users (trust model: Tailscale perimeter,\noperators trust each other).",
+        "operationId": "add_user_users_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add User"
       }
     },
     "/users/sign-out": {
@@ -9690,6 +9754,48 @@
           }
         },
         "summary": "Switch User"
+      }
+    },
+    "/users/{username}": {
+      "delete": {
+        "description": "Multi-user batch PR 5 \u2014 in-app user deletion. Legacy bucket\nand the kalshi_owner are protected (service raises ValueError).\nIdempotent: deleting a missing user is a 200 with ``deleted=False``\nrather than a 404.",
+        "operationId": "remove_user_users__username__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Remove User Users  Username  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove User"
       }
     },
     "/watchlist": {

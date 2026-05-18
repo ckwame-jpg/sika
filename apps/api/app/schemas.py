@@ -1553,6 +1553,17 @@ class SwitchUserPayload(BaseModel):
     username: str
 
 
+# Multi-user batch PR 5 — in-app user management.
+class CreateUserPayload(BaseModel):
+    """POST /users body. Username must be a lowercase identifier
+    (letters, digits, underscore, hyphen) — keeps cookies clean and
+    avoids ambiguity with the synthetic legacy bucket. Display name
+    defaults to the username if omitted."""
+
+    username: str = Field(min_length=1, max_length=40)
+    display_name: str | None = None
+
+
 # Multi-user batch PR 4 — per-user Kalshi credentials.
 class UserKalshiCredentialsRead(BaseModel):
     """Status payload for the /settings/kalshi page. Does NOT echo the

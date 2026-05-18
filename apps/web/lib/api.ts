@@ -12,11 +12,14 @@ import type {
   ModelFamilyReadinessRead,
   ModelReadinessSettingsUpdate,
   ModelReadinessSummaryRead,
+  CreateUserPayload,
   CurrentUserRead,
   PaperParlayCreate,
   PaperParlayRead,
   PaperPositionCreate,
   SwitchUserPayload,
+  UserKalshiCredentialsCreate,
+  UserKalshiCredentialsRead,
   UserRead,
   PaperPositionExit,
   PaperPositionRead,
@@ -190,6 +193,31 @@ export const switchUser = (body: SwitchUserPayload) =>
 
 export const signOut = () =>
   request<CurrentUserRead>("/users/sign-out", { method: "POST" });
+
+export const createUser = (body: CreateUserPayload) =>
+  request<UserRead>("/users", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const deleteUser = (username: string) =>
+  request<{ deleted: boolean }>(`/users/${encodeURIComponent(username)}`, {
+    method: "DELETE",
+  });
+
+export const fetchMyKalshiCredentials = () =>
+  request<UserKalshiCredentialsRead>("/me/kalshi-credentials");
+
+export const saveMyKalshiCredentials = (body: UserKalshiCredentialsCreate) =>
+  request<UserKalshiCredentialsRead>("/me/kalshi-credentials", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const deleteMyKalshiCredentials = () =>
+  request<UserKalshiCredentialsRead>("/me/kalshi-credentials", {
+    method: "DELETE",
+  });
 
 
 export const openPaperParlay = (body: PaperParlayCreate) =>
@@ -471,6 +499,7 @@ function pathWithQuery(path: string, qs: string): string {
 export const keys = {
   me: "/me",
   users: "/users",
+  myKalshiCredentials: "/me/kalshi-credentials",
   health: "/health",
   sports: "/sports",
   sportAvailability: "/sports/availability",

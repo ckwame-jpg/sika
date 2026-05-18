@@ -245,6 +245,57 @@ export default function SettingsPage() {
                 <Link
                   href="/settings/models"
                   className="flex items-center gap-1"
+                  data-testid="settings-link-models"
+                >
+                  Open
+                  <ArrowRight size={12} />
+                </Link>
+              </Button>
+            </div>
+          </section>
+
+          {/* Multi-user batch PR 5 — link panel to the new in-app
+              user management page. Lets the operator add Canaan
+              without editing .env. */}
+          <section className="cosmos-panel">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">Users</h2>
+                <p className="cosmos-panel-desc">
+                  Add or remove operators that show up in the topbar dropdown.
+                  Replaces the env-var-only flow.
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" asChild>
+                <Link
+                  href="/settings/users"
+                  className="flex items-center gap-1"
+                  data-testid="settings-link-users"
+                >
+                  Open
+                  <ArrowRight size={12} />
+                </Link>
+              </Button>
+            </div>
+          </section>
+
+          {/* Multi-user batch PR 5 — Kalshi credential entry per user.
+              Each operator pastes their own key + private key so the
+              KalshiAccountPanel + demo orders use their account. */}
+          <section className="cosmos-panel">
+            <div className="cosmos-panel-head">
+              <div className="cosmos-panel-head-text">
+                <h2 className="cosmos-panel-title">Kalshi credentials</h2>
+                <p className="cosmos-panel-desc">
+                  Connect the current user's Kalshi account so the portfolio
+                  shows their real-money balance + positions.
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" asChild>
+                <Link
+                  href="/settings/kalshi"
+                  className="flex items-center gap-1"
+                  data-testid="settings-link-kalshi"
                 >
                   Open
                   <ArrowRight size={12} />

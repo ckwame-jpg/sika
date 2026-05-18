@@ -765,7 +765,14 @@ export interface paths {
          */
         get: operations["list_users_users_get"];
         put?: never;
-        post?: never;
+        /**
+         * Add User
+         * @description Multi-user batch PR 5 — in-app user creation. Lets the operator
+         *     add (e.g.) Canaan without editing .env + restarting the API. Any
+         *     current user can add new users (trust model: Tailscale perimeter,
+         *     operators trust each other).
+         */
+        post: operations["add_user_users_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -814,6 +821,29 @@ export interface paths {
          */
         post: operations["switch_user_users_switch_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{username}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove User
+         * @description Multi-user batch PR 5 — in-app user deletion. Legacy bucket
+         *     and the kalshi_owner are protected (service raises ValueError).
+         *     Idempotent: deleting a missing user is a 200 with ``deleted=False``
+         *     rather than a 404.
+         */
+        delete: operations["remove_user_users__username__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -875,6 +905,19 @@ export interface components {
             miscalibration?: number | null;
             /** Settled Count */
             settled_count: number;
+        };
+        /**
+         * CreateUserPayload
+         * @description POST /users body. Username must be a lowercase identifier
+         *     (letters, digits, underscore, hyphen) — keeps cookies clean and
+         *     avoids ambiguity with the synthetic legacy bucket. Display name
+         *     defaults to the username if omitted.
+         */
+        CreateUserPayload: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Username */
+            username: string;
         };
         /**
          * CurrentUserRead
@@ -4754,6 +4797,39 @@ export interface operations {
             };
         };
     };
+    add_user_users_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUserPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     sign_out_users_sign_out_post: {
         parameters: {
             query?: never;
@@ -4794,6 +4870,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CurrentUserRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_user_users__username__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
