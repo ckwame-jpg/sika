@@ -62,12 +62,10 @@ describe("ModelReadinessPanel", () => {
       auto_promotion_enabled: false,
     });
     mockFetchModelReadinessDetail.mockResolvedValue(activeStudyFamilyFixture);
-    mockUpdateModelReadinessSettings.mockResolvedValue({
-      ...modelReadinessSummaryFixture,
-      ml_serving_mode: "shadow",
-      shadow_enabled: true,
-      auto_promotion_enabled: false,
-    });
+    // Bug #235 — PATCH now returns a lightweight ack; the panel
+    // re-fetches the GET endpoint via SWR mutate to surface the
+    // updated values.
+    mockUpdateModelReadinessSettings.mockResolvedValue({ applied: true });
 
     renderWithProviders(<ModelReadinessPanel />);
 

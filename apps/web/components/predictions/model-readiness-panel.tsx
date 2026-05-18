@@ -398,11 +398,16 @@ export function ModelReadinessPanel() {
     setSavingMode(mode);
     setModeError(null);
     try {
-      const nextSummary = await updateModelReadinessSettings({
+      await updateModelReadinessSettings({
         ml_serving_mode: mode,
         enqueue_shadow_backfill: mode !== "heuristic",
       });
-      await mutate(keys.modelReadinessSummary, nextSummary, { revalidate: false });
+      // Bug #235 — PATCH now returns ``{applied: true}`` (not the
+      // full summary) so the route doesn't have to run the ~22s
+      // summary build inside the request handler. Re-fetch the
+      // GET endpoint via SWR mutate so the panel re-renders with
+      // the persisted values.
+      await mutate(keys.modelReadinessSummary);
       if (selectedFamilyKey) {
         await mutate(keys.modelReadinessDetail(selectedFamilyKey));
       }

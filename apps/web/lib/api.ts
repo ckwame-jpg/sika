@@ -10,6 +10,7 @@ import type {
   MarketMappingOverrideCreate,
   MarketMappingStateRead,
   ModelFamilyReadinessRead,
+  ModelReadinessSettingsApplied,
   ModelReadinessSettingsUpdate,
   ModelReadinessSummaryRead,
   CreateUserPayload,
@@ -366,8 +367,13 @@ export const fetchModelReadinessSummary = () =>
 export const fetchModelReadinessDetail = (familyKey: string) =>
   request<ModelFamilyReadinessRead>(`/ops/models/readiness/${encodeURIComponent(familyKey)}`);
 
+// Bug #235 — PATCH returns a lightweight ack so the route doesn't
+// have to run the ~22s ``build_model_readiness_summary`` helper
+// inside the request handler. Callers that need the refreshed
+// summary should ``mutate(keys.modelReadinessSummary)`` after this
+// resolves; the GET endpoint serves the canonical read.
 export const updateModelReadinessSettings = (body: ModelReadinessSettingsUpdate) =>
-  request<ModelReadinessSummaryRead>("/ops/models/readiness/settings", {
+  request<ModelReadinessSettingsApplied>("/ops/models/readiness/settings", {
     method: "PATCH",
     body: JSON.stringify(body),
   });

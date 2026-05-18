@@ -97,6 +97,12 @@ export type ModelReadinessSummaryRead = Wire<Schema<"ModelReadinessSummaryRead">
 // = True``) so call sites like ``{ pick_history_default_n: 5 }``
 // continue to type-check.
 export type ModelReadinessSettingsUpdate = Partial<Schema<"ModelReadinessSettingsUpdate">>;
+// Bug #235 — lightweight ack returned by PATCH
+// ``/ops/models/readiness/settings``. The PATCH no longer echoes the
+// full summary (which used to force ~22s of summary-build work inside
+// the request handler); callers re-fetch via
+// ``GET /ops/models/readiness`` (SWR ``mutate``) instead.
+export type ModelReadinessSettingsApplied = Wire<Schema<"ModelReadinessSettingsApplied">>;
 
 // ── /events + /markets endpoint family ──
 //

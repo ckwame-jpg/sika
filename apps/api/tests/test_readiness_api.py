@@ -221,11 +221,10 @@ def test_models_readiness_settings_update_enables_shadow_and_queues_backfill(cli
         json={"ml_serving_mode": "shadow"},
     )
 
+    # Bug #235 — PATCH returns a lightweight ack; the GET endpoint is
+    # the canonical source for the refreshed summary.
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["ml_serving_mode"] == "shadow"
-    assert payload["shadow_enabled"] is True
-    assert payload["auto_promotion_enabled"] is False
+    assert response.json() == {"applied": True}
 
     setting = db_session.scalar(select(OperatorSetting).where(OperatorSetting.key == "ml_serving_mode"))
     assert setting is not None
@@ -235,6 +234,14 @@ def test_models_readiness_settings_update_enables_shadow_and_queues_backfill(cli
     assert job is not None
     assert job.status == "queued"
 
+    # And the subsequent GET reflects the persisted change.
+    summary = client.get("/ops/models/readiness")
+    assert summary.status_code == 200
+    summary_payload = summary.json()
+    assert summary_payload["ml_serving_mode"] == "shadow"
+    assert summary_payload["shadow_enabled"] is True
+    assert summary_payload["auto_promotion_enabled"] is False
+
 
 def test_models_readiness_settings_update_arms_auto_promotion(client, db_session):
     response = client.patch(
@@ -242,11 +249,10 @@ def test_models_readiness_settings_update_arms_auto_promotion(client, db_session
         json={"ml_serving_mode": "ml", "enqueue_shadow_backfill": False},
     )
 
+    # Bug #235 — PATCH returns a lightweight ack; the GET endpoint is
+    # the canonical source for the refreshed summary.
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["ml_serving_mode"] == "ml"
-    assert payload["shadow_enabled"] is True
-    assert payload["auto_promotion_enabled"] is True
+    assert response.json() == {"applied": True}
 
     setting = db_session.scalar(select(OperatorSetting).where(OperatorSetting.key == "ml_serving_mode"))
     assert setting is not None
@@ -254,6 +260,13 @@ def test_models_readiness_settings_update_arms_auto_promotion(client, db_session
 
     job = db_session.scalar(select(RefreshJob).where(RefreshJob.kind == "shadow_capture"))
     assert job is None
+
+    summary = client.get("/ops/models/readiness")
+    assert summary.status_code == 200
+    summary_payload = summary.json()
+    assert summary_payload["ml_serving_mode"] == "ml"
+    assert summary_payload["shadow_enabled"] is True
+    assert summary_payload["auto_promotion_enabled"] is True
 
 
 def test_models_readiness_endpoint_marks_locked_and_heuristic_families(client):

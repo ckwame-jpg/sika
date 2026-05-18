@@ -353,7 +353,31 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update Model Readiness Settings */
+        /**
+         * Update Model Readiness Settings
+         * @description Apply a partial PATCH of operator settings.
+         *
+         *     Bug #235 — split-response design. The previous version returned
+         *     the full ``ModelReadinessSummaryRead`` after the write, which
+         *     forced ``build_model_readiness_summary(db)`` (~22s in production)
+         *     to run inside the PATCH handler. That blew past the 15s client
+         *     timeout in ``apps/web/lib/api.ts`` and surfaced a misleading
+         *     "request timed out" overlay on every settings-page click even
+         *     though the write itself completed in milliseconds.
+         *
+         *     This route now returns only ``{"applied": true}`` once the
+         *     persisted writes commit. Callers that need the refreshed summary
+         *     (the settings page chip cluster, the model-readiness panel) GET
+         *     ``/ops/models/readiness`` afterwards — typically by ``mutate``-ing
+         *     the SWR key so the cached value re-fetches in the background.
+         *     ``GET`` and ``PATCH`` are no longer coupled, so the slow summary
+         *     no longer gates the write acknowledgement.
+         *
+         *     Each field is independently optional (partial-PATCH idiom): a
+         *     payload that touches only one knob leaves the others alone. The
+         *     setters themselves remain idempotent — re-applying the same value
+         *     is a no-op write.
+         */
         patch: operations["update_model_readiness_settings_ops_models_readiness_settings_patch"];
         trace?: never;
     };
@@ -1772,6 +1796,31 @@ export interface components {
              * @enum {string}
              */
             runtime_health: "healthy" | "degraded" | "unavailable";
+        };
+        /**
+         * ModelReadinessSettingsApplied
+         * @description Lightweight ack for ``PATCH /ops/models/readiness/settings``.
+         *
+         *     Bug #235 — the previous response returned the full
+         *     ``ModelReadinessSummaryRead`` payload, which forced the route to
+         *     call ``build_model_readiness_summary`` after the write. That helper
+         *     takes ~22s in production, blowing past the 15s client timeout in
+         *     ``apps/web/lib/api.ts`` and surfacing a "request timed out"
+         *     overlay to operators even though the write itself completed in
+         *     milliseconds.
+         *
+         *     The fix is to split the response: PATCH returns only an
+         *     acknowledgement, and the caller re-fetches the summary via
+         *     ``GET /ops/models/readiness`` (already cached by SWR) to render
+         *     the updated value. Always ``applied=True`` on a 200 — failures
+         *     surface as 4xx/5xx with the standard FastAPI error envelope.
+         */
+        ModelReadinessSettingsApplied: {
+            /**
+             * Applied
+             * @default true
+             */
+            applied: boolean;
         };
         /** ModelReadinessSettingsUpdate */
         ModelReadinessSettingsUpdate: {
@@ -4204,7 +4253,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ModelReadinessSummaryRead"];
+                    "application/json": components["schemas"]["ModelReadinessSettingsApplied"];
                 };
             };
             /** @description Validation Error */
