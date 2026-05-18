@@ -3588,6 +3588,80 @@
   justify-content: flex-end;
 }
 
+/* PAPER_PARLAY_SCOPE.md step 6 — save dialog. Visual rhymes with the
+   tray (chip-style legs, label/value pairs) so the operator's mental
+   model carries over from the tray to the confirmation form. */
+.paper-parlay-dialog-legs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.paper-parlay-dialog-leg {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--color-cosmos-border-soft);
+  font-size: 12px;
+}
+.paper-parlay-dialog-leg-label {
+  color: var(--color-cosmos-text-bright);
+}
+.paper-parlay-dialog-leg-side {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-cosmos-text-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.paper-parlay-dialog-quote {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-cosmos-border-soft);
+}
+.paper-parlay-dialog-quote-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.paper-parlay-dialog-quote-label {
+  color: var(--color-cosmos-text-muted);
+}
+.paper-parlay-dialog-quote-value {
+  color: var(--color-cosmos-text-bright);
+}
+.paper-parlay-dialog-field {
+  display: grid;
+  gap: 4px;
+}
+.paper-parlay-dialog-field-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--color-cosmos-text-muted);
+}
+.paper-parlay-dialog-payout {
+  font-size: 11px;
+  color: var(--color-positive);
+  font-variant-numeric: tabular-nums;
+}
+.paper-parlay-dialog-error {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--color-negative);
+  background: color-mix(in oklab, var(--color-negative) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-negative) 40%, transparent);
+  border-radius: 6px;
+}
+
 body,
 body *,
 body ::placeholder {

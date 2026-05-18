@@ -64,6 +64,11 @@ function buildResponse(overrides: Partial<PositionsRead> = {}): PositionsRead {
     },
     paper_truncated: false,
     demo_truncated: false,
+    // PAPER_PARLAY_SCOPE.md step 3 added these fields to PositionsRead.
+    // They're required by the generated Wire<> type even though the
+    // backend defaults them to empty/false; fixtures must supply them.
+    paper_parlays: [],
+    paper_parlays_truncated: false,
     drawdown_brake: null,
     ...overrides,
   };
