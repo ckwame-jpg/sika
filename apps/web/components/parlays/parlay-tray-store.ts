@@ -41,9 +41,15 @@ export const MAX_TRAY_LEGS = 6;
 interface TrayState {
   legs: TradeSelection[];
   savedAt: number;
+  /**
+   * Operator's working stake (USD) for the parlay. Set in the tray
+   * for a live projection, inherited by the save dialog so the
+   * operator doesn't retype. Null until the operator types one.
+   */
+  stake: number | null;
 }
 
-const INITIAL_STATE: TrayState = { legs: [], savedAt: 0 };
+const INITIAL_STATE: TrayState = { legs: [], savedAt: 0, stake: null };
 
 let state: TrayState = INITIAL_STATE;
 let hydrated = false;
@@ -70,7 +76,17 @@ function hydrateOnce(): void {
       window.localStorage.removeItem(LOCAL_STORAGE_KEY);
       return;
     }
-    state = { legs: parsed.legs as TradeSelection[], savedAt: parsed.savedAt };
+    // stake is a new field; existing on-disk shapes may not include it.
+    // Treat missing/invalid as null rather than dropping the whole tray.
+    const stake =
+      typeof parsed.stake === "number" && Number.isFinite(parsed.stake) && parsed.stake > 0
+        ? parsed.stake
+        : null;
+    state = {
+      legs: parsed.legs as TradeSelection[],
+      savedAt: parsed.savedAt,
+      stake,
+    };
   } catch {
     // Corrupt JSON or QuotaExceeded → silently fall back to empty tray.
   }
@@ -121,11 +137,13 @@ function getServerSnapshot(): TrayState {
 
 export interface UseParlayTrayResult {
   legs: TradeSelection[];
+  stake: number | null;
   isFull: boolean;
   /** ``true`` when the given selection.ticker is already in the tray. */
   contains: (ticker: string) => boolean;
   addLeg: (selection: TradeSelection) => void;
   removeLeg: (ticker: string) => void;
+  setStake: (stake: number | null) => void;
   clear: () => void;
 }
 
@@ -133,11 +151,13 @@ export function useParlayTray(): UseParlayTrayResult {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   return {
     legs: snapshot.legs,
+    stake: snapshot.stake,
     isFull: snapshot.legs.length >= MAX_TRAY_LEGS,
     contains: (ticker: string) =>
       snapshot.legs.some((leg) => leg.ticker === ticker),
     addLeg,
     removeLeg,
+    setStake,
     clear,
   };
 }
@@ -157,18 +177,27 @@ export function addLeg(selection: TradeSelection): void {
   setState({
     legs: [...state.legs, selection],
     savedAt: Date.now(),
+    stake: state.stake,
   });
 }
 
 export function removeLeg(ticker: string): void {
   const next = state.legs.filter((leg) => leg.ticker !== ticker);
   if (next.length === state.legs.length) return;
-  setState({ legs: next, savedAt: Date.now() });
+  // Preserve the operator's stake when only the leg set changes —
+  // they were mid-flow on this parlay and re-typing a stake just to
+  // swap a leg would be annoying.
+  setState({ legs: next, savedAt: Date.now(), stake: state.stake });
+}
+
+export function setStake(stake: number | null): void {
+  if (stake === state.stake) return;
+  setState({ legs: state.legs, savedAt: state.savedAt, stake });
 }
 
 export function clear(): void {
-  if (state.legs.length === 0) return;
-  setState({ legs: [], savedAt: 0 });
+  if (state.legs.length === 0 && state.stake === null) return;
+  setState({ legs: [], savedAt: 0, stake: null });
 }
 
 // Test-only helpers — exported under a clearly-namespaced object so a
