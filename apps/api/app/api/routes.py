@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 from math import isfinite
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -23,6 +23,7 @@ from app.models import (
     Run,
     SignalSnapshot,
     Sport,
+    User,
 )
 from app.schemas import (
     DemoOrderCreate,
@@ -43,12 +44,15 @@ from app.schemas import (
     ModelFamilyReadinessRead,
     ModelReadinessSettingsUpdate,
     ModelReadinessSummaryRead,
+    CurrentUserRead,
     PaperParlayCreate,
     PaperParlayRead,
     PaperPositionCreate,
     PaperPositionExit,
     PaperPositionRead,
     ParlayPredictionRead,
+    SwitchUserPayload,
+    UserRead,
     ParlayPredictionSummaryRead,
     ParlayRecommendationRead,
     PositionsRead,
@@ -99,6 +103,12 @@ from app.services.operator_settings import (
 )
 from app.services.orders import cancel_demo_order, close_paper_position, create_demo_order, create_paper_position
 from app.services.paper_parlays import create_paper_parlay
+from app.services.users import LEGACY_USERNAME, get_user_by_username, list_active_users
+from app.api.current_user import (
+    COOKIE_MAX_AGE_SECONDS,
+    CURRENT_USER_COOKIE,
+    get_current_user_optional,
+)
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
 from app.services.refresh_jobs import enqueue_refresh_job, enqueue_shadow_capture_job, get_refresh_job, reconcile_stale_jobs as reconcile_stale_refresh_jobs
@@ -1034,6 +1044,79 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
         latest_settlement_job=RefreshJobRead.model_validate(runtime.get("latest_settlement_job")) if runtime.get("latest_settlement_job") else None,
         upstream_sources=upstream_sources,
     )
+
+
+# -----------------------------------------------------------------------------
+# Multi-user identity endpoints (multi-user batch PR 1)
+# -----------------------------------------------------------------------------
+
+
+@router.get("/me", response_model=CurrentUserRead)
+def get_me(
+    current_user: User | None = Depends(get_current_user_optional),
+) -> CurrentUserRead:
+    """Who am I right now? Returns ``{user: null}`` when no cookie is
+    set (single-tenant or fresh browser). Frontend uses this to render
+    the topbar selector + decide whether to redirect to a user picker."""
+    if current_user is None:
+        return CurrentUserRead(user=None)
+    return CurrentUserRead(user=UserRead.model_validate(current_user))
+
+
+@router.get("/users", response_model=list[UserRead])
+def list_users(db: Session = Depends(get_db)) -> list[UserRead]:
+    """Users available for selection in the topbar dropdown.
+    Excludes the synthetic ``legacy`` bucket (operators can't
+    impersonate the historical-data shared user)."""
+    return [UserRead.model_validate(user) for user in list_active_users(db)]
+
+
+@router.post("/users/switch", response_model=CurrentUserRead)
+def switch_user(
+    payload: SwitchUserPayload,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> CurrentUserRead:
+    """Set the ``sika.userId`` cookie to the chosen username.
+
+    400 on unknown username; 400 on attempting to impersonate the
+    legacy bucket (codex pattern 6 — explicit close-set on the side
+    of the choice).
+    """
+    if payload.username == LEGACY_USERNAME:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot switch to the legacy bucket; it's a read-only shared identity.",
+        )
+    user = get_user_by_username(db, payload.username)
+    if user is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown user '{payload.username}'. Configure via SIKA_USERS in .env.",
+        )
+    response.set_cookie(
+        key=CURRENT_USER_COOKIE,
+        value=user.username,
+        max_age=COOKIE_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        # Tailscale-served traffic isn't HTTPS, so Secure must stay
+        # off or the cookie would be dropped. When sika ever ships
+        # behind real TLS, flip this.
+        secure=False,
+    )
+    return CurrentUserRead(user=UserRead.model_validate(user))
+
+
+@router.post("/users/sign-out", response_model=CurrentUserRead)
+def sign_out(response: Response) -> CurrentUserRead:
+    """Clear the ``sika.userId`` cookie. Returns ``{user: null}``.
+
+    Useful when handing off the tab to another operator (Canaan picks up
+    the laptop, hits sign-out, picks his own name from the dropdown).
+    """
+    response.delete_cookie(CURRENT_USER_COOKIE)
+    return CurrentUserRead(user=None)
 
 
 @router.get("/sports", response_model=list[SportRead])

@@ -53,6 +53,23 @@
         "title": "CalibrationBucketRead",
         "type": "object"
       },
+      "CurrentUserRead": {
+        "description": "Wire shape for ``GET /me``. ``user`` is ``None`` when the\noperator hasn't picked one yet (or the cookie is invalid).",
+        "properties": {
+          "user": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "CurrentUserRead",
+        "type": "object"
+      },
       "DemoOrderCreate": {
         "properties": {
           "action": {
@@ -6195,6 +6212,19 @@
         "title": "StatsSummaryRead",
         "type": "object"
       },
+      "SwitchUserPayload": {
+        "properties": {
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "title": "SwitchUserPayload",
+        "type": "object"
+      },
       "TeamGameResultRead": {
         "properties": {
           "game_date": {
@@ -6963,6 +6993,40 @@
           "is_stale"
         ],
         "title": "UpstreamSourceHealthRead",
+        "type": "object"
+      },
+      "UserRead": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_kalshi_owner": {
+            "default": false,
+            "title": "Is Kalshi Owner",
+            "type": "boolean"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "UserRead",
         "type": "object"
       },
       "ValidationError": {
@@ -7829,6 +7893,25 @@
           }
         },
         "summary": "Get Market History"
+      }
+    },
+    "/me": {
+      "get": {
+        "description": "Who am I right now? Returns ``{user: null}`` when no cookie is\nset (single-tenant or fresh browser). Frontend uses this to render\nthe topbar selector + decide whether to redirect to a user picker.",
+        "operationId": "get_me_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentUserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Me"
       }
     },
     "/ops/jobs/market-discovery": {
@@ -9353,6 +9436,87 @@
           }
         },
         "summary": "Get Trade Desk"
+      }
+    },
+    "/users": {
+      "get": {
+        "description": "Users available for selection in the topbar dropdown.\nExcludes the synthetic ``legacy`` bucket (operators can't\nimpersonate the historical-data shared user).",
+        "operationId": "list_users_users_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/UserRead"
+                  },
+                  "title": "Response List Users Users Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Users"
+      }
+    },
+    "/users/sign-out": {
+      "post": {
+        "description": "Clear the ``sika.userId`` cookie. Returns ``{user: null}``.\n\nUseful when handing off the tab to another operator (Canaan picks up\nthe laptop, hits sign-out, picks his own name from the dropdown).",
+        "operationId": "sign_out_users_sign_out_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentUserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sign Out"
+      }
+    },
+    "/users/switch": {
+      "post": {
+        "description": "Set the ``sika.userId`` cookie to the chosen username.\n\n400 on unknown username; 400 on attempting to impersonate the\nlegacy bucket (codex pattern 6 \u2014 explicit close-set on the side\nof the choice).",
+        "operationId": "switch_user_users_switch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchUserPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CurrentUserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Switch User"
       }
     },
     "/watchlist": {
