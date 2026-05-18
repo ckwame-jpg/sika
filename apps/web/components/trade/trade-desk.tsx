@@ -732,16 +732,25 @@ export function TradeDesk({ sport }: { sport?: string }) {
           "pb-[env(safe-area-inset-bottom)]",
         )}
       >
-        <div className="relative flex items-center justify-center px-4 pb-1 pt-3">
-          <div className="h-1 w-10 rounded-full bg-muted-foreground/30" />
-          <button
-            className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:bg-surface-hover hover:text-foreground focus-visible:ring-focus"
-            onClick={() => setSelected(null)}
-            aria-label="Close"
+        {/* Tap-to-close header. The wrapping button gives the drag
+            indicator (and the empty space around it) a tap target so
+            mobile users can dismiss the sheet without hunting for the
+            tiny X icon — the visible drag bar already implies the
+            interaction. Native swipe-to-close is a follow-up. */}
+        <button
+          type="button"
+          className="relative flex w-full items-center justify-center px-4 pb-2 pt-3 focus-visible:ring-focus"
+          onClick={() => setSelected(null)}
+          aria-label="Close trade sheet"
+        >
+          <span className="block h-1 w-10 rounded-full bg-muted-foreground/30 transition-colors duration-150 group-hover:bg-muted-foreground/50" />
+          <span
+            className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+            aria-hidden="true"
           >
             <X size={16} />
-          </button>
-        </div>
+          </span>
+        </button>
         <div className="overflow-y-auto px-4 pb-4">
           <TradeTicket selection={selected} onClose={() => setSelected(null)} />
         </div>
