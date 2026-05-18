@@ -1524,6 +1524,24 @@
   color: var(--color-cosmos-text-muted);
   font-variant-numeric: tabular-nums;
 }
+.pick-history-strip-retry {
+  appearance: none;
+  margin: 0 2px 4px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(120, 210, 200, 0.12);
+  border: 1px solid var(--color-cosmos-border-soft);
+  color: var(--color-cosmos-pos);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  cursor: pointer;
+  min-height: 22px;
+  transition: background 120ms ease, color 120ms ease;
+}
+.pick-history-strip-retry:hover {
+  background: rgba(120, 210, 200, 0.22);
+}
 .pick-history-strip-pill-letter {
   font-size: 13px;
   font-weight: 700;

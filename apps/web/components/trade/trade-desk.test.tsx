@@ -247,4 +247,31 @@ describe("TradeDesk", () => {
     expect(screen.queryByText("Game Lines")).not.toBeInTheDocument();
     expect(screen.queryByText("Player Props")).not.toBeInTheDocument();
   });
+
+  it("shows a retry button on fetch error that refetches and renders the desk", async () => {
+    // The trade-desk endpoint is the heaviest call in the app and
+    // bears the brunt of API timeouts. The retry button replaces
+    // the "hard-reload the whole page" recovery flow.
+    mockFetchTradeDesk
+      .mockRejectedValueOnce(new Error("Request timed out after 15s."))
+      .mockResolvedValueOnce(tradeDeskFixture);
+
+    renderWithProviders(<TradeDesk sport="NBA" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("trade-desk-error")).toBeInTheDocument(),
+    );
+    // Surfaced for the operator — not just a generic "failed" message.
+    expect(screen.getByText(/Request timed out/)).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("trade-desk-retry"));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("trade-desk-error")).not.toBeInTheDocument(),
+    );
+    // Second call resolves with the fixture → desk renders the event.
+    await screen.findByText("Miami Heat at Toronto Raptors");
+    expect(mockFetchTradeDesk).toHaveBeenCalledTimes(2);
+  });
 });

@@ -140,10 +140,16 @@ function PlayerPropStrip({ selection, controls, n, location }: PlayerPropStripPr
     teamHint: selection.subjectTeam ?? null,
   };
 
-  const { data, error, isLoading } = useSWR<StatsQueryRead>(
+  const { data, error, isLoading, mutate } = useSWR<StatsQueryRead>(
     ready ? keys.playerHistory(subjectName!, selection.sportKey, n, opts) : null,
     () => fetchPlayerHistory(subjectName!, selection.sportKey, n, opts),
-    { revalidateOnFocus: false, revalidateOnReconnect: false },
+    // ``revalidateOnReconnect`` is enabled so a transient API hiccup
+    // self-heals when the network comes back — otherwise SWR's
+    // exhausted-retry cache strands the operator on "Couldn't load
+    // history" until a hard refresh. ``revalidateOnFocus`` stays off
+    // because game history is immutable mid-session; tab-focus
+    // refetches would be pure noise.
+    { revalidateOnFocus: false, revalidateOnReconnect: true },
   );
 
   if (!ready) return null;
@@ -160,6 +166,7 @@ function PlayerPropStrip({ selection, controls, n, location }: PlayerPropStripPr
             ? `No ${location}-only games yet — try clearing the filter.`
             : "Couldn't load history."
         }
+        onRetry={location ? undefined : () => void mutate()}
       />
     );
   }
@@ -241,10 +248,13 @@ function GameLineStrip({ selection, controls, n, location }: GameLineStripProps)
   // ``/research/teams/history`` round trip and a skeleton flash
   // per MLB first-five ticket.
   const shouldFetch = teamName !== null && kind !== "first_five_winner";
-  const { data, error, isLoading } = useSWR<TeamHistoryRead>(
+  const { data, error, isLoading, mutate } = useSWR<TeamHistoryRead>(
     shouldFetch ? keys.teamHistory(teamName, selection.sportKey, n, opts) : null,
     shouldFetch ? () => fetchTeamHistory(teamName, selection.sportKey, n, opts) : null,
-    { revalidateOnFocus: false, revalidateOnReconnect: false },
+    // See the player-prop branch above: reconnect revalidation lets
+    // a transient API hiccup self-heal; focus stays off so a tab
+    // refocus doesn't refetch immutable game history.
+    { revalidateOnFocus: false, revalidateOnReconnect: true },
   );
 
   if (teamName === null) return null;
@@ -254,6 +264,11 @@ function GameLineStrip({ selection, controls, n, location }: GameLineStripProps)
   // the StripHeader (controls) visible so the operator can clear
   // their home/away filter without re-picking the market.
   if (error || !data || data.results.length === 0) {
+    // Only offer a retry when the fetch itself failed. An empty
+    // ``results`` list or a no-rows location filter is a data
+    // condition — pressing retry would refetch and land in the
+    // same empty state, which would feel like a broken button.
+    const fetchFailed = Boolean(error) || !data;
     return (
       <StripEmptyState
         controls={controls}
@@ -263,6 +278,7 @@ function GameLineStrip({ selection, controls, n, location }: GameLineStripProps)
             ? `No ${location}-only games in ${teamName}'s last ${n}.`
             : `No team-history rows yet for ${teamName}.`
         }
+        onRetry={fetchFailed && !location ? () => void mutate() : undefined}
       />
     );
   }
@@ -591,15 +607,23 @@ function StripSkeleton({ n, controls }: { n: HistoryN; controls: StripControlsPr
  * short of swapping the selection. Render an empty state that
  * keeps the StripHeader (and therefore the filter controls)
  * visible so they can click their way back to "all".
+ *
+ * Bug recovery: when ``onRetry`` is provided (fetch-failed branch
+ * only, not the data-empty branch), render a retry button below
+ * the message. SWR caches errors and — with focus/reconnect
+ * revalidation off for the empty-filter use case — there's no
+ * other way to recover without a hard page refresh.
  */
 function StripEmptyState({
   controls,
   n,
   message,
+  onRetry,
 }: {
   controls: StripControlsProps;
   n: HistoryN;
   message: string;
+  onRetry?: () => void;
 }) {
   return (
     <section
@@ -608,6 +632,16 @@ function StripEmptyState({
     >
       <StripHeader controls={controls} leadLine={<span>last {n}</span>} />
       <p className="pick-history-strip-empty-message">{message}</p>
+      {onRetry ? (
+        <button
+          type="button"
+          className="pick-history-strip-retry focus-visible:ring-focus"
+          onClick={onRetry}
+          data-testid="pick-history-strip-retry"
+        >
+          retry
+        </button>
+      ) : null}
     </section>
   );
 }

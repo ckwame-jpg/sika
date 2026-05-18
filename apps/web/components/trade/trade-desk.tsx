@@ -506,7 +506,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
   const [expandedEventIds, setExpandedEventIds] = useState<Set<number>>(() => new Set());
   const [archivedExpandedEventIds, setArchivedExpandedEventIds] = useState<Set<number>>(() => new Set());
   const [archiveState, setArchiveState] = useState<{ key: string | null; expanded: boolean } | null>(null);
-  const { data, error, isLoading } = useSWR<TradeDeskResponse>(
+  const { data, error, isLoading, mutate } = useSWR<TradeDeskResponse>(
     keys.tradeDesk(sport),
     () => fetchTradeDesk(sport),
     { refreshInterval: 30_000 },
@@ -587,10 +587,25 @@ export function TradeDesk({ sport }: { sport?: string }) {
   }
 
   if (error) {
+    // The 30s ``refreshInterval`` will eventually self-heal, but the
+    // operator shouldn't have to wait — give them a manual retry so a
+    // transient timeout (the most common case here) is a one-click fix.
     return (
-      <div className="rounded-2xl border border-negative/30 bg-negative/10 px-4 py-6 text-center">
+      <div
+        className="rounded-2xl border border-negative/30 bg-negative/10 px-4 py-6 text-center"
+        data-testid="trade-desk-error"
+      >
         <p className="text-sm font-medium text-foreground">Trade desk failed to load.</p>
         <p className="mt-1 text-sm text-muted-foreground">{error.message}</p>
+        <button
+          type="button"
+          onClick={() => void mutate()}
+          data-testid="trade-desk-retry"
+          className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-hover/40 px-3 py-1 text-xs font-medium text-foreground transition hover:bg-surface-hover focus-visible:ring-focus"
+        >
+          <RefreshCw size={12} />
+          Retry
+        </button>
       </div>
     );
   }

@@ -130,7 +130,10 @@ export function TradeTicket({
         {selection.predictionInterval && (
           <>
             <div className="ticket-section-divider" aria-hidden />
-            <PredictionIntervalBand interval={selection.predictionInterval} />
+            <PredictionIntervalBand
+              interval={selection.predictionInterval}
+              statKey={selection.statKey}
+            />
           </>
         )}
 
