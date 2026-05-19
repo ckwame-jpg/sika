@@ -184,7 +184,7 @@ export function ProbabilitySurfaceHero({
         <canvas ref={canvasRef} className="trade-hero-canvas" aria-hidden />
       </div>
       <div className="trade-hero-inner">
-        <div className="th-eyebrow">Trade desk ty shie</div>
+        <div className="th-eyebrow">Trade desk fr</div>
         <div className="th-title">
           <span>{scoredCount} shown rn fr </span>
           <span className="th-hl">{recommendationCount} current picks rn type shi</span>
