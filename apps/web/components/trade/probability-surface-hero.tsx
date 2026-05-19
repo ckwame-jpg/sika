@@ -184,12 +184,12 @@ export function ProbabilitySurfaceHero({
         <canvas ref={canvasRef} className="trade-hero-canvas" aria-hidden />
       </div>
       <div className="trade-hero-inner">
-        <div className="th-eyebrow">Trade desk · probability surface</div>
+        <div className="th-eyebrow">Trade desk ty shie</div>
         <div className="th-title">
-          <span>{scoredCount} markets in current snapshot. </span>
-          <span className="th-hl">{recommendationCount} current picks.</span>
+          <span>{scoredCount} shown rn fr </span>
+          <span className="th-hl">{recommendationCount} current picks rn type shi</span>
         </div>
-        <div className="th-sub">Snapshot {fmtDatetime(generatedAt)}.</div>
+        <div className="th-sub">refreshed at {fmtDatetime(generatedAt)} type shi.</div>
         <div className="th-chips" data-testid="trade-hero-chips">
           <div className="th-chip" data-testid="trade-hero-chip-avg-edge">
             <span className="th-chip-label">AVG EDGE</span>
