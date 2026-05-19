@@ -2424,11 +2424,34 @@
 }
 
 /* ---- Input row ------------------------------------------------------------- */
+/*
+ * Mobile (< 640px): the question input is too important to crush, so it
+ * gets its own full-width row. The two selects (sport / season) sit
+ * side-by-side underneath, with the Run button on its own full-width
+ * row below them. Tested at 393px iPhone-ish width.
+ *
+ * Tablet+ (>= 640px): single-row 4-column layout — the original design.
+ */
 .sa-input-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 140px 120px auto;
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "input input"
+    "sport season"
+    "run run";
   gap: 8px;
   margin-top: 14px;
+}
+.sa-input-row > .sa-input { grid-area: input; }
+.sa-input-row > .sa-select:nth-of-type(1) { grid-area: sport; }
+.sa-input-row > .sa-select:nth-of-type(2) { grid-area: season; }
+.sa-input-row > .sa-run { grid-area: run; }
+
+@media (min-width: 640px) {
+  .sa-input-row {
+    grid-template-columns: minmax(0, 1fr) 140px 120px auto;
+    grid-template-areas: "input sport season run";
+  }
 }
 
 .sa-input {
