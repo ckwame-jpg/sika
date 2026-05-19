@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from typing import Any
@@ -15,8 +16,21 @@ from app.services.clv import closing_yes_price_for_market, compute_clv
 from app.services.ml.lineage import HEURISTIC_SINGLE_MODEL
 from app.services.market_support import parse_market_datetime
 
+logger = logging.getLogger(__name__)
+
 MODEL_NAME = HEURISTIC_SINGLE_MODEL.model_name
 OPEN_MARKET_STATUSES = {"open", "active", "paused", "initialized"}
+
+# Bulk-fetch budget for the settlement pre-pass. The previous per-ticker
+# ``client.get_market`` loop took ~0.7s/ticker (rate limiter + HTTP RTT), so
+# 100 unsettled rows = ~70s/batch. ``list_markets(status="settled")`` returns
+# up to 1000 rows per page in a single round trip — one page is typically
+# enough to cover all of today's settled tickers across all sports. We cap
+# the wall clock at 15s so the bulk pre-pass can NEVER be slower than the
+# per-ticker fallback for the same batch size.
+_BULK_SETTLEMENT_WALL_CLOCK_SECONDS = 15.0
+_BULK_SETTLEMENT_MAX_PAGES = 10
+_BULK_SETTLEMENT_PAGE_LIMIT = 1000
 
 
 def _now_utc() -> datetime:
@@ -564,6 +578,75 @@ def _load_prediction_settlement_batch(
     return db.scalars(stmt.limit(limit)).all()
 
 
+def _bulk_fetch_settled_market_payloads(
+    client: KalshiPublicClient,
+    tickers_needing_refresh: set[str],
+) -> dict[str, dict[str, Any]]:
+    """Pre-fetch a ``{ticker -> payload}`` dict using paginated
+    ``list_markets(status="settled")`` instead of one ``get_market``
+    call per ticker.
+
+    Bug #N (settlement-bulk): the per-prediction ``get_market`` loop was
+    serialized through the process-level Kalshi rate limiter (5 rps),
+    making a 100-prediction batch take ~70s — long enough to starve the
+    refresh + prop_refresh workers. ``list_markets`` returns up to 1000
+    markets per HTTP round trip, so one page typically covers every
+    ticker we need for a batch across all sports.
+
+    Returns an empty dict on ANY failure (timeout, transport error,
+    unexpected schema). The caller is expected to fall back to
+    per-ticker ``client.get_market`` so settlement still drains a
+    batch even when the bulk path is unavailable.
+
+    Returned payloads are intersected with ``tickers_needing_refresh``
+    — markets the listing returns for OTHER batches are dropped here
+    to avoid polluting downstream telemetry with hits we never asked
+    about.
+    """
+    if not tickers_needing_refresh:
+        return {}
+
+    found: dict[str, dict[str, Any]] = {}
+    pages_scanned = 0
+    try:
+        for page_markets, _next_cursor in client.iter_market_pages(
+            status="settled",
+            limit=_BULK_SETTLEMENT_PAGE_LIMIT,
+            mve_filter="exclude",
+            max_pages=_BULK_SETTLEMENT_MAX_PAGES,
+            wall_clock_budget_seconds=_BULK_SETTLEMENT_WALL_CLOCK_SECONDS,
+        ):
+            pages_scanned += 1
+            for payload in page_markets or []:
+                ticker = payload.get("ticker")
+                if not ticker or not isinstance(ticker, str):
+                    continue
+                if ticker not in tickers_needing_refresh:
+                    continue
+                # First write wins — if a later page somehow returns a
+                # duplicate ticker we keep the earlier (typically more
+                # recent) entry.
+                found.setdefault(ticker, payload)
+            # Early exit: if we've already covered every ticker in the
+            # batch, don't burn more pages.
+            if len(found) >= len(tickers_needing_refresh):
+                break
+    except Exception:
+        # Pattern 6 (data-shape assumptions): degrade gracefully on
+        # transport / pagination errors. The caller's per-ticker
+        # fallback handles every ticker we didn't return.
+        logger.warning(
+            "settlement.bulk_fetch.failed pages_scanned=%d requested=%d found=%d",
+            pages_scanned,
+            len(tickers_needing_refresh),
+            len(found),
+            exc_info=True,
+        )
+        return found
+
+    return found
+
+
 def _settle_prediction_rows(
     db: Session,
     unsettled: list[Prediction],
@@ -577,8 +660,38 @@ def _settle_prediction_rows(
     summary = _empty_settlement_summary()
     summary["processed"] = len(unsettled)
     open_market_tickers = set(open_market_tickers or set())
-    payload_cache: dict[str, dict[str, Any]] = {}
 
+    # Bulk pre-fetch: collect every unique ticker that needs an upstream
+    # refresh, then ask Kalshi for them in ONE paginated call instead of
+    # N per-ticker round trips. ``payload_cache`` is scoped to this
+    # function call only — pattern 4 (reduction reuse): no cross-call
+    # state means a follow-up batch always re-fetches.
+    tickers_needing_refresh: set[str] = set()
+    for prediction in unsettled:
+        if prediction.market is None:
+            continue
+        if open_market_tickers and prediction.ticker in open_market_tickers:
+            continue
+        if prediction.ticker:
+            tickers_needing_refresh.add(prediction.ticker)
+
+    bulk_payloads = _bulk_fetch_settled_market_payloads(
+        client, tickers_needing_refresh
+    )
+    # Pre-seed the per-ticker cache with bulk results so the per-prediction
+    # loop just looks them up. Each entry is tagged with its source so we
+    # can preserve the existing ``settlement_source`` telemetry distinction
+    # between bulk-listed and per-ticker fetches.
+    payload_cache: dict[str, dict[str, Any]] = dict(bulk_payloads)
+    bulk_hit_tickers: set[str] = set(bulk_payloads.keys())
+
+    logger.debug(
+        "settlement.bulk_fetch tickers_needing_refresh=%d bulk_hits=%d",
+        len(tickers_needing_refresh),
+        len(bulk_hit_tickers),
+    )
+
+    fallback_count = 0
     for prediction in unsettled:
         market = prediction.market
         if open_market_tickers and prediction.ticker in open_market_tickers:
@@ -595,9 +708,11 @@ def _settle_prediction_rows(
         if should_refresh:
             try:
                 latest_payload = payload_cache.get(prediction.ticker)
+                bulk_hit = prediction.ticker in bulk_hit_tickers
                 if latest_payload is None:
                     latest_payload = client.get_market(prediction.ticker)
                     payload_cache[prediction.ticker] = latest_payload
+                    fallback_count += 1
             except Exception:
                 summary["errors"] += 1
                 if prediction.settlement_status == "pending":
@@ -607,7 +722,9 @@ def _settle_prediction_rows(
                 continue
             if latest_payload:
                 payload = {**payload, **latest_payload}
-                settlement_source = "kalshi_get_market"
+                settlement_source = (
+                    "kalshi_list_markets" if bulk_hit else "kalshi_get_market"
+                )
                 if market is not None:
                     market.status = latest_payload.get("status") or market.status
                     close_time = parse_market_datetime(latest_payload.get("close_time"))
@@ -665,6 +782,15 @@ def _settle_prediction_rows(
             summary["cancelled"] += 1
         else:
             summary["unresolved"] += 1
+
+    logger.info(
+        "settlement.batch_complete processed=%d updated=%d bulk_hits=%d per_ticker_fallbacks=%d errors=%d",
+        summary["processed"],
+        summary["updated"],
+        len(bulk_hit_tickers),
+        fallback_count,
+        summary["errors"],
+    )
 
     db.flush()
     return summary

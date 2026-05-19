@@ -1234,6 +1234,324 @@ def test_settle_predictions_settles_every_stacked_prediction_per_ticker(db_sessi
     assert newer.prediction_outcome == "won"
 
 
+class BulkSettlementClient:
+    """Fake Kalshi client that exposes both ``list_markets`` and
+    ``get_market``, separately counted so the bulk-fetch tests can
+    assert exactly how many of each were made.
+
+    ``list_markets_payloads`` seeds the paginated bulk response;
+    ``get_market_payloads`` backstops the per-ticker fallback path.
+
+    ``list_markets_delay_seconds`` lets us simulate a slow Kalshi
+    listing so the timeout-bounded fallback test can fire without
+    actually waiting 15s on the real budget.
+    """
+
+    def __init__(
+        self,
+        *,
+        list_markets_payloads: list[dict] | None = None,
+        get_market_payloads: dict | None = None,
+        list_markets_raises: BaseException | None = None,
+        list_markets_delay_seconds: float = 0.0,
+    ):
+        self.list_markets_payloads = list_markets_payloads or []
+        self.get_market_payloads = get_market_payloads or {}
+        self.list_markets_raises = list_markets_raises
+        self.list_markets_delay_seconds = list_markets_delay_seconds
+        self.list_markets_calls = 0
+        self.get_market_calls: list[str] = []
+
+    def iter_market_pages(
+        self,
+        *,
+        status="open",
+        limit=1000,
+        mve_filter="exclude",
+        max_pages=50,
+        cursor=None,
+        wall_clock_budget_seconds=None,
+    ):
+        self.list_markets_calls += 1
+        if self.list_markets_delay_seconds:
+            import time as _time
+
+            _time.sleep(self.list_markets_delay_seconds)
+        if self.list_markets_raises is not None:
+            raise self.list_markets_raises
+        if self.list_markets_payloads:
+            yield self.list_markets_payloads, None
+
+    def list_markets(self, status="open", limit=1000, mve_filter="exclude", **_kwargs):
+        # Some refresh code calls list_markets directly; settlement
+        # bulk path uses iter_market_pages, but the existing
+        # FakeSettlementClient API forwarded calls to ``list_markets``.
+        # Keep this present for compatibility with any caller that may
+        # invoke it; for the settlement code path the iter_market_pages
+        # method above is what fires.
+        return []
+
+    def get_market(self, ticker):
+        self.get_market_calls.append(ticker)
+        if ticker not in self.get_market_payloads:
+            raise KeyError(ticker)
+        return self.get_market_payloads[ticker]
+
+
+def _settled_yes_payload(ticker: str) -> dict:
+    return {
+        "ticker": ticker,
+        "status": "settled",
+        "result": "yes",
+        "settlement_value_dollars": "1.0000",
+        "settlement_ts": "2026-04-02T03:00:00Z",
+    }
+
+
+def test_settle_predictions_bulk_full_hit_skips_get_market(db_session):
+    """Happy path: every ticker the batch needs is returned by
+    ``list_markets``. ``get_market`` MUST NOT be called — that's the
+    whole point of the bulk pre-pass."""
+    tickers = [f"KXNBA-BULK-{i}" for i in range(5)]
+    predictions = [
+        _create_prediction(db_session, ticker=t, side="yes", suggested_price=0.42)
+        for t in tickers
+    ]
+    db_session.commit()
+
+    client = BulkSettlementClient(
+        list_markets_payloads=[_settled_yes_payload(t) for t in tickers]
+    )
+
+    summary = settle_predictions(db_session, client=client)
+    db_session.commit()
+
+    assert summary["processed"] == len(tickers)
+    assert summary["won"] == len(tickers)
+    assert client.get_market_calls == []
+    assert client.list_markets_calls >= 1
+    db_session.expire_all()
+    for prediction in predictions:
+        row = db_session.scalar(
+            select(Prediction).where(Prediction.id == prediction.id)
+        )
+        assert row.settlement_source == "kalshi_list_markets"
+
+
+def test_settle_predictions_bulk_partial_hit_falls_back_per_ticker(db_session):
+    """80 tickers covered by bulk → only the remaining 20 hit
+    ``get_market``. Demonstrates the new code path doesn't regress when
+    Kalshi's settled-markets page misses some recently-settled tickers
+    (older sports, multi-page coverage, etc.)."""
+    total = 30
+    covered = 20
+    tickers = [f"KXMLB-PARTIAL-{i}" for i in range(total)]
+    for t in tickers:
+        _create_prediction(db_session, ticker=t, sport_key="MLB", side="yes")
+    db_session.commit()
+
+    client = BulkSettlementClient(
+        list_markets_payloads=[
+            _settled_yes_payload(t) for t in tickers[:covered]
+        ],
+        get_market_payloads={
+            t: _settled_yes_payload(t) for t in tickers[covered:]
+        },
+    )
+
+    summary = settle_predictions(db_session, client=client)
+    db_session.commit()
+
+    assert summary["processed"] == total
+    assert summary["won"] == total
+    # Exactly the misses fell back to get_market.
+    assert set(client.get_market_calls) == set(tickers[covered:])
+    assert len(client.get_market_calls) == total - covered
+
+
+def test_settle_predictions_bulk_empty_falls_back_entirely(db_session):
+    """Bulk listing returns []. Every prediction must still settle via
+    the per-ticker fallback — parity with the pre-change behavior."""
+    tickers = [f"KXNBA-EMPTY-{i}" for i in range(3)]
+    for t in tickers:
+        _create_prediction(db_session, ticker=t, side="yes")
+    db_session.commit()
+
+    client = BulkSettlementClient(
+        list_markets_payloads=[],
+        get_market_payloads={t: _settled_yes_payload(t) for t in tickers},
+    )
+
+    summary = settle_predictions(db_session, client=client)
+    db_session.commit()
+
+    assert summary["processed"] == len(tickers)
+    assert summary["won"] == len(tickers)
+    assert sorted(client.get_market_calls) == sorted(tickers)
+    db_session.expire_all()
+    for ticker in tickers:
+        row = db_session.scalar(select(Prediction).where(Prediction.ticker == ticker))
+        assert row.settlement_source == "kalshi_get_market"
+
+
+def test_settle_predictions_bulk_raises_falls_back_entirely(db_session):
+    """Bulk listing raises a transport error mid-fetch. Settlement must
+    degrade gracefully — every prediction goes through ``get_market``
+    so the batch still drains, never crashes."""
+    import httpx
+
+    tickers = [f"KXNBA-FAIL-{i}" for i in range(3)]
+    for t in tickers:
+        _create_prediction(db_session, ticker=t, side="yes")
+    db_session.commit()
+
+    client = BulkSettlementClient(
+        list_markets_raises=httpx.TimeoutException("simulated"),
+        get_market_payloads={t: _settled_yes_payload(t) for t in tickers},
+    )
+
+    summary = settle_predictions(db_session, client=client)
+    db_session.commit()
+
+    assert summary["processed"] == len(tickers)
+    assert summary["won"] == len(tickers)
+    assert sorted(client.get_market_calls) == sorted(tickers)
+
+
+def test_settle_predictions_bulk_records_settlement_source_telemetry(db_session):
+    """Operators distinguish bulk-list hits from per-ticker fallbacks via
+    the ``settlement_source`` column. Mixed batch → mixed sources."""
+    bulk_ticker = "KXNBA-MIX-BULK"
+    fallback_ticker = "KXNBA-MIX-FALLBACK"
+    _create_prediction(db_session, ticker=bulk_ticker, side="yes")
+    _create_prediction(db_session, ticker=fallback_ticker, side="yes")
+    db_session.commit()
+
+    client = BulkSettlementClient(
+        list_markets_payloads=[_settled_yes_payload(bulk_ticker)],
+        get_market_payloads={fallback_ticker: _settled_yes_payload(fallback_ticker)},
+    )
+
+    settle_predictions(db_session, client=client)
+    db_session.commit()
+    db_session.expire_all()
+
+    bulk_row = db_session.scalar(
+        select(Prediction).where(Prediction.ticker == bulk_ticker)
+    )
+    fallback_row = db_session.scalar(
+        select(Prediction).where(Prediction.ticker == fallback_ticker)
+    )
+    assert bulk_row.settlement_source == "kalshi_list_markets"
+    assert fallback_row.settlement_source == "kalshi_get_market"
+
+
+def test_settle_predictions_bulk_hit_still_captures_closing_yes_price(db_session):
+    """Pattern 2 (cross-component data flow): the bulk path must still
+    feed the CLV capture step. A bulk-hit prediction whose market has
+    snapshot history must end up with ``closing_yes_price`` and
+    ``closing_line_value`` populated."""
+    ticker = "KXNBA-BULK-CLV-1"
+    prediction = _create_prediction(db_session, ticker=ticker, side="yes")
+    db_session.flush()
+    db_session.add(
+        MarketSnapshot(
+            market_id=prediction.market_id,
+            captured_at=datetime(2026, 4, 1, 23, 50, tzinfo=timezone.utc),
+            yes_bid=0.55,
+            yes_ask=0.60,
+            no_bid=0.40,
+            no_ask=0.45,
+            last_price=0.58,
+        )
+    )
+    db_session.commit()
+
+    client = BulkSettlementClient(
+        list_markets_payloads=[
+            {
+                **_settled_yes_payload(ticker),
+                "close_time": "2026-04-02T00:00:00Z",
+            }
+        ]
+    )
+    settle_predictions(db_session, client=client)
+    db_session.commit()
+    db_session.expire_all()
+
+    row = db_session.scalar(select(Prediction).where(Prediction.ticker == ticker))
+    assert row.settlement_source == "kalshi_list_markets"
+    assert row.closing_yes_price is not None
+    assert row.closing_line_value is not None
+
+
+def test_settle_predictions_bulk_cross_sport_coverage(db_session):
+    """Pattern 9 (cross-scope unaccounted): settlement runs for every
+    sport at once. A single bulk page must service mixed
+    NBA + MLB tickers without one sport's tickers stealing pages from
+    another. With ``ticker -> payload`` intersection, mixed sports
+    settle correctly so long as every ticker is on the page."""
+    nba_ticker = "KXNBA-CROSS-1"
+    mlb_ticker = "KXMLB-CROSS-1"
+    _create_prediction(db_session, ticker=nba_ticker, sport_key="NBA")
+    _create_prediction(db_session, ticker=mlb_ticker, sport_key="MLB")
+    db_session.commit()
+
+    client = BulkSettlementClient(
+        list_markets_payloads=[
+            _settled_yes_payload(nba_ticker),
+            _settled_yes_payload(mlb_ticker),
+        ]
+    )
+    summary = settle_predictions(db_session, client=client)
+    db_session.commit()
+    db_session.expire_all()
+
+    assert summary["won"] == 2
+    assert client.get_market_calls == []
+    nba_row = db_session.scalar(select(Prediction).where(Prediction.ticker == nba_ticker))
+    mlb_row = db_session.scalar(select(Prediction).where(Prediction.ticker == mlb_ticker))
+    assert nba_row.settlement_source == "kalshi_list_markets"
+    assert mlb_row.settlement_source == "kalshi_list_markets"
+
+
+def test_settle_predictions_bulk_skips_open_market_tickers(db_session):
+    """Pattern 6 (data-shape assumptions): tickers in
+    ``open_market_tickers`` should NOT appear in the bulk-fetch set.
+    Settlement of an open market is a no-op (still pending) and we
+    shouldn't waste Kalshi quota listing them."""
+    settled_ticker = "KXNBA-SKIP-SETTLED"
+    open_ticker = "KXNBA-SKIP-OPEN"
+    _create_prediction(db_session, ticker=settled_ticker)
+    _create_prediction(db_session, ticker=open_ticker)
+    db_session.commit()
+
+    client = BulkSettlementClient(
+        list_markets_payloads=[_settled_yes_payload(settled_ticker)]
+    )
+    summary = settle_predictions(
+        db_session,
+        client=client,
+        open_market_tickers={open_ticker},
+    )
+    db_session.commit()
+    db_session.expire_all()
+
+    assert summary["pending"] == 1
+    assert summary["won"] == 1
+    settled_row = db_session.scalar(
+        select(Prediction).where(Prediction.ticker == settled_ticker)
+    )
+    open_row = db_session.scalar(
+        select(Prediction).where(Prediction.ticker == open_ticker)
+    )
+    assert settled_row.settlement_source == "kalshi_list_markets"
+    assert open_row.settlement_status == "pending"
+    assert open_row.settlement_source is None
+    # And the open ticker was never asked about per-ticker either.
+    assert open_ticker not in client.get_market_calls
+
+
 def test_prediction_history_and_summary_endpoints(client, db_session):
     captured_base = datetime.now(timezone.utc) - timedelta(days=1)
     _create_prediction(
