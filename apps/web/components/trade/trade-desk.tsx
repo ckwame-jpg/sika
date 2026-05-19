@@ -47,6 +47,26 @@ function sectionOrder(marketKind: string) {
   return 99;
 }
 
+/**
+ * Short badge text for a game-line market_kind. Multiple kinds can
+ * share the same ``display_label`` (e.g. both the full-game winner
+ * and the first-five-innings winner read "Kansas City Royals to
+ * win") — surface the kind here so the operator can disambiguate at
+ * a glance. Returns ``null`` for kinds where the row stands alone
+ * (spreads/totals already encode their variant in the line).
+ */
+function formatMarketKindBadge(marketKind: string): string | null {
+  switch (marketKind) {
+    case "first_five_winner":
+      return "F5";
+    case "game_winner":
+    case "moneyline":
+      return "Full game";
+    default:
+      return null;
+  }
+}
+
 /** Flat pool of every scored edge in the slate. */
 function collectAllEdges(events: TradeDeskEvent[]): number[] {
   const edges: number[] = [];
@@ -153,7 +173,20 @@ function GameLineRow({
       className={cn("line-row focus-visible:ring-focus", isSelected && "selected")}
     >
       <div className="min-w-0">
-        <div className="line-row-label truncate">{line.display_label}</div>
+        <div className="line-row-label truncate">
+          <span>{line.display_label}</span>
+          {/* Bug: two game-line rows share the same display_label
+              (e.g. "Kansas City Royals to win" appears for both the
+              full-game winner and the first-five-innings winner). The
+              underlying markets are different but the operator can't
+              tell without ticker spelunking. Surface the kind as a
+              compact badge so they read distinctly at a glance. */}
+          {formatMarketKindBadge(line.market_kind) && (
+            <span className="line-row-kind-badge" data-testid="line-row-kind-badge">
+              {formatMarketKindBadge(line.market_kind)}
+            </span>
+          )}
+        </div>
         <div className="line-row-lean">
           {line.projected_side_label
             ? `Model leans ${line.projected_side_label}`

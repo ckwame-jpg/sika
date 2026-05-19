@@ -1117,6 +1117,28 @@
   font-size: 13px;
   font-weight: 500;
   color: var(--color-cosmos-text-bright);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.line-row .line-row-label > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.line-row .line-row-kind-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--color-cosmos-violet-soft-hsl) / 0.85);
+  background-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.14);
+  border: 0.625px solid hsl(var(--color-cosmos-violet-500-hsl) / 0.28);
+  border-radius: 4px;
+  padding: 2px 6px;
 }
 .line-row .line-row-lean {
   font-size: 11.5px;
