@@ -59,9 +59,12 @@ describe("TradeDesk", () => {
     expect(screen.getByTestId("trade-kpi-card-avg-edge")).toHaveTextContent("Avg edge");
     expect(screen.getByTestId("trade-kpi-card-avg-edge")).toHaveTextContent("top-quartile +10.0%");
 
-    // Hero: two-clause headline + chip row
-    expect(screen.getByText(/markets in current snapshot\./)).toBeInTheDocument();
-    expect(screen.getByText(/current picks\./)).toBeInTheDocument();
+    // Hero: two-clause headline + chip row. Match on the count
+    // numbers + the surrounding "shown rn fr" / "current picks rn"
+    // phrasing — the exact words are operator-chosen copy so the
+    // assertion stays loose around the live numbers.
+    expect(screen.getByText(/shown rn fr/)).toBeInTheDocument();
+    expect(screen.getByText(/current picks rn/)).toBeInTheDocument();
     expect(screen.getByTestId("trade-hero-chip-avg-edge")).toHaveTextContent("+11.2%");
     expect(screen.getByTestId("trade-hero-chip-top-quartile")).toHaveTextContent("+10.0%");
 
