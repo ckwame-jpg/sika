@@ -67,8 +67,19 @@ export function PaperEarningsCard() {
     setEditing(false);
   }
 
-  const positions = data?.paper_positions ?? [];
-  const parlays = data?.paper_parlays ?? [];
+  // Include the legacy bucket in totals — those bets are still
+  // history the operator made, and excluding them gave a misleading
+  // "+$0.00 realized PnL" even after a -$50 legacy parlay had
+  // settled. Per-user and legacy share the same PaperPosition /
+  // PaperParlay schema, so they can be concatenated cleanly here.
+  const positions = useMemo(
+    () => [...(data?.paper_positions ?? []), ...(data?.legacy_paper_positions ?? [])],
+    [data?.paper_positions, data?.legacy_paper_positions],
+  );
+  const parlays = useMemo(
+    () => [...(data?.paper_parlays ?? []), ...(data?.legacy_paper_parlays ?? [])],
+    [data?.paper_parlays, data?.legacy_paper_parlays],
+  );
 
   const totals = useMemo(() => computeTotals(positions, parlays), [positions, parlays]);
   const netPosition = startingBankroll + totals.realizedPnl - totals.openExposure;
