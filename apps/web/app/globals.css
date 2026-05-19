@@ -3627,14 +3627,69 @@
 }
 .parlay-tray-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 .parlay-tray-title {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+.parlay-tray-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.parlay-tray-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 0.625px solid hsl(var(--color-cosmos-violet-500-hsl) / 0.28);
+  background-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.10);
+  color: hsl(var(--color-cosmos-violet-soft-hsl) / 0.85);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+.parlay-tray-toggle:hover {
+  background-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.18);
+  color: var(--color-cosmos-text-bright);
+}
+.parlay-tray-collapsed-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11.5px;
+  margin-left: 4px;
+}
+.parlay-tray-collapsed-arrow {
+  color: var(--color-cosmos-text-muted);
+}
+.parlay-tray-collapsed-stake,
+.parlay-tray-collapsed-payout {
+  color: var(--color-cosmos-text-bright);
+}
+
+/* Collapsed mode — hide the body, leaving only the header strip.
+   The header keeps the toggle + label + count + collapsed summary +
+   save button + clear, so the operator still sees the bet's shape
+   without losing the trade-desk content underneath. */
+.parlay-tray-collapsed .parlay-tray-inner {
+  gap: 0;
+}
+.parlay-tray-collapsed .parlay-tray-chips,
+.parlay-tray-collapsed .parlay-tray-quote,
+.parlay-tray-collapsed .parlay-tray-stake-row,
+.parlay-tray-collapsed .parlay-tray-actions {
+  display: none;
 }
 .parlay-tray-label {
   font-size: 11px;

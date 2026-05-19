@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useParlayTray, MAX_TRAY_LEGS } from "./parlay-tray-store";
 import { computePaperParlayQuote } from "./paper-parlay-quote";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,7 @@ interface ParlayTrayProps {
 }
 
 export function ParlayTray({ onSave }: ParlayTrayProps) {
-  const { legs, stake, removeLeg, setStake, clear } = useParlayTray();
+  const { legs, stake, collapsed, removeLeg, setStake, setCollapsed, clear } = useParlayTray();
   const quote = useMemo(() => computePaperParlayQuote(legs), [legs]);
 
   // Local input string mirrors the store's parsed stake so the user
@@ -55,27 +55,68 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
 
   return (
     <section
-      className="parlay-tray"
+      className={cn("parlay-tray", collapsed && "parlay-tray-collapsed")}
       role="region"
       aria-label="Paper parlay tray"
       data-testid="parlay-tray"
+      data-collapsed={collapsed ? "true" : "false"}
     >
       <div className="parlay-tray-inner">
         <header className="parlay-tray-header">
           <div className="parlay-tray-title">
+            <button
+              type="button"
+              onClick={() => setCollapsed(!collapsed)}
+              className="parlay-tray-toggle focus-visible:ring-focus"
+              aria-label={collapsed ? "Expand parlay tray" : "Collapse parlay tray"}
+              aria-expanded={!collapsed}
+              data-testid="parlay-tray-toggle"
+            >
+              {collapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
             <span className="parlay-tray-label">parlay</span>
             <span className="parlay-tray-count">
               {legs.length} of {MAX_TRAY_LEGS} legs
             </span>
+            {/* Inline summary visible only while collapsed — keeps the
+                key numbers (stake + projected payout + profit) at the
+                operator's eye-line even with the body hidden. */}
+            {collapsed && projection && (
+              <span className="parlay-tray-collapsed-summary" data-testid="parlay-tray-collapsed-summary">
+                <span className="parlay-tray-collapsed-stake">${parsedStake!.toFixed(2)}</span>
+                <span className="parlay-tray-collapsed-arrow">→</span>
+                <span className="parlay-tray-collapsed-payout">${projection.payout.toFixed(2)}</span>
+                <span
+                  className={cn(
+                    "parlay-tray-collapsed-profit",
+                    projection.profit >= 0 ? "text-positive" : "text-negative",
+                  )}
+                >
+                  {projection.profit >= 0 ? "+" : ""}${projection.profit.toFixed(2)}
+                </span>
+              </span>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={clear}
-            className="parlay-tray-clear focus-visible:ring-focus"
-            data-testid="parlay-tray-clear"
-          >
-            clear
-          </button>
+          <div className="parlay-tray-header-actions">
+            {collapsed && canSave && (
+              <Button
+                variant="primary"
+                size="xs"
+                onClick={onSave}
+                data-testid="parlay-tray-save-collapsed"
+              >
+                Save
+              </Button>
+            )}
+            <button
+              type="button"
+              onClick={clear}
+              className="parlay-tray-clear focus-visible:ring-focus"
+              data-testid="parlay-tray-clear"
+            >
+              clear
+            </button>
+          </div>
         </header>
 
         <ol className="parlay-tray-chips" data-testid="parlay-tray-chips">
@@ -112,7 +153,7 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
           />
         </div>
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+        <div className="parlay-tray-stake-row mt-3 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
           <div className="relative">
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
               $
