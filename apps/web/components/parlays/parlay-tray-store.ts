@@ -47,9 +47,17 @@ interface TrayState {
    * operator doesn't retype. Null until the operator types one.
    */
   stake: number | null;
+  /**
+   * Whether the tray is rendered in its compact one-line mode.
+   * When ``true`` only the summary header is visible — the legs,
+   * quote, stake input, and projection are hidden so the tray
+   * doesn't overlap the trade-desk content underneath. Persists
+   * across reloads so the operator's preference sticks.
+   */
+  collapsed: boolean;
 }
 
-const INITIAL_STATE: TrayState = { legs: [], savedAt: 0, stake: null };
+const INITIAL_STATE: TrayState = { legs: [], savedAt: 0, stake: null, collapsed: false };
 
 let state: TrayState = INITIAL_STATE;
 let hydrated = false;
@@ -82,10 +90,12 @@ function hydrateOnce(): void {
       typeof parsed.stake === "number" && Number.isFinite(parsed.stake) && parsed.stake > 0
         ? parsed.stake
         : null;
+    const collapsed = typeof parsed.collapsed === "boolean" ? parsed.collapsed : false;
     state = {
       legs: parsed.legs as TradeSelection[],
       savedAt: parsed.savedAt,
       stake,
+      collapsed,
     };
   } catch {
     // Corrupt JSON or QuotaExceeded → silently fall back to empty tray.
@@ -138,12 +148,14 @@ function getServerSnapshot(): TrayState {
 export interface UseParlayTrayResult {
   legs: TradeSelection[];
   stake: number | null;
+  collapsed: boolean;
   isFull: boolean;
   /** ``true`` when the given selection.ticker is already in the tray. */
   contains: (ticker: string) => boolean;
   addLeg: (selection: TradeSelection) => void;
   removeLeg: (ticker: string) => void;
   setStake: (stake: number | null) => void;
+  setCollapsed: (collapsed: boolean) => void;
   clear: () => void;
 }
 
@@ -152,12 +164,14 @@ export function useParlayTray(): UseParlayTrayResult {
   return {
     legs: snapshot.legs,
     stake: snapshot.stake,
+    collapsed: snapshot.collapsed,
     isFull: snapshot.legs.length >= MAX_TRAY_LEGS,
     contains: (ticker: string) =>
       snapshot.legs.some((leg) => leg.ticker === ticker),
     addLeg,
     removeLeg,
     setStake,
+    setCollapsed,
     clear,
   };
 }
@@ -178,6 +192,10 @@ export function addLeg(selection: TradeSelection): void {
     legs: [...state.legs, selection],
     savedAt: Date.now(),
     stake: state.stake,
+    // Adding a leg auto-expands the tray. The operator just expressed
+    // intent to interact with the parlay; surfacing the full UI is
+    // the right default.
+    collapsed: false,
   });
 }
 
@@ -187,17 +205,22 @@ export function removeLeg(ticker: string): void {
   // Preserve the operator's stake when only the leg set changes —
   // they were mid-flow on this parlay and re-typing a stake just to
   // swap a leg would be annoying.
-  setState({ legs: next, savedAt: Date.now(), stake: state.stake });
+  setState({ legs: next, savedAt: Date.now(), stake: state.stake, collapsed: state.collapsed });
 }
 
 export function setStake(stake: number | null): void {
   if (stake === state.stake) return;
-  setState({ legs: state.legs, savedAt: state.savedAt, stake });
+  setState({ legs: state.legs, savedAt: state.savedAt, stake, collapsed: state.collapsed });
+}
+
+export function setCollapsed(collapsed: boolean): void {
+  if (collapsed === state.collapsed) return;
+  setState({ legs: state.legs, savedAt: state.savedAt, stake: state.stake, collapsed });
 }
 
 export function clear(): void {
-  if (state.legs.length === 0 && state.stake === null) return;
-  setState({ legs: [], savedAt: 0, stake: null });
+  if (state.legs.length === 0 && state.stake === null && !state.collapsed) return;
+  setState({ legs: [], savedAt: 0, stake: null, collapsed: false });
 }
 
 // Test-only helpers — exported under a clearly-namespaced object so a
