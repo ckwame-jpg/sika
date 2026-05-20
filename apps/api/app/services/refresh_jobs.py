@@ -969,14 +969,28 @@ def _cancel_check_before_commit(session: Session) -> None:
 
 
 def _apply_worker_statement_timeout(db: Session) -> None:
-    """Bug #51: bound any individual DB statement issued by the refresh
-    worker so a single slow query can't pin the worker thread (and its
-    pooled connection) indefinitely.
+    """Bug #51 / connection-pool-leak: bound every individual DB statement
+    issued by the refresh worker so a single slow query can't pin the
+    worker thread (and its pooled connection) indefinitely.
 
-    SET LOCAL applies only to the current transaction, so the value
-    follows the session lifetime managed by ``with SessionLocal()`` and
-    won't leak across pool checkouts. No-op for non-Postgres dialects
-    (SQLite has no equivalent; tests use SQLite and remain unaffected).
+    ``SET LOCAL`` only applies to the CURRENT transaction — the worker
+    commits many times during a job (per stage / per batch), and each
+    commit drops the LOCAL setting. Without the listener below the
+    second-and-onward transactions ran with no timeout, so a slow query
+    after the first commit could pin the worker indefinitely. When the
+    main thread's timeout fired, the worker stayed alive (no Python-level
+    interrupt is possible during a blocking DB call) and kept its pooled
+    connection. Every subsequent tick spawned another worker, each one
+    leaking another connection, until the pool was exhausted.
+
+    Fix: apply the SET LOCAL on the current transaction AND register an
+    ``after_begin`` listener on this specific session so every new
+    transaction within the session re-applies the timeout. The listener
+    is scoped to ``db`` (not the global ``Session`` class) so request
+    sessions and tests are unaffected.
+
+    No-op for non-Postgres dialects (SQLite has no equivalent; tests
+    use SQLite and remain unaffected).
     """
     bind = db.get_bind()
     if bind is None or bind.dialect.name != "postgresql":
@@ -988,7 +1002,17 @@ def _apply_worker_statement_timeout(db: Session) -> None:
     # SET value via a literal — Postgres' SET syntax doesn't accept bind
     # params, but the value is operator-controlled config (not user input)
     # so f-string interpolation of an int is safe.
-    db.execute(text(f"SET LOCAL statement_timeout = {timeout_seconds * 1000}"))
+    timeout_ms = timeout_seconds * 1000
+    set_local_sql = text(f"SET LOCAL statement_timeout = {timeout_ms}")
+    db.execute(set_local_sql)
+
+    def _reapply_on_begin(_session, _transaction, connection) -> None:
+        # Re-apply for every new transaction in this session. Use the
+        # provided ``connection`` (per SQLAlchemy docs — invoking SQL
+        # via the session itself inside ``after_begin`` is unsafe).
+        connection.execute(set_local_sql)
+
+    event.listen(db, "after_begin", _reapply_on_begin)
 
 
 def _execute_job_in_thread(
