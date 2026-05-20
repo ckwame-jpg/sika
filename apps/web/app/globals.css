@@ -3366,6 +3366,40 @@
   align-items: center;
   gap: 8px;
 }
+
+/*
+ * Mobile (< 640px): the topbar's chips + user-switcher + live pill
+ * are too wide to fit alongside the breadcrumb on a phone — the
+ * "pick user" label was wrapping to two lines and "refresh" pill
+ * was overlapping the page title. Wrap to a 2-row layout: row 1 is
+ * the breadcrumb, row 2 is the right-side cluster of pills, with
+ * the pills also allowed to wrap among themselves if there are
+ * enough of them.
+ */
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 10px 12px;
+  }
+  .topbar .spacer {
+    display: none;
+  }
+  .topbar-right {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .topbar-chips {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .topbar-chip {
+    padding: 3px 8px;
+    font-size: 10.5px;
+  }
+}
 .topbar-chip {
   display: inline-flex;
   align-items: center;
