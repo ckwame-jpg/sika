@@ -8,7 +8,7 @@ from time import monotonic
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import Base
@@ -1208,24 +1208,76 @@ def test_prop_refresh_successful_batch_resets_transient_attempts(db_session, mon
 # -----------------------------------------------------------------------------
 
 
-def test_apply_worker_statement_timeout_emits_set_local_on_postgres(monkeypatch):
+def _fake_pg_session(monkeypatch, db):
+    """Helper: mark ``db`` as a postgres session by patching its bind's
+    dialect name and intercepting ``db.execute`` so SET LOCAL is
+    captured without hitting the underlying engine (which is SQLite
+    in tests and would raise).
+
+    Note: ``get_bind`` is called BOTH by ``_apply_worker_statement_timeout``
+    (which we want to take the postgres branch) AND by the session's
+    own internal execute machinery (which needs the REAL bind for
+    actual queries). So the lambda inspects the call site via a small
+    state flag: when called with no kwargs (from our helper), return
+    the fake; otherwise (from session internals, e.g. with
+    ``clause=...``), return the real bind.
+    """
+    real_get_bind = db.get_bind
+    fake_pg_bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+    def _patched_get_bind(*args, **kwargs):
+        # Only the SET LOCAL dialect check calls ``get_bind()`` with no
+        # args from our helper. Session internals call it with
+        # ``clause=...`` / ``mapper=...`` / etc. Forward those to the
+        # real engine.
+        if not args and not kwargs:
+            return fake_pg_bind
+        return real_get_bind(*args, **kwargs)
+
+    monkeypatch.setattr(db, "get_bind", _patched_get_bind)
+    real_execute = db.execute
+    captured: list[str] = []
+
+    def _execute(stmt, *args, **kwargs):
+        sql_text = str(stmt)
+        if "SET LOCAL statement_timeout" in sql_text:
+            captured.append(sql_text)
+            return None
+        return real_execute(stmt, *args, **kwargs)
+
+    monkeypatch.setattr(db, "execute", _execute)
+    return captured
+
+
+def test_apply_worker_statement_timeout_emits_set_local_on_postgres(
+    tmp_path, monkeypatch
+):
     """On Postgres, the helper issues ``SET LOCAL statement_timeout``
     with the configured millisecond value so any individual query is
     bounded."""
+    db_path = tmp_path / "set_local_pg.sqlite"
+    url = f"sqlite+pysqlite:///{db_path}"
+    engine = create_engine(
+        url, connect_args={"check_same_thread": False}, future=True
+    )
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)()
+
     monkeypatch.setattr(
         refresh_jobs,
         "get_settings",
         lambda: SimpleNamespace(refresh_worker_statement_timeout_seconds=30),
     )
-    mock_db = unittest.mock.MagicMock()
-    mock_db.get_bind.return_value.dialect.name = "postgresql"
+    captured = _fake_pg_session(monkeypatch, db)
 
-    refresh_jobs._apply_worker_statement_timeout(mock_db)
-
-    executed_sql = [str(call.args[0]) for call in mock_db.execute.call_args_list]
-    assert any(
-        "SET LOCAL statement_timeout = 30000" in sql for sql in executed_sql
-    ), f"expected SET LOCAL statement_timeout=30000 in executed SQL, got: {executed_sql}"
+    try:
+        refresh_jobs._apply_worker_statement_timeout(db)
+        assert any(
+            "SET LOCAL statement_timeout = 30000" in sql for sql in captured
+        ), f"expected SET LOCAL statement_timeout=30000, got: {captured}"
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def test_apply_worker_statement_timeout_is_noop_on_sqlite(monkeypatch):
@@ -1330,3 +1382,160 @@ def test_slow_worker_query_raising_does_not_leak_session(db_session, monkeypatch
     assert second_result is not None
     assert second_result.job_id == second_job.id
     assert second_result.status == "completed"
+
+
+# -----------------------------------------------------------------------------
+# Connection-pool-leak fix: ``SET LOCAL statement_timeout`` is scoped to the
+# CURRENT transaction. The worker commits many times per job (per stage / per
+# batch), and every commit drops the LOCAL setting. Without an
+# ``after_begin`` listener that re-applies the timeout, the second-and-onward
+# transactions ran with no cap — so a slow query after the first commit
+# could pin the worker indefinitely. When the main thread's timeout fired,
+# the worker stayed alive (no Python-level interrupt during a blocking DB
+# call), kept its pooled connection, and every subsequent tick spawned
+# another worker. After ~170 of these the pool was exhausted at 5 base + 10
+# overflow = 15 connections and every API request 30s-timed-out at session
+# checkout. The wedge log captured this exact pattern.
+# -----------------------------------------------------------------------------
+
+
+def test_set_local_statement_timeout_reapplied_after_commit(tmp_path, monkeypatch):
+    """The ``after_begin`` listener must fire on every new transaction
+    in the worker session, re-emitting ``SET LOCAL statement_timeout``
+    so the cap survives mid-worker commits.
+
+    Before the fix the helper only ran ``SET LOCAL`` once. SET LOCAL is
+    transaction-scoped, so after the first ``db.commit()`` the timeout
+    was gone — the next slow query had no cap and could pin the worker
+    indefinitely, leaking its pooled connection.
+    """
+    db_path = tmp_path / "conn_pool_leak.sqlite"
+    url = f"sqlite+pysqlite:///{db_path}"
+    engine = create_engine(
+        url, connect_args={"check_same_thread": False}, future=True
+    )
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)()
+
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(refresh_worker_statement_timeout_seconds=30),
+    )
+
+    captured_db_set_local = _fake_pg_session(monkeypatch, db)
+
+    # The fix re-emits SET LOCAL via the after_begin listener using the
+    # ``connection`` provided by SQLAlchemy. Capture the statement at
+    # the engine layer AND short-circuit before SQLite executes it
+    # (SQLite would raise on unknown SET syntax).
+    from sqlalchemy import event as _event
+
+    connection_set_local_records: list[str] = []
+
+    @_event.listens_for(engine, "before_cursor_execute", retval=True)
+    def _capture_and_skip_set_local(
+        _conn, _cursor, statement, parameters, _context, _executemany
+    ):
+        if "SET LOCAL statement_timeout" in statement:
+            connection_set_local_records.append(statement)
+            # Replace with a harmless statement SQLite accepts. We're
+            # only verifying the listener fires, not the actual DDL.
+            return ("SELECT 1 -- SET LOCAL placeholder", parameters)
+        return (statement, parameters)
+
+    after_begin_calls = {"count": 0}
+
+    @_event.listens_for(db, "after_begin")
+    def _count_after_begin(_session, _trans, _conn):
+        after_begin_calls["count"] += 1
+
+    real_execute = type(db).execute.__get__(db, type(db))
+
+    try:
+        # Apply the timeout — this both emits SET LOCAL on the current
+        # transaction (via db.execute) AND registers the after_begin
+        # listener.
+        refresh_jobs._apply_worker_statement_timeout(db)
+        assert len(captured_db_set_local) == 1, (
+            "_apply_worker_statement_timeout must emit SET LOCAL once on the "
+            f"current transaction; got: {captured_db_set_local}"
+        )
+
+        # Commit closes the current transaction; the next statement
+        # opens a new one and ``after_begin`` fires the listener.
+        db.commit()
+        real_execute(text("SELECT 1"))
+        assert after_begin_calls["count"] >= 1, (
+            "after_begin listener must fire when a new transaction begins"
+        )
+        # The fix's listener must have emitted SET LOCAL again on the
+        # new transaction via the connection. Before the fix, this list
+        # would be empty — every transaction past the first ran with
+        # no cap.
+        assert any(
+            "SET LOCAL statement_timeout" in s
+            for s in connection_set_local_records
+        ), (
+            "the after_begin listener must re-emit SET LOCAL on every new "
+            "transaction in the worker session — otherwise post-commit "
+            "queries run uncapped and a slow one pins the connection "
+            f"forever. connection_set_local_records={connection_set_local_records}"
+        )
+
+        # Do one more commit cycle — every NEW transaction's begin
+        # must re-arm SET LOCAL, not just the first post-init one.
+        previous_count = len(connection_set_local_records)
+        db.commit()
+        real_execute(text("SELECT 1"))
+        assert len(connection_set_local_records) > previous_count, (
+            "SET LOCAL must be re-emitted on EVERY new transaction, not "
+            "just the second one. Got "
+            f"{len(connection_set_local_records)} SET LOCAL calls after 2 "
+            "commit cycles."
+        )
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_set_local_statement_timeout_listener_scoped_to_session(tmp_path, monkeypatch):
+    """The ``after_begin`` listener must be attached to the SPECIFIC
+    session that ``_apply_worker_statement_timeout`` was called on, not
+    the global ``Session`` class. Otherwise every request session would
+    have its statements bounded by ``refresh_worker_statement_timeout_seconds``
+    — silently capping API queries far below their natural budget.
+    """
+    db_path = tmp_path / "listener_scope.sqlite"
+    url = f"sqlite+pysqlite:///{db_path}"
+    engine = create_engine(
+        url, connect_args={"check_same_thread": False}, future=True
+    )
+    Base.metadata.create_all(bind=engine)
+    TestingSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=engine, future=True
+    )
+    worker_db = TestingSessionLocal()
+    request_db = TestingSessionLocal()
+
+    monkeypatch.setattr(
+        refresh_jobs,
+        "get_settings",
+        lambda: SimpleNamespace(refresh_worker_statement_timeout_seconds=30),
+    )
+    _fake_pg_session(monkeypatch, worker_db)
+
+    try:
+        refresh_jobs._apply_worker_statement_timeout(worker_db)
+
+        # Now exercise a transaction on the OTHER session. If the
+        # listener leaked to the global ``Session`` class, the
+        # request_db's begin would also trigger SET LOCAL — and SQLite
+        # would raise because we haven't intercepted request_db.execute.
+        # No exception = listener is correctly session-scoped.
+        request_db.execute(text("SELECT 1"))
+        request_db.commit()
+    finally:
+        worker_db.close()
+        request_db.close()
+        engine.dispose()
