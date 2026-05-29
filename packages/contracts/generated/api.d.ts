@@ -1825,6 +1825,11 @@ export interface components {
         /** ModelReadinessSettingsUpdate */
         ModelReadinessSettingsUpdate: {
             /**
+             * Enqueue Diagnostic Backfill
+             * @default false
+             */
+            enqueue_diagnostic_backfill: boolean;
+            /**
              * Enqueue Shadow Backfill
              * @default true
              */

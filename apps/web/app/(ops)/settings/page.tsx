@@ -213,7 +213,7 @@ export default function SettingsPage() {
                   recommendation, grounded in the same features the
                   model uses. A verifier rejects any output that
                   references injuries, refs, weather, trades, or numbers
-                  that aren't in the feature set. The mechanical
+                  that are not in the feature set. The mechanical
                   rationale is always shown alongside, so flipping this
                   off has no impact on what data you see.
                 </p>
@@ -306,7 +306,7 @@ export default function SettingsPage() {
               <div className="cosmos-panel-head-text">
                 <h2 className="cosmos-panel-title">Kalshi credentials</h2>
                 <p className="cosmos-panel-desc">
-                  Connect the current user's Kalshi account so the portfolio
+                  Connect the current user&apos;s Kalshi account so the portfolio
                   shows their real-money balance + positions.
                 </p>
               </div>

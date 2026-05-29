@@ -8,9 +8,11 @@ from app.models import ModelFamilyRuntimeHealth, ParlayPrediction, Prediction, S
 from app.services.ml.promotion import (
     MIN_WALK_FORWARD_ROWS_PER_FOLD,
     MIN_WALK_FORWARD_VALID_FOLDS,
+    PROMOTION_GATE_VERSION,
     PromotionExample,
     PromotionMetrics,
     _walk_forward_buckets,
+    diagnostic_backfill_metrics_for_family,
     evaluate_family,
     evaluate_promotion_gates,
     metrics_for_examples,
@@ -18,10 +20,8 @@ from app.services.ml.promotion import (
 from app.services.ml.runtime import resolve_family_runtime
 
 
-# Bug #20 — promotion gate consumes the worst-fold walk-forward Brier.
-# Existing seeders spaced rows 1 minute apart (single-day window) which
-# cannot form a walk-forward fold; bump every seeded row to a unique
-# bucket-friendly timestamp by passing ``time_step`` to the seed helper.
+# Promotion-ready seeders need rows spread across capture time so the
+# walk-forward diagnostic has representative buckets by default.
 WALK_FORWARD_TIME_STEP = timedelta(hours=6)
 
 
@@ -40,6 +40,11 @@ def _seed_nba_shadow_pair(
     shadow_probability: float,
     heuristic_probability: float = 0.52,
     time_step: timedelta = WALK_FORWARD_TIME_STEP,
+    model_name: str = "shadow-model",
+    model_version: str = "v1",
+    calibration_version: str = "cal-v1",
+    feature_set_version: str = "features-v1",
+    model_metadata: dict | None = None,
 ) -> None:
     captured_at = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc) + index * time_step
     prediction = Prediction(
@@ -94,11 +99,11 @@ def _seed_nba_shadow_pair(
             fair_no_price=round(1 - shadow_probability, 4),
             edge=round(shadow_probability - prediction.suggested_price, 4),
             confidence=shadow_probability,
-            model_name="shadow-model",
-            model_version="v1",
-            calibration_version="cal-v1",
-            feature_set_version="features-v1",
-            model_metadata={"family_key": "nba_singles"},
+            model_name=model_name,
+            model_version=model_version,
+            calibration_version=calibration_version,
+            feature_set_version=feature_set_version,
+            model_metadata=model_metadata if model_metadata is not None else {"family_key": "nba_singles"},
             rationale="Shadow test",
             reasons=["shadow"],
             features={},
@@ -108,11 +113,10 @@ def _seed_nba_shadow_pair(
 
 
 def _seed_promotion_ready_family(db_session, *, total: int = 320) -> None:
-    """Seed enough shadow pairs to clear both volume and walk-forward gates.
+    """Seed enough shadow pairs to clear volume, calibration, and ranking.
 
-    320 rows × 6-hour spacing = 80 days = ~11.4 weeks → 10 valid weekly
-    walk-forward folds with ~28 rows each, comfortably above the 8-fold
-    × 25-rows floor.
+    320 rows × 6-hour spacing = 80 days = ~11.4 weeks, which also leaves
+    the walk-forward diagnostic with representative weekly buckets.
     """
     for index in range(total):
         won = index % 2 == 0
@@ -181,7 +185,15 @@ def test_promotion_gates_require_volume_calibration_ranking_and_stability():
         previous_stability_days=2,
     ).volume_passed
     assert not evaluate_promotion_gates(
-        PromotionMetrics(150, 0.24, 0.26, 0.01, 0.08),
+        PromotionMetrics(
+            150,
+            0.24,
+            0.26,
+            0.01,
+            0.08,
+            calibration_delta_upper_bound=0.02,
+            calibration_tolerance=0.005,
+        ),
         previous_stability_days=2,
     ).calibration_passed
     assert not evaluate_promotion_gates(
@@ -194,7 +206,21 @@ def test_evaluate_family_promotes_after_three_passing_daily_evaluations(db_sessi
     _seed_promotion_ready_family(db_session)
 
     first = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 21, tzinfo=timezone.utc))
+    _seed_nba_shadow_pair(
+        db_session,
+        index=320,
+        won=True,
+        shadow_probability=0.85,
+    )
+    db_session.flush()
     second = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 22, tzinfo=timezone.utc))
+    _seed_nba_shadow_pair(
+        db_session,
+        index=321,
+        won=False,
+        shadow_probability=0.15,
+    )
+    db_session.flush()
     third = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 23, tzinfo=timezone.utc))
 
     assert first.gates.stability_days == 1
@@ -202,16 +228,58 @@ def test_evaluate_family_promotes_after_three_passing_daily_evaluations(db_sessi
     assert third.gates.promoted is True
     runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one()
     assert runtime_row.promotion_mode == "ml"
-    # Bug #20 / codex round 4: kill switch compares its 50-row rolling
-    # aggregate Brier against this baseline; storing the aggregate
-    # (rather than worst-fold) keeps the comparison apples-to-apples.
+    # Kill switch compares its 50-row rolling aggregate Brier against
+    # this baseline, so the stored value must remain aggregate Brier.
     assert runtime_row.promotion_baseline_brier == third.metrics.aggregate_shadow_brier
+
+
+def test_evaluate_family_does_not_count_same_evidence_on_later_days(db_session):
+    _seed_promotion_ready_family(db_session)
+
+    first = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 21, tzinfo=timezone.utc))
+    second = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 22, tzinfo=timezone.utc))
+
+    assert first.gates.stability_days == 1
+    assert second.gates.stability_days == 1
+    assert second.gates.promoted is False
+    assert any("newly settled" in reason for reason in second.gates.reasons)
+
+
+def test_evaluate_family_can_count_later_same_day_when_new_settled_rows_make_gate_pass(db_session):
+    for index in range(149):
+        won = index % 2 == 0
+        _seed_nba_shadow_pair(
+            db_session,
+            index=index,
+            won=won,
+            shadow_probability=0.85 if won else 0.15,
+        )
+    db_session.flush()
+
+    first = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 21, 9, tzinfo=timezone.utc))
+    _seed_nba_shadow_pair(
+        db_session,
+        index=149,
+        won=False,
+        shadow_probability=0.15,
+    )
+    db_session.flush()
+    second = evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 21, 18, tzinfo=timezone.utc))
+
+    assert first.gates.volume_passed is False
+    assert first.gates.stability_days == 0
+    assert second.gates.volume_passed is True
+    assert second.gates.stability_days == 1
 
 
 def test_runtime_uses_promotion_mode_below_explicit_family_override(db_session, monkeypatch, tmp_path):
     _seed_promotion_ready_family(db_session)
     evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 21, tzinfo=timezone.utc))
+    _seed_nba_shadow_pair(db_session, index=320, won=True, shadow_probability=0.85)
+    db_session.flush()
     evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 22, tzinfo=timezone.utc))
+    _seed_nba_shadow_pair(db_session, index=321, won=False, shadow_probability=0.15)
+    db_session.flush()
     evaluate_family(db_session, "nba_singles", now=datetime(2026, 4, 23, tzinfo=timezone.utc))
     manifest_path = _write_static_manifest(tmp_path, mode="shadow")
     monkeypatch.setenv("ML_SERVING_MODE", "ml")
@@ -231,12 +299,11 @@ def test_runtime_uses_promotion_mode_below_explicit_family_override(db_session, 
 
 
 # -----------------------------------------------------------------------------
-# Bug #20 — walk-forward worst-fold gate
+# Promotion diagnostics — walk-forward buckets
 #
-# The promotion gate now consumes the worst-per-week-bucket Brier, with a
-# per-family floor of 8 valid folds × ≥25 rows. Below that floor the
-# family stays in shadow regardless of the aggregate metric — preventing
-# one favourable stretch from short-circuiting the gate.
+# Walk-forward buckets remain useful diagnostics, but the promotion gate
+# now uses paired Brier-delta confidence bounds so low week-count does not
+# block otherwise strong current-lineage evidence.
 
 
 def _example(*, day_offset: int, target: int, shadow_probability: float, heuristic_probability: float = 0.5) -> PromotionExample:
@@ -295,10 +362,10 @@ def test_walk_forward_buckets_insufficient_history_for_single_day_span():
         assert len(buckets[0]) >= MIN_WALK_FORWARD_ROWS_PER_FOLD
 
 
-def test_metrics_for_examples_reports_worst_fold_brier_not_mean():
+def test_metrics_for_examples_reports_worst_fold_brier_as_diagnostic_not_headline():
     """One bad week + nine perfect weeks → worst-fold Brier ≈ the bad
-    week, not the (~0) mean. Asserts the gate consumes the worst, not
-    the average."""
+    week, while the headline Brier remains the aggregate current-lineage
+    score used by the paired-delta calibration gate."""
     examples: list[PromotionExample] = []
     # Nine pristine weeks: shadow probability matches outcome perfectly.
     for week in range(9):
@@ -327,44 +394,38 @@ def test_metrics_for_examples_reports_worst_fold_brier_not_mean():
     metrics = metrics_for_examples(examples)
     assert metrics.insufficient_history is False
     assert metrics.walk_forward_fold_count == 10
-    # Worst-fold shadow Brier comes from the catastrophic week (≈0.996).
-    # The mean across folds would be ≈ 0.0996 — order of magnitude lower.
-    # If the gate accidentally consumed the aggregate, calibration would
-    # still pass; consuming the worst-fold flips it.
-    assert metrics.shadow_brier > 0.9, (
-        f"shadow_brier must surface the catastrophic week, got {metrics.shadow_brier}"
-    )
-    assert metrics.aggregate_shadow_brier < 0.2, (
-        "aggregate shadow Brier (the prior gate) is much lower — confirms worst-fold matters"
-    )
+    assert metrics.worst_fold_shadow_brier is not None
+    assert metrics.worst_fold_shadow_brier > 0.9
+    assert metrics.shadow_brier < 0.2
+    assert metrics.aggregate_shadow_brier == metrics.shadow_brier
     # Heuristic stayed perfect across all weeks → worst-fold Brier near zero.
-    assert metrics.heuristic_brier < 0.01
+    assert metrics.worst_fold_heuristic_brier is not None
+    assert metrics.worst_fold_heuristic_brier < 0.01
 
 
-def test_evaluate_promotion_gates_blocks_promotion_on_insufficient_history():
-    """A metrics struct flagged insufficient_history must fail
-    calibration even if the headline Brier numbers would otherwise
-    clear the noise band."""
+def test_evaluate_promotion_gates_does_not_block_on_walk_forward_history_alone():
+    """Walk-forward insufficiency is diagnostic; paired Brier-delta is
+    the calibration gate."""
     insufficient = PromotionMetrics(
         sample_count=150,
         heuristic_brier=0.24,
         shadow_brier=0.20,
         heuristic_top_decile_roi=0.01,
         shadow_top_decile_roi=0.08,
+        calibration_delta_upper_bound=-0.01,
+        calibration_tolerance=0.005,
         insufficient_history=True,
         walk_forward_fold_count=2,
     )
     result = evaluate_promotion_gates(insufficient, previous_stability_days=2)
-    assert result.calibration_passed is False
-    assert result.promoted is False
-    assert any("walk-forward" in reason for reason in result.reasons)
+    assert result.calibration_passed is True
+    assert result.promoted is True
+    assert not any("walk-forward" in reason for reason in result.reasons)
 
 
-def test_evaluate_family_does_not_promote_when_walk_forward_insufficient(db_session):
-    """Seed enough rows for volume but compressed into a single day —
-    walk-forward can't form folds, so the gate stalls in shadow."""
-    # Compress: time_step = 1 minute means all 200 rows land in one
-    # weekly bucket. Volume gate passes (≥150) but walk-forward fails.
+def test_evaluate_family_can_count_stability_when_walk_forward_is_insufficient(db_session):
+    """A single-day batch can still count as a passing daily evaluation
+    when paired current evidence clears volume, calibration, and ranking."""
     for index in range(200):
         won = index % 2 == 0
         _seed_nba_shadow_pair(
@@ -379,7 +440,8 @@ def test_evaluate_family_does_not_promote_when_walk_forward_insufficient(db_sess
     result = evaluate_family(db_session, "nba_singles", now=datetime(2026, 5, 1, tzinfo=timezone.utc))
     assert result.metrics.insufficient_history is True
     assert result.gates.promoted is False
-    assert result.gates.calibration_passed is False
+    assert result.gates.calibration_passed is True
+    assert result.gates.stability_days == 1
     runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one()
     # promotion_baseline_brier must NOT be overwritten — only successful
     # promotions stamp the baseline.
@@ -390,8 +452,8 @@ def test_evaluate_family_fresh_row_defaults_to_zero_stability_no_carryover(db_se
     """Self-review case (a): a brand-new ``ModelFamilyRuntimeHealth`` row
     with no stored ``promotion_metrics`` is the legacy-payload path's
     default. ``_previous_metric_compatible`` returns False for an empty
-    dict so carryover stability resets to 0 and ``same_evaluation_date``
-    forces False. The first walk-forward pass then records day 1, not 0."""
+    dict so carryover stability resets to 0. The first current-gate pass
+    then records day 1, not 0."""
     _seed_promotion_ready_family(db_session)
     # ``_seed_promotion_ready_family`` doesn't touch
     # ``ModelFamilyRuntimeHealth``; ``evaluate_family`` will lazily
@@ -403,13 +465,13 @@ def test_evaluate_family_fresh_row_defaults_to_zero_stability_no_carryover(db_se
     assert runtime_row.promotion_stability_days == 1
 
 
-def test_evaluate_family_resets_stability_when_previous_payload_predates_walk_forward(db_session):
-    """Codex round 4: if the stored ``promotion_metrics`` payload was
-    written by the pre-bug-#20 aggregate-Brier gate, those stability days
+def test_evaluate_family_resets_stability_when_previous_payload_predates_current_gate(db_session):
+    """If the stored ``promotion_metrics`` payload was written by an older
+    calibration gate, those stability days
     were earned under different semantics and must not transfer."""
     _seed_promotion_ready_family(db_session)
     # Simulate legacy state: 2 stability days already accumulated under
-    # the old gate, but the stored payload has no walk_forward marker.
+    # the old gate, but the stored payload has no gate_version marker.
     runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one_or_none()
     if runtime_row is None:
         runtime_row = ModelFamilyRuntimeHealth(family_key="nba_singles")
@@ -417,7 +479,7 @@ def test_evaluate_family_resets_stability_when_previous_payload_predates_walk_fo
         db_session.flush()
     runtime_row.promotion_stability_days = 2
     runtime_row.promotion_metrics = {
-        "last_evaluation_date": "2026-04-19",  # different day, no walk_forward marker
+        "last_evaluation_date": "2026-04-19",  # different day, no gate_version marker
         "metrics": {
             "sample_count": 200,
             "heuristic_brier": 0.22,
@@ -437,14 +499,11 @@ def test_evaluate_family_resets_stability_when_previous_payload_predates_walk_fo
     assert result.gates.promoted is False
 
 
-def test_evaluate_family_first_walk_forward_pass_counts_after_same_day_legacy_payload(db_session):
+def test_evaluate_family_first_current_gate_pass_counts_after_same_day_legacy_payload(db_session):
     """Codex round 5 edge case: legacy payload was written earlier on the
-    same calendar day as the first walk-forward evaluation. The naive
-    reset (``previous_stability_days=0`` + ``same_evaluation_date=True``)
-    leaves the gate computing ``stability_days = previous_stability_days
-    = 0``, so the first new-gate pass records 0 days instead of 1. Force
-    ``same_evaluation_date=False`` when the previous payload is legacy
-    so the first walk-forward pass counts as day 1."""
+    same calendar day as the first current-gate evaluation. Legacy
+    stability must not carry over, but the first pass under the new
+    gate/lineage should still count as day 1."""
     _seed_promotion_ready_family(db_session)
     runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one_or_none()
     if runtime_row is None:
@@ -453,7 +512,7 @@ def test_evaluate_family_first_walk_forward_pass_counts_after_same_day_legacy_pa
         db_session.flush()
     eval_date = datetime(2026, 4, 21, tzinfo=timezone.utc)
     # Legacy payload stamped on the SAME calendar day as the impending
-    # walk-forward evaluation.
+    # current-gate evaluation.
     runtime_row.promotion_stability_days = 2
     runtime_row.promotion_metrics = {
         "last_evaluation_date": eval_date.date().isoformat(),
@@ -463,7 +522,7 @@ def test_evaluate_family_first_walk_forward_pass_counts_after_same_day_legacy_pa
             "shadow_brier": 0.19,
             "heuristic_top_decile_roi": 0.01,
             "shadow_top_decile_roi": 0.08,
-            # No ``walk_forward`` block — payload predates bug #20.
+            # No ``gate_version`` marker — payload predates current gate.
         },
         "gates": {},
     }
@@ -475,10 +534,10 @@ def test_evaluate_family_first_walk_forward_pass_counts_after_same_day_legacy_pa
     assert result.gates.promoted is False
 
 
-def test_evaluate_family_keeps_stability_when_previous_payload_already_walk_forward(db_session):
+def test_evaluate_family_keeps_stability_when_previous_payload_uses_current_gate(db_session):
     """Companion to the reset test: when the stored payload was already
-    produced by the walk-forward gate (``metric == worst_fold_brier``),
-    the stability counter carries forward as before."""
+    produced by the current gate version, the stability counter carries
+    forward as before."""
     _seed_promotion_ready_family(db_session)
     runtime_row = db_session.query(ModelFamilyRuntimeHealth).filter_by(family_key="nba_singles").one_or_none()
     if runtime_row is None:
@@ -487,18 +546,19 @@ def test_evaluate_family_keeps_stability_when_previous_payload_already_walk_forw
         db_session.flush()
     runtime_row.promotion_stability_days = 2
     runtime_row.promotion_metrics = {
+        "gate_version": PROMOTION_GATE_VERSION,
         "last_evaluation_date": "2026-04-19",
+        "last_counted_date": "2026-04-19",
+        "last_counted_sample_count": 319,
+        "last_counted_latest_settled_at": "2026-04-21T00:00:00+00:00",
         "metrics": {
             "sample_count": 200,
             "heuristic_brier": 0.22,
             "shadow_brier": 0.19,
             "heuristic_top_decile_roi": 0.01,
             "shadow_top_decile_roi": 0.08,
-            "walk_forward": {
-                "metric": "worst_fold_brier",
-                "fold_count": 10,
-                "insufficient_history": False,
-            },
+            "calibration_delta_upper_bound": -0.01,
+            "calibration_tolerance": 0.005,
         },
         "gates": {},
     }
@@ -508,6 +568,159 @@ def test_evaluate_family_keeps_stability_when_previous_payload_already_walk_forw
     # Carry-over preserves the previous 2 days → this third pass promotes.
     assert result.gates.stability_days == 3
     assert result.gates.promoted is True
+
+
+def test_evaluate_family_filters_to_current_runtime_lineage(db_session):
+    """Old shadow rows from prior artifacts must not pollute current
+    promotion metrics."""
+    runtime_row = ModelFamilyRuntimeHealth(
+        family_key="nba_singles",
+        model_name="shadow-model",
+        model_version="current",
+        calibration_version="cal-current",
+        feature_set_version="features-current",
+    )
+    db_session.add(runtime_row)
+    for index in range(200):
+        won = index % 2 == 0
+        _seed_nba_shadow_pair(
+            db_session,
+            index=index,
+            won=won,
+            shadow_probability=0.99 if not won else 0.01,
+            model_version="old",
+            calibration_version="cal-old",
+            feature_set_version="features-old",
+        )
+    for index in range(200, 400):
+        won = index % 2 == 0
+        _seed_nba_shadow_pair(
+            db_session,
+            index=index,
+            won=won,
+            shadow_probability=0.85 if won else 0.15,
+            model_version="current",
+            calibration_version="cal-current",
+            feature_set_version="features-current",
+        )
+    db_session.flush()
+
+    result = evaluate_family(db_session, "nba_singles", now=datetime(2026, 5, 1, tzinfo=timezone.utc))
+
+    assert result.metrics.sample_count == 200
+    assert result.metrics.shadow_brier < 0.05
+    assert result.gates.calibration_passed is True
+
+
+def test_evaluate_family_filters_same_named_artifacts_by_signature(db_session):
+    """Artifact content identity is part of the promotion lineage. This
+    catches retrains that kept the same model/version labels."""
+    runtime_row = ModelFamilyRuntimeHealth(
+        family_key="nba_singles",
+        model_name="shadow-model",
+        model_version="v1",
+        calibration_version="cal-v1",
+        feature_set_version="features-v1",
+        model_metadata={"artifact_signature": "current"},
+    )
+    db_session.add(runtime_row)
+    for index in range(200):
+        won = index % 2 == 0
+        _seed_nba_shadow_pair(
+            db_session,
+            index=index,
+            won=won,
+            shadow_probability=0.99 if not won else 0.01,
+            model_metadata={"family_key": "nba_singles", "artifact_signature": "old"},
+        )
+    for index in range(200, 400):
+        won = index % 2 == 0
+        _seed_nba_shadow_pair(
+            db_session,
+            index=index,
+            won=won,
+            shadow_probability=0.85 if won else 0.15,
+            model_metadata={"family_key": "nba_singles", "artifact_signature": "current"},
+        )
+    db_session.flush()
+
+    result = evaluate_family(db_session, "nba_singles", now=datetime(2026, 5, 1, tzinfo=timezone.utc))
+
+    assert result.metrics.sample_count == 200
+    assert result.metrics.shadow_brier < 0.05
+    assert result.gates.calibration_passed is True
+
+
+def test_evaluate_family_resets_stability_when_lineage_changes(db_session):
+    runtime_row = ModelFamilyRuntimeHealth(
+        family_key="nba_singles",
+        promotion_mode="ml",
+        promotion_stability_days=2,
+        model_name="shadow-model",
+        model_version="current",
+        calibration_version="cal-current",
+        feature_set_version="features-current",
+        promotion_metrics={
+            "gate_version": PROMOTION_GATE_VERSION,
+            "last_evaluation_date": "2026-04-30",
+            "last_counted_date": "2026-04-30",
+            "last_counted_sample_count": 200,
+            "last_counted_latest_settled_at": "2026-04-30T00:00:00+00:00",
+            "lineage": {
+                "model_name": "shadow-model",
+                "model_version": "old",
+                "calibration_version": "cal-old",
+                "feature_set_version": "features-old",
+            },
+            "metrics": {},
+            "gates": {},
+        },
+    )
+    db_session.add(runtime_row)
+    for index in range(200):
+        won = index % 2 == 0
+        _seed_nba_shadow_pair(
+            db_session,
+            index=index,
+            won=won,
+            shadow_probability=0.85 if won else 0.15,
+            model_version="current",
+            calibration_version="cal-current",
+            feature_set_version="features-current",
+        )
+    db_session.flush()
+
+    result = evaluate_family(db_session, "nba_singles", now=datetime(2026, 5, 1, tzinfo=timezone.utc))
+
+    assert result.gates.stability_days == 1
+    assert result.gates.promoted is False
+    assert result.promotion_mode == "shadow"
+    assert runtime_row.promotion_mode == "shadow"
+
+
+def test_diagnostic_backfill_rows_are_excluded_from_promotion_metrics(db_session):
+    for index in range(200):
+        won = index % 2 == 0
+        _seed_nba_shadow_pair(
+            db_session,
+            index=index,
+            won=won,
+            shadow_probability=0.85 if won else 0.15,
+            model_metadata={
+                "family_key": "nba_singles",
+                "capture_mode": "diagnostic_backfill",
+                "promotion_excluded": True,
+            },
+        )
+    db_session.flush()
+
+    result = evaluate_family(db_session, "nba_singles", now=datetime(2026, 5, 1, tzinfo=timezone.utc))
+    diagnostic_metrics = diagnostic_backfill_metrics_for_family(db_session, "nba_singles")
+
+    assert result.metrics.sample_count == 0
+    assert result.gates.volume_passed is False
+    assert diagnostic_metrics.sample_count == 200
+    assert diagnostic_metrics.shadow_brier < 0.05
 
 
 def _seed_parlay_shadow_pair(
@@ -568,14 +781,9 @@ def _seed_parlay_shadow_pair(
     )
 
 
-def test_evaluate_family_parlay_with_sparse_volume_reports_insufficient_history(db_session):
-    """Codex-style second-pass catch: bug #20's walk-forward floor
-    (8 folds × ≥25 rows) is steep for parlay families whose settled
-    volume is typically much lower than singles. Verify the gate path
-    doesn't crash on parlay examples and reports insufficient_history
-    for a low-volume parlay family — protecting against degenerate
-    behavior if ``combined_market_price``/``combined_model_probability``
-    were nullable / defaulted in ways that broke the Brier compute."""
+def test_evaluate_family_parlay_with_sparse_volume_reports_diagnostic_insufficient_history(db_session):
+    """Sparse parlay families still report walk-forward insufficiency as a
+    diagnostic while the actual gate blocks on sample volume."""
     # 20 parlay rows total — well below the 200-row floor and the
     # ≥25-rows-per-week × ≥8-folds requirement. Spread across 5 days
     # so they all land in a single weekly bucket.
@@ -592,7 +800,8 @@ def test_evaluate_family_parlay_with_sparse_volume_reports_insufficient_history(
     result = evaluate_family(db_session, "nba_parlay_2leg", now=datetime(2026, 5, 1, tzinfo=timezone.utc))
     assert result.metrics.sample_count == 20
     assert result.metrics.insufficient_history is True
-    assert result.gates.calibration_passed is False
+    assert result.gates.volume_passed is False
+    assert result.gates.calibration_passed is True
     assert result.gates.promoted is False
     # The walk_forward block must surface the actual fold-build outcome
     # for ops visibility — not a degenerate empty / nan result.
@@ -632,6 +841,7 @@ def test_promotion_metrics_to_dict_exposes_walk_forward_block():
     walk_forward = payload["walk_forward"]
     assert walk_forward["fold_count"] == 9
     assert walk_forward["window_days"] == 7
-    assert walk_forward["metric"] == "worst_fold_brier"
+    assert walk_forward["metric"] == "worst_fold_brier_diagnostic"
     assert walk_forward["insufficient_history"] is False
     assert walk_forward["aggregate_shadow_brier"] == 0.19
+    assert payload["calibration_metric"] == "paired_brier_delta_upper_bound"

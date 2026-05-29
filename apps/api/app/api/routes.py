@@ -92,6 +92,8 @@ from app.services.kalshi_account import (
 )
 from app.services.kelly_sizing_db import compute_drawdown_brake_snapshot
 from app.services.ml.readiness import build_model_readiness_detail, build_model_readiness_summary
+from app.services.ml.promotion import evaluate_all_families_if_due, evaluate_family_if_due
+from app.services.ml.shadow_modes import DIAGNOSTIC_BACKFILL_CAPTURE_MODE
 from app.services.ml.study_progress import retained_study_cutoff
 from app.services.narrator import (
     NarratorNotConfiguredError,
@@ -1471,6 +1473,8 @@ def get_parlay_watchlist(
 
 @ops_router.get("/models/readiness", response_model=ModelReadinessSummaryRead)
 def model_readiness_summary(db: Session = Depends(get_db)) -> ModelReadinessSummaryRead:
+    if evaluate_all_families_if_due(db):
+        db.commit()
     return ModelReadinessSummaryRead.model_validate(build_model_readiness_summary(db))
 
 
@@ -1514,6 +1518,8 @@ def update_model_readiness_settings(
         set_ml_serving_mode(db, payload.ml_serving_mode)
         if payload.ml_serving_mode in {"shadow", "ml"} and payload.enqueue_shadow_backfill:
             enqueue_shadow_capture_job(db, scope="backfill")
+    if payload.enqueue_diagnostic_backfill:
+        enqueue_shadow_capture_job(db, scope=DIAGNOSTIC_BACKFILL_CAPTURE_MODE)
     if payload.pick_history_default_n is not None:
         set_pick_history_default_n(db, payload.pick_history_default_n)
     if payload.narrator_enabled is not None:
@@ -1531,6 +1537,8 @@ def update_model_readiness_settings(
 
 @ops_router.get("/models/readiness/{family_key}", response_model=ModelFamilyReadinessRead)
 def model_readiness_detail(family_key: str, db: Session = Depends(get_db)) -> ModelFamilyReadinessRead:
+    if evaluate_family_if_due(db, family_key):
+        db.commit()
     payload = build_model_readiness_detail(db, family_key)
     if payload is None:
         raise HTTPException(status_code=404, detail="Unknown model family")

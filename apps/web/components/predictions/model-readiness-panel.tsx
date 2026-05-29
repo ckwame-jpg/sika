@@ -456,6 +456,8 @@ export function ModelReadinessPanel() {
   const selectedShadowBrier = selected ? promotionMetric(selected, "shadow_brier") : null;
   const selectedHeuristicBrier = selected ? promotionMetric(selected, "heuristic_brier") : null;
   const selectedShadowTopDecileRoi = selected ? promotionMetric(selected, "shadow_top_decile_roi") : null;
+  const selectedCalibrationUpperBound = selected ? promotionMetric(selected, "calibration_delta_upper_bound") : null;
+  const selectedCalibrationTolerance = selected ? promotionMetric(selected, "calibration_tolerance") : null;
   const selectedHasNoRecommendationRows = selected
     ? selected.total_predictions === 0 && selected.settled_predictions === 0 && selected.pending_predictions === 0
     : false;
@@ -667,14 +669,23 @@ export function ModelReadinessPanel() {
             </div>
 
             {(selectedHeuristicBrier != null || selectedShadowBrier != null || selectedShadowTopDecileRoi != null) ? (
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="stats-tile">
-                  <p className="stats-tile-label" title="Worst per-week walk-forward fold; bug #20 promotion gate metric.">Heuristic Brier (worst fold)</p>
+                  <p className="stats-tile-label" title="Aggregate paired Brier across settled current-lineage shadow samples.">Heuristic Brier</p>
                   <p className="stats-tile-value font-mono">{selectedHeuristicBrier?.toFixed(4) ?? "—"}</p>
                 </div>
                 <div className="stats-tile">
-                  <p className="stats-tile-label" title="Worst per-week walk-forward fold; bug #20 promotion gate metric.">Shadow Brier (worst fold)</p>
+                  <p className="stats-tile-label" title="Aggregate paired Brier across settled current-lineage shadow samples.">Shadow Brier</p>
                   <p className="stats-tile-value font-mono">{selectedShadowBrier?.toFixed(4) ?? "—"}</p>
+                </div>
+                <div className="stats-tile">
+                  <p className="stats-tile-label" title="One-sided paired Brier delta upper bound; passes when this is at or below tolerance.">Brier Delta UB</p>
+                  <p className="stats-tile-value font-mono">
+                    {selectedCalibrationUpperBound != null ? `${selectedCalibrationUpperBound > 0 ? "+" : ""}${selectedCalibrationUpperBound.toFixed(4)}` : "—"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    tolerance {selectedCalibrationTolerance != null ? selectedCalibrationTolerance.toFixed(4) : "—"}
+                  </p>
                 </div>
                 <div className="stats-tile">
                   <p className="stats-tile-label">Shadow Top-Decile ROI</p>

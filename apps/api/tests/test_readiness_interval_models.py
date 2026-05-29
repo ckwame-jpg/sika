@@ -378,11 +378,11 @@ def test_coverage_bands_match_ml_cli_constants(tmp_path: Path) -> None:
 
 
 def test_readiness_endpoint_returns_empty_list_when_no_manifest_configured(
-    client, monkeypatch: pytest.MonkeyPatch,
+    client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """No manifest path configured / file missing → empty list. The
     pre-ML-rollout state."""
-    monkeypatch.setenv("ML_MANIFEST_PATH", "")
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(tmp_path / "missing-manifest.json"))
     get_settings.cache_clear()
 
     response = client.get("/ops/models/readiness")
