@@ -958,6 +958,7 @@ class ModelReadinessSettingsUpdate(BaseModel):
     # The route skips ``set_ml_serving_mode`` when this is None.
     ml_serving_mode: Literal["heuristic", "shadow", "ml"] | None = None
     enqueue_shadow_backfill: bool = True
+    enqueue_diagnostic_backfill: bool = False
     # Codex round-6 P2 on PR #24: pinned to the exact UI options
     # (the trade-ticket strip's ``HISTORY_OPTIONS``). Accepting an
     # in-range-but-non-canonical value (6, 15, …) would have the

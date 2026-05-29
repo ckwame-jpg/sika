@@ -116,18 +116,10 @@ describe("MappingsDesk", () => {
     // these polyfills the Select trigger crashes on click. Patch
     // before each test so the Select tests run cleanly.
     if (typeof Element !== "undefined") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (Element.prototype as any).hasPointerCapture = (Element.prototype as any).hasPointerCapture
-        ?? (() => false);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (Element.prototype as any).setPointerCapture = (Element.prototype as any).setPointerCapture
-        ?? (() => {});
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (Element.prototype as any).releasePointerCapture = (Element.prototype as any).releasePointerCapture
-        ?? (() => {});
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (Element.prototype as any).scrollIntoView = (Element.prototype as any).scrollIntoView
-        ?? (() => {});
+      Element.prototype.hasPointerCapture ??= () => false;
+      Element.prototype.setPointerCapture ??= () => {};
+      Element.prototype.releasePointerCapture ??= () => {};
+      Element.prototype.scrollIntoView ??= () => {};
     }
   });
 

@@ -39,6 +39,7 @@ from app.config import get_settings
 from app.models import RefreshJob, Run
 from app.services.market_mapping import map_markets_to_events
 from app.services.ml import capture_shadow_artifacts, sync_family_runtime_health
+from app.services.ml.shadow_modes import DIAGNOSTIC_BACKFILL_CAPTURE_MODE
 from app.services.parlays import settle_parlay_predictions
 from app.services.predictions import settle_predictions
 from app.services.scoring import (
@@ -316,10 +317,11 @@ def run_shadow_capture_cycle(
 ) -> Run:
     if scope == "current_slate" and (source_run_id or 0) <= 0:
         raise ValueError("A source refresh run is required for shadow capture.")
-    if scope not in {"current_slate", "backfill"}:
+    if scope not in {"current_slate", "backfill", DIAGNOSTIC_BACKFILL_CAPTURE_MODE}:
         raise ValueError(f"Unsupported shadow capture scope: {scope}")
 
-    run_details = {"shadow_capture_scope": scope}
+    diagnostic_backfill = scope == DIAGNOSTIC_BACKFILL_CAPTURE_MODE
+    run_details = {"shadow_capture_scope": scope, "diagnostic_backfill": diagnostic_backfill}
     if source_run_id is not None:
         run_details["source_run_id"] = source_run_id
     run = Run(kind="shadow_capture", status="running", details=run_details)
@@ -331,10 +333,12 @@ def run_shadow_capture_cycle(
             db,
             run_id=run.id,
             source_run_id=source_run_id,
-            backfill=(scope == "backfill"),
+            backfill=scope in {"backfill", DIAGNOSTIC_BACKFILL_CAPTURE_MODE},
+            diagnostic_backfill=diagnostic_backfill,
         )
         run.details = {
             "shadow_capture_scope": scope,
+            "diagnostic_backfill": diagnostic_backfill,
             "source_run_id": source_run_id,
             "shadow_predictions_captured": shadow_prediction_count,
             "shadow_parlay_predictions_captured": shadow_parlay_prediction_count,

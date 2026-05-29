@@ -130,7 +130,7 @@ export default function SettingsUsersPage() {
               <div className="cosmos-panel-head-text">
                 <h2 className="cosmos-panel-title">Existing users</h2>
                 <p className="cosmos-panel-desc">
-                  The Kalshi owner has env-var credentials wired up and can't be
+                  The Kalshi owner has env-var credentials wired up and cannot be
                   removed here — update SIKA_KALSHI_OWNER in .env first. The
                   legacy bucket is a synthetic identity for historical data and
                   is hidden from this list.

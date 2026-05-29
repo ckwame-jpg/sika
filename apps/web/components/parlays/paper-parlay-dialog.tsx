@@ -110,7 +110,7 @@ export function PaperParlayDialog({ open, onOpenChange }: PaperParlayDialogProps
         <DialogHeader>
           <DialogTitle>Save paper parlay</DialogTitle>
           <DialogDescription>
-            Locks the current tray prices as a paper-only wager. Settles when every leg's underlying prediction resolves.
+            Locks the current tray prices as a paper-only wager. Settles when every leg&apos;s underlying prediction resolves.
           </DialogDescription>
         </DialogHeader>
 

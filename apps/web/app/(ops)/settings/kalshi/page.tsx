@@ -116,7 +116,7 @@ export default function SettingsKalshiPage() {
                 </h2>
                 <p className="cosmos-panel-desc">
                   Paste your Kalshi API key ID and the contents of your RSA
-                  private key file. The credentials are stored in sika's local
+                  private key file. The credentials are stored in the local sika
                   database and used to fetch your portfolio + submit demo
                   orders. Re-saving overwrites the previous value.{" "}
                   <a

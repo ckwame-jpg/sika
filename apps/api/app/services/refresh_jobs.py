@@ -17,6 +17,7 @@ from app.models import RefreshJob, Run
 from app.services.ingestion import advance_current_slate_refresh_job, advance_prop_refresh_job, run_refresh_cycle
 from app.services.maintenance import prune_runtime_artifacts
 from app.services.ml.shadow import capture_shadow_artifacts_batch
+from app.services.ml.shadow_modes import DIAGNOSTIC_BACKFILL_CAPTURE_MODE
 from app.services.paper_parlays import settle_paper_parlays
 from app.services.parlays import settle_parlay_predictions_batch
 from app.services.predictions import settle_predictions_batch
@@ -182,17 +183,17 @@ def _build_mlb_event_index(
         .where(Event.status != "completed")
     ).all()
     index: list[tuple[Any, datetime, set[str]]] = []
-    for event in rows:
-        starts_at = _as_utc(event.starts_at) if event.starts_at else None
+    for event_row in rows:
+        starts_at = _as_utc(event_row.starts_at) if event_row.starts_at else None
         if starts_at is None:
             continue
-        tokens = alias_tokens(event.name)
-        for entry in event.participants:
+        tokens = alias_tokens(event_row.name)
+        for entry in event_row.participants:
             participant = entry.participant
             tokens.update(
                 alias_tokens(participant.display_name, participant.short_name)
             )
-        index.append((event, starts_at, tokens))
+        index.append((event_row, starts_at, tokens))
     return index
 
 
@@ -230,7 +231,7 @@ def _match_mlb_event(
         return None
 
     best: tuple[Any, float, float] | None = None  # (event, -overlap, |dt|)
-    for event, starts_at, event_tokens in event_index:
+    for event_row, starts_at, event_tokens in event_index:
         shared = game_tokens & event_tokens
         if not shared:
             continue
@@ -249,7 +250,7 @@ def _match_mlb_event(
             dt = 0.0
         score = -float(len(shared))
         if best is None or (score, dt) < (best[1], best[2]):
-            best = (event, score, dt)
+            best = (event_row, score, dt)
     return best[0] if best else None
 
 
@@ -493,7 +494,7 @@ def enqueue_shadow_capture_job(
     source_refresh_job_id: int | None = None,
     source_prop_refresh_job_id: int | None = None,
 ) -> tuple[RefreshJob, bool]:
-    if scope not in {"current_slate", "backfill"}:
+    if scope not in {"current_slate", "backfill", DIAGNOSTIC_BACKFILL_CAPTURE_MODE}:
         raise ValueError(f"Unsupported shadow capture scope: {scope}")
     if scope == "current_slate" and (source_run_id or 0) <= 0:
         raise ValueError("A source refresh run is required for current-slate shadow capture.")
@@ -506,6 +507,7 @@ def enqueue_shadow_capture_job(
     if created or job.status == "queued":
         details = dict(job.details or {})
         details["shadow_capture_scope"] = scope
+        details["diagnostic_backfill"] = scope == DIAGNOSTIC_BACKFILL_CAPTURE_MODE
         if source_run_id is not None:
             details["source_run_id"] = source_run_id
         else:
@@ -765,7 +767,8 @@ def _ensure_shadow_capture_run(
         if existing is not None:
             return existing
     source_run_id = int((job.details or {}).get("source_run_id") or 0) or None
-    run_details = {"shadow_capture_scope": job.scope}
+    diagnostic_backfill = job.scope == DIAGNOSTIC_BACKFILL_CAPTURE_MODE or bool((job.details or {}).get("diagnostic_backfill"))
+    run_details = {"shadow_capture_scope": job.scope, "diagnostic_backfill": diagnostic_backfill}
     if source_run_id is not None:
         run_details["source_run_id"] = source_run_id
     run = Run(kind="shadow_capture", status="running", details=run_details)
@@ -1191,12 +1194,14 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 source_run_id = int(details.get("source_run_id") or 0) or None
                 phase = str(details.get("phase") or "predictions")
                 cursor = dict(details.get("cursor") or {}) or None
+                diagnostic_backfill = job.scope == DIAGNOSTIC_BACKFILL_CAPTURE_MODE or bool(details.get("diagnostic_backfill"))
                 batch_started = datetime.now(timezone.utc)
                 batch = capture_shadow_artifacts_batch(
                     db,
                     run_id=run.id,
                     source_run_id=source_run_id,
-                    backfill=(job.scope == "backfill"),
+                    backfill=job.scope in {"backfill", DIAGNOSTIC_BACKFILL_CAPTURE_MODE} or diagnostic_backfill,
+                    diagnostic_backfill=diagnostic_backfill,
                     phase=phase,
                     cursor=cursor,
                 )
@@ -1208,6 +1213,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                         "phase": batch.next_phase or phase,
                         "cursor": batch.next_cursor or {},
                         "shadow_capture_scope": job.scope,
+                        "diagnostic_backfill": diagnostic_backfill,
                         "source_run_id": source_run_id,
                         "shadow_predictions_captured_total": prediction_total,
                         "shadow_parlay_predictions_captured_total": parlay_total,
@@ -1221,6 +1227,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 run.records_processed = prediction_total + parlay_total
                 run.details = {
                     "shadow_capture_scope": job.scope,
+                    "diagnostic_backfill": diagnostic_backfill,
                     "source_run_id": source_run_id,
                     "phase": batch.next_phase or phase,
                     "cursor": batch.next_cursor or {},
@@ -1234,6 +1241,7 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     run.finished_at = datetime.now(timezone.utc)
                     run.details = {
                         "shadow_capture_scope": job.scope,
+                        "diagnostic_backfill": diagnostic_backfill,
                         "source_run_id": source_run_id,
                         "shadow_predictions_captured": prediction_total,
                         "shadow_parlay_predictions_captured": parlay_total,

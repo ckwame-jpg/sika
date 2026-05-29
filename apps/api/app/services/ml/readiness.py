@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, load_only, selectinload
 
 from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
 from app.services.clv import average_clv
+from app.services.ml.shadow_modes import is_promotion_excluded_metadata
 from app.services.ml.promotion import MIN_PROMOTION_SHADOW_SAMPLES, STABILITY_DAYS_REQUIRED
 from app.services.ml.runtime import read_family_runtime, shadow_capture_blocker
 from app.services.ml.study_progress import (
@@ -101,10 +102,11 @@ def _parlay_shadow_fallback_key(run_id: int | None, leg_count: int, leg_tickers:
 
 
 def _single_shadow_coverage_count(predictions: list[Prediction], shadows: list[ShadowInference]) -> tuple[int, int]:
-    linked_prediction_ids = {int(item.source_prediction_id) for item in shadows if item.source_prediction_id is not None}
+    countable_shadows = [item for item in shadows if not is_promotion_excluded_metadata(item.model_metadata)]
+    linked_prediction_ids = {int(item.source_prediction_id) for item in countable_shadows if item.source_prediction_id is not None}
     fallback_keys = {
         _single_shadow_fallback_key(item.run_id, item.market_id, item.ticker)
-        for item in shadows
+        for item in countable_shadows
         if item.source_prediction_id is None
     }
     covered = 0
@@ -118,10 +120,11 @@ def _single_shadow_coverage_count(predictions: list[Prediction], shadows: list[S
 
 
 def _parlay_shadow_coverage_count(predictions: list[ParlayPrediction], shadows: list[ShadowParlayInference]) -> tuple[int, int]:
-    linked_prediction_ids = {int(item.source_parlay_prediction_id) for item in shadows if item.source_parlay_prediction_id is not None}
+    countable_shadows = [item for item in shadows if not is_promotion_excluded_metadata(item.model_metadata)]
+    linked_prediction_ids = {int(item.source_parlay_prediction_id) for item in countable_shadows if item.source_parlay_prediction_id is not None}
     fallback_keys = {
         _parlay_shadow_fallback_key(item.run_id, item.leg_count, item.leg_tickers or [])
-        for item in shadows
+        for item in countable_shadows
         if item.source_parlay_prediction_id is None
     }
     covered = 0
@@ -382,25 +385,28 @@ def _single_outcome_counts(db: Session, *, cutoff: datetime) -> dict[str, dict[s
 
 def _single_shadow_match_counts(db: Session, *, cutoff: datetime) -> dict[str, int]:
     """Per-family count of in-window predictions that have a matching shadow inference."""
-    matched_ids = (
-        select(ShadowInference.source_prediction_id)
+    stmt = (
+        select(
+            Prediction.id,
+            Prediction.sport_key,
+            Prediction.market_family,
+            ShadowInference.model_metadata,
+        )
+        .join(ShadowInference, ShadowInference.source_prediction_id == Prediction.id)
+        .where(Prediction.captured_at >= cutoff)
         .where(ShadowInference.captured_at >= cutoff)
         .where(ShadowInference.source_prediction_id.is_not(None))
     )
-    stmt = (
-        select(
-            Prediction.sport_key,
-            Prediction.market_family,
-            func.count(Prediction.id),
-        )
-        .where(Prediction.captured_at >= cutoff)
-        .where(Prediction.id.in_(matched_ids))
-        .group_by(Prediction.sport_key, Prediction.market_family)
-    )
     by_family: dict[str, int] = {}
-    for sport_key, market_family, count in db.execute(stmt).all():
+    seen_prediction_ids: set[int] = set()
+    for prediction_id, sport_key, market_family, metadata in db.execute(stmt).all():
+        if int(prediction_id) in seen_prediction_ids:
+            continue
+        if is_promotion_excluded_metadata(metadata):
+            continue
+        seen_prediction_ids.add(int(prediction_id))
         family_key = single_family_key(sport_key, market_family)
-        by_family[family_key] = by_family.get(family_key, 0) + int(count or 0)
+        by_family[family_key] = by_family.get(family_key, 0) + 1
     return by_family
 
 
@@ -430,25 +436,28 @@ def _parlay_outcome_counts(db: Session, *, cutoff: datetime) -> dict[str, dict[s
 
 
 def _parlay_shadow_match_counts(db: Session, *, cutoff: datetime) -> dict[str, int]:
-    matched_ids = (
-        select(ShadowParlayInference.source_parlay_prediction_id)
+    stmt = (
+        select(
+            ParlayPrediction.id,
+            ParlayPrediction.leg_count,
+            ParlayPrediction.sport_scope,
+            ShadowParlayInference.model_metadata,
+        )
+        .join(ShadowParlayInference, ShadowParlayInference.source_parlay_prediction_id == ParlayPrediction.id)
+        .where(ParlayPrediction.captured_at >= cutoff)
         .where(ShadowParlayInference.captured_at >= cutoff)
         .where(ShadowParlayInference.source_parlay_prediction_id.is_not(None))
     )
-    stmt = (
-        select(
-            ParlayPrediction.leg_count,
-            ParlayPrediction.sport_scope,
-            func.count(ParlayPrediction.id),
-        )
-        .where(ParlayPrediction.captured_at >= cutoff)
-        .where(ParlayPrediction.id.in_(matched_ids))
-        .group_by(ParlayPrediction.leg_count, ParlayPrediction.sport_scope)
-    )
     by_family: dict[str, int] = {}
-    for leg_count, sport_scope, count in db.execute(stmt).all():
+    seen_prediction_ids: set[int] = set()
+    for prediction_id, leg_count, sport_scope, metadata in db.execute(stmt).all():
+        if int(prediction_id) in seen_prediction_ids:
+            continue
+        if is_promotion_excluded_metadata(metadata):
+            continue
+        seen_prediction_ids.add(int(prediction_id))
         family_key = parlay_family_key(int(leg_count), [sport_scope or "MIXED"])
-        by_family[family_key] = by_family.get(family_key, 0) + int(count or 0)
+        by_family[family_key] = by_family.get(family_key, 0) + 1
     return by_family
 
 
@@ -514,17 +523,14 @@ def _readiness_status(
         )
     if not shadow_coverage_ready(shadow_coverage_ratio):
         return "shadowing", f"Shadow coverage is {shadow_coverage_ratio:.0%}; need at least {MIN_SHADOW_COVERAGE:.0%} before review."
-    # Bug #20 walk-forward gate needs ≥200 settled rows spread across ≥8
-    # weekly folds; advancing to ``ready_for_review`` before that floor
-    # is operator-misleading — the gate will keep returning
-    # ``insufficient_history`` until enough weeks accumulate. Hold the
-    # status at ``history_accumulating`` until the per-family settled
-    # count clears the walk-forward floor.
+    # Promotion review needs a larger settled base than auto-shadow entry.
+    # Hold the status at ``history_accumulating`` until the per-family
+    # settled count clears that review floor.
     if not walk_forward_history_ready(settled_predictions):
         return "history_accumulating", (
             f"Shadow coverage is high, but only {settled_predictions} settled predictions are available. "
-            f"The walk-forward promotion gate needs ≥{MIN_SETTLED_FOR_PROMOTION_REVIEW} rows "
-            f"across ≥8 weeks before it can evaluate. Keep collecting settled history; "
+            f"Promotion review needs ≥{MIN_SETTLED_FOR_PROMOTION_REVIEW} settled rows. "
+            f"Keep collecting settled history; "
             f"the status will advance to ``ready_for_review`` once the floor is cleared."
         )
     return "ready_for_review", (
@@ -551,7 +557,6 @@ def _summary_for_family(
     all_predictions: list[Any] = single_predictions if scope == "single" else parlay_predictions
     shadows: list[Any] = shadow_singles if scope == "single" else shadow_parlays
     if scope == "single":
-        coverage_predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") == "coverage"]
         predictions = [row for row in all_predictions if getattr(row, "capture_scope", "recommendation") != "coverage"]
         # Headline counts come from SQL aggregation (`single_outcome_counts`) so they
         # stay accurate beyond the diagnostic row sample. The row lists above remain
@@ -575,7 +580,6 @@ def _summary_for_family(
         shadow_backlog_predictions = max(gate_total - covered_shadow_predictions, 0)
         shadow_backlog_parlays = 0
     else:
-        coverage_predictions = []
         predictions = all_predictions
         family_outcomes = (parlay_outcome_counts or {}).get(family_key, {})
         total_predictions = _scope_total(family_outcomes)
@@ -801,10 +805,14 @@ def build_model_readiness_summary(
 
     shadow_singles_by_family: dict[str, list[ShadowInference]] = {}
     for item in shadow_singles:
+        if is_promotion_excluded_metadata(item.model_metadata):
+            continue
         shadow_singles_by_family.setdefault(_shadow_single_family_key(item), []).append(item)
 
     shadow_parlays_by_family: dict[str, list[ShadowParlayInference]] = {}
     for item in shadow_parlays:
+        if is_promotion_excluded_metadata(item.model_metadata):
+            continue
         shadow_parlays_by_family.setdefault(_shadow_parlay_family_key(item), []).append(item)
 
     single_counts = _single_outcome_counts(db, cutoff=cutoff)
@@ -967,7 +975,7 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
                 .order_by(ShadowInference.captured_at.desc(), ShadowInference.id.desc())
                 .limit(READINESS_ROW_LIMIT)
             ).all()
-            if _shadow_single_family_key(item) == family_key
+            if _shadow_single_family_key(item) == family_key and not is_promotion_excluded_metadata(item.model_metadata)
         ]
         return _summary_for_family(
             db,
@@ -1030,7 +1038,7 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
             .order_by(ShadowParlayInference.captured_at.desc(), ShadowParlayInference.id.desc())
             .limit(READINESS_ROW_LIMIT)
         ).all()
-        if _shadow_parlay_family_key(item) == family_key
+        if _shadow_parlay_family_key(item) == family_key and not is_promotion_excluded_metadata(item.model_metadata)
     ]
     return _summary_for_family(
         db,

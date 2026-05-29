@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.models import ModelFamilyRuntimeHealth, OperatorSetting, Prediction, RefreshJob, Run, ShadowInference
 from app.services.ingestion import run_shadow_capture_cycle
 from app.services.ml.runtime import sync_family_runtime_health
+from app.services.ml.shadow_modes import DIAGNOSTIC_BACKFILL_CAPTURE_MODE
 
 
 @pytest.fixture(autouse=True)
@@ -269,6 +270,25 @@ def test_models_readiness_settings_update_arms_auto_promotion(client, db_session
     assert summary_payload["auto_promotion_enabled"] is True
 
 
+def test_models_readiness_settings_update_queues_diagnostic_backfill(client, db_session):
+    response = client.patch(
+        "/ops/models/readiness/settings",
+        json={"enqueue_diagnostic_backfill": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"applied": True}
+    job = db_session.scalar(
+        select(RefreshJob).where(
+            RefreshJob.kind == "shadow_capture",
+            RefreshJob.scope == DIAGNOSTIC_BACKFILL_CAPTURE_MODE,
+        )
+    )
+    assert job is not None
+    assert job.status == "queued"
+    assert job.details["diagnostic_backfill"] is True
+
+
 def test_models_readiness_endpoint_marks_locked_and_heuristic_families(client):
     response = client.get("/ops/models/readiness")
 
@@ -373,10 +393,37 @@ def test_models_readiness_endpoint_reports_shadowing_with_low_coverage(client, d
     assert payload["runtime"]["effective_mode"] == "shadow"
 
 
+def test_models_readiness_excludes_diagnostic_backfill_from_shadow_coverage(client, db_session, monkeypatch, tmp_path):
+    artifact_path = _write_artifact(tmp_path, family_key="nba_singles", scope="single")
+    manifest_path = _write_manifest(tmp_path, family_key="nba_singles", artifact_path=str(artifact_path), mode="shadow")
+    monkeypatch.setenv("ML_SERVING_MODE", "shadow")
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(manifest_path))
+    monkeypatch.setenv("ML_FAMILY_MODES_JSON", json.dumps({"nba_singles": "shadow"}))
+    get_settings.cache_clear()
+    _seed_nba_single_predictions(db_session, total=40, settled=40)
+    _seed_shadow_singles(db_session, count=10)
+    for row in db_session.scalars(select(ShadowInference)).all():
+        row.model_metadata = {
+            **dict(row.model_metadata or {}),
+            "capture_mode": DIAGNOSTIC_BACKFILL_CAPTURE_MODE,
+            "promotion_excluded": True,
+        }
+    sync_family_runtime_health(db_session)
+    db_session.commit()
+
+    response = client.get("/ops/models/readiness/nba_singles")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["shadow_predictions"] == 0
+    assert payload["shadow_coverage_ratio"] == 0.0
+    assert payload["readiness_status"] == "shadow_not_started"
+
+
 def test_models_readiness_endpoint_reports_history_accumulating_when_below_walk_forward_floor(
     client, db_session, monkeypatch, tmp_path
 ):
-    """Bug-#20 walk-forward gate needs ≥200 settled rows. A family with
+    """Promotion review needs ≥200 settled rows. A family with
     shadow coverage cleared but settled-history below that floor must
     NOT advance to ``ready_for_review`` — the readiness ladder holds at
     ``history_accumulating`` so operators don't arm auto-promotion
@@ -400,7 +447,7 @@ def test_models_readiness_endpoint_reports_history_accumulating_when_below_walk_
     payload = response.json()
     assert payload["readiness_status"] == "history_accumulating"
     assert payload["shadow_coverage_ratio"] == 0.75
-    assert "walk-forward promotion gate" in payload["why_not_ready"]
+    assert "Promotion review needs" in payload["why_not_ready"]
     assert "200" in payload["why_not_ready"]
 
 

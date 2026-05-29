@@ -7,7 +7,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import ParlayPrediction, Prediction, ShadowInference, ShadowParlayInference
-from app.services.ml.runtime import run_shadow_inference
+from app.services.ml.runtime import resolve_family_runtime, run_shadow_inference
+from app.services.ml.shadow_modes import is_promotion_excluded_metadata, with_diagnostic_backfill_metadata
 from app.services.ml.study_progress import is_active_study_family, retained_study_cutoff
 from app.services.model_families import parlay_family_key, single_family_key
 from app.services.operator_settings import effective_ml_serving_mode
@@ -36,18 +37,35 @@ def _parlay_prediction_family_key(prediction: ParlayPrediction) -> str:
     return parlay_family_key(prediction.leg_count, prediction.participating_sports or [prediction.sport_scope])
 
 
-def _shadow_single_exists(db: Session, prediction: Prediction) -> bool:
-    linked = db.scalar(
-        select(ShadowInference.id)
-        .where(ShadowInference.source_prediction_id == prediction.id)
-        .limit(1)
-    )
-    if linked is not None:
+def _lineage_metadata_matches(metadata, model) -> bool:
+    if model is None:
+        return True
+    model_metadata = dict(getattr(model, "model_metadata", None) or {})
+    row_metadata = dict(metadata or {}) if isinstance(metadata, dict) else {}
+    artifact_signature = str(model_metadata.get("artifact_signature") or "").strip()
+    if artifact_signature:
+        return row_metadata.get("artifact_signature") == artifact_signature
+    artifact_path = str(model_metadata.get("artifact_path") or "").strip()
+    if artifact_path:
+        return row_metadata.get("artifact_path") == artifact_path
+    return True
+
+
+def _shadow_single_exists(db: Session, prediction: Prediction, model=None) -> bool:
+    linked_statement = select(ShadowInference).where(ShadowInference.source_prediction_id == prediction.id)
+    if model is not None:
+        linked_statement = _lineage_filters(linked_statement, model)
+    linked = db.scalars(linked_statement).all()
+    if any(
+        not is_promotion_excluded_metadata(row.model_metadata)
+        and _lineage_metadata_matches(row.model_metadata, model)
+        for row in linked
+    ):
         return True
     if prediction.run_id is None:
         return False
-    return db.scalar(
-        select(ShadowInference.id)
+    fallback_statement = (
+        select(ShadowInference)
         .where(
             ShadowInference.source_prediction_id.is_(None),
             ShadowInference.run_id == prediction.run_id,
@@ -55,33 +73,92 @@ def _shadow_single_exists(db: Session, prediction: Prediction) -> bool:
             ShadowInference.ticker == prediction.ticker,
             ShadowInference.inference_scope == "single",
         )
-        .limit(1)
-    ) is not None
-
-
-def _shadow_parlay_exists(db: Session, parlay: ParlayPrediction) -> bool:
-    linked = db.scalar(
-        select(ShadowParlayInference.id)
-        .where(ShadowParlayInference.source_parlay_prediction_id == parlay.id)
-        .limit(1)
     )
-    if linked is not None:
+    if model is not None:
+        fallback_statement = _lineage_filters(fallback_statement, model)
+    fallback = db.scalars(fallback_statement).all()
+    return any(
+        not is_promotion_excluded_metadata(row.model_metadata)
+        and _lineage_metadata_matches(row.model_metadata, model)
+        for row in fallback
+    )
+
+
+def _shadow_parlay_exists(db: Session, parlay: ParlayPrediction, model=None) -> bool:
+    linked_statement = select(ShadowParlayInference).where(ShadowParlayInference.source_parlay_prediction_id == parlay.id)
+    if model is not None:
+        linked_statement = _parlay_lineage_filters(linked_statement, model)
+    linked = db.scalars(linked_statement).all()
+    if any(
+        not is_promotion_excluded_metadata(row.model_metadata)
+        and _lineage_metadata_matches(row.model_metadata, model)
+        for row in linked
+    ):
         return True
     if parlay.run_id is None:
         return False
-    return db.scalar(
-        select(ShadowParlayInference.id)
+    fallback_statement = (
+        select(ShadowParlayInference)
         .where(
             ShadowParlayInference.source_parlay_prediction_id.is_(None),
             ShadowParlayInference.run_id == parlay.run_id,
             ShadowParlayInference.leg_count == parlay.leg_count,
             ShadowParlayInference.leg_tickers == [leg.ticker for leg in parlay.legs],
         )
-        .limit(1)
-    ) is not None
+    )
+    if model is not None:
+        fallback_statement = _parlay_lineage_filters(fallback_statement, model)
+    fallback = db.scalars(fallback_statement).all()
+    return any(
+        not is_promotion_excluded_metadata(row.model_metadata)
+        and _lineage_metadata_matches(row.model_metadata, model)
+        for row in fallback
+    )
 
 
-def _shadow_metadata(result, decision, *, family_key: str) -> dict[str, object]:
+def _lineage_filters(statement, model):
+    statement = statement.where(ShadowInference.model_name == model.model_name)
+    if model.model_version is not None:
+        statement = statement.where(ShadowInference.model_version == model.model_version)
+    if model.calibration_version is not None:
+        statement = statement.where(ShadowInference.calibration_version == model.calibration_version)
+    if model.feature_set_version is not None:
+        statement = statement.where(ShadowInference.feature_set_version == model.feature_set_version)
+    return statement
+
+
+def _parlay_lineage_filters(statement, model):
+    statement = statement.where(ShadowParlayInference.model_name == model.model_name)
+    if model.model_version is not None:
+        statement = statement.where(ShadowParlayInference.model_version == model.model_version)
+    if model.calibration_version is not None:
+        statement = statement.where(ShadowParlayInference.calibration_version == model.calibration_version)
+    if model.feature_set_version is not None:
+        statement = statement.where(ShadowParlayInference.feature_set_version == model.feature_set_version)
+    return statement
+
+
+def _diagnostic_single_exists(db: Session, prediction: Prediction, model) -> bool:
+    statement = select(ShadowInference).where(ShadowInference.source_prediction_id == prediction.id)
+    rows = db.scalars(_lineage_filters(statement, model)).all()
+    return any(
+        is_promotion_excluded_metadata(row.model_metadata)
+        and _lineage_metadata_matches(row.model_metadata, model)
+        for row in rows
+    )
+
+
+def _diagnostic_parlay_exists(db: Session, parlay: ParlayPrediction, model) -> bool:
+    statement = select(ShadowParlayInference).where(ShadowParlayInference.source_parlay_prediction_id == parlay.id)
+    rows = db.scalars(_parlay_lineage_filters(statement, model)).all()
+    return any(
+        is_promotion_excluded_metadata(row.model_metadata)
+        and _lineage_metadata_matches(row.model_metadata, model)
+        for row in rows
+    )
+
+
+def _shadow_metadata(result, decision, *, family_key: str, diagnostic_backfill: bool = False) -> dict[str, object]:
     model_metadata = dict(result.lineage.model_metadata or {})
     model_metadata.update(
         {
@@ -104,6 +181,8 @@ def _shadow_metadata(result, decision, *, family_key: str) -> dict[str, object]:
         raw_probability = inference_metadata.get("raw_probability")
         if raw_probability is not None:
             model_metadata["raw_probability"] = round(float(raw_probability), 4)
+    if diagnostic_backfill:
+        model_metadata = with_diagnostic_backfill_metadata(model_metadata)
     return model_metadata
 
 
@@ -112,11 +191,12 @@ def prediction_requires_shadow_capture(
     prediction: Prediction,
     *,
     active_study_only: bool = False,
+    lineage=None,
 ) -> bool:
     family_key = _single_prediction_family_key(prediction)
     if active_study_only and not is_active_study_family(family_key):
         return False
-    return not _shadow_single_exists(db, prediction)
+    return not _shadow_single_exists(db, prediction, lineage)
 
 
 def parlay_requires_shadow_capture(
@@ -124,20 +204,44 @@ def parlay_requires_shadow_capture(
     parlay: ParlayPrediction,
     *,
     active_study_only: bool = False,
+    lineage=None,
 ) -> bool:
     family_key = _parlay_prediction_family_key(parlay)
     if active_study_only and not is_active_study_family(family_key):
         return False
-    return not _shadow_parlay_exists(db, parlay)
+    return not _shadow_parlay_exists(db, parlay, lineage)
 
 
-def _capture_prediction_shadow(db: Session, prediction: Prediction) -> bool:
-    if not prediction_requires_shadow_capture(db, prediction):
-        return False
+def _shadow_lineage_for_family(
+    db: Session,
+    family_key: str,
+    *,
+    scope: str,
+    cache: dict[tuple[str, str], object | None],
+):
+    cache_key = (scope, family_key)
+    if cache_key not in cache:
+        decision = resolve_family_runtime(db, family_key, scope=scope)
+        cache[cache_key] = (
+            decision.lineage
+            if decision.desired_mode in {"shadow", "ml"} and decision.runtime_health == "healthy"
+            else None
+        )
+    return cache[cache_key]
 
+
+def _capture_prediction_shadow(db: Session, prediction: Prediction, *, diagnostic_backfill: bool = False) -> bool:
     family_key = _single_prediction_family_key(prediction)
+    if diagnostic_backfill:
+        if not is_active_study_family(family_key):
+            return False
+
     result, decision = run_shadow_inference(db, family_key=family_key, scope="single", features=dict(prediction.features or {}))
     if result is None:
+        return False
+    if diagnostic_backfill and _diagnostic_single_exists(db, prediction, result.lineage):
+        return False
+    if not diagnostic_backfill and _shadow_single_exists(db, prediction, result.lineage):
         return False
 
     recommended_side = prediction.side
@@ -172,8 +276,8 @@ def _capture_prediction_shadow(db: Session, prediction: Prediction) -> bool:
             model_version=result.lineage.model_version,
             calibration_version=result.lineage.calibration_version,
             feature_set_version=result.lineage.feature_set_version,
-            model_metadata=_shadow_metadata(result, decision, family_key=family_key),
-            rationale=f"Shadow inference for {prediction.ticker}",
+            model_metadata=_shadow_metadata(result, decision, family_key=family_key, diagnostic_backfill=diagnostic_backfill),
+            rationale=f"{'Diagnostic backfill' if diagnostic_backfill else 'Shadow inference'} for {prediction.ticker}",
             reasons=list(prediction.reasons or []),
             features=dict(prediction.features or {}),
             captured_at=prediction.captured_at,
@@ -182,13 +286,18 @@ def _capture_prediction_shadow(db: Session, prediction: Prediction) -> bool:
     return True
 
 
-def _capture_parlay_shadow(db: Session, parlay: ParlayPrediction) -> bool:
-    if not parlay_requires_shadow_capture(db, parlay):
-        return False
-
+def _capture_parlay_shadow(db: Session, parlay: ParlayPrediction, *, diagnostic_backfill: bool = False) -> bool:
     family_key = _parlay_prediction_family_key(parlay)
+    if diagnostic_backfill:
+        if not is_active_study_family(family_key):
+            return False
+
     result, decision = run_shadow_inference(db, family_key=family_key, scope="parlay", features=dict(parlay.scoring_diagnostics or {}))
     if result is None:
+        return False
+    if diagnostic_backfill and _diagnostic_parlay_exists(db, parlay, result.lineage):
+        return False
+    if not diagnostic_backfill and _shadow_parlay_exists(db, parlay, result.lineage):
         return False
 
     db.add(
@@ -207,8 +316,8 @@ def _capture_parlay_shadow(db: Session, parlay: ParlayPrediction) -> bool:
             model_version=result.lineage.model_version,
             calibration_version=result.lineage.calibration_version,
             feature_set_version=result.lineage.feature_set_version,
-            model_metadata=_shadow_metadata(result, decision, family_key=family_key),
-            rationale=f"Shadow inference for parlay {parlay.id}",
+            model_metadata=_shadow_metadata(result, decision, family_key=family_key, diagnostic_backfill=diagnostic_backfill),
+            rationale=f"{'Diagnostic backfill' if diagnostic_backfill else 'Shadow inference'} for parlay {parlay.id}",
             features=dict(parlay.scoring_diagnostics or {}),
             captured_at=parlay.captured_at,
         )
@@ -241,16 +350,26 @@ def _current_run_parlays(db: Session, *, run_id: int) -> list[ParlayPrediction]:
     return _source_run_parlays(db, source_run_id=run_id)
 
 
-def _backfill_predictions(db: Session) -> list[Prediction]:
+def _backfill_predictions(db: Session, *, diagnostic_backfill: bool = False) -> list[Prediction]:
     cutoff = retained_study_cutoff()
     selected_predictions: list[Prediction] = []
+    lineage_cache: dict[tuple[str, str], object | None] = {}
     rows = db.scalars(
         select(Prediction)
         .where(Prediction.captured_at >= cutoff)
         .order_by(Prediction.captured_at.asc(), Prediction.id.asc())
     ).all()
     for prediction in rows:
-        if not prediction_requires_shadow_capture(db, prediction, active_study_only=True):
+        family_key = _single_prediction_family_key(prediction)
+        if not is_active_study_family(family_key):
+            continue
+        lineage = _shadow_lineage_for_family(db, family_key, scope="single", cache=lineage_cache)
+        if lineage is None:
+            continue
+        if diagnostic_backfill:
+            if _diagnostic_single_exists(db, prediction, lineage):
+                continue
+        elif not prediction_requires_shadow_capture(db, prediction, active_study_only=True, lineage=lineage):
             continue
         selected_predictions.append(prediction)
         if len(selected_predictions) >= SHADOW_BACKFILL_MAX_PREDICTIONS:
@@ -258,9 +377,10 @@ def _backfill_predictions(db: Session) -> list[Prediction]:
     return selected_predictions
 
 
-def _backfill_parlays(db: Session) -> list[ParlayPrediction]:
+def _backfill_parlays(db: Session, *, diagnostic_backfill: bool = False) -> list[ParlayPrediction]:
     cutoff = retained_study_cutoff()
     selected_parlays: list[ParlayPrediction] = []
+    lineage_cache: dict[tuple[str, str], object | None] = {}
     rows = db.scalars(
         select(ParlayPrediction)
         .options(selectinload(ParlayPrediction.legs))
@@ -268,7 +388,16 @@ def _backfill_parlays(db: Session) -> list[ParlayPrediction]:
         .order_by(ParlayPrediction.captured_at.asc(), ParlayPrediction.id.asc())
     ).all()
     for parlay in rows:
-        if not parlay_requires_shadow_capture(db, parlay, active_study_only=True):
+        family_key = _parlay_prediction_family_key(parlay)
+        if not is_active_study_family(family_key):
+            continue
+        lineage = _shadow_lineage_for_family(db, family_key, scope="parlay", cache=lineage_cache)
+        if lineage is None:
+            continue
+        if diagnostic_backfill:
+            if _diagnostic_parlay_exists(db, parlay, lineage):
+                continue
+        elif not parlay_requires_shadow_capture(db, parlay, active_study_only=True, lineage=lineage):
             continue
         selected_parlays.append(parlay)
         if len(selected_parlays) >= SHADOW_BACKFILL_MAX_PARLAYS:
@@ -282,15 +411,18 @@ def capture_shadow_artifacts(
     run_id: int,
     source_run_id: int | None = None,
     backfill: bool = False,
+    diagnostic_backfill: bool = False,
 ) -> tuple[int, int]:
     if effective_ml_serving_mode(db) == "heuristic" or run_id is None:
         return 0, 0
     if source_run_id is not None and backfill:
         raise ValueError("Shadow capture cannot target a source run and backfill in the same pass.")
+    if diagnostic_backfill and not backfill:
+        raise ValueError("Diagnostic shadow capture is only supported in backfill mode.")
 
     if backfill:
-        predictions = _backfill_predictions(db)
-        parlays = _backfill_parlays(db)
+        predictions = _backfill_predictions(db, diagnostic_backfill=diagnostic_backfill)
+        parlays = _backfill_parlays(db, diagnostic_backfill=diagnostic_backfill)
     elif source_run_id is not None:
         predictions = _source_run_predictions(db, source_run_id=source_run_id)
         parlays = _source_run_parlays(db, source_run_id=source_run_id)
@@ -300,12 +432,12 @@ def capture_shadow_artifacts(
 
     prediction_count = 0
     for prediction in predictions:
-        if _capture_prediction_shadow(db, prediction):
+        if _capture_prediction_shadow(db, prediction, diagnostic_backfill=diagnostic_backfill):
             prediction_count += 1
 
     parlay_prediction_count = 0
     for parlay in parlays:
-        if _capture_parlay_shadow(db, parlay):
+        if _capture_parlay_shadow(db, parlay, diagnostic_backfill=diagnostic_backfill):
             parlay_prediction_count += 1
 
     db.flush()
@@ -373,12 +505,14 @@ def _select_prediction_shadow_batch(
     source_run_id: int | None,
     run_id: int,
     backfill: bool,
+    diagnostic_backfill: bool,
     limit: int,
     cursor: dict[str, object] | None,
 ) -> tuple[list[Prediction], dict[str, object] | None, bool]:
     selected: list[Prediction] = []
     next_cursor = cursor
     exhausted = False
+    lineage_cache: dict[tuple[str, str], object | None] = {}
     while len(selected) < limit:
         stmt = _prediction_shadow_stmt(source_run_id=source_run_id, run_id=run_id, backfill=backfill)
         cursor_filter = _shadow_cursor_filter(Prediction.captured_at, Prediction.id, next_cursor)
@@ -393,7 +527,17 @@ def _select_prediction_shadow_batch(
                 "captured_at": row.captured_at.isoformat() if row.captured_at is not None else None,
                 "item_id": row.id,
             }
-            if not prediction_requires_shadow_capture(db, row, active_study_only=backfill):
+            family_key = _single_prediction_family_key(row)
+            if diagnostic_backfill:
+                if not is_active_study_family(family_key):
+                    continue
+            lineage = _shadow_lineage_for_family(db, family_key, scope="single", cache=lineage_cache)
+            if lineage is None:
+                continue
+            if diagnostic_backfill:
+                if _diagnostic_single_exists(db, row, lineage):
+                    continue
+            elif not prediction_requires_shadow_capture(db, row, active_study_only=backfill, lineage=lineage):
                 continue
             selected.append(row)
             if len(selected) >= limit:
@@ -410,12 +554,14 @@ def _select_parlay_shadow_batch(
     source_run_id: int | None,
     run_id: int,
     backfill: bool,
+    diagnostic_backfill: bool,
     limit: int,
     cursor: dict[str, object] | None,
 ) -> tuple[list[ParlayPrediction], dict[str, object] | None, bool]:
     selected: list[ParlayPrediction] = []
     next_cursor = cursor
     exhausted = False
+    lineage_cache: dict[tuple[str, str], object | None] = {}
     while len(selected) < limit:
         stmt = _parlay_shadow_stmt(source_run_id=source_run_id, run_id=run_id, backfill=backfill)
         cursor_filter = _shadow_cursor_filter(ParlayPrediction.captured_at, ParlayPrediction.id, next_cursor)
@@ -430,7 +576,17 @@ def _select_parlay_shadow_batch(
                 "captured_at": row.captured_at.isoformat() if row.captured_at is not None else None,
                 "item_id": row.id,
             }
-            if not parlay_requires_shadow_capture(db, row, active_study_only=backfill):
+            family_key = _parlay_prediction_family_key(row)
+            if diagnostic_backfill:
+                if not is_active_study_family(family_key):
+                    continue
+            lineage = _shadow_lineage_for_family(db, family_key, scope="parlay", cache=lineage_cache)
+            if lineage is None:
+                continue
+            if diagnostic_backfill:
+                if _diagnostic_parlay_exists(db, row, lineage):
+                    continue
+            elif not parlay_requires_shadow_capture(db, row, active_study_only=backfill, lineage=lineage):
                 continue
             selected.append(row)
             if len(selected) >= limit:
@@ -447,6 +603,7 @@ def capture_shadow_artifacts_batch(
     run_id: int,
     source_run_id: int | None = None,
     backfill: bool = False,
+    diagnostic_backfill: bool = False,
     phase: str = "predictions",
     cursor: dict[str, object] | None = None,
     prediction_limit: int = SHADOW_CAPTURE_BATCH_PREDICTIONS,
@@ -456,6 +613,8 @@ def capture_shadow_artifacts_batch(
         return ShadowCaptureBatch(0, 0, None, None, True)
     if source_run_id is not None and backfill:
         raise ValueError("Shadow capture cannot target a source run and backfill in the same pass.")
+    if diagnostic_backfill and not backfill:
+        raise ValueError("Diagnostic shadow capture is only supported in backfill mode.")
 
     if phase == "predictions":
         predictions, next_cursor, exhausted = _select_prediction_shadow_batch(
@@ -463,12 +622,13 @@ def capture_shadow_artifacts_batch(
             source_run_id=source_run_id,
             run_id=run_id,
             backfill=backfill,
+            diagnostic_backfill=diagnostic_backfill,
             limit=prediction_limit,
             cursor=cursor,
         )
         prediction_count = 0
         for prediction in predictions:
-            if _capture_prediction_shadow(db, prediction):
+            if _capture_prediction_shadow(db, prediction, diagnostic_backfill=diagnostic_backfill):
                 prediction_count += 1
         db.flush()
         if exhausted:
@@ -481,12 +641,13 @@ def capture_shadow_artifacts_batch(
             source_run_id=source_run_id,
             run_id=run_id,
             backfill=backfill,
+            diagnostic_backfill=diagnostic_backfill,
             limit=parlay_limit,
             cursor=cursor,
         )
         parlay_prediction_count = 0
         for parlay in parlays:
-            if _capture_parlay_shadow(db, parlay):
+            if _capture_parlay_shadow(db, parlay, diagnostic_backfill=diagnostic_backfill):
                 parlay_prediction_count += 1
         db.flush()
         if exhausted:

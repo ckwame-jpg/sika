@@ -167,6 +167,35 @@ def test_ml_family_modes_override_manifest_mode(db_session, monkeypatch, tmp_pat
     assert decision.runtime_health == "healthy"
 
 
+def test_resolve_family_runtime_tracks_artifact_content_signature(db_session, monkeypatch, tmp_path):
+    artifact_path = _write_artifact(tmp_path, family_key="nba_singles", scope="single", probability=0.61)
+    manifest_path = _write_manifest(tmp_path, family_key="nba_singles", artifact_path=str(artifact_path), mode="shadow")
+    monkeypatch.setenv("ML_SERVING_MODE", "shadow")
+    monkeypatch.setenv("ML_MANIFEST_PATH", str(manifest_path))
+    monkeypatch.setenv("ML_FAMILY_MODES_JSON", json.dumps({"nba_singles": "shadow"}))
+
+    first = resolve_family_runtime(db_session, "nba_singles", scope="single")
+    first_signature = first.lineage.model_metadata["artifact_signature"]
+
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "family_key": "nba_singles",
+                "scope": "single",
+                "behavior": "static_probability",
+                "probability": 0.73,
+                "confidence": 0.73,
+                "metadata": {"source": "test-artifact"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    second = resolve_family_runtime(db_session, "nba_singles", scope="single")
+
+    assert second.lineage.model_metadata["artifact_signature"] != first_signature
+    assert second.lineage.model_metadata["artifact_path"] == str(artifact_path.resolve())
+
+
 def test_active_study_family_auto_promotes_to_shadow_when_history_and_artifact_are_ready(db_session, monkeypatch, tmp_path):
     artifact_path = _write_artifact(tmp_path, family_key="nba_singles", scope="single")
     manifest_path = _write_manifest(tmp_path, family_key="nba_singles", artifact_path=str(artifact_path), mode="heuristic")

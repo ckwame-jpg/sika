@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import ModelFamilyRuntimeHealth
-from app.services.ml.promotion import brier_score, paired_examples_for_family
+from app.services.ml.promotion import _non_heuristic_lineage_from_row, brier_score, paired_examples_for_family
 from app.services.model_families import FAMILY_DEFINITIONS
 
 
@@ -97,9 +97,12 @@ def evaluate_family(db: Session, family_key: str, *, now: datetime | None = None
     if baseline_brier is None or baseline_brier <= 0:
         return KillSwitchResult(family_key=family_key, demoted=False, reason=None)
 
-    examples = sorted(paired_examples_for_family(db, family_key), key=lambda example: example.captured_at, reverse=True)[
-        :ROLLING_SAMPLE_SIZE
-    ]
+    lineage = _non_heuristic_lineage_from_row(row)
+    examples = sorted(
+        paired_examples_for_family(db, family_key, lineage=lineage),
+        key=lambda example: example.captured_at,
+        reverse=True,
+    )[:ROLLING_SAMPLE_SIZE]
     if len(examples) < ROLLING_SAMPLE_SIZE:
         return KillSwitchResult(
             family_key=family_key,

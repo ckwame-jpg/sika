@@ -11,14 +11,9 @@ from app.services.model_families import family_definition, parlay_family_key, si
 
 SETTLED_OUTCOMES = ("won", "lost", "push", "cancelled")
 MIN_SETTLED_FOR_REVIEW = 40
-# Bug #20 (PR #52) introduced a per-family walk-forward floor on the
-# promotion gate: 8 valid weekly folds × ≥25 family-specific settled
-# rows each = 200 settled rows minimum before the gate can even compute.
-# ``MIN_SETTLED_FOR_REVIEW`` alone (40) only gates *auto-shadow entry*
-# — readiness for actual promotion review needs the higher floor. The
-# constants live in promotion.py as ``MIN_WALK_FORWARD_VALID_FOLDS``
-# and ``MIN_WALK_FORWARD_ROWS_PER_FOLD`` post-#20; we hard-code 200
-# here so this fix doesn't depend on the #20 merge order.
+# Readiness stays more conservative than auto-shadow entry: 40 settled rows
+# lets a family start shadow capture, while promotion review needs a larger
+# settled base so paired shadow evidence is not dominated by one tiny slate.
 MIN_SETTLED_FOR_PROMOTION_REVIEW = 200
 MIN_SHADOW_COVERAGE = 0.75
 
@@ -34,15 +29,12 @@ def history_ready_for_shadow(settled_predictions: int) -> bool:
 
 
 def walk_forward_history_ready(settled_predictions: int) -> bool:
-    """True when the family has enough settled history to satisfy the
-    bug-#20 walk-forward gate's per-family floor.
+    """True when the family has enough settled history for promotion review.
 
-    Without this check the readiness UI advertises ``ready_for_review``
-    as soon as a family clears the basic 40-row shadow-eligibility bar,
-    even though the promotion gate will keep returning
-    ``insufficient_history`` until ~200 rows accumulate across ≥8 weeks.
-    Operators arm auto-promotion expecting it to fire, nothing happens,
-    and the UX/gate state silently disagree.
+    Without this check the readiness UI advertises ``ready_for_review`` as
+    soon as a family clears the basic 40-row shadow-eligibility bar. That
+    is enough to begin collecting shadow rows, but too thin for a promotion
+    decision.
     """
     return settled_predictions >= MIN_SETTLED_FOR_PROMOTION_REVIEW
 

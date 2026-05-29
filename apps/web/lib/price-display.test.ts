@@ -27,7 +27,7 @@ function readCookie(name: string): string | null {
 
 function makeWrapper(initialMode?: PriceDisplayMode) {
   return function Wrapper({ children }: { children: ReactNode }) {
-    return createElement(PriceDisplayProvider, { initialMode, children });
+    return createElement(PriceDisplayProvider, { initialMode }, children);
   };
 }
 

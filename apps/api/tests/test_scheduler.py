@@ -5,6 +5,7 @@ import httpx
 
 from app.api import routes
 from app.models import Event, RefreshJob, Run
+from app.services.ml.shadow_modes import DIAGNOSTIC_BACKFILL_CAPTURE_MODE
 from app.services import refresh_jobs, scheduler
 
 
@@ -526,6 +527,7 @@ def test_process_refresh_job_queue_once_requeues_and_completes_settlement_batche
 
     monkeypatch.setattr(refresh_jobs, "settle_predictions_batch", _settle_predictions_batch)
     monkeypatch.setattr(refresh_jobs, "settle_parlay_predictions_batch", _settle_parlay_predictions_batch)
+    monkeypatch.setattr(refresh_jobs, "settle_paper_parlays", lambda db: {"processed": 0, "updated": 0})
 
     first = refresh_jobs.process_refresh_job_queue_once()
     assert first is not None
@@ -547,7 +549,13 @@ def test_process_refresh_job_queue_once_requeues_and_completes_settlement_batche
 
     third = refresh_jobs.process_refresh_job_queue_once()
     assert third is not None
-    assert third.status == "completed"
+    assert third.status == "queued"
+    db_session.refresh(job)
+    assert job.details["phase"] == "paper_parlays"
+
+    fourth = refresh_jobs.process_refresh_job_queue_once()
+    assert fourth is not None
+    assert fourth.status == "completed"
     db_session.refresh(job)
     run = db_session.get(Run, job.run_id)
     assert run is not None
@@ -819,6 +827,26 @@ def test_enqueue_shadow_capture_job_coalesces_backfill_independently_from_curren
     assert second_backfill.details["source_prop_refresh_job_id"] == 22
 
 
+def test_enqueue_shadow_capture_job_keeps_diagnostic_backfill_separate(db_session):
+    normal_job, normal_created = refresh_jobs.enqueue_shadow_capture_job(
+        db_session,
+        scope="backfill",
+        source_prop_refresh_job_id=21,
+    )
+    diagnostic_job, diagnostic_created = refresh_jobs.enqueue_shadow_capture_job(
+        db_session,
+        scope=DIAGNOSTIC_BACKFILL_CAPTURE_MODE,
+    )
+    db_session.commit()
+
+    assert normal_created is True
+    assert diagnostic_created is True
+    assert normal_job.id != diagnostic_job.id
+    assert db_session.query(RefreshJob).filter_by(kind="shadow_capture").count() == 2
+    assert diagnostic_job.scope == DIAGNOSTIC_BACKFILL_CAPTURE_MODE
+    assert diagnostic_job.details["diagnostic_backfill"] is True
+
+
 def test_process_refresh_job_queue_once_enqueues_shadow_backfill_after_prop_refresh(db_session, monkeypatch):
     job = RefreshJob(
         kind="prop_refresh",
@@ -904,6 +932,7 @@ def test_shadow_capture_failure_does_not_mark_completed_refresh_failed(db_sessio
         run_id: int,
         source_run_id: int | None = None,
         backfill: bool = False,
+        diagnostic_backfill: bool = False,
         phase: str = "predictions",
         cursor=None,
     ):
@@ -949,6 +978,7 @@ def test_shadow_backfill_failure_does_not_mark_completed_prop_refresh_failed(db_
         run_id: int,
         source_run_id: int | None = None,
         backfill: bool = False,
+        diagnostic_backfill: bool = False,
         phase: str = "predictions",
         cursor=None,
     ):

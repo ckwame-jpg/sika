@@ -2542,6 +2542,11 @@
       },
       "ModelReadinessSettingsUpdate": {
         "properties": {
+          "enqueue_diagnostic_backfill": {
+            "default": false,
+            "title": "Enqueue Diagnostic Backfill",
+            "type": "boolean"
+          },
           "enqueue_shadow_backfill": {
             "default": true,
             "title": "Enqueue Shadow Backfill",

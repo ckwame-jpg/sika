@@ -7,6 +7,8 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.models import ParlayPrediction, ParlayPredictionLeg, Prediction, ShadowInference, ShadowParlayInference, Run
 from app.services.ingestion import run_shadow_capture_cycle
+from app.services.ml.runtime import resolve_family_runtime
+from app.services.ml.shadow_modes import DIAGNOSTIC_BACKFILL_CAPTURE_MODE
 from app.services.ml.study_progress import retained_study_cutoff
 
 
@@ -71,6 +73,11 @@ def _configure_shadow(monkeypatch, tmp_path, *, family_scopes: dict[str, str], f
     monkeypatch.setenv("ML_MANIFEST_PATH", str(manifest_path))
     monkeypatch.setenv("ML_FAMILY_MODES_JSON", json.dumps(family_modes or {family_key: "shadow" for family_key in family_scopes}))
     get_settings.cache_clear()
+
+
+def _current_lineage_metadata(db_session, family_key: str, *, scope: str) -> dict[str, object]:
+    decision = resolve_family_runtime(db_session, family_key, scope=scope)
+    return dict(decision.lineage.model_metadata or {})
 
 
 def _seed_prediction(
@@ -259,6 +266,7 @@ def test_shadow_backfill_captures_uncaptured_historical_predictions_and_parlays(
         captured_at=now - timedelta(days=4),
         leg_predictions=[leg_a, leg_b],
     )
+    nba_single_metadata = _current_lineage_metadata(db_session, "nba_singles", scope="single")
     db_session.add(
         ShadowInference(
             run_id=covered_single.run_id,
@@ -282,7 +290,7 @@ def test_shadow_backfill_captures_uncaptured_historical_predictions_and_parlays(
             model_version="v1",
             calibration_version="cal-v1",
             feature_set_version="features-v1",
-            model_metadata={"family_key": "nba_singles"},
+            model_metadata=nba_single_metadata,
             rationale="Existing shadow",
             reasons=["shadow"],
             features={},
@@ -311,6 +319,85 @@ def test_shadow_backfill_captures_uncaptured_historical_predictions_and_parlays(
     assert all(row.source_prediction_id is not None for row in single_rows)
     assert len(parlay_rows) == 1
     assert parlay_rows[0].source_parlay_prediction_id == parlay.id
+
+
+def test_diagnostic_backfill_is_excluded_and_does_not_block_normal_shadow_capture(db_session, monkeypatch, tmp_path):
+    _configure_shadow(monkeypatch, tmp_path, family_scopes={"nba_singles": "single"})
+
+    run = Run(kind="refresh", status="completed")
+    db_session.add(run)
+    db_session.flush()
+    prediction = _seed_prediction(
+        db_session,
+        ticker="NBA-DIAGNOSTIC",
+        market_id=21,
+        run_id=run.id,
+        captured_at=retained_study_cutoff() + timedelta(days=1),
+    )
+    db_session.commit()
+
+    diagnostic_run = run_shadow_capture_cycle(db_session, scope=DIAGNOSTIC_BACKFILL_CAPTURE_MODE)
+    db_session.commit()
+    db_session.add(
+        ShadowInference(
+            run_id=prediction.run_id,
+            source_prediction_id=prediction.id,
+            event_id=prediction.event_id,
+            market_id=prediction.market_id,
+            ticker=prediction.ticker,
+            sport_key=prediction.sport_key,
+            event_name=prediction.event_name,
+            market_title=prediction.market_title,
+            market_family=prediction.market_family,
+            market_kind=prediction.market_kind,
+            inference_scope="single",
+            recommended_side=prediction.side,
+            suggested_price=prediction.suggested_price,
+            fair_yes_price=0.6,
+            fair_no_price=0.4,
+            edge=0.15,
+            confidence=0.6,
+            model_name="nba_singles-model",
+            model_version="v1",
+            calibration_version="cal-v1",
+            feature_set_version="features-v1",
+            model_metadata={"family_key": "nba_singles", "artifact_signature": "old"},
+            rationale="Old shadow",
+            reasons=["shadow"],
+            features={},
+            captured_at=prediction.captured_at,
+        )
+    )
+    db_session.commit()
+    normal_run = run_shadow_capture_cycle(db_session, scope="backfill")
+    db_session.commit()
+    duplicate_diagnostic_run = run_shadow_capture_cycle(db_session, scope=DIAGNOSTIC_BACKFILL_CAPTURE_MODE)
+    db_session.commit()
+
+    rows = db_session.scalars(select(ShadowInference).order_by(ShadowInference.id.asc())).all()
+    diagnostic_rows = [
+        row for row in rows
+        if row.model_metadata.get("capture_mode") == DIAGNOSTIC_BACKFILL_CAPTURE_MODE
+    ]
+    normal_rows = [
+        row for row in rows
+        if row.model_metadata.get("capture_mode") != DIAGNOSTIC_BACKFILL_CAPTURE_MODE
+    ]
+
+    assert diagnostic_run.records_processed == 1
+    assert normal_run.records_processed == 1
+    assert duplicate_diagnostic_run.records_processed == 0
+    assert len(diagnostic_rows) == 1
+    assert diagnostic_rows[0].model_metadata["promotion_excluded"] is True
+    assert len(normal_rows) == 2
+    current_normal_rows = [
+        row
+        for row in normal_rows
+        if row.model_metadata.get("artifact_signature")
+        and row.model_metadata.get("artifact_signature") != "old"
+    ]
+    assert len(current_normal_rows) == 1
+    assert current_normal_rows[0].model_metadata.get("promotion_excluded") is not True
 
 
 def test_shadow_backfill_skips_legacy_unlinked_duplicates(db_session, monkeypatch, tmp_path):
@@ -348,6 +435,8 @@ def test_shadow_backfill_skips_legacy_unlinked_duplicates(db_session, monkeypatc
         captured_at=now - timedelta(days=2),
         leg_predictions=[leg_a, leg_b],
     )
+    nba_single_metadata = _current_lineage_metadata(db_session, "nba_singles", scope="single")
+    nba_parlay_metadata = _current_lineage_metadata(db_session, "nba_parlay_2leg", scope="parlay")
     for source in (single, leg_a, leg_b):
         db_session.add(
             ShadowInference(
@@ -371,7 +460,7 @@ def test_shadow_backfill_skips_legacy_unlinked_duplicates(db_session, monkeypatc
                 model_version="v1",
                 calibration_version="cal-v1",
                 feature_set_version="features-v1",
-                model_metadata={"family_key": "nba_singles"},
+                model_metadata=nba_single_metadata,
                 rationale="Legacy shadow",
                 reasons=["shadow"],
                 features={},
@@ -393,7 +482,7 @@ def test_shadow_backfill_skips_legacy_unlinked_duplicates(db_session, monkeypatc
             model_version="v1",
             calibration_version="cal-v1",
             feature_set_version="features-v1",
-            model_metadata={"family_key": "nba_parlay_2leg"},
+            model_metadata=nba_parlay_metadata,
             rationale="Legacy parlay shadow",
             features={},
             captured_at=parlay.captured_at,

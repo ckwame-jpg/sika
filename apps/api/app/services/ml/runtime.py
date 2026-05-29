@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from typing import Any, Literal
@@ -260,7 +261,10 @@ def shadow_capture_blocker(
     if not artifact_path:
         return "This family has enough settled history, but no shadow artifact is configured for it yet."
 
-    lineage = _lineage_from_manifest_family(manifest_family, scope)
+    lineage = _lineage_with_artifact_identity(
+        _lineage_from_manifest_family(manifest_family, scope),
+        artifact_path,
+    )
     _payload, error = _validate_artifact_payload(
         family_key,
         scope,
@@ -302,6 +306,67 @@ def _lineage_from_manifest_family(family: ModelManifestFamily | None, scope: str
         calibration_version=family.calibration_version,
         feature_set_version=family.feature_set_version,
         model_metadata=metadata,
+    )
+
+
+def _artifact_identity_metadata(artifact_path: str | None) -> dict[str, Any]:
+    if not artifact_path:
+        return {}
+    path = Path(artifact_path).resolve()
+    metadata: dict[str, Any] = {"artifact_path": str(path)}
+    signature_parts: list[str] = []
+    try:
+        if path.is_dir():
+            training_metadata_path = path / "training_metadata.json"
+            if training_metadata_path.exists():
+                raw = training_metadata_path.read_text(encoding="utf-8")
+                signature_parts.append(f"training_metadata:{sha256(raw.encode()).hexdigest()}")
+                try:
+                    training_metadata = json.loads(raw)
+                except json.JSONDecodeError:
+                    training_metadata = {}
+                if isinstance(training_metadata, dict):
+                    for key in ("trained_at", "training_rows", "winner", "feature_mode"):
+                        if training_metadata.get(key) is not None:
+                            metadata[f"artifact_{key}"] = training_metadata[key]
+            feature_spec_path = path / "feature_spec.json"
+            if feature_spec_path.exists():
+                raw = feature_spec_path.read_text(encoding="utf-8")
+                signature_parts.append(f"feature_spec:{sha256(raw.encode()).hexdigest()}")
+            model_path = path / "model.joblib"
+            if model_path.exists():
+                stat = model_path.stat()
+                signature_parts.append(f"model.joblib:{stat.st_size}:{stat.st_mtime_ns}")
+        elif path.exists():
+            stat = path.stat()
+            signature_parts.append(f"artifact:{stat.st_size}:{stat.st_mtime_ns}")
+            if path.suffix == ".json":
+                raw = path.read_text(encoding="utf-8")
+                signature_parts.append(f"payload:{sha256(raw.encode()).hexdigest()}")
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    payload = {}
+                payload_metadata = payload.get("metadata") if isinstance(payload, dict) else None
+                if isinstance(payload_metadata, dict) and payload_metadata.get("trained_at") is not None:
+                    metadata["artifact_trained_at"] = payload_metadata["trained_at"]
+    except OSError:
+        signature_parts = []
+    if signature_parts:
+        metadata["artifact_signature"] = sha256("|".join(signature_parts).encode()).hexdigest()[:16]
+    return metadata
+
+
+def _lineage_with_artifact_identity(lineage: ModelLineage, artifact_path: str | None) -> ModelLineage:
+    identity = _artifact_identity_metadata(artifact_path)
+    if not identity:
+        return lineage
+    return ModelLineage(
+        model_name=lineage.model_name,
+        model_version=lineage.model_version,
+        calibration_version=lineage.calibration_version,
+        feature_set_version=lineage.feature_set_version,
+        model_metadata={**dict(lineage.model_metadata or {}), **identity},
     )
 
 
@@ -489,7 +554,10 @@ def resolve_family_runtime(
     desired_mode = _resolve_requested_mode(db, family_key, manifest_family=manifest_family)
     row = _runtime_row(db, family_key)
     artifact_path = _resolve_artifact_path(manifest, manifest_family)
-    lineage = _lineage_from_manifest_family(manifest_family, scope)
+    lineage = _lineage_with_artifact_identity(
+        _lineage_from_manifest_family(manifest_family, scope),
+        artifact_path,
+    )
     now = _now_utc()
 
     if desired_mode == "heuristic":
