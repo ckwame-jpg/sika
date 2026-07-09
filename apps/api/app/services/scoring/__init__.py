@@ -850,6 +850,17 @@ def _prop_value_from_raw(sport_key: str, stat_key: str, raw: dict[str, float]) -
         if "_" in stat_key:
             return sum(_prop_value_from_raw(sport_key, component, raw) for component in stat_key.split("_"))
         return raw.get(stat_key, 0.0)
+    if sport_key == "NFL":
+        # Smarter NFL PR 7 — NFL component keys CONTAIN underscores
+        # (passing_yards), so MLB's split("_") recombination above
+        # would shred them into nonsense ("passing" + "yards"). Combos
+        # are enumerated explicitly; simple keys match the gamelog
+        # raw_metrics names 1:1 (Smarter NFL PR 1 parser).
+        if stat_key == "rushing_yards_receiving_yards":
+            return raw.get("rushing_yards", 0.0) + raw.get("receiving_yards", 0.0)
+        if stat_key == "passing_yards_rushing_yards":
+            return raw.get("passing_yards", 0.0) + raw.get("rushing_yards", 0.0)
+        return raw.get(stat_key, 0.0)
     return raw.get(stat_key, 0.0)
 
 
@@ -890,6 +901,63 @@ def _poisson_yes_probability(expected_value: float, threshold: float) -> float:
     return clamp(1.0 - cumulative, 0.01, 0.99)
 
 
+# Smarter NFL PR 7 — distribution split. Poisson is fine for COUNT
+# stats (TDs, receptions, completions: small integers, variance ≈
+# mean) but mathematically wrong for YARDAGE: Poisson at λ=250 forces
+# sd≈16 where real per-game passing-yard sd is ~65-75 — prices would
+# be wildly overconfident. Yardage stats price with a Normal tail
+# whose sd is the player's sample sd shrunk toward a league prior.
+_NFL_NORMAL_PROP_STATS = frozenset({
+    "passing_yards", "rushing_yards", "receiving_yards",
+    "rushing_yards_receiving_yards", "passing_yards_rushing_yards",
+})
+# League per-game sd priors (nflverse weekly stats; re-fit by the
+# Smarter NFL PR 9 backtest, which owns tuning these).
+_NFL_STAT_SD_PRIORS: dict[str, float] = {
+    "passing_yards": 68.0,
+    "rushing_yards": 26.0,
+    "receiving_yards": 27.0,
+    "rushing_yards_receiving_yards": 33.0,
+    "passing_yards_rushing_yards": 70.0,
+}
+_NFL_SD_SHRINK_K = 6.0
+
+
+def _nfl_prop_sd(stat_key: str, recent_values: list[float]) -> float:
+    """Sample sd shrunk toward the league prior:
+    sd² = (n·s² + k·prior²) / (n + k), k=6 — with 17-game seasons the
+    prior dominates early and the player's own volatility takes over
+    as the sample grows."""
+    prior = _NFL_STAT_SD_PRIORS.get(stat_key, 30.0)
+    values = [float(v) for v in recent_values if isinstance(v, (int, float))]
+    n = len(values)
+    if n < 2:
+        return prior
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values) / n
+    return ((n * variance + _NFL_SD_SHRINK_K * prior * prior) / (n + _NFL_SD_SHRINK_K)) ** 0.5
+
+
+def _prop_yes_probability(
+    sport_key: str,
+    stat_key: str,
+    expected_value: float,
+    threshold: float,
+    features: dict[str, Any],
+) -> float:
+    """Route a prop to its distribution model, annotating ``features``
+    with the choice so operators / training rows can audit it."""
+    if sport_key == "NFL" and stat_key in _NFL_NORMAL_PROP_STATS:
+        from ml_features.nfl_pricing import normal_tail_yes_probability  # noqa: PLC0415
+
+        sd = _nfl_prop_sd(stat_key, features.get("recent_values") or [])
+        features["distribution_model"] = "normal"
+        features["distribution_sd"] = round(sd, 3)
+        return clamp(normal_tail_yes_probability(expected_value, sd, threshold), 0.01, 0.99)
+    features["distribution_model"] = "poisson"
+    return _poisson_yes_probability(expected_value, threshold)
+
+
 def _event_entry_for_team_hint(event: Event, team_hint: str | None, team_name: str | None) -> EventParticipant | None:
     tokens = alias_tokens(team_hint or "", team_name or "")
     best_entry = None
@@ -918,7 +986,27 @@ def _logs_for_opponent(game_logs: list[dict[str, Any]], opponent_name: str, oppo
     return matched
 
 
-def _player_prop_participation_gate(sport_key: str, recent_logs: list[dict[str, Any]]) -> tuple[bool, str | None]:
+def _player_prop_participation_gate(
+    sport_key: str,
+    recent_logs: list[dict[str, Any]],
+    *,
+    snap_shares: list[float] | None = None,
+) -> tuple[bool, str | None]:
+    # Smarter NFL PR 7 — 17-game seasons: a 5-log floor would keep every
+    # player gated until week 6, so NFL uses 4. The role signal is snap
+    # share (offense_pct from nflverse) instead of minutes/PAs: require
+    # ≥40% in 3 of the last 4 games when snap data is available; weeks
+    # 1-2 (no snap rows yet) fall through on the log floor alone.
+    if sport_key == "NFL":
+        if len(recent_logs) < 4:
+            return False, "Not enough recent appearances to trust the player-prop sample."
+        if snap_shares:
+            recent_shares = snap_shares[:4]
+            active = [share for share in recent_shares if share >= 40.0]
+            if len(recent_shares) >= 3 and len(active) < min(3, len(recent_shares)):
+                return False, "Player role looks unstable in recent NFL snap counts."
+        return True, None
+
     if len(recent_logs) < 5:
         return False, "Not enough recent appearances to trust the player-prop sample."
 
@@ -938,6 +1026,118 @@ def _player_prop_participation_gate(sport_key: str, recent_logs: list[dict[str, 
     if len([value for value in recent_pa if value >= 2.0]) < 3:
         return False, "Batter role looks unstable because recent plate appearances are too thin."
     return True, None
+
+
+def _nfl_recent_snap_shares(db: Session, event: Event, player_name: str) -> list[float]:
+    """Player's offense snap % per week, latest week first, from the
+    nflverse snap-count cache. Name-matched (snap rows key on PFR ids,
+    not ESPN athletes). Empty when the cache is cold or the player has
+    no rows — the participation gate treats that as 'no snap signal'."""
+    from app.services.nfl_advanced import (  # noqa: PLC0415 — avoid circular import
+        _normalize_player_name,
+        load_nfl_snap_counts,
+    )
+
+    ref_date = event.starts_at.date() if event.starts_at else None
+    season = default_season_for_sport("NFL", ref_date)
+    snaps = load_nfl_snap_counts(db, season)
+    if not snaps.complete:
+        return []
+    target = _normalize_player_name(player_name)
+    if not target:
+        return []
+    shares: list[float] = []
+    weeks = sorted(
+        ((int(week), rows) for week, rows in (snaps.payload.get("weeks") or {}).items()),
+        key=lambda pair: pair[0],
+        reverse=True,
+    )
+    for _week, rows in weeks:
+        for row in rows:
+            if _normalize_player_name(str(row.get("player") or "")) == target:
+                try:
+                    shares.append(float(row.get("offense_pct") or 0.0))
+                except (TypeError, ValueError):
+                    pass
+                break
+    return shares
+
+
+def _emit_nfl_prop_context(
+    db: Session,
+    event: Event,
+    opponent_entry: EventParticipant | None,
+    snap_shares: list[float],
+    features: dict[str, Any],
+    feature_groups: dict[str, FeatureGroupSnapshot],
+) -> None:
+    """Smarter NFL PR 7 — opponent defense EPA, weather, and the snap-
+    share volume proxy for the heuristic factor pass."""
+    from app.services.nfl_advanced import (  # noqa: PLC0415 — avoid circular import
+        load_nfl_team_ratings,
+        load_nfl_weather,
+        nfl_team_abbr_for_name,
+    )
+
+    ref_date = event.starts_at.date() if event.starts_at else None
+    season = default_season_for_sport("NFL", ref_date)
+
+    opponent_values: dict[str, Any] = {"nfl_opponent_data_complete": 0.0}
+    ratings = load_nfl_team_ratings(db, season)
+    opponent_code = nfl_team_abbr_for_name(
+        opponent_entry.participant.display_name
+        if opponent_entry is not None and opponent_entry.participant
+        else None
+    )
+    opponent_rating = (ratings.payload.get("teams") or {}).get(opponent_code or "")
+    if opponent_rating:
+        def_epa = opponent_rating.get("def_epa_per_play_allowed")
+        if isinstance(def_epa, (int, float)):
+            opponent_values["nfl_opponent_data_complete"] = 1.0
+            opponent_values["nfl_opp_def_epa_per_play"] = round(float(def_epa), 5)
+    emit_to_group(
+        feature_groups, features, "nfl_team_ratings", opponent_values,
+        fresh_at=ratings.cached_at, source="NflTeamRatingCache",
+    )
+
+    home_entry = next((entry for entry in event.participants if entry.is_home), None)
+    home_code = nfl_team_abbr_for_name(
+        home_entry.participant.display_name if home_entry and home_entry.participant else None
+    )
+    weather = load_nfl_weather(
+        db,
+        event_id=str(event.id),
+        home_team_abbr=home_code,
+        game_time_utc=event.starts_at,
+        allow_network=False,
+    )
+    weather_values: dict[str, Any] = {
+        "nfl_weather_data_complete": 1.0 if weather.complete else 0.0,
+        "nfl_is_dome": 1.0 if weather.payload.get("is_dome") else 0.0,
+    }
+    if weather.complete and not weather.payload.get("is_dome"):
+        weather_values["nfl_wind_mph"] = float(weather.payload.get("wind_speed_mph") or 0.0)
+    emit_to_group(
+        feature_groups, features, "nfl_weather", weather_values,
+        fresh_at=weather.cached_at if weather.cache_status != "dome" else None,
+        source="NflWeatherCache",
+    )
+
+    snap_values: dict[str, Any] = {
+        "nfl_snap_data_complete": 1.0 if snap_shares else 0.0,
+    }
+    if len(snap_shares) >= 4:
+        recent_avg = sum(snap_shares[:3]) / 3.0
+        season_avg = sum(snap_shares) / len(snap_shares)
+        if season_avg > 0:
+            snap_values["nfl_snap_share_factor_raw"] = round(
+                clamp(recent_avg / season_avg, 0.88, 1.12), 4
+            )
+        snap_values["nfl_snap_share_recent"] = round(recent_avg, 2)
+    emit_to_group(
+        feature_groups, features, "nfl_snap_counts", snap_values,
+        fresh_at=None, source="NflSnapCountsCache",
+    )
 
 
 def _score_player_prop(
@@ -968,7 +1168,14 @@ def _score_player_prop(
     season_logs = resolved.game_logs
     recent_logs = season_logs[:10]
     short_term_logs = recent_logs[:3]
-    is_eligible, _ = _player_prop_participation_gate(sport_key, recent_logs)
+    nfl_snap_shares = (
+        _nfl_recent_snap_shares(db, event, resolved.display_name)
+        if sport_key == "NFL"
+        else None
+    )
+    is_eligible, _ = _player_prop_participation_gate(
+        sport_key, recent_logs, snap_shares=nfl_snap_shares,
+    )
     if not is_eligible:
         return None
 
@@ -1718,10 +1925,17 @@ def _score_player_prop(
     # name reflects "before the advanced-factor pass," not "before any
     # adjustment." Same meaning as pre-PR3a — only the numeric value moves
     # because the proxy block is now gated.
+    # Smarter NFL PR 7 — opponent def EPA + weather + snap-share proxy
+    # land in features before the advanced-factor pass reads them.
+    if sport_key == "NFL":
+        _emit_nfl_prop_context(
+            db, event, opponent_entry, nfl_snap_shares or [], features, feature_groups,
+        )
+
     expected_before_advanced = expected
     features["expected_before_advanced"] = round(expected_before_advanced, 3)
 
-    probability_yes = _poisson_yes_probability(expected, threshold)
+    probability_yes = _prop_yes_probability(sport_key, stat_key, expected, threshold, features)
     sample_size = min(len(recent_logs), 10)
     confidence = clamp(0.32 + (sample_size / 18.0) + abs(probability_yes - 0.5) * 0.45, 0.25, 0.93)
     if len(short_term_logs) < 3:
@@ -1745,7 +1959,9 @@ def _score_player_prop(
         features["advanced_factors"] = advanced_factors
         features["expected_stat_output"] = round(expected_after_advanced, 3)
         # Recompute probability with the adjusted expected.
-        probability_yes = _poisson_yes_probability(expected_after_advanced, threshold)
+        probability_yes = _prop_yes_probability(
+            sport_key, stat_key, expected_after_advanced, threshold, features,
+        )
         features["yes_probability"] = round(probability_yes, 4)
         # Driver attribution — turn the multipliers into a sorted, labeled
         # list with detail strings so the frontend can render rich rows
