@@ -124,8 +124,19 @@ def test_similarity_partial_match_below_one() -> None:
 
 def test_slug_translation_known_sports() -> None:
     assert odds_api_slug_to_sika_sport("basketball_nba") == "NBA"
+    assert odds_api_slug_to_sika_sport("basketball_wnba") == "WNBA"
     assert odds_api_slug_to_sika_sport("baseball_mlb") == "MLB"
     assert odds_api_slug_to_sika_sport("americanfootball_nfl") == "NFL"
+
+
+def test_slug_map_covers_every_client_sport() -> None:
+    # Regression: WNBA was added to the client's forward map without a
+    # matching reverse entry here, so WNBA odds events could never
+    # attach to a sika event. Assert the reverse map stays in sync.
+    from app.clients.the_odds_api import _SPORT_KEY_TO_ODDS_API_KEY
+
+    for sika_sport, slug in _SPORT_KEY_TO_ODDS_API_KEY.items():
+        assert odds_api_slug_to_sika_sport(slug) == sika_sport
 
 
 def test_slug_translation_case_insensitive() -> None:
