@@ -150,6 +150,11 @@ def compute_rolling_pnl_dollars(
             Prediction.settled_at >= start_at,
             Prediction.settled_at <= end_at,
             Prediction.realized_pnl.is_not(None),
+            # Only operator-surfaced picks feed the drawdown brake. Coverage-scope
+            # rows — markets the engine scored but never recommended, including the
+            # force-YES-suppressed props booked at the model's own fair value —
+            # must not drag the brake that sizes real recommendations.
+            Prediction.capture_scope == "recommendation",
         )
     )
     total = db.scalar(stmt)

@@ -151,6 +151,7 @@ def _seed_settled_prediction(
     market: Market,
     realized_pnl: float | None,
     settled_at: datetime,
+    capture_scope: str = "recommendation",
 ) -> None:
     db_session.add(
         Prediction(
@@ -161,6 +162,7 @@ def _seed_settled_prediction(
             captured_at=settled_at - timedelta(hours=2),
             settled_at=settled_at,
             realized_pnl=realized_pnl,
+            capture_scope=capture_scope,
         )
     )
     db_session.flush()
@@ -215,6 +217,24 @@ def test_pnl_dollars_skips_null_realized_pnl(db_session) -> None:
     db_session.commit()
     total = compute_rolling_pnl_dollars(db_session, end_date=_NOW)
     assert total == pytest.approx(0.10)
+
+
+def test_pnl_dollars_excludes_coverage_scope(db_session) -> None:
+    """Coverage-scope rows (markets scored but never recommended, including
+    force-YES-suppressed props booked at fair value) must not feed the drawdown
+    brake that sizes real recommendations."""
+    market = _seed_market(db_session)
+    _seed_settled_prediction(
+        db_session, market=market, realized_pnl=0.30,
+        settled_at=_NOW - timedelta(days=1), capture_scope="recommendation",
+    )
+    _seed_settled_prediction(
+        db_session, market=market, realized_pnl=-5.0,
+        settled_at=_NOW - timedelta(days=1), capture_scope="coverage",
+    )
+    db_session.commit()
+    total = compute_rolling_pnl_dollars(db_session, end_date=_NOW)
+    assert total == pytest.approx(0.30)  # coverage row excluded
 
 
 def test_pnl_dollars_rejects_non_positive_lookback(db_session) -> None:

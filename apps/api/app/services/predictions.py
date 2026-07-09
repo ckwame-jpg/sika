@@ -760,7 +760,18 @@ def _settle_prediction_rows(
         # already carrying a CLV, leave it alone to preserve the original
         # close.
         if prediction.closing_yes_price is None and market is not None:
-            close_cutoff = market.close_time or prediction.settled_at
+            # Anchor the "closing" price to the PRE-GAME close. For in-game-traded
+            # sports markets, market.close_time is game END — the price has already
+            # converged to ~0/1 — so anchoring there makes CLV a did-it-win proxy
+            # rather than a sharpness signal. The last snapshot at or before the
+            # event start is the true closing line; fall back to close_time only
+            # when the market has no event.
+            event_start = None
+            if market.event_id is not None:
+                event_start = db.scalar(
+                    select(Event.starts_at).where(Event.id == market.event_id)
+                )
+            close_cutoff = event_start or market.close_time or prediction.settled_at
             closing_yes = closing_yes_price_for_market(db, market.id, before=close_cutoff)
             if closing_yes is not None:
                 prediction.closing_yes_price = closing_yes

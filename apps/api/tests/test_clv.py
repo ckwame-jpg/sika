@@ -258,17 +258,29 @@ def test_settlement_writes_closing_line_value(db_session) -> None:
         side="yes",
         suggested_price=0.40,
     )
-    # Add a market snapshot that lands BEFORE close_time so the closing-line
-    # lookup picks it up.
+    # The event tips off at 01:00 and the market keeps trading in-game until
+    # it closes at 03:00. The closing line must be the last snapshot BEFORE
+    # tip-off (mid 0.55), not the converged in-game price near close (mid 0.97)
+    # — anchoring at close would make CLV a did-it-win proxy.
     close_time = datetime(2026, 4, 2, 3, 0, tzinfo=timezone.utc)
+    starts_at = datetime(2026, 4, 2, 1, 0, tzinfo=timezone.utc)
     prediction.market.close_time = close_time
-    db_session.add(
-        MarketSnapshot(
-            market_id=prediction.market_id,
-            captured_at=close_time - timedelta(minutes=5),
-            yes_bid=0.54,
-            yes_ask=0.56,  # mid = 0.55
-        )
+    prediction.market.event.starts_at = starts_at
+    db_session.add_all(
+        [
+            MarketSnapshot(  # pre-game close — the correct anchor
+                market_id=prediction.market_id,
+                captured_at=starts_at - timedelta(minutes=5),
+                yes_bid=0.54,
+                yes_ask=0.56,  # mid = 0.55
+            ),
+            MarketSnapshot(  # in-game, converged toward the outcome — must be ignored
+                market_id=prediction.market_id,
+                captured_at=close_time - timedelta(minutes=5),
+                yes_bid=0.96,
+                yes_ask=0.98,  # mid = 0.97
+            ),
+        ]
     )
     db_session.commit()
 
