@@ -243,6 +243,7 @@ from app.services.scoring.heuristics import (  # noqa: E402
     _sample_penalty,
     _schedule_context,
     _selected_side_probability,
+    _spread_subject_entry,
     _staleness_penalty,
     _token_score,
     _win_rate,
@@ -717,7 +718,7 @@ def _score_game_line(
     sample_size = min(len(left_pairs), 10) + min(len(right_pairs), 10)
 
     if market_kind == "spread":
-        yes_entry_target = _market_yes_entry(event, market)
+        yes_entry_target = _spread_subject_entry(event, market)
         if yes_entry_target is None:
             return None
 

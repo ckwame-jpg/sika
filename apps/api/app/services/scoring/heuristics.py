@@ -8,7 +8,8 @@ the kernel (``_score_*`` functions) and orchestration both consume:
   ``_market_disagreement_penalty``, ``_prop_volatility_penalty``,
   ``_mean_abs_deviation``.
 - Market context: ``_market_implied_yes_price``, ``_market_payload``,
-  ``_market_metadata``, ``_market_yes_entry``, ``_token_score``.
+  ``_market_metadata``, ``_market_yes_entry``, ``_spread_subject_entry``,
+  ``_token_score``.
 - Event context: ``_competition_from_event``, ``_event_venue_context``,
   ``_competitor_for_role``, ``_parse_first_five_runs``.
 - Recent-history DB queries: ``_days_since_participant_game``,
@@ -60,6 +61,7 @@ __all__ = [
     "_market_metadata",
     "_token_score",
     "_market_yes_entry",
+    "_spread_subject_entry",
     "_competition_from_event",
     "_event_venue_context",
     "_competitor_for_role",
@@ -220,6 +222,21 @@ def _token_score(left: set[str], right: set[str]) -> float:
     return min(1.0, (len(shared) * 0.15) + (len(strong_shared) * 0.2))
 
 
+def _best_token_match_entry(event: Event, label: str) -> EventParticipant | None:
+    label_tokens = alias_tokens(label)
+    best_entry = None
+    best_score = 0.0
+    for entry in event.participants:
+        participant = entry.participant
+        score = _token_score(label_tokens, alias_tokens(participant.display_name, participant.short_name))
+        if score > best_score:
+            best_score = score
+            best_entry = entry
+    if best_score < 0.15:
+        return None
+    return best_entry
+
+
 def _market_yes_entry(event: Event, market: Market) -> EventParticipant | None:
     payload = _market_payload(market)
     market_kind = str((_market_metadata(market) or {}).get("copilot_market_kind") or "")
@@ -230,18 +247,21 @@ def _market_yes_entry(event: Event, market: Market) -> EventParticipant | None:
     if not yes_label or yes_label.lower() == "tie":
         return None
 
-    yes_tokens = alias_tokens(yes_label)
-    best_entry = None
-    best_score = 0.0
-    for entry in event.participants:
-        participant = entry.participant
-        score = _token_score(yes_tokens, alias_tokens(participant.display_name, participant.short_name))
-        if score > best_score:
-            best_score = score
-            best_entry = entry
-    if best_score < 0.15:
+    return _best_token_match_entry(event, yes_label)
+
+
+def _spread_subject_entry(event: Event, market: Market) -> EventParticipant | None:
+    # Spread markets can't go through _market_yes_entry (winner-kinds
+    # only, and their YES label is "Yes"/"No", not a team). The classifier
+    # already extracted the favored team from the title into
+    # copilot_subject_name, so match that against the participants.
+    metadata = _market_metadata(market) or {}
+    if str(metadata.get("copilot_market_kind") or "") != "spread":
         return None
-    return best_entry
+    subject_name = str(metadata.get("copilot_subject_name") or "").strip()
+    if not subject_name:
+        return None
+    return _best_token_match_entry(event, subject_name)
 
 
 def _competition_from_event(event: Event) -> dict[str, Any]:
