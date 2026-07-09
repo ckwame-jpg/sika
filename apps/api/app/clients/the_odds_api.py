@@ -85,6 +85,71 @@ class TheOddsApiClient:
             return self._http_client.get(url, **kwargs)
         return httpx.get(url, **kwargs)
 
+    def fetch_odds_with_quota(
+        self,
+        sika_sport_key: str,
+        *,
+        markets: str = "h2h",
+        regions: str = "us",
+        odds_format: str = "decimal",
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Fetch odds for a sport and return ``(events, quota)``.
+
+        Smarter NFL PR 4 — generalizes the original h2h-only fetch to
+        arbitrary market lists. IMPORTANT for budgeting: The Odds API
+        charges ONE credit per market per region, so
+        ``markets="h2h,spreads,totals"`` costs 3 credits per call —
+        the caller-side cache/gating (``odds_api_cache``) is what keeps
+        the free tier viable.
+
+        ``quota`` carries the response's ``x-requests-remaining`` /
+        ``x-requests-used`` headers (ints when present) so the cache
+        layer can surface budget burn on the upstream-health board.
+
+        Raises ``MissingApiKeyError`` when the key is unset and
+        ``httpx.HTTPStatusError`` on 4xx/5xx, matching the original
+        fetch semantics.
+        """
+        slug = odds_api_sport_key(sika_sport_key)
+        if slug is None:
+            return [], {}
+        url = f"{self._base_url()}/sports/{slug}/odds"
+        params = {
+            "apiKey": self._api_key(),
+            "regions": regions,
+            "markets": markets,
+            "oddsFormat": odds_format,
+        }
+        response = self._get(url, params=params, timeout=self._timeout())
+        response.raise_for_status()
+        quota: dict[str, Any] = {}
+        for header, key in (
+            ("x-requests-remaining", "requests_remaining"),
+            ("x-requests-used", "requests_used"),
+        ):
+            raw = response.headers.get(header)
+            if raw is not None:
+                try:
+                    quota[key] = int(float(raw))
+                except (TypeError, ValueError):
+                    pass
+        if quota.get("requests_remaining") is not None:
+            logger.info(
+                "The Odds API quota after %s fetch (markets=%s): %s remaining",
+                sika_sport_key,
+                markets,
+                quota["requests_remaining"],
+            )
+        payload = response.json()
+        if not isinstance(payload, list):
+            logger.warning(
+                "The Odds API returned non-list payload for %s: %r",
+                sika_sport_key,
+                type(payload).__name__,
+            )
+            return [], quota
+        return payload, quota
+
     def fetch_h2h_odds(
         self,
         sika_sport_key: str,
@@ -126,27 +191,10 @@ class TheOddsApiClient:
         Raises ``httpx.HTTPStatusError`` on 4xx/5xx so callers can
         record per-source failure on the upstream-health board.
         """
-        slug = odds_api_sport_key(sika_sport_key)
-        if slug is None:
-            return []
-        url = f"{self._base_url()}/sports/{slug}/odds"
-        params = {
-            "apiKey": self._api_key(),
-            "regions": regions,
-            "markets": "h2h",
-            "oddsFormat": odds_format,
-        }
-        response = self._get(url, params=params, timeout=self._timeout())
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, list):
-            logger.warning(
-                "The Odds API returned non-list payload for %s: %r",
-                sika_sport_key,
-                type(payload).__name__,
-            )
-            return []
-        return payload
+        events, _quota = self.fetch_odds_with_quota(
+            sika_sport_key, markets="h2h", regions=regions, odds_format=odds_format,
+        )
+        return events
 
 
 # -----------------------------------------------------------------------------
@@ -255,3 +303,99 @@ def consensus_yes_probability(
     if not yes_probs:
         return None
     return round(sum(yes_probs) / len(yes_probs), 6), len(yes_probs)
+
+
+# -----------------------------------------------------------------------------
+# Line consensus (Smarter NFL PR 4)
+#
+# ``spreads`` and ``totals`` markets quote a POINT per outcome in
+# addition to the price. The consensus signal sika wants from them is
+# the line itself (the market's margin / total expectation) — the
+# median across books is robust to a single stale or outlier book.
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def consensus_spread_point(
+    bookmakers: list[dict[str, Any]],
+    *,
+    team_name: str,
+) -> tuple[float, int] | None:
+    """Return ``(median_spread_point, book_count)`` for ``team_name``
+    across books' ``spreads`` markets, or ``None`` when no book quotes
+    it. The point is oriented to the named team: -3.5 means that team
+    is favored by 3.5."""
+    if not isinstance(bookmakers, list):
+        return None
+    target = (team_name or "").strip().lower()
+    if not target:
+        return None
+    points: list[float] = []
+    for book in bookmakers:
+        if not isinstance(book, dict):
+            continue
+        markets = book.get("markets") or []
+        if not isinstance(markets, list):
+            continue
+        spread_market = next(
+            (m for m in markets if isinstance(m, dict) and m.get("key") == "spreads"),
+            None,
+        )
+        if spread_market is None:
+            continue
+        for outcome in spread_market.get("outcomes") or []:
+            if not isinstance(outcome, dict):
+                continue
+            if str(outcome.get("name") or "").strip().lower() != target:
+                continue
+            point = outcome.get("point")
+            if isinstance(point, (int, float)) and not isinstance(point, bool):
+                points.append(float(point))
+            break
+    median_point = _median(points)
+    if median_point is None:
+        return None
+    return round(median_point, 2), len(points)
+
+
+def consensus_total_point(
+    bookmakers: list[dict[str, Any]],
+) -> tuple[float, int] | None:
+    """Return ``(median_total_point, book_count)`` across books'
+    ``totals`` markets (the Over outcome's point), or ``None``."""
+    if not isinstance(bookmakers, list):
+        return None
+    points: list[float] = []
+    for book in bookmakers:
+        if not isinstance(book, dict):
+            continue
+        markets = book.get("markets") or []
+        if not isinstance(markets, list):
+            continue
+        totals_market = next(
+            (m for m in markets if isinstance(m, dict) and m.get("key") == "totals"),
+            None,
+        )
+        if totals_market is None:
+            continue
+        for outcome in totals_market.get("outcomes") or []:
+            if not isinstance(outcome, dict):
+                continue
+            if str(outcome.get("name") or "").strip().lower() != "over":
+                continue
+            point = outcome.get("point")
+            if isinstance(point, (int, float)) and not isinstance(point, bool):
+                points.append(float(point))
+            break
+    median_point = _median(points)
+    if median_point is None:
+        return None
+    return round(median_point, 2), len(points)
