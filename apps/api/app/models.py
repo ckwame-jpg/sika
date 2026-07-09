@@ -864,6 +864,139 @@ class NbaRefereeAssignmentCache(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
 
+# -----------------------------------------------------------------------------
+# NFL advanced-stats caches (Smarter NFL PR 3). Parallel-tables-per-sport
+# topology, per the D1 decision recorded on ``WnbaInjuryReportCache``.
+# All nflverse-sourced tables are written by the daily ``nfl_data_refresh``
+# job; read-side loaders in ``services/nfl_advanced.py`` tolerate stale
+# rows (weekly sport — yesterday's snap counts are still last week's game).
+
+
+class NflWeeklyStatsCache(Base):
+    """nflverse weekly player box stats (one cache row per season-week;
+    payload = list of player rows incl. EPA splits + target share)."""
+    __tablename__ = "nfl_weekly_stats_cache"
+    __table_args__ = (
+        UniqueConstraint("season", "week", name="uq_nfl_weekly_stats_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    week = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NflSnapCountsCache(Base):
+    """nflverse per-game snap counts (one cache row per season-week)."""
+    __tablename__ = "nfl_snap_counts_cache"
+    __table_args__ = (
+        UniqueConstraint("season", "week", name="uq_nfl_snap_counts_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    week = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NflDepthChartCache(Base):
+    """Latest depth-chart snapshot per team (nflverse; carries espn_id +
+    gsis_id per player — the ESPN↔nflverse identity bridge)."""
+    __tablename__ = "nfl_depth_chart_cache"
+    __table_args__ = (
+        UniqueConstraint("season", "team", name="uq_nfl_depth_chart_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    team = Column(String, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NflOfficialInjuryCache(Base):
+    """nflverse OFFICIAL club injury reports per season-week (report
+    status Out/Doubtful/Questionable + practice status). Distinct from
+    ``NflInjuryReportCache`` below: this is the structured nightly
+    ground truth; the ESPN feed is the fresher intraday supplement."""
+    __tablename__ = "nfl_official_injury_cache"
+    __table_args__ = (
+        UniqueConstraint("season", "week", name="uq_nfl_official_injury_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    week = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NflTeamRatingCache(Base):
+    """Season-to-date team ratings computed from nflverse team-week
+    stats + schedule results: off/def EPA per play, plays per game,
+    points for/against per game (one cache row per season)."""
+    __tablename__ = "nfl_team_rating_cache"
+    __table_args__ = (
+        UniqueConstraint("season", name="uq_nfl_team_rating_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NflScheduleCache(Base):
+    """nfldata games.csv rows for one season: schedule, results, rest
+    days, division flags, closing spread/total/moneylines, QB starters."""
+    __tablename__ = "nfl_schedule_cache"
+    __table_args__ = (
+        UniqueConstraint("season", name="uq_nfl_schedule_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    season = Column(Integer, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NflWeatherCache(Base):
+    """Game-time weather per NFL event (mirror of ``MlbWeatherCache``;
+    outdoor stadiums only — domes short-circuit in the loader)."""
+    __tablename__ = "nfl_weather_cache"
+    __table_args__ = (UniqueConstraint("event_id", name="uq_nfl_weather_cache"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String, nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class NflInjuryReportCache(Base):
+    """ESPN NFL injury feed per fetched day (Smarter NFL PR 6 populates;
+    table lands with the rest of the NFL cache topology). Parallel of
+    ``WnbaInjuryReportCache``."""
+    __tablename__ = "nfl_injury_report_cache"
+    __table_args__ = (
+        UniqueConstraint("fetched_date", name="uq_nfl_injury_report_cache"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    fetched_date = Column(String, nullable=False, index=True)  # YYYY-MM-DD
+    payload = Column(JSON, default=dict)
+    cached_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
 class ModelFamilyRuntimeHealth(Base):
     __tablename__ = "model_family_runtime_health"
 
