@@ -53,7 +53,12 @@ function accountStatusClass(status: string): string {
 }
 
 function FillPrice({ fill }: { fill: KalshiAccountFillRead }) {
-  const price = fill.yes_price_dollars ?? fill.no_price_dollars;
+  // Both yes_price_dollars and no_price_dollars are populated on every fill
+  // (they are complements), so the old `??` fallback always rendered the YES
+  // price — even for NO fills. Select the price actually paid, by side.
+  const yes = fill.yes_price_dollars ?? null;
+  const no = fill.no_price_dollars ?? (yes != null ? 1 - yes : null);
+  const price = fill.side?.toLowerCase() === "no" ? no : yes ?? no;
   return <span className="font-mono text-xs">{fmtDollars(price)}</span>;
 }
 

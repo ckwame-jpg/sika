@@ -117,6 +117,43 @@ describe("KalshiAccountPanel", () => {
     expect(screen.queryByText("$0.55")).not.toBeInTheDocument();
   });
 
+  it("shows the NO price for NO-side fills, not the YES complement", async () => {
+    const noFillPositions: PositionsRead = {
+      ...connectedPositions,
+      kalshi_account: {
+        ...connectedPositions.kalshi_account,
+        recent_fills: [
+          {
+            fill_id: "fill-no",
+            trade_id: "trade-no",
+            order_id: "order-no",
+            ticker: "NBA-NO",
+            bet_label: "NO Heat",
+            bet_subtitle: "Heat to win?",
+            market_title: "Heat to win?",
+            market_subtitle: "NBA",
+            sport_key: "NBA",
+            side: "no",
+            action: "buy",
+            count: 2,
+            yes_price_dollars: 0.9,
+            no_price_dollars: 0.1,
+            fee_dollars: 0.01,
+            created_time: "2026-04-29T12:02:00Z",
+          },
+        ],
+      },
+    };
+    const user = userEvent.setup();
+    mockFetchPositions.mockResolvedValue(noFillPositions);
+
+    renderWithProviders(<KalshiAccountPanel />);
+    await user.click(await screen.findByRole("button", { name: /recent fills 1/i }));
+
+    expect(screen.getByText("$0.10")).toBeInTheDocument(); // paid the NO price
+    expect(screen.queryByText("$0.90")).not.toBeInTheDocument(); // not the YES complement
+  });
+
   it("toggles account tables independently", async () => {
     const user = userEvent.setup();
     mockFetchPositions.mockResolvedValue(connectedPositions);

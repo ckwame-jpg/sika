@@ -123,9 +123,20 @@ def _enrich_with_kelly_sizing(
         return
     side = str(getattr(recommendation, "side", "") or "")
     probability_yes = signal.fair_yes_price
-    price_yes = recommendation.suggested_price
-    if probability_yes is None or price_yes is None:
+    suggested_price = recommendation.suggested_price
+    if probability_yes is None or suggested_price is None:
         return
+    # ``suggested_price`` is side-relative: for a NO pick it is the NO entry
+    # (``no_ask``), not the YES price. ``compute_kelly_sizing_diagnostics``
+    # expects a YES-denominated ``price_yes`` and inverts it internally for the
+    # NO side. Passing the NO entry straight through double-inverted every NO
+    # recommendation — favorites pinned to the 2% max stake off a phantom edge,
+    # positive-edge underdogs suppressed to zero. Map back to the YES axis so
+    # the consumer's single inversion lands on the real NO price.
+    if side.lower() == "no":
+        price_yes = 1.0 - float(suggested_price)
+    else:
+        price_yes = float(suggested_price)
     try:
         from app.services.kelly_sizing_consumer import (  # noqa: PLC0415
             compute_kelly_sizing_diagnostics,
@@ -133,7 +144,7 @@ def _enrich_with_kelly_sizing(
         sizing = compute_kelly_sizing_diagnostics(
             db,
             probability_yes=float(probability_yes),
-            price_yes=float(price_yes),
+            price_yes=price_yes,
             side=side,
         )
     except Exception:  # noqa: BLE001
