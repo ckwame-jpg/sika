@@ -911,31 +911,13 @@ _NFL_NORMAL_PROP_STATS = frozenset({
     "passing_yards", "rushing_yards", "receiving_yards",
     "rushing_yards_receiving_yards", "passing_yards_rushing_yards",
 })
-# League per-game sd priors (nflverse weekly stats; re-fit by the
-# Smarter NFL PR 9 backtest, which owns tuning these).
-_NFL_STAT_SD_PRIORS: dict[str, float] = {
-    "passing_yards": 68.0,
-    "rushing_yards": 26.0,
-    "receiving_yards": 27.0,
-    "rushing_yards_receiving_yards": 33.0,
-    "passing_yards_rushing_yards": 70.0,
-}
-_NFL_SD_SHRINK_K = 6.0
-
-
+# Sd priors + shrinkage live in ``ml_features.nfl_pricing`` (tuned by
+# the Smarter NFL PR 9 replay; shared so serving and the backtest can
+# never drift). Thin re-export keeps the kernel's call sites local.
 def _nfl_prop_sd(stat_key: str, recent_values: list[float]) -> float:
-    """Sample sd shrunk toward the league prior:
-    sd² = (n·s² + k·prior²) / (n + k), k=6 — with 17-game seasons the
-    prior dominates early and the player's own volatility takes over
-    as the sample grows."""
-    prior = _NFL_STAT_SD_PRIORS.get(stat_key, 30.0)
-    values = [float(v) for v in recent_values if isinstance(v, (int, float))]
-    n = len(values)
-    if n < 2:
-        return prior
-    mean = sum(values) / n
-    variance = sum((v - mean) ** 2 for v in values) / n
-    return ((n * variance + _NFL_SD_SHRINK_K * prior * prior) / (n + _NFL_SD_SHRINK_K)) ** 0.5
+    from ml_features.nfl_pricing import nfl_prop_sd  # noqa: PLC0415
+
+    return nfl_prop_sd(stat_key, recent_values)
 
 
 def _prop_yes_probability(

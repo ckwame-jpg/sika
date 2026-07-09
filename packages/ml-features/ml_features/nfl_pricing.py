@@ -139,6 +139,35 @@ def nfl_total_yes_probability(
     return _clamp_probability(probability)
 
 
+# Per-game sd priors for the yardage-prop Normal model. Tuned by the
+# Smarter NFL PR 9 replay: 2025 per-player-demeaned sds came out at
+# passing 76.0 / rushing 26.5 / receiving 23.6; the shipped values
+# blend those with the multi-season starting points (single-season
+# fits are noisy). Shared here so serving (apps/api) and the replay
+# backtest (apps/ml) can never drift apart.
+NFL_STAT_SD_PRIORS: dict[str, float] = {
+    "passing_yards": 72.0,
+    "rushing_yards": 26.0,
+    "receiving_yards": 25.0,
+    "rushing_yards_receiving_yards": 32.0,
+    "passing_yards_rushing_yards": 74.0,
+}
+NFL_SD_SHRINK_K = 6.0
+
+
+def nfl_prop_sd(stat_key: str, recent_values: list[float]) -> float:
+    """Sample sd shrunk toward the league prior:
+    sd² = (n·s² + k·prior²) / (n + k), k=6."""
+    prior = NFL_STAT_SD_PRIORS.get(stat_key, 30.0)
+    values = [float(v) for v in recent_values if isinstance(v, (int, float))]
+    n = len(values)
+    if n < 2:
+        return prior
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values) / n
+    return ((n * variance + NFL_SD_SHRINK_K * prior * prior) / (n + NFL_SD_SHRINK_K)) ** 0.5
+
+
 def normal_tail_yes_probability(mu: float, sd: float, threshold: float) -> float:
     """``P(stat >= threshold)`` under a Normal model with a 0.5
     continuity correction — the yardage-prop pricing shape (Smarter NFL

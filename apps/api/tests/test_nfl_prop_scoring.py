@@ -45,11 +45,14 @@ def test_counts_stay_poisson() -> None:
 
 
 def test_sd_shrinkage_pulls_toward_prior() -> None:
+    from ml_features.nfl_pricing import NFL_STAT_SD_PRIORS
+
+    prior = NFL_STAT_SD_PRIORS["passing_yards"]  # PR 9 tunes this value
     # No sample → prior exactly.
-    assert _nfl_prop_sd("passing_yards", []) == 68.0
+    assert _nfl_prop_sd("passing_yards", []) == prior
     # A tight 4-game sample shrinks partway, never all the way.
     tight = _nfl_prop_sd("passing_yards", [250.0, 255.0, 245.0, 250.0])
-    assert 40.0 < tight < 68.0
+    assert 40.0 < tight < prior
     # A wild sample can exceed the prior.
     wild = _nfl_prop_sd("rushing_yards", [10.0, 150.0, 20.0, 140.0])
     assert wild > 26.0
