@@ -265,6 +265,11 @@ KALSHI_EVENT_SERIES = {
     # template — Kalshi renders the W vs M variant via the category
     # root above.
     "WNBA": ("kxwnbagame", "professional-basketball-game"),
+    # Smarter NFL PR 2 — KXNFLGAME series live-verified (2026-07-09,
+    # preseason markets listed). URL slug mirrors the series title
+    # "Professional Football Game"; verify against a live kalshi.com
+    # game page at first regular-season listing.
+    "NFL": ("kxnflgame", "professional-football-game"),
 }
 KALSHI_PROP_CATEGORY_SLUGS = {
     "NBA": {
@@ -298,6 +303,17 @@ KALSHI_PROP_CATEGORY_SLUGS = {
         "steals": "player-steals",
         "blocks": "player-blocks",
         "turnovers": "player-turnovers",
+    },
+    # Smarter NFL PR 2 — prop series live-verified (KXNFLPASSYDS /
+    # KXNFLPASSTDS / KXNFLRSHYDS / KXNFLRECYDS / KXNFLREC); URL slugs
+    # follow the NBA "player-<stat>" convention pending a live prop
+    # listing to confirm.
+    "NFL": {
+        "passing_yards": "player-passing-yards",
+        "passing_touchdowns": "player-passing-touchdowns",
+        "rushing_yards": "player-rushing-yards",
+        "receiving_yards": "player-receiving-yards",
+        "receptions": "player-receptions",
     },
 }
 

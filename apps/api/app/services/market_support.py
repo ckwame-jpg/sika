@@ -36,6 +36,11 @@ SUPPORTED_COMBO_PROP_FAMILIES = {
     # made threes / steals / blocks / turnovers all map to the same ESPN
     # gamelog payload keys (PR 3 will share _build_nba_game_logs).
     "WNBA": frozenset({"PTS", "REB", "AST", "PR", "PA", "RA", "PRA", "3PM", "STL", "BLK", "TOV"}),
+    # Smarter NFL PR 2 — family codes verified against Kalshi's live
+    # series inventory (2026-07-09): KXNFLPASSYDS / KXNFLPASSTDS /
+    # KXNFLRSHYDS (Kalshi's abbreviation, NOT "RUSHYDS") / KXNFLRECYDS /
+    # KXNFLREC. No completions or combined rush+rec series exist yet.
+    "NFL": frozenset({"PASSYDS", "PASSTDS", "RSHYDS", "RECYDS", "REC"}),
 }
 BLOCKED_COMBO_LEG_FAMILY_PREFIXES = {
     "NBA": ("GAME", "SPREAD", "TOTAL", "WINNER", "1H", "2H", "1Q", "2Q", "3Q", "4Q"),
@@ -44,11 +49,28 @@ BLOCKED_COMBO_LEG_FAMILY_PREFIXES = {
     # for live-betting splits — block the same prefixes from being treated
     # as player-prop combo legs.
     "WNBA": ("GAME", "SPREAD", "TOTAL", "WINNER", "1H", "2H", "1Q", "2Q", "3Q", "4Q"),
+    # NFL game-structure and season-futures families (live inventory:
+    # GAME also covers GAMEFG/GAMESACK/GAMETD/GAMETO, TEAM covers
+    # TEAMTOTAL/TEAMPTS/TEAMFIRSTTD, WIN covers WINS/WINMARGIN).
+    "NFL": (
+        "GAME", "SPREAD", "TOTAL", "WINNER", "TEAM", "WIN", "EXACTWINS",
+        "1H", "2H", "1Q", "2Q", "3Q", "4Q", "H2H", "OT", "SEASON",
+        "PREPACK", "COMBO", "DRAFT", "PLAYOFF",
+    ),
 }
 KNOWN_UNSUPPORTED_COMBO_PROP_FAMILIES = {
     "NBA": frozenset(),
     "MLB": frozenset({"SO", "IP", "OUTS", "ER"}),
     "WNBA": frozenset(),
+    # NFL prop-shaped families sika deliberately doesn't model in v1:
+    # touchdown-scorer markets (binary "does X score", not a threshold
+    # stat), defense / kicker / exotic in-game events.
+    "NFL": frozenset({
+        "ANYTD", "FIRSTTD", "FIRSTTDTIME", "NEXTTD", "2TD", "LONGESTTD",
+        "SHORTESTTD", "DSTTD", "SAFETY", "NONQBPASS", "COMEBACK",
+        "2PTCONV", "4DCONV", "4DOWNCONV", "FANTASYMOST", "NEXTINT",
+        "HIGHSCOREQ", "NOSCOREQ", "LARGELEAD", "LARGESTLEAD", "LEADCHANGE",
+    }),
 }
 
 PLAYER_PROP_TITLE_RE = re.compile(
@@ -113,6 +135,59 @@ MLB_PROP_ALIASES = {
 # WNBA-only colloquialisms (e.g. league-specific shorthand) can land
 # without touching the NBA dict.
 WNBA_PROP_ALIASES = dict(NBA_PROP_ALIASES)
+# Smarter NFL PR 2 — NFL prop phrases span passing / rushing / receiving
+# stat lines (the "structurally messier" split the punch list warned
+# about). Live series titles confirm the stat vocabulary ("Pro Football
+# player Passing Yards" / "Receiving Yards" / "Receptions" / "Passing
+# Touchdowns"); per-market title phrasing follows Kalshi's cross-sport
+# "<player>: <N>+ <phrase>" prop format. Short forms ("pass yards",
+# "rec yards") cover ticker-derived and abbreviated phrasings; TD
+# aliases beyond PASSTDS ship defensively for future series.
+NFL_PROP_ALIASES = {
+    "passing yards": "passing_yards",
+    "passing yard": "passing_yards",
+    "pass yards": "passing_yards",
+    "pass yard": "passing_yards",
+    "rushing yards": "rushing_yards",
+    "rushing yard": "rushing_yards",
+    "rush yards": "rushing_yards",
+    "rush yard": "rushing_yards",
+    "receiving yards": "receiving_yards",
+    "receiving yard": "receiving_yards",
+    "rec yards": "receiving_yards",
+    "rec yard": "receiving_yards",
+    "receptions": "receptions",
+    "reception": "receptions",
+    "catches": "receptions",
+    "catch": "receptions",
+    "passing touchdowns": "passing_touchdowns",
+    "passing touchdown": "passing_touchdowns",
+    "passing tds": "passing_touchdowns",
+    "passing td": "passing_touchdowns",
+    "pass tds": "passing_touchdowns",
+    "pass td": "passing_touchdowns",
+    "rushing touchdowns": "rushing_touchdowns",
+    "rushing touchdown": "rushing_touchdowns",
+    "rush tds": "rushing_touchdowns",
+    "rush td": "rushing_touchdowns",
+    "receiving touchdowns": "receiving_touchdowns",
+    "receiving touchdown": "receiving_touchdowns",
+    "rec tds": "receiving_touchdowns",
+    "rec td": "receiving_touchdowns",
+    "completions": "completions",
+    "completion": "completions",
+}
+# Combined-stat phrase shorthands ("rush + rec yards") must expand
+# BEFORE ``_component_stat_keys`` splits the phrase on "+" — otherwise
+# the split yields fragments like "rush" / "rec yards" that no alias
+# matches. Keys are lowercase; applied via substring replace on the
+# lowered phrase.
+_NFL_PROP_PHRASE_EXPANSIONS = {
+    "rush + rec yards": "rushing yards + receiving yards",
+    "rushing + receiving yards": "rushing yards + receiving yards",
+    "pass + rush yards": "passing yards + rushing yards",
+    "passing + rushing yards": "passing yards + rushing yards",
+}
 PROP_COMPONENT_ORDER = {
     "NBA": {
         "points": 0,
@@ -140,6 +215,22 @@ PROP_COMPONENT_ORDER = {
         "steals": 4,
         "blocks": 5,
         "turnovers": 6,
+    },
+    # NFL combined keys join with "_" like every sport, so a combined
+    # rush+rec market yields ``rushing_yards_receiving_yards``. NOTE for
+    # the scoring kernel: NFL component keys contain underscores, so the
+    # MLB-style ``stat_key.split("_")`` recombination trick CANNOT
+    # recover components — ``copilot_component_stat_keys`` metadata (or
+    # explicit enumeration) is the only safe path (Smarter NFL PR 7).
+    "NFL": {
+        "passing_yards": 0,
+        "rushing_yards": 1,
+        "receiving_yards": 2,
+        "receptions": 3,
+        "passing_touchdowns": 4,
+        "rushing_touchdowns": 5,
+        "receiving_touchdowns": 6,
+        "completions": 7,
     },
 }
 
@@ -203,7 +294,7 @@ def combo_leg_metadata_prefilter(payload: dict[str, Any]) -> dict[str, Any]:
     if not market_ticker:
         result["reason"] = "missing_identity"
         return result
-    if sport_key not in {"NBA", "MLB", "WNBA"}:
+    if sport_key not in {"NBA", "MLB", "WNBA", "NFL"}:
         result["reason"] = "unsupported_sport"
         return result
     if not family_code:
@@ -325,11 +416,41 @@ def _winner_market_metadata(payload: dict[str, Any], sport_key: str, lowered_tit
             "copilot_subject_name": yes_label,
         }
 
+    # Smarter NFL PR 2 — Kalshi phrases NFL game markets as
+    # "Will Seattle win the Dallas vs Seattle Pro Football game?"
+    # (live-verified 2026-07-09) instead of the "Winner?" / "beat"
+    # forms above. Require the " vs " matchup AND the trailing
+    # "game?" so season futures ("Will Buffalo win the AFC East?")
+    # can't classify as a game winner.
+    if (
+        lowered_title.startswith("will ")
+        and " win the " in lowered_title
+        and " vs " in lowered_title
+        and lowered_title.rstrip().endswith("game?")
+    ):
+        return {
+            "copilot_market_family": "winner",
+            "copilot_market_kind": "game_winner",
+            "copilot_direction": "yes",
+            "copilot_subject_name": yes_label,
+        }
+
     return None
 
 
 def _game_line_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, Any] | None:
     if sport_key not in {"NBA", "NFL", "MLB", "WNBA"}:
+        return None
+
+    # Smarter NFL PR 2 — Kalshi's NFL team-total series (KXNFLTEAMTOTAL)
+    # could phrase titles identically to game totals ("Over 24.5 points
+    # scored?"). A team total priced by the game-total model would be
+    # badly mispriced, so reject on the ticker signal rather than trust
+    # the title shape.
+    ticker_text = " ".join(
+        str(payload.get(field) or "").upper() for field in ("ticker", "event_ticker", "series_ticker")
+    )
+    if "TEAMTOTAL" in ticker_text:
         return None
 
     title = str(payload.get("title") or "").strip()
@@ -370,7 +491,7 @@ def _game_line_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, An
 
 
 def _player_prop_metadata(payload: dict[str, Any], sport_key: str) -> dict[str, Any] | None:
-    if sport_key not in {"NBA", "MLB", "WNBA"}:
+    if sport_key not in {"NBA", "MLB", "WNBA", "NFL"}:
         return None
 
     title = str(payload.get("title") or "").strip()
@@ -420,6 +541,7 @@ _SPORT_KEY_TO_COMBO_TICKER_PREFIX = {
     "NBA": "KXNBA",
     "MLB": "KXMLB",
     "WNBA": "KXWNBA",
+    "NFL": "KXNFL",
 }
 
 
@@ -446,6 +568,7 @@ _PROP_ALIASES_BY_SPORT = {
     "NBA": NBA_PROP_ALIASES,
     "MLB": MLB_PROP_ALIASES,
     "WNBA": WNBA_PROP_ALIASES,
+    "NFL": NFL_PROP_ALIASES,
 }
 
 
@@ -453,6 +576,13 @@ def _component_stat_keys(sport_key: str, raw_phrase: str) -> list[str] | None:
     aliases = _PROP_ALIASES_BY_SPORT.get(sport_key)
     if aliases is None:
         return None
+    if sport_key == "NFL":
+        # Expand shorthand combined phrases ("rush + rec yards") before
+        # the "+" split below fragments them (Smarter NFL PR 2).
+        lowered_phrase = raw_phrase.lower()
+        for source, target in _NFL_PROP_PHRASE_EXPANSIONS.items():
+            lowered_phrase = lowered_phrase.replace(source, target)
+        raw_phrase = lowered_phrase
     components: list[str] = []
     for part in raw_phrase.split("+"):
         normalized = _normalize_prop_component(part)

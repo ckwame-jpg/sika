@@ -156,7 +156,7 @@ def _persist_market_payload_records(
         classification = classification_override or classify_market_payload(payload)
         metadata = classification.get("metadata")
         if not classification.get("supported") or not metadata:
-            if classification.get("reason") == "unsupported_prop_category" and classification.get("sport_key") in {"NBA", "MLB", "WNBA"}:
+            if classification.get("reason") == "unsupported_prop_category" and classification.get("sport_key") in {"NBA", "MLB", "WNBA", "NFL"}:
                 prop_category = str(classification.get("prop_category") or "unknown")
                 unsupported_prop_categories[prop_category] = unsupported_prop_categories.get(prop_category, 0) + 1
             return False

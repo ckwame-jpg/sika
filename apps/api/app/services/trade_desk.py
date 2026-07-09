@@ -53,6 +53,9 @@ KALSHI_EVENT_SERIES = {
     # coverage was thin as of mid-May 2026 (only milestones +
     # futures live); infrastructure ships ready for Kalshi's roll-out.
     "WNBA": ("kxwnbagame", "professional-basketball-game"),
+    # Smarter NFL PR 2 — mirrors ``routes.py`` (Bug #30 duplication).
+    # KXNFLGAME live-verified 2026-07-09.
+    "NFL": ("kxnflgame", "professional-football-game"),
 }
 KALSHI_PROP_CATEGORY_SLUGS = {
     "NBA": {
@@ -84,6 +87,14 @@ KALSHI_PROP_CATEGORY_SLUGS = {
         "steals": "player-steals",
         "blocks": "player-blocks",
         "turnovers": "player-turnovers",
+    },
+    # Smarter NFL PR 2 — mirrors ``routes.py`` (Bug #30 duplication).
+    "NFL": {
+        "passing_yards": "player-passing-yards",
+        "passing_touchdowns": "player-passing-touchdowns",
+        "rushing_yards": "player-rushing-yards",
+        "receiving_yards": "player-receiving-yards",
+        "receptions": "player-receptions",
     },
 }
 SNAPSHOT_SCOPE_ALL = "all"
