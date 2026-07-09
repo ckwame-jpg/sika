@@ -175,6 +175,10 @@ class MlbStatsClient:
                     retry_after = self._BACKOFF_SECONDS[
                         min(attempt - 1, len(self._BACKOFF_SECONDS) - 1)
                     ]
+                # Clamp the server-controlled Retry-After: an upstream/CDN
+                # incident can emit a huge value that would freeze the refresh
+                # worker for hours (kalshi/nba_stats clamp the same way).
+                retry_after = min(retry_after, 30.0)
                 logger.warning("MLB Stats 429 on %s (attempt %d); sleeping %.1fs", path, attempt, retry_after)
                 time.sleep(retry_after)
                 continue

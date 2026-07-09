@@ -361,7 +361,11 @@ class EspnPublicClient:
         while current <= end_day:
             try:
                 events.extend(self.fetch_events_for_day(sport_key, current))
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, ValueError) as exc:
+                # ValueError catches json.JSONDecodeError: ESPN's CDN serves
+                # HTTP 200 HTML during incidents, so response.json() raises a
+                # (non-HTTPError) ValueError that would otherwise escape this
+                # per-day guard and abort the whole multi-sport refresh.
                 message = str(exc).strip() or exc.__class__.__name__
                 errors.append(f"{current.isoformat()}: {exc.__class__.__name__}: {message}")
                 logger.warning("ESPN fetch failed for %s on %s: %s", sport_key, current.isoformat(), message)

@@ -41,7 +41,10 @@ class TheSportsDBClient:
         while current <= end_day:
             try:
                 events.extend(self.fetch_events_for_day(sport_name, current))
-            except httpx.HTTPError as exc:
+            except (httpx.HTTPError, ValueError) as exc:
+                # ValueError catches json.JSONDecodeError: a 200 HTML/non-JSON
+                # body would otherwise escape this per-day guard and abort the
+                # whole multi-sport refresh.
                 message = str(exc).strip() or exc.__class__.__name__
                 errors.append(f"{current.isoformat()}: {exc.__class__.__name__}: {message}")
                 logger.warning("TheSportsDB fetch failed for %s on %s: %s", sport_name, current.isoformat(), message)

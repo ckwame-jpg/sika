@@ -81,10 +81,22 @@ def _candlestick_points(payload: dict[str, Any], *, source: str) -> list[dict[st
         timestamp = _timestamp_from_candlestick(item)
         if not timestamp:
             continue
+        # Live Kalshi candlesticks nest OHLC under a ``price`` object
+        # (close_dollars / mean_dollars); the old top-level keys never existed,
+        # so every point was price-less and the history chart rendered empty.
+        # Read the nested dollar fields first, then the *_dollars fallbacks, and
+        # drop the legacy bare cent keys (close_price / last_price) — those were
+        # a latent 100x unit hazard on the same 0-1 axis.
+        price = item.get("price") or {}
         last_price = parse_price_dollars(
-            item.get("close_price_dollars") or item.get("close_price") or item.get("last_price_dollars") or item.get("last_price")
+            price.get("close_dollars")
+            or price.get("mean_dollars")
+            or item.get("close_price_dollars")
+            or item.get("last_price_dollars")
         )
-        mean_price = parse_price_dollars(item.get("mean_price_dollars") or item.get("mean_price")) or last_price
+        mean_price = parse_price_dollars(
+            price.get("mean_dollars") or item.get("mean_price_dollars")
+        ) or last_price
         volume = parse_price_dollars(item.get("volume_fp") or item.get("volume_dollars") or item.get("volume"))
         points.append(
             {

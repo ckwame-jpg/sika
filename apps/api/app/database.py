@@ -76,8 +76,8 @@ SCHEMA_PATCHES: dict[str, dict[str, str]] = {
         "scoring_diagnostics": "JSON",
     },
     "model_family_runtime_health": {
-        "last_error_at": "DATETIME",
-        "degraded_until": "DATETIME",
+        "last_error_at": "TIMESTAMP WITH TIME ZONE",
+        "degraded_until": "TIMESTAMP WITH TIME ZONE",
         "promotion_mode": "VARCHAR",
         "promotion_stability_days": "INTEGER",
         "promotion_baseline_brier": "FLOAT",
