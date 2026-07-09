@@ -192,6 +192,20 @@ def test_aging_excludes_cancelled_predictions(db_session) -> None:
     assert aging.total_pending_past_close == 0
 
 
+def test_aging_includes_unresolved_predictions(db_session) -> None:
+    # 'unresolved' = market closed with no result yet (the Kalshi settlement-lag
+    # case). The retry queue still works these, so the aging badge must count
+    # them; counting only 'pending' hid the stuck rows during an outage.
+    _seed_pending_prediction(
+        db_session,
+        close_offset_hours=8.0,
+        settlement_status="unresolved",
+    )
+    aging = compute_settlement_aging(db_session, now=_NOW)
+    assert aging.total_pending_past_close == 1
+    assert aging.bucket_6_to_24h == 1
+
+
 def test_aging_handles_naive_close_times_from_sqlite(db_session) -> None:
     # SQLite drops tz info on read — close_time comes back naive. The
     # helper coerces to UTC; in Postgres both sides stay aware.

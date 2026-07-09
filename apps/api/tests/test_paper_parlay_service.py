@@ -167,6 +167,28 @@ def test_create_paper_parlay_persists_parlay_and_legs(db_session: Session) -> No
     assert [leg.ticker for leg in parlay.legs] == ["TEST-A", "TEST-B"]
 
 
+def test_create_paper_parlay_rejects_combined_price_underflow(db_session: Session) -> None:
+    """The rounded product of long-shot legs can be exactly 0.0 (schema-legal
+    input), which the win-settlement branch would divide by — a ZeroDivisionError
+    that poisons the whole paper-parlay settlement pass. Reject it at creation."""
+    event = _add_event(db_session, prefix="underflow")
+    leg_a = _add_market(db_session, event=event, ticker="UF-A", subject_name="A", subject_team="X")
+    leg_b = _add_market(db_session, event=event, ticker="UF-B", subject_name="B", subject_team="Y")
+    _add_prediction(db_session, market=leg_a, fair_yes_price=0.5, fair_no_price=0.5)
+    _add_prediction(db_session, market=leg_b, fair_yes_price=0.5, fair_no_price=0.5)
+
+    payload = PaperParlayCreate(
+        stake=10.0,
+        legs=[
+            PaperParlayLegCreate(ticker="UF-A", side="yes", suggested_price=0.0005),
+            PaperParlayLegCreate(ticker="UF-B", side="yes", suggested_price=0.0005),
+        ],
+    )
+    with pytest.raises(HTTPException) as exc:
+        create_paper_parlay(db_session, payload)
+    assert exc.value.status_code == 400
+
+
 def test_create_paper_parlay_rejects_unknown_ticker(db_session: Session) -> None:
     event = _add_event(db_session, prefix="unk")
     leg = _add_market(db_session, event=event, ticker="REAL", subject_name="A", subject_team="X")
