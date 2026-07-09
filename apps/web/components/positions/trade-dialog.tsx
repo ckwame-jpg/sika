@@ -92,20 +92,22 @@ export function TradeDialog({
 
   const hasTickerDefault = Boolean(defaults?.ticker);
 
-  // Compute projection. We charge the side-appropriate price: YES at
-  // ``p`` costs $p per $1 payout, NO at ``p`` costs $(1-p) per $1
-  // payout. Bail out early on invalid inputs so the form shows "—".
+  // Compute projection. ``parsedPrice`` is already the SELECTED side's cost —
+  // callers seed the dialog from the pick's side-relative ``suggested_price``
+  // (e.g. the NO ask for a NO pick), and the backend stores ``entry_price`` on
+  // that same axis — so a $1 payout costs $price regardless of side. Do NOT
+  // invert for NO; that double-inverted the stake (~2-3x wrong quantity and
+  // open exposure). Bail out early on invalid inputs so the form shows "—".
   const projection = useMemo(() => {
     const stake = parseStake(stakeInput);
     if (stake == null || parsedPrice == null || parsedPrice <= 0 || parsedPrice >= 1) {
       return null;
     }
-    const effective = side === "yes" ? parsedPrice : 1 - parsedPrice;
-    const payout = stake / effective;
+    const payout = stake / parsedPrice;
     const profit = payout - stake;
     const profitPct = (profit / stake) * 100;
     return { stake, payout, profit, profitPct };
-  }, [parsedPrice, side, stakeInput]);
+  }, [parsedPrice, stakeInput]);
 
   async function handleSubmit() {
     const stake = parseStake(stakeInput);
@@ -128,12 +130,12 @@ export function TradeDialog({
       return;
     }
 
-    // Compute contract quantity from the dollar amount. YES at $0.55
-    // and $20 stake → 36.36 contracts → round to 36 (paper trade, so
-    // the rounding is cosmetic; the position table still tracks
-    // ``quantity`` × ``entry_price`` for PnL).
-    const effective = side === "yes" ? price : 1 - price;
-    const computedQuantity = Math.max(1, Math.round(stake / effective));
+    // Compute contract quantity from the dollar amount. ``price`` is the
+    // selected side's cost (same axis as the submitted ``entry_price``), so
+    // quantity = stake / price for both sides — $20 at $0.55 → 36 contracts.
+    // (Previously NO used 1 - price, so the stored quantity × entry_price
+    // diverged ~2-3x from the dollars the operator entered.)
+    const computedQuantity = Math.max(1, Math.round(stake / price));
 
     setLoading(true);
     setError(null);

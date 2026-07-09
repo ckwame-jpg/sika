@@ -194,6 +194,31 @@ def test_enrich_writes_kelly_block_on_both_diagnostics(db_session) -> None:
     assert signal_diag["kelly_sizing"]["fraction"] == rec_diag["kelly_sizing"]["fraction"]
 
 
+def test_enrich_no_side_uses_no_entry_price_not_its_complement(db_session) -> None:
+    # NO pick: model P(YES)=0.30 (P(NO)=0.70) and NO ask = 0.60 (the
+    # side-relative suggested_price). Correct raw Kelly = (0.70 - 0.60) /
+    # (1 - 0.60) = 0.25. The pre-fix hook passed 0.60 as price_yes and the
+    # consumer re-inverted it to 0.40, producing a phantom raw Kelly of 0.50.
+    capture = _make_capture(db_session, probability_yes=0.30, price=0.60, side="no")
+    _enrich_with_kelly_sizing(db_session, capture)
+    block = capture.scored.recommendation.scoring_diagnostics["kelly_sizing"]
+    assert block["raw_kelly"] == pytest.approx(0.25)
+
+
+def test_enrich_no_side_positive_edge_longshot_not_suppressed(db_session) -> None:
+    # NO longshot: P(YES)=0.78 (P(NO)=0.22), NO ask=0.17 → real positive edge.
+    # Correct fractional Kelly ~= 0.015 (above the 0.005 floor). The pre-fix
+    # double inversion made P(NO)=0.22 <= price 0.83, so raw Kelly was 0 and
+    # the position was wrongly suppressed as below_floor.
+    capture = _make_capture(db_session, probability_yes=0.78, price=0.17, side="no")
+    _enrich_with_kelly_sizing(db_session, capture)
+    block = capture.scored.recommendation.scoring_diagnostics["kelly_sizing"]
+    assert block["below_floor"] is False
+    # Persisted raw_kelly is rounded to 4 decimals (~0.0602).
+    assert block["raw_kelly"] == pytest.approx((0.22 - 0.17) / (1 - 0.17), abs=1e-4)
+    assert block["fraction"] > 0.0
+
+
 def test_enrich_skips_when_capture_scope_not_recommendation(db_session) -> None:
     """Coverage-only or signal-only captures don't get sized."""
     capture = _make_capture(db_session, capture_scope="coverage")
