@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.clients.kalshi import KalshiPublicClient
 from app.config import get_settings
 from app.models import Market, RefreshJob, Run
+from app.query_utils import chunked
 from app.services.market_mapping import map_markets_to_events
 from app.services.market_support import (
     classify_market_payload,
@@ -168,9 +169,11 @@ def _current_slate_candidate_market_ids(
     candidate_market_ids: set[int] = set(existing_recommendation_market_ids)
     affected_event_ids: set[int] = set()
 
-    touched_markets = db.scalars(
-        select(Market).where(Market.id.in_(tuple(sorted(touched_market_ids))))
-    ).all() if touched_market_ids else []
+    touched_markets: list[Market] = []
+    for market_id_chunk in chunked(sorted(touched_market_ids)):
+        touched_markets.extend(
+            db.scalars(select(Market).where(Market.id.in_(tuple(market_id_chunk)))).all()
+        )
     touched_current_prop_keys: set[tuple[int, str, str]] = set()
     for market in touched_markets:
         if market.event_id is None:
@@ -189,9 +192,11 @@ def _current_slate_candidate_market_ids(
 
     affected_event_ids.update(event_id for event_id in touched_event_ids if event_id in current_event_ids)
     if affected_event_ids:
-        event_markets = db.scalars(
-            select(Market).where(Market.event_id.in_(tuple(sorted(affected_event_ids))))
-        ).all()
+        event_markets: list[Market] = []
+        for event_id_chunk in chunked(sorted(affected_event_ids)):
+            event_markets.extend(
+                db.scalars(select(Market).where(Market.event_id.in_(tuple(event_id_chunk)))).all()
+            )
         for market in event_markets:
             if (market.sport_key or "").upper() not in tracked_sports:
                 continue

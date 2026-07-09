@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Event, EventParticipant, Market
+from app.query_utils import chunked
 from app.services.market_support import infer_market_sport_key, market_anchor_time
 from app.sports.base import alias_tokens
 
@@ -54,17 +55,20 @@ def _normalize_utc(value):
 
 
 def map_markets_to_events(db: Session, *, candidate_market_ids: set[int] | None = None) -> int:
-    stmt = select(Market)
+    # Bug #17: never auto-remap a market that ops has manually
+    # overridden — the override stamp is sticky across refresh cycles.
+    base = select(Market).where(Market.mapping_overridden_at.is_(None))
     if candidate_market_ids is None:
-        stmt = stmt.where(Market.event_id.is_(None))
+        markets = db.scalars(base.where(Market.event_id.is_(None))).all()
     else:
         if not candidate_market_ids:
             return 0
-        stmt = stmt.where(Market.id.in_(tuple(sorted(candidate_market_ids))))
-    # Bug #17: never auto-remap a market that ops has manually
-    # overridden — the override stamp is sticky across refresh cycles.
-    stmt = stmt.where(Market.mapping_overridden_at.is_(None))
-    markets = db.scalars(stmt).all()
+        # Chunk the id list to stay under SQLite's host-parameter cap.
+        markets: list[Market] = []
+        for market_id_chunk in chunked(sorted(candidate_market_ids)):
+            markets.extend(
+                db.scalars(base.where(Market.id.in_(tuple(market_id_chunk)))).all()
+            )
     if not markets:
         return 0
 

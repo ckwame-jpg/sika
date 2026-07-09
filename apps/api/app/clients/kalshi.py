@@ -1,4 +1,5 @@
 import base64
+import logging
 import threading
 import time
 import uuid
@@ -11,6 +12,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 # Process-level token bucket for Kalshi public API calls. One limiter per
@@ -164,7 +167,7 @@ class KalshiPublicClient:
         status: str = "open",
         limit: int = 1000,
         mve_filter: str = "exclude",
-        max_pages: int = 50,
+        max_pages: int = 100,
         cursor: str | None = None,
         wall_clock_budget_seconds: float | None = None,
     ):
@@ -186,6 +189,8 @@ class KalshiPublicClient:
         per_page = max(1, min(int(limit), 1000))
         next_cursor = cursor
         started = time.monotonic()
+        pages_fetched = 0
+        markets_seen = 0
         for _ in range(max_pages):
             if (
                 wall_clock_budget_seconds is not None
@@ -200,16 +205,31 @@ class KalshiPublicClient:
             )
             if not page_markets:
                 break
+            pages_fetched += 1
+            markets_seen += len(page_markets)
             yield page_markets, next_cursor
             if not next_cursor:
                 break
+        else:
+            # Bug #18 guard: the loop ran the full max_pages without a natural
+            # break. If the cursor is still live, Kalshi has more markets we
+            # never scanned — previously a silent truncation.
+            if next_cursor:
+                logger.warning(
+                    "iter_market_pages hit max_pages=%d with a live cursor: "
+                    "scanned %d markets across %d pages; remaining markets NOT "
+                    "fetched (raise max_pages or set wall_clock_budget_seconds)",
+                    max_pages,
+                    markets_seen,
+                    pages_fetched,
+                )
 
     def list_markets(
         self,
         status: str = "open",
         limit: int = 1000,
         mve_filter: str = "exclude",
-        max_pages: int = 50,
+        max_pages: int = 100,
         wall_clock_budget_seconds: float | None = None,
     ) -> list[dict[str, Any]]:
         """Return paginated Kalshi markets, stopping at the FIRST of:
