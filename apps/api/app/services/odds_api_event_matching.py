@@ -68,6 +68,7 @@ logger = logging.getLogger(__name__)
 # state.
 _ODDS_API_SLUG_TO_SIKA_SPORT: dict[str, str] = {
     "basketball_nba": "NBA",
+    "basketball_wnba": "WNBA",
     "baseball_mlb": "MLB",
     "americanfootball_nfl": "NFL",
     "tennis_atp_french_open": "TENNIS",
