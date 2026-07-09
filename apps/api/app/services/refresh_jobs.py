@@ -1720,6 +1720,13 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
             db.commit()
             return _refresh_job_snapshot(db, job.id)
         except Exception as exc:
+            # The work above may have failed mid-flush (an IntegrityError, a
+            # SQLite lock, or the Postgres statement-timeout cancellation),
+            # leaving the session in a failed transaction. Roll back first so
+            # the failure bookkeeping below can issue SQL instead of raising
+            # PendingRollbackError and wedging the job in 'running' (which then
+            # blocks the singleton queue and masks the real error as a timeout).
+            db.rollback()
             if job.kind == "prop_refresh" and isinstance(exc, httpx.HTTPError):
                 # Bug #22: bound the transient-error requeue loop.
                 # Previously every ``httpx.HTTPError`` requeued the job
