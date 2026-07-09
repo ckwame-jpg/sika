@@ -234,7 +234,14 @@ def _time_to_close_minutes(market: Market, *, now: datetime | None = None) -> in
     close_time = market.close_time if market is not None else None
     if close_time is None:
         return None
+    # SQLite returns naive datetimes even for DateTime(timezone=True) columns;
+    # market close times are stored as UTC, so attach UTC before arithmetic to
+    # avoid "can't subtract offset-naive and offset-aware datetimes".
+    if close_time.tzinfo is None:
+        close_time = close_time.replace(tzinfo=timezone.utc)
     current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
     delta_seconds = (close_time - current).total_seconds()
     if delta_seconds <= 0:
         return 0

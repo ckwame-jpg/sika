@@ -14,6 +14,7 @@ from app.clients.espn import EspnPublicClient
 from app.clients.kalshi import KalshiPublicClient, snapshot_from_market_payload
 from app.clients.sports_data import TheSportsDBClient
 from app.config import get_settings
+from app.query_utils import chunked
 from app.models import Event, EventParticipant, League, Market, MarketSnapshot, ParlayRecommendation, Participant, Recommendation, RefreshJob, Run, Sport
 from app.services.market_mapping import map_markets_to_events
 from app.services.market_support import (
@@ -136,11 +137,12 @@ def _persist_market_payload_records(
 
     existing_markets: dict[str, Market] = {}
     tickers = sorted({str(record["payload"].get("ticker") or "") for record in payload_records if record["payload"].get("ticker")})
-    if tickers:
-        existing_markets = {
-            market.ticker: market
-            for market in db.scalars(select(Market).where(Market.ticker.in_(tuple(tickers)))).all()
-        }
+    # Chunk the ticker list so a large slate can't overflow SQLite's
+    # host-parameter cap ("too many SQL variables"), which was
+    # crash-looping the market refresh and leaving 0 candidate markets.
+    for ticker_chunk in chunked(tickers):
+        for market in db.scalars(select(Market).where(Market.ticker.in_(tuple(ticker_chunk)))).all():
+            existing_markets[market.ticker] = market
     latest_snapshots = latest_snapshot_by_market_id(db, [market.id for market in existing_markets.values()])
 
     def persist_market_payload(

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.models import Event, EventParticipant, Market, MarketSnapshot, Prediction, Recommendation
+from app.query_utils import chunked
 from app.services.predictions import OPEN_MARKET_STATUSES
 
 if TYPE_CHECKING:
@@ -284,25 +285,31 @@ def _latest_per_market_by_captured_at(
     """
     if not market_ids:
         return {}
-    ranked = (
-        select(
-            model,
-            func.row_number()
-            .over(
-                partition_by=model.market_id,
-                order_by=(model.captured_at.desc(), model.id.desc()),
+    result: dict[int, Any] = {}
+    # Chunk market_ids so a large id list can't overflow SQLite's
+    # host-parameter cap ("too many SQL variables"). Each market's
+    # latest row is independent, so per-chunk results merge cleanly.
+    for market_id_chunk in chunked(market_ids):
+        ranked = (
+            select(
+                model,
+                func.row_number()
+                .over(
+                    partition_by=model.market_id,
+                    order_by=(model.captured_at.desc(), model.id.desc()),
+                )
+                .label("rn"),
             )
-            .label("rn"),
+            .where(model.market_id.in_(market_id_chunk))
+            .subquery()
         )
-        .where(model.market_id.in_(market_ids))
-        .subquery()
-    )
-    rows = db.scalars(
-        select(model)
-        .join(ranked, model.id == ranked.c.id)
-        .where(ranked.c.rn == 1)
-    ).all()
-    return {row.market_id: row for row in rows}
+        rows = db.scalars(
+            select(model)
+            .join(ranked, model.id == ranked.c.id)
+            .where(ranked.c.rn == 1)
+        ).all()
+        result.update({row.market_id: row for row in rows})
+    return result
 
 
 def latest_snapshot_by_market_id(db: Session, market_ids: list[int]) -> dict[int, MarketSnapshot]:
@@ -327,32 +334,33 @@ def recent_snapshots_by_market_id(
     """
     if not market_ids or limit_per_market <= 0:
         return {}
-    ranked = (
-        select(
-            MarketSnapshot,
-            func.row_number()
-            .over(
-                partition_by=MarketSnapshot.market_id,
-                order_by=(MarketSnapshot.captured_at.desc(), MarketSnapshot.id.desc()),
-            )
-            .label("rn"),
-        )
-        .where(MarketSnapshot.market_id.in_(market_ids))
-        .subquery()
-    )
-    rows = db.scalars(
-        select(MarketSnapshot)
-        .join(ranked, MarketSnapshot.id == ranked.c.id)
-        .where(ranked.c.rn <= limit_per_market)
-        .order_by(
-            MarketSnapshot.market_id.asc(),
-            MarketSnapshot.captured_at.asc(),
-            MarketSnapshot.id.asc(),
-        )
-    ).all()
     by_market: dict[int, list[MarketSnapshot]] = {}
-    for row in rows:
-        by_market.setdefault(row.market_id, []).append(row)
+    for market_id_chunk in chunked(market_ids):
+        ranked = (
+            select(
+                MarketSnapshot,
+                func.row_number()
+                .over(
+                    partition_by=MarketSnapshot.market_id,
+                    order_by=(MarketSnapshot.captured_at.desc(), MarketSnapshot.id.desc()),
+                )
+                .label("rn"),
+            )
+            .where(MarketSnapshot.market_id.in_(market_id_chunk))
+            .subquery()
+        )
+        rows = db.scalars(
+            select(MarketSnapshot)
+            .join(ranked, MarketSnapshot.id == ranked.c.id)
+            .where(ranked.c.rn <= limit_per_market)
+            .order_by(
+                MarketSnapshot.market_id.asc(),
+                MarketSnapshot.captured_at.asc(),
+                MarketSnapshot.id.asc(),
+            )
+        ).all()
+        for row in rows:
+            by_market.setdefault(row.market_id, []).append(row)
     return by_market
 
 
