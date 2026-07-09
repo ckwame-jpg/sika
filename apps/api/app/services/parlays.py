@@ -705,7 +705,15 @@ def _settle_parlay_rows(unsettled: list[ParlayPrediction]) -> dict[str, int]:
             summary["won"] += 1
             continue
 
-        if any(outcome in {"cancelled", "push"} for outcome in outcomes):
+        # Only void the whole parlay on a cancel/push once no leg is still
+        # pending or unresolved. Otherwise the parlay finalizes as cancelled
+        # mid-slate and a leg that later loses (checked first, above) can never
+        # flip it to lost — silently inflating P&L.
+        leg_still_open = any(
+            s == "pending" or o == "pending" or s == "unresolved" or o == "unresolved"
+            for s, o in zip(statuses, outcomes, strict=False)
+        )
+        if not leg_still_open and any(outcome in {"cancelled", "push"} for outcome in outcomes):
             parlay.settlement_status = "cancelled"
             parlay.prediction_outcome = "cancelled"
             parlay.settlement_value = None

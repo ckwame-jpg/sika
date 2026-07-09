@@ -222,6 +222,45 @@ def test_settle_paper_parlays_marks_cancelled_on_push_or_cancel(db_session: Sess
     assert parlay.realized_pnl == 0.0
 
 
+def test_settle_paper_parlays_waits_on_push_while_a_leg_is_pending(db_session: Session) -> None:
+    """Regression: a push/cancel must NOT finalize the parlay while another
+    leg is still pending. Otherwise the row goes terminally 'cancelled' and a
+    leg that later loses can never flip it to lost — silently inflating P&L."""
+    event = _add_event(db_session, "cxlpend")
+    market_a = _add_market(db_session, event=event, ticker="CXLP-A")
+    market_b = _add_market(db_session, event=event, ticker="CXLP-B")
+    pred_a = _add_prediction_for_market(db_session, market=market_a, outcome="push")
+    pred_b = _add_prediction_for_market(
+        db_session, market=market_b, outcome="pending", settlement_status="pending"
+    )
+    parlay = _add_parlay_with_legs(
+        db_session,
+        stake=50.0,
+        legs=[(market_a, pred_a), (market_b, pred_b)],
+    )
+    db_session.commit()
+
+    summary = settle_paper_parlays(db_session)
+    db_session.commit()
+    db_session.refresh(parlay)
+
+    # Still pending — waiting on leg B, NOT finalized as cancelled.
+    assert summary["pending"] == 1
+    assert parlay.outcome == "pending"
+    assert parlay.settlement_status == "pending"
+
+    # Leg B now loses → the whole parlay must settle LOST, not cancelled.
+    pred_b.prediction_outcome = "lost"
+    pred_b.settlement_status = "settled"
+    db_session.commit()
+    settle_paper_parlays(db_session)
+    db_session.commit()
+    db_session.refresh(parlay)
+
+    assert parlay.outcome == OUTCOME_LOST
+    assert parlay.realized_pnl == -50.0
+
+
 def test_settle_paper_parlays_leaves_pending_when_a_leg_is_unsettled(
     db_session: Session,
 ) -> None:

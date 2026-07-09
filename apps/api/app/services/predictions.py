@@ -64,14 +64,17 @@ class SettlementAging:
 
 
 def compute_settlement_aging(db: Session, *, now: datetime | None = None) -> SettlementAging:
-    """Count predictions stuck in ``settlement_status='pending'`` past
-    their market's ``close_time``, bucketed by how long ago the close
-    was.
+    """Count predictions still unsettled (``settlement_status`` in
+    {``pending``, ``unresolved``}) past their market's ``close_time``,
+    bucketed by how long ago the close was.
 
     Predictions whose market has no ``close_time`` (early market state
-    or non-Kalshi sources) are skipped — we don't know when they
-    SHOULD have settled. Cancelled / resolved predictions are skipped
-    because their ``settlement_status`` is not ``pending`` anymore.
+    or non-Kalshi sources) are skipped — we don't know when they SHOULD
+    have settled. Settled / cancelled rows are skipped. ``unresolved``
+    rows (market closed with no result yet — the Kalshi settlement-lag
+    case the retry queue keeps working) ARE counted: counting only
+    ``pending`` made the badge read zero during a real settlement outage,
+    hiding exactly the stuck rows it exists to surface.
     """
     moment = now or _now_utc()
     if moment.tzinfo is None:
@@ -82,7 +85,7 @@ def compute_settlement_aging(db: Session, *, now: datetime | None = None) -> Set
         select(Market.close_time)
         .join(Prediction, Prediction.market_id == Market.id)
         .where(
-            Prediction.settlement_status == "pending",
+            Prediction.settlement_status.in_(("pending", "unresolved")),
             Market.close_time.is_not(None),
             Market.close_time < moment,
         )

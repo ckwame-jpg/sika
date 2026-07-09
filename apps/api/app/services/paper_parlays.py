@@ -129,6 +129,14 @@ def create_paper_parlay(
         prod(leg.request.suggested_price for leg in resolved_legs),
         6,
     )
+    # Guard against underflow: the product of enough long-shot legs rounds to
+    # exactly 0.0 (e.g. four 2-cent legs), which the win-settlement branch then
+    # divides by — a ZeroDivisionError that poisons the entire settlement pass.
+    if combined_market_price <= 0.0:
+        raise HTTPException(
+            status_code=400,
+            detail="Combined parlay price is too small to price; the legs are too long-shot.",
+        )
     combined_model_probability = round(
         _correlation_adjusted_joint(resolved_legs),
         6,
@@ -523,7 +531,13 @@ def settle_paper_parlays(db: Session) -> dict[str, int]:
             # caller bypasses the schema and writes 0, this will
             # raise ZeroDivisionError and surface in the cron logs
             # rather than silently producing infinity.
-            profit = parlay.stake * (1.0 / parlay.combined_market_price - 1.0)
+            # Defensive: a legacy row created before the creation-time guard
+            # could carry combined_market_price == 0. Book zero rather than
+            # raise ZeroDivisionError and abort the whole settlement pass.
+            if parlay.combined_market_price and parlay.combined_market_price > 0.0:
+                profit = parlay.stake * (1.0 / parlay.combined_market_price - 1.0)
+            else:
+                profit = 0.0
             parlay.realized_pnl = round(profit, 4)
             parlay.settled_at = now
             parlay.settlement_notes = "Every leg settled as a win."
@@ -531,7 +545,15 @@ def settle_paper_parlays(db: Session) -> dict[str, int]:
             summary["won"] += 1
             continue
 
-        if any(outcome in {"cancelled", "push"} for outcome in outcomes):
+        # Only void the whole parlay on a cancel/push once no leg is still
+        # pending or unresolved. Otherwise the parlay finalizes as cancelled
+        # mid-slate and a leg that later loses (checked first, above) can never
+        # flip it to lost — silently inflating P&L.
+        leg_still_open = any(
+            s == "pending" or o == "pending" or s == "unresolved" or o == "unresolved"
+            for s, o in zip(statuses, outcomes, strict=False)
+        )
+        if not leg_still_open and any(outcome in {"cancelled", "push"} for outcome in outcomes):
             parlay.settlement_status = "settled"
             parlay.outcome = OUTCOME_CANCELLED
             parlay.realized_pnl = 0.0
