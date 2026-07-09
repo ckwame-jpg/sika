@@ -21,6 +21,17 @@ if TYPE_CHECKING:
 # the ``/product/freshness`` endpoint enumerates a per-WNBA scope row.
 CURRENT_WATCHLIST_SPORTS = frozenset({"NBA", "MLB", "WNBA"})
 CURRENT_WATCHLIST_MARKET_FAMILIES = frozenset({"winner", "game_line", "player_prop"})
+# Smarter NFL PR 8 — per-sport family allowlist. Sports without an
+# entry get the full family set (existing behavior). This is the
+# "lines live before props" mechanism: PR 10a sets
+# ``"NFL": frozenset({"winner", "game_line"})`` and PR 10b removes it.
+CURRENT_WATCHLIST_FAMILIES_BY_SPORT: dict[str, frozenset[str]] = {}
+
+
+def current_families_for_sport(sport_key: str | None) -> frozenset[str]:
+    return CURRENT_WATCHLIST_FAMILIES_BY_SPORT.get(
+        (sport_key or "").upper(), CURRENT_WATCHLIST_MARKET_FAMILIES
+    )
 TERMINAL_EVENT_STATUSES = frozenset({"completed", "cancelled"})
 CURRENT_WATCHLIST_MAX_IN_PROGRESS_AGE = timedelta(hours=18)
 
@@ -94,7 +105,7 @@ def is_current_watchlist_market(market: Market | None, *, now: datetime | None =
         return False
     if (market.status or "").lower() not in OPEN_MARKET_STATUSES:
         return False
-    if str((market.raw_data or {}).get("copilot_market_family") or "") not in CURRENT_WATCHLIST_MARKET_FAMILIES:
+    if str((market.raw_data or {}).get("copilot_market_family") or "") not in current_families_for_sport(market.sport_key):
         return False
     return is_current_watchlist_event(market.event, now=now)
 
@@ -196,7 +207,15 @@ def load_current_watchlist_markets(
         if not market_ids:
             return []
         stmt = stmt.where(Market.id.in_(tuple(sorted(market_ids))))
-    return list(db.scalars(stmt).all())
+    # Smarter NFL PR 8 — the SQL filter above uses the GLOBAL family
+    # set (per-sport filtering in JSON-extract SQL is awkward across
+    # SQLite/Postgres); the per-sport allowlist applies here in Python.
+    return [
+        market
+        for market in db.scalars(stmt).all()
+        if str((market.raw_data or {}).get("copilot_market_family") or "")
+        in current_families_for_sport(market.sport_key)
+    ]
 
 
 def current_watchlist_markets(

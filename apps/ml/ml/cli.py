@@ -36,7 +36,7 @@ _ADVANCED_ONLY_MAP = {"auto": None, "yes": True, "no": False}
 # rows accumulate the readiness panel will mark them
 # ``insufficient_history`` — same shape NBA + MLB families used during
 # their cold-start windows.
-_DEFAULT_SERVE_FAMILY_KEYS = "mlb_props,nba_props,wnba_props,mlb_singles,nba_singles,wnba_singles"
+_DEFAULT_SERVE_FAMILY_KEYS = "mlb_props,nba_props,wnba_props,nfl_props,mlb_singles,nba_singles,wnba_singles,nfl_singles"
 
 
 def _now() -> datetime:
