@@ -42,17 +42,30 @@ def test_parlay_family_key_routes_nfl_not_mixed() -> None:
 
 
 def test_family_allowlist_defaults_preserve_behavior() -> None:
-    # No overrides registered yet (PR 10a adds the NFL lines-first entry).
-    assert CURRENT_WATCHLIST_FAMILIES_BY_SPORT == {}
-    for sport in ("NBA", "MLB", "WNBA", "NFL", None):
+    # PR 10a: NFL runs lines-first; every other sport keeps the full set.
+    for sport in ("NBA", "MLB", "WNBA", None):
         assert current_families_for_sport(sport) == CURRENT_WATCHLIST_MARKET_FAMILIES
 
 
-def test_family_allowlist_override_mechanism() -> None:
-    try:
-        CURRENT_WATCHLIST_FAMILIES_BY_SPORT["NFL"] = frozenset({"winner", "game_line"})
-        assert current_families_for_sport("NFL") == {"winner", "game_line"}
-        assert current_families_for_sport("nfl") == {"winner", "game_line"}
-        assert current_families_for_sport("NBA") == CURRENT_WATCHLIST_MARKET_FAMILIES
-    finally:
-        CURRENT_WATCHLIST_FAMILIES_BY_SPORT.clear()
+def test_nfl_lines_first_allowlist_active() -> None:
+    """PR 10a: NFL winner + game_line surface on the watchlist; props
+    stay research-mode until PR 10b removes this entry."""
+    assert CURRENT_WATCHLIST_FAMILIES_BY_SPORT["NFL"] == {"winner", "game_line"}
+    assert current_families_for_sport("nfl") == {"winner", "game_line"}
+    assert "player_prop" not in current_families_for_sport("NFL")
+
+
+def test_current_watchlist_sports_include_nfl() -> None:
+    from app.services.watchlist_coverage import CURRENT_WATCHLIST_SPORTS
+
+    assert "NFL" in CURRENT_WATCHLIST_SPORTS
+
+
+def test_current_slate_sports_derived_from_watchlist_constant() -> None:
+    """PR 10a killed the triplicated hardcoded sport lists — the slate
+    list must track CURRENT_WATCHLIST_SPORTS automatically."""
+    from app.services.ingestion.cycles import _current_slate_sports
+    from app.services.watchlist_coverage import CURRENT_WATCHLIST_SPORTS
+
+    assert set(_current_slate_sports()) == set(CURRENT_WATCHLIST_SPORTS)
+    assert _current_slate_sports() == sorted(_current_slate_sports())

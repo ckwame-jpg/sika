@@ -19,13 +19,20 @@ if TYPE_CHECKING:
 # Smarter WNBA PR 6 — WNBA joins the current-slate watchlist scope so
 # KXWNBAGAME / KXWNBA player-prop markets surface in the trade desk and
 # the ``/product/freshness`` endpoint enumerates a per-WNBA scope row.
-CURRENT_WATCHLIST_SPORTS = frozenset({"NBA", "MLB", "WNBA"})
+# Smarter NFL PR 10a — NFL goes live behind the PR 9 backtest's GO
+# verdict (SMARTER_NFL_PREP.md), game lines first via the family
+# allowlist below; props/parlays follow in PR 10b.
+CURRENT_WATCHLIST_SPORTS = frozenset({"NBA", "MLB", "WNBA", "NFL"})
 CURRENT_WATCHLIST_MARKET_FAMILIES = frozenset({"winner", "game_line", "player_prop"})
 # Smarter NFL PR 8 — per-sport family allowlist. Sports without an
 # entry get the full family set (existing behavior). This is the
 # "lines live before props" mechanism: PR 10a sets
 # ``"NFL": frozenset({"winner", "game_line"})`` and PR 10b removes it.
-CURRENT_WATCHLIST_FAMILIES_BY_SPORT: dict[str, frozenset[str]] = {}
+CURRENT_WATCHLIST_FAMILIES_BY_SPORT: dict[str, frozenset[str]] = {
+    # Smarter NFL PR 10a — lines live first; PR 10b removes this entry
+    # once research-mode props have a week or two of observed output.
+    "NFL": frozenset({"winner", "game_line"}),
+}
 
 
 def current_families_for_sport(sport_key: str | None) -> frozenset[str]:

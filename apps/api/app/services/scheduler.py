@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.models import EspnPlayerGamelogCache, Event, RefreshJob, Run
 from app.services.ingestion import run_refresh_cycle
+from app.services.watchlist_coverage import CURRENT_WATCHLIST_SPORTS
 from app.services.orders import reconcile_demo_state
 from app.services.refresh_jobs import (
     active_job_for_kind,
@@ -484,7 +485,9 @@ def run_refresh_cycle_now(*, reason: str = "manual", current_slate_only: bool = 
         run = run_refresh_cycle(
             db,
             current_slate_only=current_slate_only,
-            sports=["NBA", "MLB", "WNBA"] if current_slate_only else None,
+            # Smarter NFL PR 10a — derive from CURRENT_WATCHLIST_SPORTS
+            # (see ingestion.cycles._current_slate_sports).
+            sports=sorted(CURRENT_WATCHLIST_SPORTS) if current_slate_only else None,
         )
         snapshot = RefreshRunSnapshot(
             run_id=run.id,
