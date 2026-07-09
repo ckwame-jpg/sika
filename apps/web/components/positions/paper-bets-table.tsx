@@ -76,7 +76,10 @@ export function PaperBetsTable() {
   const truncated =
     (data?.paper_truncated === true) || (data?.paper_parlays_truncated === true);
 
-  if (error) {
+  // Only hard-fail when there's no cached data. SWR keeps the last good
+  // response on a failed revalidation (stale-if-error); blanking the whole
+  // table on a transient 15s poll timeout hid the operator's open exposure.
+  if (error && !data) {
     return (
       <div className="flex h-24 items-center justify-center text-xs text-negative">
         Failed to load paper bets.
@@ -513,7 +516,7 @@ function TypeBadge({ kind }: { kind: "single" | "parlay" }) {
 function PnlCell({ pnl, pending }: { pnl: number | null; pending: boolean }) {
   if (pending) return <span className="font-mono text-xs text-muted-foreground">Open</span>;
   if (pnl == null) return <span className="font-mono text-xs text-muted-foreground">—</span>;
-  const sign = pnl >= 0 ? "+" : "";
+  const sign = pnl >= 0 ? "+" : "-";
   return (
     <span className={cn("font-mono text-xs font-medium", pnlClass(pnl))}>
       {sign}${Math.abs(pnl).toFixed(2)}

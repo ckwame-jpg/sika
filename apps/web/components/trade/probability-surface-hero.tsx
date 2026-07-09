@@ -189,7 +189,9 @@ export function ProbabilitySurfaceHero({
           <span>{scoredCount} shown rn fr </span>
           <span className="th-hl">{recommendationCount} current picks rn type shi</span>
         </div>
-        <div className="th-sub">refreshed at {fmtDatetime(generatedAt)} type shi.</div>
+        <div className="th-sub">
+          {generatedAt ? `refreshed at ${fmtDatetime(generatedAt)} type shi.` : "warming up rn type shi."}
+        </div>
         <div className="th-chips" data-testid="trade-hero-chips">
           <div className="th-chip" data-testid="trade-hero-chip-avg-edge">
             <span className="th-chip-label">AVG EDGE</span>
