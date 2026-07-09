@@ -282,7 +282,10 @@ export function KalshiAccountPanel() {
     }
   }
 
-  if (error) {
+  // Only hard-fail when there's no cached data. SWR keeps the last good
+  // snapshot on a failed poll (stale-if-error), and /positions is the slowest
+  // endpoint, so a transient timeout shouldn't vanish the balance + positions.
+  if (error && !data) {
     return (
       <div className="flex h-24 items-center justify-center text-xs text-negative">
         Failed to load Kalshi account.

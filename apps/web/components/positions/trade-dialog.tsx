@@ -80,7 +80,11 @@ export function TradeDialog({
     setParsedPrice(initialPrice);
     setNotes(defaults?.notes ?? "");
     setError(null);
-  }, [defaults, formatEditablePrice, open]);
+    // Reset only on the open transition. ``defaults`` is a fresh object literal
+    // on every parent render, so depending on it re-ran this effect on each 30s
+    // trade-desk poll and wiped the operator's in-progress stake/notes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // When the operator flips the price-display mode (american / prob /
   // cents) while the dialog is open, re-render the price input string
