@@ -66,6 +66,15 @@ _METRIC_LABELS = {
         "rushing_yards": "Rush Yards",
         "yards_per_rush_attempt": "YPC",
         "rushing_touchdowns": "Rush TD",
+        # Smarter NFL PR 1 — receiving surface so WR / TE / RB queries
+        # and the prop resolver see real numbers instead of all-zero
+        # passing rows.
+        "receptions": "Receptions",
+        "receiving_targets": "Targets",
+        "receiving_yards": "Rec Yards",
+        "yards_per_reception": "YPR",
+        "receiving_touchdowns": "Rec TD",
+        "fumbles_lost": "Fumbles Lost",
     },
     "MLB": {
         "at_bats": "AB",
@@ -150,10 +159,16 @@ _STAT_LINE_SPECS = {
     "NBA": _NBA_STAT_LINE_SPEC,
     # WNBA mirrors NBA — same per-game metric shape, same stat-line phrasing.
     "WNBA": _NBA_STAT_LINE_SPEC,
+    # NFL spans passing / rushing / receiving stat lines by position.
+    # ``_build_stat_line`` drops zero-valued NFL components so a WR
+    # reads "8 receptions, 101 rec yards" instead of "0 pass yards, …".
     "NFL": (
         ("passing_yards", "pass yard", "pass yards"),
         ("passing_touchdowns", "pass TD", "pass TD"),
         ("rushing_yards", "rush yard", "rush yards"),
+        ("receptions", "reception", "receptions"),
+        ("receiving_yards", "rec yard", "rec yards"),
+        ("receiving_touchdowns", "rec TD", "rec TD"),
         ("qbr", "QBR", "QBR"),
     ),
     "MLB": (
@@ -667,17 +682,29 @@ def _build_nfl_game_logs(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 metadata = event_metadata.get(event_id) or {}
                 stats = event_stats.get("stats") or []
                 stat_map = {name: stats[index] if index < len(stats) else None for index, name in enumerate(stat_names)}
+                # ESPN's NFL rows use "-" for stats a position never
+                # accrues (e.g. ``fumblesForced`` on a WR line), unlike
+                # the NBA/MLB payloads — parse via the dash-tolerant
+                # helper so one placeholder can't 500 the whole query.
                 raw_metrics = {
-                    "completions": _parse_number(stat_map.get("completions")),
-                    "passing_attempts": _parse_number(stat_map.get("passingAttempts")),
-                    "passing_yards": _parse_number(stat_map.get("passingYards")),
-                    "passing_touchdowns": _parse_number(stat_map.get("passingTouchdowns")),
-                    "interceptions": _parse_number(stat_map.get("interceptions")),
-                    "sacks": _parse_number(stat_map.get("sacks")),
-                    "qbr": _parse_number(stat_map.get("adjQBR")),
-                    "rushing_attempts": _parse_number(stat_map.get("rushingAttempts")),
-                    "rushing_yards": _parse_number(stat_map.get("rushingYards")),
-                    "rushing_touchdowns": _parse_number(stat_map.get("rushingTouchdowns")),
+                    "completions": _parse_nfl_stat(stat_map.get("completions")),
+                    "passing_attempts": _parse_nfl_stat(stat_map.get("passingAttempts")),
+                    "passing_yards": _parse_nfl_stat(stat_map.get("passingYards")),
+                    "passing_touchdowns": _parse_nfl_stat(stat_map.get("passingTouchdowns")),
+                    "interceptions": _parse_nfl_stat(stat_map.get("interceptions")),
+                    "sacks": _parse_nfl_stat(stat_map.get("sacks")),
+                    "qbr": _parse_nfl_stat(stat_map.get("adjQBR")),
+                    "rushing_attempts": _parse_nfl_stat(stat_map.get("rushingAttempts")),
+                    "rushing_yards": _parse_nfl_stat(stat_map.get("rushingYards")),
+                    "rushing_touchdowns": _parse_nfl_stat(stat_map.get("rushingTouchdowns")),
+                    # Smarter NFL PR 1 — receiving stats (WR/TE/RB
+                    # gamelog payloads carry these instead of passing;
+                    # stat names verified against live ESPN payloads).
+                    "receptions": _parse_nfl_stat(stat_map.get("receptions")),
+                    "receiving_targets": _parse_nfl_stat(stat_map.get("receivingTargets")),
+                    "receiving_yards": _parse_nfl_stat(stat_map.get("receivingYards")),
+                    "receiving_touchdowns": _parse_nfl_stat(stat_map.get("receivingTouchdowns")),
+                    "fumbles_lost": _parse_nfl_stat(stat_map.get("fumblesLost")),
                 }
                 game_logs[event_id] = _build_game_entry("NFL", metadata, event_id, raw_metrics, _nfl_metrics_for_game(raw_metrics))
 
@@ -924,6 +951,12 @@ def _nfl_metrics_for_game(raw: dict[str, float]) -> dict[str, float | None]:
         "rushing_yards": raw["rushing_yards"],
         "yards_per_rush_attempt": _rate(raw["rushing_yards"], raw["rushing_attempts"]),
         "rushing_touchdowns": raw["rushing_touchdowns"],
+        "receptions": raw["receptions"],
+        "receiving_targets": raw["receiving_targets"],
+        "receiving_yards": raw["receiving_yards"],
+        "yards_per_reception": _rate(raw["receiving_yards"], raw["receptions"]),
+        "receiving_touchdowns": raw["receiving_touchdowns"],
+        "fumbles_lost": raw["fumbles_lost"],
     }
 
 
@@ -944,6 +977,12 @@ def _nfl_summary_metrics(game_logs: list[dict[str, Any]]) -> dict[str, float | N
         "rushing_yards": _round_average(raw_totals["rushing_yards"], count),
         "yards_per_rush_attempt": _rate(raw_totals["rushing_yards"], raw_totals["rushing_attempts"]),
         "rushing_touchdowns": _round_average(raw_totals["rushing_touchdowns"], count),
+        "receptions": _round_average(raw_totals["receptions"], count),
+        "receiving_targets": _round_average(raw_totals["receiving_targets"], count),
+        "receiving_yards": _round_average(raw_totals["receiving_yards"], count),
+        "yards_per_reception": _rate(raw_totals["receiving_yards"], raw_totals["receptions"]),
+        "receiving_touchdowns": _round_average(raw_totals["receiving_touchdowns"], count),
+        "fumbles_lost": _round_average(raw_totals["fumbles_lost"], count),
     }
 
 
@@ -1268,6 +1307,12 @@ def _build_stat_line(sport_key: str | None, metrics: dict[str, float | None]) ->
         value = metrics.get(metric_key)
         if value is None:
             continue
+        # Smarter NFL PR 1 — NFL's spec spans passing / rushing /
+        # receiving lines; players only accrue their position's subset,
+        # so zero components are noise ("0 pass yards" on a WR line).
+        # Other sports keep zeros: "0 points" is real information.
+        if sport_key == "NFL" and not value:
+            continue
         label = singular_label if _uses_singular_stat_label(value) else plural_label
         parts.append(f"{_format_stat_line_value(metric_key, value)} {label}")
 
@@ -1330,6 +1375,17 @@ def _parse_number(value: Any) -> float:
     if value in (None, ""):
         return 0.0
     return float(str(value).replace(",", ""))
+
+
+def _parse_nfl_stat(value: Any) -> float:
+    """Smarter NFL PR 1 — ESPN NFL gamelog rows emit ``"-"`` for stats a
+    position never accrues (verified live: WR rows carry ``"-"`` for
+    ``fumblesForced`` / ``kicksBlocked``). Treat any unparseable
+    placeholder as 0.0 instead of letting ``float("-")`` raise."""
+    try:
+        return _parse_number(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _parse_minutes(value: Any) -> float:

@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     mlb_prop_gamelog_cache_minutes: int = 60
     # WNBA shares NBA's payload shape + cadence; default to the NBA TTL.
     wnba_prop_gamelog_cache_minutes: int = 30
+    # Smarter NFL PR 1 — NFL players log one game a week, so a 6-hour
+    # gamelog TTL keeps game-day freshness without the daily-sport churn
+    # the 30-minute NBA TTL is sized for.
+    nfl_prop_gamelog_cache_minutes: int = 360
     current_slate_lookback_days: int = 0
     current_slate_lookahead_days: int = 1
     watchlist_min_edge: float = 0.03
@@ -137,6 +141,24 @@ class Settings(BaseSettings):
     wnba_team_advanced_cache_minutes: int = 1440
     wnba_referee_assignments_cache_minutes: int = 240
 
+    # NFL data layer (Smarter NFL PR 1; consumed by the nflverse client
+    # + nfl_advanced loaders from PR 3 onward). nflverse release assets
+    # update nightly during the season, so the bulk datasets default to
+    # 24h TTLs; the injury report and weather run tighter because they
+    # move on game day.
+    nfl_injury_report_cache_minutes: int = 240
+    nfl_weekly_stats_cache_minutes: int = 1440
+    nfl_snap_counts_cache_minutes: int = 1440
+    nfl_depth_chart_cache_minutes: int = 1440
+    nfl_team_rating_cache_minutes: int = 1440
+    nfl_schedule_cache_minutes: int = 10080  # weekly — slate + rest days shift rarely
+    nfl_weather_cache_minutes: int = 60
+    # Margin adjustment (points) applied against a team whose depth-chart
+    # QB1 is OUT / doubtful on a fresh injury report. Literature range is
+    # 3–7 depending on the backup; 4.5 is the conservative midpoint and
+    # the 2025 backtest (Smarter NFL PR 9) re-tunes it.
+    nfl_qb_out_margin_penalty: float = 4.5
+
     # MLB advanced stats
     mlb_batter_advanced_cache_minutes: int = 360
     mlb_pitcher_advanced_cache_minutes: int = 360
@@ -167,6 +189,14 @@ class Settings(BaseSettings):
     # per sport per hour over a 12-hour active window (~48/day,
     # ~1500/month — well under the cap with 2+ sports).
     the_odds_api_cache_ttl_minutes: int = 30
+    # Smarter NFL PR 1 — per-sport TTL overrides so a 4th active sport
+    # doesn't blow the free-tier budget. NFL lines are weekly-cadence:
+    # 6 hours between fetches is plenty outside the pre-kick window, and
+    # the PR 4 event-window gate stops fetches entirely when no NFL game
+    # is near. Sports without an entry fall back to the global TTL.
+    the_odds_api_cache_ttl_minutes_by_sport: dict[str, int] = Field(
+        default_factory=lambda: {"NFL": 360}
+    )
 
     # Smarter #13 phase 2 — NBA referee-assignments cache TTL. NBA
     # posts assignments the afternoon-of for that night's games

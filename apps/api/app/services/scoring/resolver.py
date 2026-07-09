@@ -130,6 +130,10 @@ class PropStatsResolver:
         # PR 4 review Medium).
         if sport == "WNBA":
             return timedelta(minutes=settings.wnba_prop_gamelog_cache_minutes)
+        # NFL games are weekly — its TTL (6h default) is deliberately
+        # looser than the daily sports' (Smarter NFL PR 1).
+        if sport == "NFL":
+            return timedelta(minutes=settings.nfl_prop_gamelog_cache_minutes)
         return timedelta(minutes=settings.mlb_prop_gamelog_cache_minutes)
 
     def _load_player_search(
