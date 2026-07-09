@@ -166,6 +166,91 @@ def _qb_out_adjustment(
     return 0.0
 
 
+QB_REPORT_FRESH_WINDOW_HOURS = 12.0
+OFFICIAL_REPORT_FRESH_WINDOW_HOURS = 48.0
+
+
+def _emit_qb_status_group(
+    db: Session,
+    season: int,
+    features: dict[str, Any],
+    feature_groups: dict[str, FeatureGroupSnapshot],
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Smarter NFL PR 6 — the questionable-QB signal for the SUPPRESS
+    gate (``nfl_qb_status_suppress_when``).
+
+    Reads the QB1 statuses ``_qb_out_adjustment`` already stashed in
+    ``features`` (official weekly report) and cross-checks the fresher
+    ESPN intraday feed by player name. OUT / DOUBTFUL is priced by the
+    margin adjustment; QUESTIONABLE raises the flag that suppresses
+    winner / game-line picks while the situation is live.
+    """
+    from app.services.nfl_injury_report import load_nfl_injury_report  # noqa: PLC0415 — avoid circular import
+
+    moment = now or datetime.now(timezone.utc)
+    espn_report = load_nfl_injury_report(db, allow_network=False)
+    espn_players = {
+        str(name).strip().lower(): entry
+        for name, entry in (espn_report.get("players") or {}).items()
+    }
+    espn_fetched_at = _parse_iso_ts(espn_report.get("report_updated_at"))
+    espn_fresh = (
+        espn_fetched_at is not None
+        and (moment - espn_fetched_at).total_seconds() <= QB_REPORT_FRESH_WINDOW_HOURS * 3600
+    )
+
+    questionable = 0.0
+    data_complete = 0.0
+    for prefix in ("nfl_home", "nfl_away"):
+        qb_name = features.get(f"{prefix}_qb1_name")
+        if not qb_name:
+            continue
+        data_complete = 1.0
+        official_status = str(features.get(f"{prefix}_qb1_report_status") or "").lower()
+        espn_status = str(
+            (espn_players.get(str(qb_name).strip().lower()) or {}).get("status") or ""
+        ).lower()
+        features[f"{prefix}_qb1_espn_status"] = espn_status or None
+        if official_status == "questionable" or (espn_fresh and espn_status == "questionable"):
+            questionable = 1.0
+
+    official = load_nfl_official_injuries(db, season)
+    official_fresh = (
+        official.cached_at is not None
+        and (moment - official.cached_at).total_seconds()
+        <= OFFICIAL_REPORT_FRESH_WINDOW_HOURS * 3600
+    )
+    report_fresh = 1.0 if (espn_fresh or official_fresh) else 0.0
+    fresh_at = espn_fetched_at or official.cached_at
+
+    emit_to_group(
+        feature_groups,
+        features,
+        "nfl_qb_status",
+        {
+            "nfl_qb_status_data_complete": data_complete,
+            "nfl_qb_status_questionable": questionable,
+            "nfl_qb_report_is_fresh": report_fresh,
+        },
+        fresh_at=fresh_at,
+        source="NflInjuryReportCache+NflOfficialInjuryCache",
+    )
+
+
+def _parse_iso_ts(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _rest_adjustment(
     db: Session,
     season: int,
@@ -317,6 +402,7 @@ def build_nfl_game_projection(
     qb_home_penalty = _qb_out_adjustment(db, season, home_code, features, "nfl_home")
     qb_away_penalty = _qb_out_adjustment(db, season, away_code, features, "nfl_away")
     qb_adjustment = qb_away_penalty - qb_home_penalty
+    _emit_qb_status_group(db, season, features, feature_groups)
     rest_adjustment = _rest_adjustment(db, season, event, home_code, away_code, features)
 
     internal_margin = (

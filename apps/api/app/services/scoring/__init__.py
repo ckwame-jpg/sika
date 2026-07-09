@@ -1850,7 +1850,13 @@ def _single_scoring_adjustments(
     # ``_build_scored_recommendation`` only inspects the reason, not
     # which group keyed it.
     injury_suppression_reason: str | None = (
-        suppressions.get("nba_injury") or suppressions.get("wnba_injury")
+        suppressions.get("nba_injury")
+        or suppressions.get("wnba_injury")
+        # Smarter NFL PR 6 — NFL prop OUT/DOUBTFUL + the questionable-QB
+        # game-line gate ride the same aggregation; the downstream
+        # translation inspects the reason string, not the group key.
+        or suppressions.get("nfl_injury")
+        or suppressions.get("nfl_qb_status")
     )
 
     if "has_schedule_context" in features:
@@ -2541,7 +2547,10 @@ def _build_scored_recommendation(
     # lineups are posted. Treat as a hard suppression — the prop is a
     # near-zero either way.
     injury_reason = str(scoring_diagnostics.get("injury_suppression_reason") or "")
-    if injury_reason in {"player_injury_out", "player_injury_doubtful"}:
+    # Smarter NFL PR 6 adds ``starting_qb_questionable`` — an NFL
+    # game-line pick with an unresolved QB1 is unpriceable, not
+    # mispriced, so it suppresses like a hard injury signal.
+    if injury_reason in {"player_injury_out", "player_injury_doubtful", "starting_qb_questionable"}:
         suppression_reasons.append(injury_reason)
     # Smarter #18 phase 2d: sportsbook consensus disagrees with the
     # model by more than the operator-configured pp threshold (and

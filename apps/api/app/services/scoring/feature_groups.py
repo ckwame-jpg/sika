@@ -250,6 +250,39 @@ def wnba_injury_suppress_when(ctx: SuppressionContext) -> str | None:
     return _injury_suppress_when(ctx, family_key="wnba_props")
 
 
+def nfl_injury_suppress_when(ctx: SuppressionContext) -> str | None:
+    """Smarter NFL PR 6 — NFL prop counterpart of the shared
+    OUT/DOUBTFUL gate, family-gated to ``nfl_props`` (Pattern 9)."""
+    return _injury_suppress_when(ctx, family_key="nfl_props")
+
+
+def nfl_qb_status_suppress_when(ctx: SuppressionContext) -> str | None:
+    """Smarter NFL PR 6 — the questionable-QB gate on NFL game lines.
+
+    A starting QB listed OUT or DOUBTFUL is PRICED (the -4.5-point
+    margin adjustment in the game model); *Questionable* is the
+    unpriceable state — the line could move 5+ points either way on a
+    pre-kick decision sika can't predict — so the pick is suppressed
+    rather than nudged (the user-confirmed design decision).
+
+    Fires only for ``nfl_singles`` winner / game-line markets with a
+    fresh QB-status read (``nfl_qb_report_is_fresh``, computed by the
+    game model from the ESPN intraday feed / official report age).
+    """
+    if ctx.family_key != "nfl_singles":
+        return None
+    market_family = str(ctx.metadata.get("copilot_market_family") or "")
+    if market_family not in {"winner", "game_line"}:
+        return None
+    if not (float(ctx.features.get("nfl_qb_status_data_complete") or 0.0) >= 1.0):
+        return None
+    if not (float(ctx.features.get("nfl_qb_report_is_fresh") or 0.0) >= 1.0):
+        return None
+    if float(ctx.features.get("nfl_qb_status_questionable") or 0.0) >= 1.0:
+        return "starting_qb_questionable"
+    return None
+
+
 # Default policy: ignore. Adding a new emitter without an explicit
 # registry entry never accidentally gates scoring; operators opt in.
 DEFAULT_POLICY = FeatureGroupPolicy(
@@ -321,6 +354,21 @@ FEATURE_GROUP_POLICIES: dict[str, FeatureGroupPolicy] = {
         severity=FeatureGroupSeverity.SUPPRESS,
         ttl=timedelta(hours=12),
         suppress_when=wnba_injury_suppress_when,
+    ),
+    # SUPPRESS (Smarter NFL PR 6): NFL prop OUT/DOUBTFUL gate, parallel
+    # to nba_injury / wnba_injury. Consumed once PR 7 emits player
+    # injury features on the NFL prop path.
+    "nfl_injury": FeatureGroupPolicy(
+        severity=FeatureGroupSeverity.SUPPRESS,
+        ttl=timedelta(hours=12),
+        suppress_when=nfl_injury_suppress_when,
+    ),
+    # SUPPRESS (Smarter NFL PR 6): questionable-QB gate on NFL game
+    # lines. OUT/Doubtful QBs are priced; Questionable suppresses.
+    "nfl_qb_status": FeatureGroupPolicy(
+        severity=FeatureGroupSeverity.SUPPRESS,
+        ttl=timedelta(hours=12),
+        suppress_when=nfl_qb_status_suppress_when,
     ),
     # PENALIZE (Smarter NFL PR 5): the sportsbook consensus anchor is a
     # first-class NFL scoring input (unlike the advisory-only
@@ -657,6 +705,8 @@ __all__ = [
     "mlb_lineup_suppress_when",
     "nba_injury_suppress_when",
     "wnba_injury_suppress_when",
+    "nfl_injury_suppress_when",
+    "nfl_qb_status_suppress_when",
     "serialize_feature_groups",
     "deserialize_feature_groups",
 ]

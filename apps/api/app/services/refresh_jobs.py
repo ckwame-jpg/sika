@@ -57,6 +57,10 @@ REFRESH_JOB_KINDS = frozenset({
     # per-season files — there's no per-dataset incremental fetch to
     # split across kinds.
     "nfl_data_refresh",
+    # Smarter NFL PR 6 — ESPN NFL injury feed (the intraday supplement
+    # to the nightly official report). Same shape as the NBA / WNBA
+    # injury refreshes.
+    "nfl_injury_refresh",
 })
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
@@ -85,6 +89,9 @@ WNBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
 # largest ~50 MB (depth charts), plus per-week upserts. Generous
 # budget: a cold GitHub CDN fetch of the full bundle takes ~1-2 min.
 NFL_DATA_REFRESH_WORKER_TIMEOUT_SECONDS = 300.0
+# Smarter NFL PR 6 — single ESPN GET + upsert, same cost profile as
+# the NBA / WNBA injury refreshes.
+NFL_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
 PREDICTION_SETTLEMENT_BATCH_SIZE = 100
 PARLAY_SETTLEMENT_BATCH_SIZE = 50
 # Bug #22: cap the transient-error requeue loop so one persistent
@@ -340,6 +347,8 @@ def _worker_timeout_seconds(job: RefreshJob) -> float:
         return max(default_timeout, NBA_REFEREE_REFRESH_WORKER_TIMEOUT_SECONDS)
     if job.kind == "nfl_data_refresh":
         return max(default_timeout, NFL_DATA_REFRESH_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "nfl_injury_refresh":
+        return max(default_timeout, NFL_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS)
     return default_timeout
 
 
@@ -1671,6 +1680,19 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                 from app.services.wnba_injury_report import load_wnba_injury_report
 
                 payload = load_wnba_injury_report(db, allow_network=True)
+                job.details = {
+                    **(job.details or {}),
+                    "players": len((payload or {}).get("players") or {}),
+                    "report_updated_at": (payload or {}).get("report_updated_at"),
+                }
+            elif job.kind == "nfl_injury_refresh":
+                # Smarter NFL PR 6 — populates ``NflInjuryReportCache``
+                # (the intraday ESPN supplement; the official weekly
+                # report rides the nfl_data_refresh bundle). Mirrors
+                # the NBA / WNBA shape.
+                from app.services.nfl_injury_report import load_nfl_injury_report
+
+                payload = load_nfl_injury_report(db, allow_network=True)
                 job.details = {
                     **(job.details or {}),
                     "players": len((payload or {}).get("players") or {}),

@@ -335,6 +335,19 @@ def _queue_nfl_data_refresh_job() -> bool:
     return _queue_job(kind="nfl_data_refresh", scope="nfl", reason="interval")
 
 
+def _queue_nfl_injury_refresh_job() -> bool:
+    """Smarter NFL PR 6 — queue an ESPN NFL injury-feed refresh.
+
+    Same off-season gate as the data bundle. NFL injury news moves
+    Wed–Sat (practice reports) with a Sunday-morning inactives burst;
+    hourly is the write floor and the near-kick TTL tighten handles
+    game-day freshness on the read side.
+    """
+    if not _nfl_events_upcoming():
+        return False
+    return _queue_job(kind="nfl_injury_refresh", scope="nfl", reason="interval")
+
+
 def _queue_nba_referee_refresh_job() -> bool:
     """Smarter #13 phase 2a-2 — queue an NBA referee-assignments refresh.
 
@@ -734,6 +747,17 @@ def start_scheduler() -> None:
         _queue_nfl_data_refresh_job,
         trigger=CronTrigger(day_of_week="sun", hour=16, minute=0),
         id="nfl_data_refresh_sunday",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Smarter NFL PR 6 — ESPN NFL injury feed, hourly while a US slate
+    # could be moving. Minute offset :05 keeps the three ESPN injury
+    # fetches (NBA :15, WNBA :45, NFL :05) out of each other's way.
+    scheduler.add_job(
+        _queue_nfl_injury_refresh_job,
+        trigger=CronTrigger(hour="12-23,0-5", minute=5),
+        id="nfl_injury_refresh_hourly",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
