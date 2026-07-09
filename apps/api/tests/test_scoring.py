@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 import app.services.scoring as scoring_module
 from app.config import get_settings
 from app.models import Event, EventParticipant, Market, MarketSnapshot, Participant, Prediction, Recommendation, Run, SignalSnapshot
+from app.services.market_support import market_metadata
 from app.services.scoring import (
     ResolvedPropSubject,
     ScoredRecommendation,
@@ -792,6 +793,84 @@ def test_score_event_supports_mlb_first_five_winner_markets(db_session):
     assert recommendation.side == "yes"
     assert recommendation.edge > 0
     assert "first-5 win rate" in recommendation.rationale
+
+
+def test_score_event_supports_nba_spread_markets(db_session):
+    # Regression: the spread branch of _score_game_line used to resolve its
+    # subject via _market_yes_entry, which only handles winner kinds — every
+    # classified spread market silently scored to None. The subject now
+    # resolves from the classifier's copilot_subject_name.
+    home = Participant(external_id="home-spread", sport_key="NBA", display_name="Atlanta Hawks", short_name="Atlanta", participant_type="team")
+    away = Participant(external_id="away-spread", sport_key="NBA", display_name="Boston Celtics", short_name="Boston", participant_type="team")
+    db_session.add_all([home, away])
+    db_session.flush()
+
+    for index in range(4):
+        past_event = Event(
+            external_id=f"spread-past-{index}",
+            sport_key="NBA",
+            name="Boston Celtics at Atlanta Hawks",
+            status="completed",
+            starts_at=datetime(2026, 3, 20 + index, 0, 0, tzinfo=timezone.utc),
+        )
+        db_session.add(past_event)
+        db_session.flush()
+        db_session.add_all(
+            [
+                EventParticipant(event_id=past_event.id, participant_id=home.id, role="home", is_home=True, score=118, result="win"),
+                EventParticipant(event_id=past_event.id, participant_id=away.id, role="away", is_home=False, score=104, result="loss"),
+            ]
+        )
+
+    event = Event(
+        external_id="future-spread-1",
+        sport_key="NBA",
+        name="Boston Celtics at Atlanta Hawks",
+        status="scheduled",
+        starts_at=datetime(2026, 3, 31, 0, 0, tzinfo=timezone.utc),
+    )
+    db_session.add(event)
+    db_session.flush()
+    db_session.add_all(
+        [
+            EventParticipant(event_id=event.id, participant_id=home.id, role="home", is_home=True),
+            EventParticipant(event_id=event.id, participant_id=away.id, role="away", is_home=False),
+        ]
+    )
+
+    # Run the real classifier so the test pins the classified shape of a
+    # spread market, then stamp its metadata into raw_data the same way
+    # ingestion persists it.
+    payload = {
+        "ticker": "KXNBASPREAD-26MAR30BOSATL-ATL-5.5",
+        "event_ticker": "KXNBASPREAD-26MAR30BOSATL",
+        "title": "Atlanta Hawks wins by over 5.5 points?",
+    }
+    metadata = market_metadata(payload)
+    assert metadata is not None
+    assert metadata["copilot_market_kind"] == "spread"
+    assert metadata["copilot_subject_name"] == "Atlanta Hawks"
+
+    market = Market(
+        ticker=payload["ticker"],
+        sport_key="NBA",
+        event_id=event.id,
+        title=payload["title"],
+        status="active",
+        raw_data={**payload, **metadata},
+    )
+    snapshot = MarketSnapshot(market=market, yes_ask=0.45, no_ask=0.60, last_price=0.44)
+    db_session.add_all([market, snapshot])
+    db_session.commit()
+
+    recommendation = score_event(db_session, event, market, snapshot)
+
+    # The Hawks win these matchups by 14 at home, so covering -5.5 is well
+    # above the 0.45 YES ask — the market must produce a YES recommendation.
+    assert recommendation is not None
+    assert recommendation.side == "yes"
+    assert recommendation.edge > 0
+    assert "Projected margin for Atlanta Hawks" in recommendation.rationale
 
 
 def test_score_event_supports_nba_player_props(db_session):
