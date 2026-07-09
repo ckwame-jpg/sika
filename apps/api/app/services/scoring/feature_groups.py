@@ -322,6 +322,31 @@ FEATURE_GROUP_POLICIES: dict[str, FeatureGroupPolicy] = {
         ttl=timedelta(hours=12),
         suppress_when=wnba_injury_suppress_when,
     ),
+    # PENALIZE (Smarter NFL PR 5): the sportsbook consensus anchor is a
+    # first-class NFL scoring input (unlike the advisory-only
+    # sportsbook_consensus group). Book lines older than 6h mislead —
+    # they miss injury news and line movement — but don't binary-flip.
+    "nfl_consensus": FeatureGroupPolicy(
+        severity=FeatureGroupSeverity.PENALIZE,
+        ttl=timedelta(hours=6),
+        penalty_confidence_delta=-0.05,
+    ),
+    # PENALIZE (Smarter NFL PR 5): mirrors mlb_weather — forecasts
+    # drift; a stale wind reading shifts totals but not catastrophically.
+    "nfl_weather": FeatureGroupPolicy(
+        severity=FeatureGroupSeverity.PENALIZE,
+        ttl=timedelta(hours=6),
+        penalty_confidence_delta=-0.05,
+    ),
+    # PENALIZE (Smarter NFL PR 5): EPA ratings refresh daily via
+    # nfl_data_refresh; 48h staleness means the job has missed a cycle
+    # (weekly sport — one missed nightly rebuild is tolerable, two are
+    # a data problem).
+    "nfl_team_ratings": FeatureGroupPolicy(
+        severity=FeatureGroupSeverity.PENALIZE,
+        ttl=timedelta(hours=48),
+        penalty_confidence_delta=-0.03,
+    ),
     # IGNORE groups (registry entries omitted; fall through to
     # ``DEFAULT_POLICY``). Documented here for operator visibility:
     #

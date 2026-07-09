@@ -2119,16 +2119,33 @@ def _build_scored_recommendation(
     elif market and market_family == "game_line":
         if not left or not right:
             return None
-        game_line_score = _score_game_line(db, event, market, left, right)
-        if game_line_score is None:
-            return None
-        probability_yes, confidence, reasons, features = game_line_score
+        # Smarter NFL PR 5 — NFL routes to the consensus-anchored model
+        # (empirical key-number margin grid). Non-NFL paths unchanged.
+        if (event.sport_key or "").upper() == "NFL":
+            from app.services.scoring.nfl_game_model import score_nfl_game_line
+
+            nfl_line_score = score_nfl_game_line(db, event, market, left, right)
+            if nfl_line_score is None:
+                return None
+            probability_yes, confidence, reasons, features, feature_groups = nfl_line_score
+        else:
+            game_line_score = _score_game_line(db, event, market, left, right)
+            if game_line_score is None:
+                return None
+            probability_yes, confidence, reasons, features = game_line_score
         probability_subject = str(metadata.get("copilot_subject_name") or metadata.get("copilot_display_line_label") or market.title)
     else:
         if not left or not right:
             return None
         if event.sport_key == "MLB" and market_kind == "first_five_winner":
             left_win_probability, confidence, reasons, features = _score_mlb_first_five(db, event, left, right)
+        elif (event.sport_key or "").upper() == "NFL":
+            # Smarter NFL PR 5 — consensus-anchored winner model.
+            from app.services.scoring.nfl_game_model import score_nfl_team_winner
+
+            left_win_probability, confidence, reasons, features, feature_groups = (
+                score_nfl_team_winner(db, event, left, right)
+            )
         else:
             left_win_probability, confidence, reasons, features = _score_team_winner(db, event, left, right)
 
