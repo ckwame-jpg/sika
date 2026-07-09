@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.models import EspnPlayerGamelogCache, Event, RefreshJob, Run
 from app.services.ingestion import run_refresh_cycle
+from app.services.watchlist_coverage import CURRENT_WATCHLIST_SPORTS
 from app.services.orders import reconcile_demo_state
 from app.services.refresh_jobs import (
     active_job_for_kind,
@@ -306,6 +307,48 @@ def _queue_wnba_injury_refresh_job() -> bool:
     return _queue_job(kind="wnba_injury_refresh", scope="wnba", reason="interval")
 
 
+def _nfl_events_upcoming(window_days: int = 8) -> bool:
+    """True when any NFL event sits inside the near window — the
+    off-season gate for the nflverse bundle refresh. The bundle is a
+    ~65 MB download; skipping it February–July costs nothing because
+    the cached prior-season data doesn't move."""
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        row = db.query(Event.id).filter(
+            Event.sport_key == "NFL",
+            Event.starts_at >= now - timedelta(days=2),
+            Event.starts_at <= now + timedelta(days=window_days),
+        ).first()
+        return row is not None
+
+
+def _queue_nfl_data_refresh_job() -> bool:
+    """Smarter NFL PR 3 — queue the daily nflverse bundle refresh.
+
+    Gated on an NFL event existing inside the next 8 days so the
+    off-season stays quiet. nflverse assets update nightly (US time)
+    during the season; the 10:00 UTC daily tick lands after that
+    publish, and a Sunday 16:00 UTC tick catches late-week injury /
+    depth movement before the main slate kicks off at ~17:00 UTC.
+    """
+    if not _nfl_events_upcoming():
+        return False
+    return _queue_job(kind="nfl_data_refresh", scope="nfl", reason="interval")
+
+
+def _queue_nfl_injury_refresh_job() -> bool:
+    """Smarter NFL PR 6 — queue an ESPN NFL injury-feed refresh.
+
+    Same off-season gate as the data bundle. NFL injury news moves
+    Wed–Sat (practice reports) with a Sunday-morning inactives burst;
+    hourly is the write floor and the near-kick TTL tighten handles
+    game-day freshness on the read side.
+    """
+    if not _nfl_events_upcoming():
+        return False
+    return _queue_job(kind="nfl_injury_refresh", scope="nfl", reason="interval")
+
+
 def _queue_nba_referee_refresh_job() -> bool:
     """Smarter #13 phase 2a-2 — queue an NBA referee-assignments refresh.
 
@@ -442,7 +485,9 @@ def run_refresh_cycle_now(*, reason: str = "manual", current_slate_only: bool = 
         run = run_refresh_cycle(
             db,
             current_slate_only=current_slate_only,
-            sports=["NBA", "MLB", "WNBA"] if current_slate_only else None,
+            # Smarter NFL PR 10a — derive from CURRENT_WATCHLIST_SPORTS
+            # (see ingestion.cycles._current_slate_sports).
+            sports=sorted(CURRENT_WATCHLIST_SPORTS) if current_slate_only else None,
         )
         snapshot = RefreshRunSnapshot(
             run_id=run.id,
@@ -684,6 +729,38 @@ def start_scheduler() -> None:
         _queue_nba_referee_refresh_job,
         trigger=CronTrigger(hour="13,21", minute=30),
         id="nba_referee_refresh_twice_daily",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Smarter NFL PR 3 — nflverse bundle refresh. Daily 10:00 UTC sits
+    # after nflverse's nightly (US) asset rebuild; the Sunday 16:00 UTC
+    # tick refreshes injuries/depth right before the main 17:00 UTC
+    # kickoff slate. The queue function no-ops in the off-season (no
+    # NFL event within 8 days).
+    scheduler.add_job(
+        _queue_nfl_data_refresh_job,
+        trigger=CronTrigger(hour=10, minute=0),
+        id="nfl_data_refresh_daily",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _queue_nfl_data_refresh_job,
+        trigger=CronTrigger(day_of_week="sun", hour=16, minute=0),
+        id="nfl_data_refresh_sunday",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Smarter NFL PR 6 — ESPN NFL injury feed, hourly while a US slate
+    # could be moving. Minute offset :05 keeps the three ESPN injury
+    # fetches (NBA :15, WNBA :45, NFL :05) out of each other's way.
+    scheduler.add_job(
+        _queue_nfl_injury_refresh_job,
+        trigger=CronTrigger(hour="12-23,0-5", minute=5),
+        id="nfl_injury_refresh_hourly",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

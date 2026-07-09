@@ -925,8 +925,10 @@ def test_trade_desk_groups_game_lines_props_and_research_rows(client, db_session
     assert thresholds[1]["is_best"] is True
 
     research_rows = {row["sport_key"]: row for row in payload["research_sports"]}
-    assert research_rows["NFL"]["availability_mode"] == "research_only"
-    assert research_rows["NFL"]["events_count"] == 1
+    # Smarter NFL PR 10a — NFL flipped live, so it no longer appears in
+    # the research group; TENNIS is the remaining research-only sport.
+    assert "NFL" not in research_rows
+    assert research_rows["TENNIS"]["availability_mode"] == "research_only"
 
 
 def test_trade_desk_clamps_non_monotonic_prop_ladders(client, db_session):
@@ -1124,7 +1126,8 @@ def test_sports_availability_reports_live_and_research_only_modes(client, db_ses
     assert payload["NBA"]["availability_mode"] == "live"
     assert payload["NBA"]["events_count"] == 1
     assert payload["NBA"]["recommendations_count"] == 1
-    assert payload["NFL"]["availability_mode"] == "research_only"
+    # Smarter NFL PR 10a — NFL flipped live (lines-first).
+    assert payload["NFL"]["availability_mode"] == "live"
     assert payload["NFL"]["events_count"] == 1
     assert payload["MLB"]["availability_mode"] == "live"
     assert payload["WNBA"]["availability_mode"] == "live"
@@ -1168,7 +1171,7 @@ def test_product_freshness_reports_missing_when_no_snapshots_exist(client):
     assert response.status_code == 200
     payload = response.json()
     assert payload["overall_status"] == "missing"
-    assert {row["scope"] for row in payload["scopes"]} == {"all", "NBA", "MLB", "WNBA"}
+    assert {row["scope"] for row in payload["scopes"]} == {"all", "NBA", "MLB", "WNBA", "NFL"}
     for row in payload["scopes"]:
         assert row["status"] == "missing"
         assert row["generated_at"] is None
@@ -1178,7 +1181,7 @@ def test_product_freshness_reports_fresh_when_all_scopes_are_current(client, db_
     """Slice 3: a fresh snapshot for every scope yields ``overall_status="fresh"``
     and echoes the ``generated_at`` timestamp per scope."""
     now = datetime.now(timezone.utc)
-    for scope in ("all", "NBA", "MLB", "WNBA"):
+    for scope in ("all", "NBA", "MLB", "WNBA", "NFL"):
         _seed_snapshot(db_session, scope=scope, generated_at=now)
     db_session.commit()
 
@@ -1208,6 +1211,8 @@ def test_product_freshness_marks_overall_stale_when_any_scope_has_stale_events(
     _seed_snapshot(db_session, scope="all", generated_at=now)
     _seed_snapshot(db_session, scope="MLB", generated_at=now)
     _seed_snapshot(db_session, scope="WNBA", generated_at=now)
+    # Smarter NFL PR 10a — NFL joined the watchlist scope enumeration.
+    _seed_snapshot(db_session, scope="NFL", generated_at=now)
     # Stale NBA: an in_progress NBA event whose start time is deep in the
     # past will flip the loader's freshness flag to "stale".
     stale_starts = datetime(2026, 4, 7, 12, 0, tzinfo=timezone.utc)
@@ -1294,6 +1299,8 @@ def test_product_freshness_ranks_degraded_above_stale_and_empty(client, db_sessi
     # Smarter WNBA PR 6: seed WNBA ``fresh`` so the aggregation pins on
     # NBA's ``degraded`` outcome rather than a missing WNBA scope.
     _seed_snapshot(db_session, scope="WNBA", generated_at=now)
+    # Smarter NFL PR 10a — same for the new NFL scope.
+    _seed_snapshot(db_session, scope="NFL", generated_at=now)
     db_session.commit()
 
     response = client.get("/product/freshness")

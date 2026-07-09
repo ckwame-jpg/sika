@@ -11,3 +11,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["ml_features"]
+
+[tool.setuptools.package-data]
+# Smarter NFL PR 5 — the precomputed conditional margin grid must ship
+# inside the wheel/editable install for ``ml_features.nfl_pricing``.
+ml_features = ["data/*.json"]

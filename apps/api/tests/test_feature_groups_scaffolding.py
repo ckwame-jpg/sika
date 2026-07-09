@@ -73,13 +73,17 @@ def test_initial_registry_has_expected_penalize_groups() -> None:
     failure is the whole point. Smarter WNBA PR 4 added
     ``wnba_workload`` (mirror of nba_workload — same -3% / 24h
     semantics, distinct group key so operator diagnostics stay clear
-    about which sport's workload signal is stale)."""
+    about which sport's workload signal is stale). Smarter NFL PR 5
+    added ``nfl_consensus`` / ``nfl_weather`` / ``nfl_team_ratings``
+    (the consensus anchor + weather + EPA ratings feeding the NFL
+    game-line model)."""
     penalize_groups = {
         group for group, policy in FEATURE_GROUP_POLICIES.items()
         if policy.severity is FeatureGroupSeverity.PENALIZE
     }
     assert penalize_groups == {
         "mlb_weather", "mlb_bullpen", "nba_workload", "wnba_workload",
+        "nfl_consensus", "nfl_weather", "nfl_team_ratings",
     }
 
 
@@ -91,12 +95,16 @@ def test_suppress_policies_match_consolidated_registry() -> None:
     sport, callback gated to ``wnba_props``). mlb_starter remains
     bespoke (not suppression-shaped). Pin the exact set so adding a
     new SUPPRESS group is an explicit test update — not a silent
-    activation."""
+    activation. Smarter NFL PR 6 added ``nfl_injury`` (prop
+    OUT/DOUBTFUL, parallel to nba/wnba) and ``nfl_qb_status`` (the
+    questionable-QB game-line gate)."""
     suppress_groups = {
         group: policy for group, policy in FEATURE_GROUP_POLICIES.items()
         if policy.severity is FeatureGroupSeverity.SUPPRESS
     }
-    assert set(suppress_groups) == {"mlb_lineup", "nba_injury", "wnba_injury"}
+    assert set(suppress_groups) == {
+        "mlb_lineup", "nba_injury", "wnba_injury", "nfl_injury", "nfl_qb_status",
+    }
     for policy in suppress_groups.values():
         assert policy.suppress_when is not None, (
             "SUPPRESS policy entries must declare a suppress_when callback"

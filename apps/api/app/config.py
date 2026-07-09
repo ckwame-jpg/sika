@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     mlb_prop_gamelog_cache_minutes: int = 60
     # WNBA shares NBA's payload shape + cadence; default to the NBA TTL.
     wnba_prop_gamelog_cache_minutes: int = 30
+    # Smarter NFL PR 1 — NFL players log one game a week, so a 6-hour
+    # gamelog TTL keeps game-day freshness without the daily-sport churn
+    # the 30-minute NBA TTL is sized for.
+    nfl_prop_gamelog_cache_minutes: int = 360
     current_slate_lookback_days: int = 0
     current_slate_lookahead_days: int = 1
     watchlist_min_edge: float = 0.03
@@ -70,7 +74,10 @@ class Settings(BaseSettings):
     parlay_max_legs: int = 6
     parlay_candidate_pool_size: int = 10
     parlay_max_output: int = 15
-    parlay_enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "MLB"])
+    # Smarter NFL PR 10b — NFL joins with its own nfl_parlay_* families
+    # (registered in PR 8, so no mixed_parlay_* pollution). WNBA still
+    # excluded pending its own families.
+    parlay_enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "MLB", "NFL"])
     lookback_days: int = 14
     lookahead_days: int = 2
     free_provider_lookback_days: int = 5
@@ -93,13 +100,14 @@ class Settings(BaseSettings):
     refresh_job_stale_minutes: int = 30
     market_snapshot_heartbeat_minutes: int = 30
     prefer_yes_side_props: bool = True
-    # Active ship target: NBA + MLB + WNBA (Smarter WNBA PR 6 added
-    # WNBA). NFL stays in the list as the next-up sport (research_only
-    # mode until the per-sport pipeline ships). Tennis remains
-    # research_only. ``parlay_enabled_sports`` above stays NBA / MLB
-    # only; ``parlay_family_key`` has no WNBA-specific family yet, and
-    # adding WNBA without one would silently route WNBA combos into
-    # ``mixed_parlay_*`` and pollute mixed-family calibration.
+    # Active ship target: NBA + MLB + WNBA + NFL (Smarter WNBA PR 6
+    # added WNBA; Smarter NFL PR 10 flipped NFL live behind the PR 9
+    # backtest's GO verdict — see SMARTER_NFL_PREP.md). Tennis remains
+    # research_only. ``parlay_enabled_sports`` above covers NBA / MLB /
+    # NFL; WNBA is still excluded because ``parlay_family_key`` has no
+    # WNBA-specific family yet, and adding a sport without one silently
+    # routes its combos into ``mixed_parlay_*`` and pollutes
+    # mixed-family calibration.
     #
     # Soccer + UFC were removed from scope on 2026-05-17 — their
     # adapters, ESPN slugs, Odds API mappings, stats-query branches,
@@ -137,6 +145,24 @@ class Settings(BaseSettings):
     wnba_team_advanced_cache_minutes: int = 1440
     wnba_referee_assignments_cache_minutes: int = 240
 
+    # NFL data layer (Smarter NFL PR 1; consumed by the nflverse client
+    # + nfl_advanced loaders from PR 3 onward). nflverse release assets
+    # update nightly during the season, so the bulk datasets default to
+    # 24h TTLs; the injury report and weather run tighter because they
+    # move on game day.
+    nfl_injury_report_cache_minutes: int = 240
+    nfl_weekly_stats_cache_minutes: int = 1440
+    nfl_snap_counts_cache_minutes: int = 1440
+    nfl_depth_chart_cache_minutes: int = 1440
+    nfl_team_rating_cache_minutes: int = 1440
+    nfl_schedule_cache_minutes: int = 10080  # weekly — slate + rest days shift rarely
+    nfl_weather_cache_minutes: int = 60
+    # Margin adjustment (points) applied against a team whose depth-chart
+    # QB1 is OUT / doubtful on a fresh injury report. Literature range is
+    # 3–7 depending on the backup; 4.5 is the conservative midpoint and
+    # the 2025 backtest (Smarter NFL PR 9) re-tunes it.
+    nfl_qb_out_margin_penalty: float = 4.5
+
     # MLB advanced stats
     mlb_batter_advanced_cache_minutes: int = 360
     mlb_pitcher_advanced_cache_minutes: int = 360
@@ -167,6 +193,14 @@ class Settings(BaseSettings):
     # per sport per hour over a 12-hour active window (~48/day,
     # ~1500/month — well under the cap with 2+ sports).
     the_odds_api_cache_ttl_minutes: int = 30
+    # Smarter NFL PR 1 — per-sport TTL overrides so a 4th active sport
+    # doesn't blow the free-tier budget. NFL lines are weekly-cadence:
+    # 6 hours between fetches is plenty outside the pre-kick window, and
+    # the PR 4 event-window gate stops fetches entirely when no NFL game
+    # is near. Sports without an entry fall back to the global TTL.
+    the_odds_api_cache_ttl_minutes_by_sport: dict[str, int] = Field(
+        default_factory=lambda: {"NFL": 360}
+    )
 
     # Smarter #13 phase 2 — NBA referee-assignments cache TTL. NBA
     # posts assignments the afternoon-of for that night's games

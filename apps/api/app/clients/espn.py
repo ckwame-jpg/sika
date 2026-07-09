@@ -86,6 +86,26 @@ ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME: dict[str, dict[str, str]] = {
         "MIN": "Minnesota Lynx", "PHX": "Phoenix Mercury",
         "POR": "Portland Fire", "SEA": "Seattle Storm",
     },
+    # NFL — Smarter NFL PR 1. ESPN's canonical abbreviations plus the
+    # alternate spellings that show up in Kalshi tickers and older feeds
+    # (JAC for Jacksonville, WAS for Washington, LA for the Rams).
+    "NFL": {
+        "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+        "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+        "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+        "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+        "HOU": "Houston Texans", "IND": "Indianapolis Colts",
+        "JAX": "Jacksonville Jaguars", "JAC": "Jacksonville Jaguars",
+        "KC": "Kansas City Chiefs", "LAC": "Los Angeles Chargers",
+        "LAR": "Los Angeles Rams", "LA": "Los Angeles Rams",
+        "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+        "NE": "New England Patriots", "NO": "New Orleans Saints",
+        "NYG": "New York Giants", "NYJ": "New York Jets",
+        "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+        "SEA": "Seattle Seahawks", "SF": "San Francisco 49ers",
+        "TB": "Tampa Bay Buccaneers", "TEN": "Tennessee Titans",
+        "WSH": "Washington Commanders", "WAS": "Washington Commanders",
+    },
 }
 
 
@@ -129,14 +149,18 @@ ESPN_LEAGUE_NAMES = {
     "WNBA": "WNBA",
 }
 
-# ESPN's basketball-league URL slug per sport (used by the
-# generalized ``fetch_injury_report``). NBA was the only entry until
-# Smarter WNBA PR 7 added WNBA; ESPN's per-team injury response schema
-# is identical across both leagues, so the parser is shared in
-# ``services/nba_injury_report.py``.
-_INJURY_REPORT_LEAGUE_SLUGS: dict[str, str] = {
-    "NBA": "nba",
-    "WNBA": "wnba",
+# ESPN's ``(sport path, league slug)`` URL segments per sport (used by
+# the generalized ``fetch_injury_report``). NBA was the only entry until
+# Smarter WNBA PR 7 added WNBA; Smarter NFL PR 1 widened the values from
+# bare league slugs to ``(sport, league)`` tuples because NFL lives
+# under ``sports/football/`` rather than ``sports/basketball/``. ESPN's
+# per-team injury response schema is shared across leagues, so the
+# parser lives once in ``services/nba_injury_report.py`` (NFL adds
+# practice-status detail fields the shared parser tolerates as extras).
+_INJURY_REPORT_LEAGUE_SLUGS: dict[str, tuple[str, str]] = {
+    "NBA": ("basketball", "nba"),
+    "WNBA": ("basketball", "wnba"),
+    "NFL": ("football", "nfl"),
 }
 
 ESPN_TENNIS_ATHLETE_URL = "https://sports.core.api.espn.com/v2/sports/tennis/athletes/{athlete_id}?lang=en&region=us"
@@ -157,9 +181,9 @@ class EspnPublicClient:
         """Fetch ESPN's current injury report for ``sport_key``.
 
         Generalizes the Smarter #17 NBA fetcher to also cover WNBA
-        (Smarter WNBA PR 7). ESPN's per-team response shape is
-        identical across NBA / WNBA (verified in
-        ``SMARTER_WNBA_PREP.md`` §3) so the parser in
+        (Smarter WNBA PR 7) and NFL (Smarter NFL PR 1). ESPN's per-team
+        response shape is shared across leagues (verified in
+        ``SMARTER_WNBA_PREP.md`` §3 for WNBA) so the parser in
         ``services/nba_injury_report.py`` is shared.
 
         Raises ``httpx.HTTPStatusError`` on 4xx/5xx so the loader's
@@ -171,9 +195,9 @@ class EspnPublicClient:
             raise ValueError(
                 f"ESPN injury report is not configured for sport_key={sport_key!r}"
             )
-        league_slug = _INJURY_REPORT_LEAGUE_SLUGS[normalized]
+        sport_slug, league_slug = _INJURY_REPORT_LEAGUE_SLUGS[normalized]
         url = (
-            f"https://site.api.espn.com/apis/site/v2/sports/basketball/"
+            f"https://site.api.espn.com/apis/site/v2/sports/{sport_slug}/"
             f"{league_slug}/injuries"
         )
         response = self._get(url, timeout=20)
@@ -190,6 +214,11 @@ class EspnPublicClient:
         """Smarter WNBA PR 7 — thin wrapper around
         :meth:`fetch_injury_report` for the WNBA loader."""
         return self.fetch_injury_report("WNBA")
+
+    def fetch_nfl_injury_report(self) -> dict[str, Any]:
+        """Smarter NFL PR 1 — thin wrapper around
+        :meth:`fetch_injury_report` for the NFL loader."""
+        return self.fetch_injury_report("NFL")
 
     def search_player(
         self,

@@ -44,13 +44,33 @@ from app.clients.the_odds_api import (
     odds_api_sport_key,
 )
 from app.config import get_settings
-from app.models import OperatorSetting, utcnow
+from app.models import Event, OperatorSetting, utcnow
 
 
 logger = logging.getLogger(__name__)
 
 
 _CACHE_KEY_PREFIX = "odds_api_h2h_"
+_LINES_CACHE_KEY_PREFIX = "odds_api_lines_"
+
+# Smarter NFL PR 4 — the event-lines fetch (h2h+spreads+totals) costs
+# 3 credits per call; only fetch when the sport actually has an event
+# starting inside this window. Weekly sports (NFL) go days with no
+# game — the gate is what makes a 4th sport fit the free tier.
+_LINES_EVENT_WINDOW_HOURS = 48.0
+_LINES_MARKETS = "h2h,spreads,totals"
+
+
+def _ttl_minutes_for_sport(sika_sport_key: str) -> int:
+    """Per-sport TTL override (Smarter NFL PR 4): NFL's weekly cadence
+    tolerates a 6h default TTL where daily sports need 30 min. Sports
+    without an override fall back to the global TTL."""
+    settings = get_settings()
+    return int(
+        settings.the_odds_api_cache_ttl_minutes_by_sport.get(
+            sika_sport_key.upper(), settings.the_odds_api_cache_ttl_minutes
+        )
+    )
 
 
 # Hard ceiling on stale-payload freshness. When the cache row's
@@ -221,11 +241,10 @@ def cached_h2h_odds(
         return []
 
     moment = _coerce_utc(now) or utcnow()
-    settings = get_settings()
     ttl = timedelta(
         minutes=ttl_minutes
         if ttl_minutes is not None
-        else settings.the_odds_api_cache_ttl_minutes
+        else _ttl_minutes_for_sport(sika_sport_key)
     )
 
     cached_events, cached_expires_at = _read_cache(db, sika_sport_key)
@@ -294,6 +313,138 @@ def cached_h2h_odds(
     from app.services.upstream_health import record_upstream_success  # noqa: PLC0415
     record_upstream_success(db, "the_odds_api")
     return events
+
+
+def _sport_has_event_in_window(
+    db: Session,
+    sika_sport_key: str,
+    *,
+    now: datetime,
+    window_hours: float,
+) -> bool:
+    row = (
+        db.query(Event.id)
+        .filter(
+            Event.sport_key == sika_sport_key.upper(),
+            Event.starts_at >= now - timedelta(hours=6),
+            Event.starts_at <= now + timedelta(hours=window_hours),
+        )
+        .first()
+    )
+    return row is not None
+
+
+def cached_event_lines(
+    db: Session,
+    sika_sport_key: str,
+    *,
+    client: TheOddsApiClient | None = None,
+    allow_network: bool = False,
+    now: datetime | None = None,
+    ttl_minutes: int | None = None,
+    event_window_hours: float = _LINES_EVENT_WINDOW_HOURS,
+) -> dict[str, Any]:
+    """Smarter NFL PR 4 — cached h2h + spreads + totals quotes.
+
+    Distinct cache key (``odds_api_lines_<SPORT>``) from the h2h-only
+    cache so NBA/MLB's existing consensus path is untouched. The
+    3-market fetch costs 3 credits, so on top of the TTL there's a
+    **budget gate**: no event for the sport starting inside
+    ``event_window_hours`` → no fetch, stale-or-empty serve.
+
+    Returns ``{"events": [...], "fetched_at": iso | None,
+    "requests_remaining": int | None}`` — the metadata lets consumers
+    (the NFL consensus anchor) freshness-stamp their feature groups and
+    lets operators watch the monthly budget burn.
+    """
+    empty: dict[str, Any] = {"events": [], "fetched_at": None, "requests_remaining": None}
+    if odds_api_sport_key(sika_sport_key) is None:
+        return empty
+
+    moment = _coerce_utc(now) or utcnow()
+    ttl = timedelta(
+        minutes=ttl_minutes if ttl_minutes is not None else _ttl_minutes_for_sport(sika_sport_key)
+    )
+
+    key = f"{_LINES_CACHE_KEY_PREFIX}{sika_sport_key.upper()}"
+    row = db.query(OperatorSetting).filter(OperatorSetting.key == key).one_or_none()
+    cached_payload = dict(row.value or {}) if row is not None else None
+    cached_expires_at = _parse_dt((cached_payload or {}).get("expires_at"))
+
+    def _serve_cached(*, stale_ok: bool) -> dict[str, Any]:
+        if cached_payload is None:
+            return empty
+        events = cached_payload.get("events")
+        if not isinstance(events, list):
+            return empty
+        if not stale_ok:
+            return {
+                "events": events,
+                "fetched_at": cached_payload.get("fetched_at"),
+                "requests_remaining": cached_payload.get("requests_remaining"),
+            }
+        served = _stale_or_empty(events, cached_expires_at, moment, ttl=ttl)
+        if not served:
+            return empty
+        return {
+            "events": served,
+            "fetched_at": cached_payload.get("fetched_at"),
+            "requests_remaining": cached_payload.get("requests_remaining"),
+        }
+
+    if cached_expires_at is not None and cached_expires_at > moment:
+        return _serve_cached(stale_ok=False)
+
+    if not allow_network:
+        return _serve_cached(stale_ok=True)
+
+    if not _sport_has_event_in_window(
+        db, sika_sport_key, now=moment, window_hours=event_window_hours
+    ):
+        # Budget gate — don't spend 3 credits when there's nothing to
+        # anchor. Serve whatever's cached (subject to the stale ceiling).
+        return _serve_cached(stale_ok=True)
+
+    odds_client = client or TheOddsApiClient()
+    try:
+        events, quota = odds_client.fetch_odds_with_quota(
+            sika_sport_key, markets=_LINES_MARKETS
+        )
+    except MissingApiKeyError:
+        logger.warning(
+            "The Odds API key not configured; skipping lines fetch for %s",
+            sika_sport_key,
+        )
+        return _serve_cached(stale_ok=True)
+    except Exception as exc:  # noqa: BLE001 — propagate as health failure
+        logger.warning("The Odds API lines fetch failed for %s: %s", sika_sport_key, exc)
+        error_detail = str(exc) or exc.__class__.__name__
+        from app.services.upstream_health import record_upstream_failure  # noqa: PLC0415
+        record_upstream_failure(db, "the_odds_api", f"{sika_sport_key} lines: {error_detail}")
+        return _serve_cached(stale_ok=True)
+
+    payload = {
+        "events": events,
+        "fetched_at": moment.isoformat(),
+        "expires_at": (moment + ttl).isoformat(),
+        "event_count": len(events),
+        "markets": _LINES_MARKETS,
+        "requests_remaining": quota.get("requests_remaining"),
+        "requests_used": quota.get("requests_used"),
+    }
+    if row is None:
+        row = OperatorSetting(key=key, value=payload)
+        db.add(row)
+    else:
+        row.value = payload
+    db.flush()
+    from app.services.upstream_health import record_upstream_success  # noqa: PLC0415
+    record_upstream_success(db, "the_odds_api")
+    return {
+        "events": events,
+        "fetched_at": payload["fetched_at"],
+        "requests_remaining": payload["requests_remaining"],
+    }
 
 
 def invalidate_cached_h2h_odds(db: Session, sika_sport_key: str) -> None:

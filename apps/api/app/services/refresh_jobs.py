@@ -50,6 +50,17 @@ REFRESH_JOB_KINDS = frozenset({
     # refresh into the same job — both are NBA-officiating data on
     # the same daily cadence, no need for a separate job kind.
     "nba_referee_refresh",
+    # Smarter NFL PR 3 — daily nflverse bundle refresh: weekly player
+    # stats, snap counts, depth charts, official injuries, team EPA
+    # ratings, schedule (+ weather prewarm for events inside 36h).
+    # One job for the whole bundle because nflverse distributes bulk
+    # per-season files — there's no per-dataset incremental fetch to
+    # split across kinds.
+    "nfl_data_refresh",
+    # Smarter NFL PR 6 — ESPN NFL injury feed (the intraday supplement
+    # to the nightly official report). Same shape as the NBA / WNBA
+    # injury refreshes.
+    "nfl_injury_refresh",
 })
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 STALE_REFRESH_JOB_ERROR = "stalled - reconciled automatically"
@@ -74,6 +85,13 @@ NBA_REFEREE_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
 # Smarter WNBA PR 7 — same shape / cost profile as the NBA injury
 # refresh (single ESPN GET + upsert into ``WnbaInjuryReportCache``).
 WNBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
+# Smarter NFL PR 3 — the nflverse bundle is ~6 CSV downloads, the
+# largest ~50 MB (depth charts), plus per-week upserts. Generous
+# budget: a cold GitHub CDN fetch of the full bundle takes ~1-2 min.
+NFL_DATA_REFRESH_WORKER_TIMEOUT_SECONDS = 300.0
+# Smarter NFL PR 6 — single ESPN GET + upsert, same cost profile as
+# the NBA / WNBA injury refreshes.
+NFL_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS = 60.0
 PREDICTION_SETTLEMENT_BATCH_SIZE = 100
 PARLAY_SETTLEMENT_BATCH_SIZE = 50
 # Bug #22: cap the transient-error requeue loop so one persistent
@@ -327,6 +345,10 @@ def _worker_timeout_seconds(job: RefreshJob) -> float:
         return max(default_timeout, WNBA_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS)
     if job.kind == "nba_referee_refresh":
         return max(default_timeout, NBA_REFEREE_REFRESH_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "nfl_data_refresh":
+        return max(default_timeout, NFL_DATA_REFRESH_WORKER_TIMEOUT_SECONDS)
+    if job.kind == "nfl_injury_refresh":
+        return max(default_timeout, NFL_INJURY_REFRESH_WORKER_TIMEOUT_SECONDS)
     return default_timeout
 
 
@@ -1662,6 +1684,41 @@ def _execute_claimed_job(job_id: int) -> RefreshJobSnapshot | None:
                     **(job.details or {}),
                     "players": len((payload or {}).get("players") or {}),
                     "report_updated_at": (payload or {}).get("report_updated_at"),
+                }
+            elif job.kind == "nfl_injury_refresh":
+                # Smarter NFL PR 6 — populates ``NflInjuryReportCache``
+                # (the intraday ESPN supplement; the official weekly
+                # report rides the nfl_data_refresh bundle). Mirrors
+                # the NBA / WNBA shape.
+                from app.services.nfl_injury_report import load_nfl_injury_report
+
+                payload = load_nfl_injury_report(db, allow_network=True)
+                job.details = {
+                    **(job.details or {}),
+                    "players": len((payload or {}).get("players") or {}),
+                    "report_updated_at": (payload or {}).get("report_updated_at"),
+                }
+            elif job.kind == "nfl_data_refresh":
+                # Smarter NFL PR 3 — refresh the whole nflverse bundle
+                # (weekly stats / snap counts / depth charts / official
+                # injuries / team ratings / schedule) + weather prewarm.
+                # ``refresh_nfl_data`` degrades per-dataset: one failed
+                # download doesn't abort the rest, and each failure is
+                # recorded on the upstream-health board.
+                from app.services.nfl_advanced import refresh_nfl_data
+
+                summary = refresh_nfl_data(db)
+                job.details = {
+                    **(job.details or {}),
+                    "season": summary.get("season"),
+                    "weekly_stats_weeks": summary.get("weekly_stats_weeks"),
+                    "snap_count_weeks": summary.get("snap_count_weeks"),
+                    "depth_chart_teams": summary.get("depth_chart_teams"),
+                    "official_injury_weeks": summary.get("official_injury_weeks"),
+                    "rated_teams": summary.get("rated_teams"),
+                    "schedule_games": summary.get("schedule_games"),
+                    "weather_prewarmed": summary.get("weather_prewarmed"),
+                    "errors": summary.get("errors") or [],
                 }
             elif job.kind == "nba_referee_refresh":
                 # Smarter #13 phase 2a-2 + 2b-2 — populates BOTH the

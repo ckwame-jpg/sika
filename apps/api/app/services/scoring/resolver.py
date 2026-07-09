@@ -81,6 +81,11 @@ SINGLE_HEURISTIC_PROFILES = {
     # and MLB use today.
     "wnba_singles": HeuristicProfile("wnba_singles", 10, 0.10, 4, 0.04, 0.18, 0.05, 0.0),
     "wnba_props": HeuristicProfile("wnba_props", 8, 0.11, 5, 0.05, 0.16, 0.06, 0.09),
+    # Smarter NFL PR 7 — weekly cadence: stale_after_days 8-9 (one game
+    # a week means a 6-day-old log is CURRENT), thin-sample targets
+    # sized for 17-game seasons. Tuned by the PR 9 backtest.
+    "nfl_singles": HeuristicProfile("nfl_singles", 8, 0.10, 8, 0.05, 0.18, 0.05, 0.0),
+    "nfl_props": HeuristicProfile("nfl_props", 6, 0.12, 9, 0.05, 0.16, 0.06, 0.10),
 }
 
 
@@ -130,6 +135,10 @@ class PropStatsResolver:
         # PR 4 review Medium).
         if sport == "WNBA":
             return timedelta(minutes=settings.wnba_prop_gamelog_cache_minutes)
+        # NFL games are weekly — its TTL (6h default) is deliberately
+        # looser than the daily sports' (Smarter NFL PR 1).
+        if sport == "NFL":
+            return timedelta(minutes=settings.nfl_prop_gamelog_cache_minutes)
         return timedelta(minutes=settings.mlb_prop_gamelog_cache_minutes)
 
     def _load_player_search(

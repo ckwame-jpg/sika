@@ -557,6 +557,73 @@ _MLB_FACTOR_FNS = {
 # -----------------------------------------------------------------------------
 # Public API
 
+# -----------------------------------------------------------------------------
+# NFL factors (Smarter NFL PR 7)
+#
+# Passing-shaped stats see the opponent-defense + weather factors;
+# rushing sees defense only (wind doesn't touch the ground game); the
+# snap-share volume proxy applies everywhere. Target-share and
+# pass/rush-split defense factors are follow-ups once the gsis identity
+# sidecar lands.
+
+_NFL_PASSING_FACTOR_SET = (
+    "nfl_opp_def_factor", "nfl_weather_passing_factor", "nfl_snap_share_factor",
+)
+_NFL_RUSHING_FACTOR_SET = ("nfl_opp_def_factor", "nfl_snap_share_factor")
+
+_NFL_FACTORS_BY_STAT: dict[str, tuple[str, ...]] = {
+    "passing_yards": _NFL_PASSING_FACTOR_SET,
+    "completions": _NFL_PASSING_FACTOR_SET,
+    "passing_touchdowns": _NFL_PASSING_FACTOR_SET,
+    "receiving_yards": _NFL_PASSING_FACTOR_SET,
+    "receptions": _NFL_PASSING_FACTOR_SET,
+    "receiving_touchdowns": _NFL_PASSING_FACTOR_SET,
+    "rushing_yards": _NFL_RUSHING_FACTOR_SET,
+    "rushing_touchdowns": _NFL_RUSHING_FACTOR_SET,
+    "rushing_yards_receiving_yards": _NFL_PASSING_FACTOR_SET,
+    "passing_yards_rushing_yards": _NFL_PASSING_FACTOR_SET,
+}
+
+
+def _nfl_opp_def_factor(features: dict[str, Any]) -> float:
+    """Opponent defensive EPA/play allowed -> offense environment. A
+    defense allowing +0.067 EPA/play (bottom of the league) inflates
+    the expectation ~10%; an elite defense (-0.067) suppresses it."""
+    def_epa = features.get("nfl_opp_def_epa_per_play")
+    if not isinstance(def_epa, (int, float)):
+        return 1.0
+    return _clamp(1.0 + float(def_epa) * 1.5, 0.90, 1.10)
+
+
+def _nfl_weather_passing_factor(features: dict[str, Any]) -> float:
+    """Wind kills passing volume/efficiency: >=20 mph -10%, >15 mph -5%.
+    Domes never set ``nfl_wind_mph`` so this stays a no-op indoors."""
+    wind = features.get("nfl_wind_mph")
+    if not isinstance(wind, (int, float)):
+        return 1.0
+    if wind >= 20.0:
+        return 0.90
+    if wind > 15.0:
+        return 0.95
+    return 1.0
+
+
+def _nfl_snap_share_factor(features: dict[str, Any]) -> float:
+    """Recent-vs-season snap-share ratio, pre-clamped by the emitter to
+    [0.88, 1.12] — a shrinking role deflates the volume expectation."""
+    value = features.get("nfl_snap_share_factor_raw")
+    if not isinstance(value, (int, float)):
+        return 1.0
+    return _clamp(float(value), 0.88, 1.12)
+
+
+_NFL_FACTOR_FNS = {
+    "nfl_opp_def_factor": _nfl_opp_def_factor,
+    "nfl_weather_passing_factor": _nfl_weather_passing_factor,
+    "nfl_snap_share_factor": _nfl_snap_share_factor,
+}
+
+
 def compute_advanced_factors(
     sport_key: str,
     stat_key: str,
@@ -576,6 +643,9 @@ def compute_advanced_factors(
     elif sport == "MLB":
         gating = _MLB_FACTORS_BY_STAT.get(stat_key) or _MLB_FACTORS_BY_STAT.get(stat_key.lower())
         fns = _MLB_FACTOR_FNS
+    elif sport == "NFL":
+        gating = _NFL_FACTORS_BY_STAT.get(stat_key) or _NFL_FACTORS_BY_STAT.get(stat_key.lower())
+        fns = _NFL_FACTOR_FNS
     else:
         return {}
 
@@ -608,6 +678,8 @@ def factor_applies(sport_key: str, stat_key: str, factor_name: str) -> bool:
         gating = _NBA_FACTORS_BY_STAT.get(stat_key) or _NBA_FACTORS_BY_STAT.get(stat_key.lower())
     elif sport == "MLB":
         gating = _MLB_FACTORS_BY_STAT.get(stat_key) or _MLB_FACTORS_BY_STAT.get(stat_key.lower())
+    elif sport == "NFL":
+        gating = _NFL_FACTORS_BY_STAT.get(stat_key) or _NFL_FACTORS_BY_STAT.get(stat_key.lower())
     else:
         return False
     return bool(gating) and factor_name in gating

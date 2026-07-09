@@ -45,6 +45,12 @@ FAMILY_DEFINITIONS: tuple[ModelFamilyDefinition, ...] = (
     # surface them as ``insufficient_history``.
     ModelFamilyDefinition(key="wnba_singles", label="WNBA singles", scope="single", sport_scope="WNBA", study_track="active"),
     ModelFamilyDefinition(key="wnba_props", label="WNBA props", scope="single", sport_scope="WNBA", study_track="active"),
+    # NFL families (Smarter NFL PR 8). ``active`` so shadow rows accrue
+    # from day one, but with ~272 games/season these will sit at
+    # ``insufficient_history`` behind the walk-forward gate well into
+    # the season — heuristics carry the year (by design).
+    ModelFamilyDefinition(key="nfl_singles", label="NFL singles", scope="single", sport_scope="NFL", study_track="active"),
+    ModelFamilyDefinition(key="nfl_props", label="NFL props", scope="single", sport_scope="NFL", study_track="active"),
     ModelFamilyDefinition(
         key="nba_parlay_2leg",
         label="NBA 2-leg parlays",
@@ -52,6 +58,27 @@ FAMILY_DEFINITIONS: tuple[ModelFamilyDefinition, ...] = (
         sport_scope="NBA",
         leg_count=2,
         study_track="active",
+    ),
+    # Smarter NFL PR 8 — registering the NFL parlay families BEFORE the
+    # parlay gate flips (PR 10b) is load-bearing: enabling a sport in
+    # ``parlay_enabled_sports`` without its own family silently routes
+    # its combos into ``mixed_parlay_*`` and pollutes mixed-family
+    # calibration (the config.py warning). 2-leg is active; 3-leg stays
+    # heuristic_only like every other sport's.
+    ModelFamilyDefinition(
+        key="nfl_parlay_2leg",
+        label="NFL 2-leg parlays",
+        scope="parlay",
+        sport_scope="NFL",
+        leg_count=2,
+        study_track="active",
+    ),
+    ModelFamilyDefinition(
+        key="nfl_parlay_3leg",
+        label="NFL 3-leg parlays",
+        scope="parlay",
+        sport_scope="NFL",
+        leg_count=3,
     ),
     # 3-leg + 4-6-leg parlay families intentionally stay
     # ``study_track="heuristic_only"`` (the default) — bug #42 flagged the
@@ -201,6 +228,8 @@ def single_family_key(sport_key: str | None, market_family: str | None) -> str:
             return "mlb_props"
         if sport == "WNBA":
             return "wnba_props"
+        if sport == "NFL":
+            return "nfl_props"
     if sport == "NBA":
         return "nba_singles"
     if sport == "MLB":
@@ -218,4 +247,6 @@ def parlay_family_key(leg_count: int, participating_sports: list[str] | tuple[st
         return f"nba_parlay_{leg_count}leg"
     if sports == ["MLB"]:
         return f"mlb_parlay_{leg_count}leg"
+    if sports == ["NFL"]:
+        return f"nfl_parlay_{leg_count}leg"
     return f"mixed_parlay_{leg_count}leg"

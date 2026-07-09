@@ -65,6 +65,16 @@ __all__ = [
 ]
 
 
+
+def _current_slate_sports() -> list[str]:
+    """Smarter NFL PR 10a — the current-slate sport list derives from
+    ``CURRENT_WATCHLIST_SPORTS`` instead of a third hardcoded copy
+    (scheduler + two call sites here used to triplicate it). Sorted for
+    deterministic refresh ordering."""
+    from app.services.watchlist_coverage import CURRENT_WATCHLIST_SPORTS
+
+    return sorted(CURRENT_WATCHLIST_SPORTS)
+
 def run_refresh_cycle(
     db: Session,
     provider: TheSportsDBClient | None = None,
@@ -80,7 +90,7 @@ def run_refresh_cycle(
     # the otherwise-circular package graph.
     from app.services.ingestion import refresh_sports_data, refresh_kalshi_markets
 
-    initial_sports = list(sports or (["NBA", "MLB", "WNBA"] if current_slate_only else get_settings().enabled_sports))
+    initial_sports = list(sports or (_current_slate_sports() if current_slate_only else get_settings().enabled_sports))
     run = Run(kind="refresh", status="running", details={"sports": initial_sports})
     db.add(run)
     db.flush()
@@ -111,7 +121,7 @@ def run_refresh_cycle(
             kalshi_client = public_client or KalshiPublicClient(http_client=shared_http_client)
             espn_client = major_provider or EspnPublicClient(http_client=shared_http_client)
             settings = get_settings()
-            active_sports = list(sports or (["NBA", "MLB", "WNBA"] if current_slate_only else settings.enabled_sports))
+            active_sports = list(sports or (_current_slate_sports() if current_slate_only else settings.enabled_sports))
             stage_details: dict[str, object] = {}
 
             stage_started = perf_counter()
