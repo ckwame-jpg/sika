@@ -161,6 +161,8 @@ def _count_correlation_pairs(combo: tuple[ParlayCandidateInput, ...]) -> dict[st
     same_team_pairs = 0
     shared_subject_pairs = 0
     shared_opponent_pairs = 0
+    qb_receiver_stack_pairs = 0
+    player_team_total_pairs = 0
     for left in range(len(combo)):
         for right in range(left + 1, len(combo)):
             if teams[left] and teams[left] == teams[right]:
@@ -169,11 +171,75 @@ def _count_correlation_pairs(combo: tuple[ParlayCandidateInput, ...]) -> dict[st
                 shared_subject_pairs += 1
             if opponents[left] and opponents[left] == opponents[right]:
                 shared_opponent_pairs += 1
+            # Smarter NFL PR 10b — same-game stack signals. One offense
+            # drives QB passing yards, WR receiving yards, and the team
+            # total together; these correlate harder than basketball's
+            # same-team pairs. Stat-key prefixes only match NFL props,
+            # so the counters are structurally zero for other sports.
+            if _is_qb_receiver_stack(combo[left], combo[right]):
+                qb_receiver_stack_pairs += 1
+            if _is_player_team_total_pair(combo[left], combo[right]):
+                player_team_total_pairs += 1
     return {
         "same_team": same_team_pairs,
         "shared_subject": shared_subject_pairs,
         "shared_opponent": shared_opponent_pairs,
+        "qb_receiver_stack": qb_receiver_stack_pairs,
+        "player_team_total": player_team_total_pairs,
     }
+
+
+_NFL_PASSING_PROP_STATS = ("passing_yards", "passing_touchdowns", "completions")
+_NFL_RECEIVING_PROP_STATS = ("receiving_yards", "receptions", "receiving_touchdowns")
+
+
+def _candidate_stat_key(candidate: ParlayCandidateInput) -> str:
+    return str(candidate.metadata.get("copilot_stat_key") or "")
+
+
+def _candidate_market_family(candidate: ParlayCandidateInput) -> str:
+    return str(candidate.metadata.get("copilot_market_family") or "")
+
+
+def _is_qb_receiver_stack(
+    left: ParlayCandidateInput, right: ParlayCandidateInput
+) -> bool:
+    """Same-team, different-player passing↔receiving prop pair — the
+    classic QB/WR stack (a completed deep ball scores BOTH legs)."""
+    left_team, right_team = _candidate_team_key(left), _candidate_team_key(right)
+    if not left_team or left_team != right_team:
+        return False
+    if _candidate_subject_key(left) == _candidate_subject_key(right):
+        return False  # same player is shared_subject, not a stack
+    left_stat, right_stat = _candidate_stat_key(left), _candidate_stat_key(right)
+    passing_receiving = (
+        left_stat in _NFL_PASSING_PROP_STATS and right_stat in _NFL_RECEIVING_PROP_STATS
+    ) or (
+        right_stat in _NFL_PASSING_PROP_STATS and left_stat in _NFL_RECEIVING_PROP_STATS
+    )
+    return passing_receiving
+
+
+def _is_player_team_total_pair(
+    left: ParlayCandidateInput, right: ParlayCandidateInput
+) -> bool:
+    """Same-event NFL yardage prop + game-line/winner leg — the player's
+    production and the game script co-move."""
+    if left.event.id != right.event.id:
+        return False
+    nfl_yardage = _NFL_PASSING_PROP_STATS + _NFL_RECEIVING_PROP_STATS + (
+        "rushing_yards", "rushing_touchdowns", "rushing_yards_receiving_yards",
+    )
+    left_family, right_family = _candidate_market_family(left), _candidate_market_family(right)
+    prop_side = None
+    line_side = None
+    if left_family == "player_prop" and right_family in {"winner", "game_line"}:
+        prop_side, line_side = left, right
+    elif right_family == "player_prop" and left_family in {"winner", "game_line"}:
+        prop_side, line_side = right, left
+    if prop_side is None or line_side is None:
+        return False
+    return _candidate_stat_key(prop_side) in nfl_yardage
 
 
 # Theoretical per-pair-type weights for the correlation blend (bug
@@ -186,10 +252,27 @@ _THEORETICAL_PAIR_WEIGHTS = {
     "shared_opponent": 0.2,
 }
 
+# Smarter NFL PR 10b — per-sport overrides. NFL same-team legs correlate
+# harder than basketball's (one offense drives every offensive stat) and
+# the stack categories only exist for NFL. Single-sport combos consult
+# their sport's override first; mixed combos use the defaults (the stack
+# categories are structurally zero outside NFL anyway).
+_SPORT_PAIR_WEIGHT_OVERRIDES: dict[str, dict[str, float]] = {
+    "NFL": {
+        "shared_subject": 0.75,
+        "same_team": 0.45,
+        "shared_opponent": 0.25,
+        "qb_receiver_stack": 0.55,
+        "player_team_total": 0.35,
+    },
+}
+
 
 def _pair_weight(
     pair_type: str,
     empirical_map: dict[str, Any] | None,
+    *,
+    sport_scope: str | None = None,
 ) -> float:
     """Smarter #8 phase 3: blend the theoretical prior with the
     empirical pair-correlation estimate when one is available.
@@ -214,7 +297,8 @@ def _pair_weight(
     # parlay_correlation, not the reverse).
     from app.services.parlay_correlation import blend_theoretical_with_empirical
 
-    theoretical = _THEORETICAL_PAIR_WEIGHTS.get(pair_type, 0.0)
+    sport_overrides = _SPORT_PAIR_WEIGHT_OVERRIDES.get((sport_scope or "").upper(), {})
+    theoretical = sport_overrides.get(pair_type, _THEORETICAL_PAIR_WEIGHTS.get(pair_type, 0.0))
     if empirical_map is None:
         return theoretical
     empirical = empirical_map.get(pair_type)
@@ -279,10 +363,19 @@ def _correlation_adjusted_joint_probability(
     # positive-correlation signal, same team is moderate, shared opponent
     # is mild. Hard cap below 1.0 so the joint never reaches min_leg fully
     # (some idiosyncratic noise remains even on co-moving legs).
+    combo_sports = {
+        (candidate.market.sport_key or candidate.event.sport_key or "").upper()
+        for candidate in combo
+    }
+    sport_scope = next(iter(combo_sports)) if len(combo_sports) == 1 else None
     weighted = (
-        _pair_weight("shared_subject", empirical_correlations) * pairs.get("shared_subject", 0)
-        + _pair_weight("same_team", empirical_correlations) * pairs.get("same_team", 0)
-        + _pair_weight("shared_opponent", empirical_correlations) * pairs.get("shared_opponent", 0)
+        _pair_weight("shared_subject", empirical_correlations, sport_scope=sport_scope) * pairs.get("shared_subject", 0)
+        + _pair_weight("same_team", empirical_correlations, sport_scope=sport_scope) * pairs.get("same_team", 0)
+        + _pair_weight("shared_opponent", empirical_correlations, sport_scope=sport_scope) * pairs.get("shared_opponent", 0)
+        # Smarter NFL PR 10b — same-game stack categories (NFL-only by
+        # construction; zero counts elsewhere).
+        + _pair_weight("qb_receiver_stack", empirical_correlations, sport_scope=sport_scope) * pairs.get("qb_receiver_stack", 0)
+        + _pair_weight("player_team_total", empirical_correlations, sport_scope=sport_scope) * pairs.get("player_team_total", 0)
     ) / max(total_pairs, 1)
     correlation_factor = min(weighted, 0.85)
     return float(independent + correlation_factor * (min_leg - independent))
@@ -299,14 +392,19 @@ def _parlay_diagnostics_for_combo(
     same_team_pairs = pair_counts["same_team"]
     shared_subject_pairs = pair_counts["shared_subject"]
     shared_opponent_pairs = pair_counts["shared_opponent"]
+    qb_receiver_stack_pairs = pair_counts.get("qb_receiver_stack", 0)
+    player_team_total_pairs = pair_counts.get("player_team_total", 0)
 
     same_sport_penalty = 0.01 if sport_scope != "MIXED" and leg_count <= 3 else 0.0
     same_team_penalty = round(same_team_pairs * 0.04, 4)
     shared_subject_penalty = round(shared_subject_pairs * 0.05, 4)
     shared_opponent_penalty = round(shared_opponent_pairs * 0.03, 4)
+    # Smarter NFL PR 10b — stacks lift the joint probability AND carry
+    # extra reliability risk (one bad game script sinks every leg).
+    stack_penalty = round(qb_receiver_stack_pairs * 0.05 + player_team_total_pairs * 0.03, 4)
     leg_count_penalty = round(max(0, leg_count - 2) * (0.04 if leg_count <= 3 else 0.06), 4)
     total_penalty = round(
-        same_sport_penalty + same_team_penalty + shared_subject_penalty + shared_opponent_penalty + leg_count_penalty,
+        same_sport_penalty + same_team_penalty + shared_subject_penalty + shared_opponent_penalty + stack_penalty + leg_count_penalty,
         4,
     )
     base_confidence = min(confidences) if leg_count >= 4 else sum(confidences) / max(len(confidences), 1)
@@ -320,11 +418,14 @@ def _parlay_diagnostics_for_combo(
         "same_team_pairs": same_team_pairs,
         "shared_subject_pairs": shared_subject_pairs,
         "shared_opponent_pairs": shared_opponent_pairs,
+        "qb_receiver_stack_pairs": qb_receiver_stack_pairs,
+        "player_team_total_pairs": player_team_total_pairs,
         "penalties": {
             "same_sport": round(same_sport_penalty, 4),
             "same_team": same_team_penalty,
             "shared_subject": shared_subject_penalty,
             "shared_opponent": shared_opponent_penalty,
+            "stack": stack_penalty,
             "leg_count": leg_count_penalty,
         },
         "feature_flags": {

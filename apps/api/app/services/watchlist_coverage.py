@@ -28,11 +28,10 @@ CURRENT_WATCHLIST_MARKET_FAMILIES = frozenset({"winner", "game_line", "player_pr
 # entry get the full family set (existing behavior). This is the
 # "lines live before props" mechanism: PR 10a sets
 # ``"NFL": frozenset({"winner", "game_line"})`` and PR 10b removes it.
-CURRENT_WATCHLIST_FAMILIES_BY_SPORT: dict[str, frozenset[str]] = {
-    # Smarter NFL PR 10a — lines live first; PR 10b removes this entry
-    # once research-mode props have a week or two of observed output.
-    "NFL": frozenset({"winner", "game_line"}),
-}
+# Smarter NFL PR 10b removed the PR 10a lines-first NFL entry — props
+# are live. To stage a rollout during the season's first weeks, an
+# operator can re-add ``"NFL": frozenset({"winner", "game_line"})``.
+CURRENT_WATCHLIST_FAMILIES_BY_SPORT: dict[str, frozenset[str]] = {}
 
 
 def current_families_for_sport(sport_key: str | None) -> frozenset[str]:

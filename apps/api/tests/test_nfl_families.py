@@ -42,17 +42,23 @@ def test_parlay_family_key_routes_nfl_not_mixed() -> None:
 
 
 def test_family_allowlist_defaults_preserve_behavior() -> None:
-    # PR 10a: NFL runs lines-first; every other sport keeps the full set.
-    for sport in ("NBA", "MLB", "WNBA", None):
+    for sport in ("NBA", "MLB", "WNBA", "NFL", None):
         assert current_families_for_sport(sport) == CURRENT_WATCHLIST_MARKET_FAMILIES
 
 
-def test_nfl_lines_first_allowlist_active() -> None:
-    """PR 10a: NFL winner + game_line surface on the watchlist; props
-    stay research-mode until PR 10b removes this entry."""
-    assert CURRENT_WATCHLIST_FAMILIES_BY_SPORT["NFL"] == {"winner", "game_line"}
-    assert current_families_for_sport("nfl") == {"winner", "game_line"}
-    assert "player_prop" not in current_families_for_sport("NFL")
+def test_nfl_full_family_set_live() -> None:
+    """PR 10b removed the PR 10a lines-first override — NFL props are
+    live. The override map stays as the operator's staged-rollout knob."""
+    assert "NFL" not in CURRENT_WATCHLIST_FAMILIES_BY_SPORT
+    assert current_families_for_sport("NFL") == CURRENT_WATCHLIST_MARKET_FAMILIES
+
+
+def test_parlay_enabled_sports_include_nfl() -> None:
+    from app.config import Settings
+
+    settings = Settings()
+    assert "NFL" in settings.parlay_enabled_sports
+    assert "WNBA" not in settings.parlay_enabled_sports  # still no wnba families
 
 
 def test_current_watchlist_sports_include_nfl() -> None:

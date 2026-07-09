@@ -74,7 +74,10 @@ class Settings(BaseSettings):
     parlay_max_legs: int = 6
     parlay_candidate_pool_size: int = 10
     parlay_max_output: int = 15
-    parlay_enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "MLB"])
+    # Smarter NFL PR 10b — NFL joins with its own nfl_parlay_* families
+    # (registered in PR 8, so no mixed_parlay_* pollution). WNBA still
+    # excluded pending its own families.
+    parlay_enabled_sports: list[str] = Field(default_factory=lambda: ["NBA", "MLB", "NFL"])
     lookback_days: int = 14
     lookahead_days: int = 2
     free_provider_lookback_days: int = 5
@@ -97,13 +100,14 @@ class Settings(BaseSettings):
     refresh_job_stale_minutes: int = 30
     market_snapshot_heartbeat_minutes: int = 30
     prefer_yes_side_props: bool = True
-    # Active ship target: NBA + MLB + WNBA (Smarter WNBA PR 6 added
-    # WNBA). NFL stays in the list as the next-up sport (research_only
-    # mode until the per-sport pipeline ships). Tennis remains
-    # research_only. ``parlay_enabled_sports`` above stays NBA / MLB
-    # only; ``parlay_family_key`` has no WNBA-specific family yet, and
-    # adding WNBA without one would silently route WNBA combos into
-    # ``mixed_parlay_*`` and pollute mixed-family calibration.
+    # Active ship target: NBA + MLB + WNBA + NFL (Smarter WNBA PR 6
+    # added WNBA; Smarter NFL PR 10 flipped NFL live behind the PR 9
+    # backtest's GO verdict — see SMARTER_NFL_PREP.md). Tennis remains
+    # research_only. ``parlay_enabled_sports`` above covers NBA / MLB /
+    # NFL; WNBA is still excluded because ``parlay_family_key`` has no
+    # WNBA-specific family yet, and adding a sport without one silently
+    # routes its combos into ``mixed_parlay_*`` and pollutes
+    # mixed-family calibration.
     #
     # Soccer + UFC were removed from scope on 2026-05-17 — their
     # adapters, ESPN slugs, Odds API mappings, stats-query branches,
