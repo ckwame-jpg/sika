@@ -193,7 +193,7 @@
   --color-cosmos-cyan-tab-bg: hsl(190 80% 60% / 0.15);
   --color-cosmos-cyan-tab-fg: hsl(190 80% 65%);
 
-  --color-cosmos-hero-ink: hsl(250 55% 4% / 0.55);
+  --color-cosmos-hero-ink: hsl(250 55% 4% / 0.62);
   --color-cosmos-hero-ink-mid: hsl(250 55% 4% / 0.25);
   --color-cosmos-hero-ink-faint: hsl(250 55% 4% / 0.08);
   --color-cosmos-hero-ink-strong: hsl(250 55% 4% / 0.72);
@@ -231,8 +231,8 @@
   --color-cosmos-log-pos-border: hsl(160 72% 46% / 0.35);
   --color-cosmos-log-neg-border: hsl(0 85% 65% / 0.35);
 
-  --color-cosmos-tile-border: rgba(255, 255, 255, 0.06);
-  --color-cosmos-tile-bg: rgba(255, 255, 255, 0.03);
+  --color-cosmos-tile-border: hsl(var(--color-cosmos-violet-500-hsl) / 0.1);
+  --color-cosmos-tile-bg: hsl(var(--color-cosmos-violet-500-hsl) / 0.04);
 
   --color-cosmos-table-hover: hsl(262 60% 70% / 0.05);
 }
@@ -255,6 +255,10 @@
   /* Cyan ramp */
   --color-cosmos-cyan-300-hsl: 195 100% 81%;    /* rgb(156,230,255) */
   --color-cosmos-cyan-500-hsl: 198 100% 77%;    /* rgb(140,220,255) base */
+
+  /* Teal — win-state accent (pick-history pills, refresh chips).
+     Was a recurring rgba(120,210,200) literal across 7 call sites. */
+  --color-cosmos-teal-hsl: 173 51% 65%;
 
   /* Glow core — the bright violet mid-tone used at canvas hotspots
      (probability-surface peaks). Was an unmapped rgba(200,160,255) literal. */
@@ -465,13 +469,13 @@
     border-radius: 12px;
     background: linear-gradient(
       180deg,
-      hsl(262 40% 12% / 0.55),
-      hsl(222 45% 7% / 0.55)
+      hsl(260 42% 12% / 0.55),
+      hsl(var(--color-cosmos-surface-deep-hsl) / 0.55)
     );
-    border: 1px solid hsl(262 40% 40% / 0.35);
+    border: 1px solid hsl(262 40% 42% / 0.4);
     box-shadow:
       inset 0 1px 0 hsl(262 80% 80% / 0.08),
-      0 8px 28px hsl(var(--color-cosmos-ink-900-hsl) / 0.45);
+      0 6px 18px hsl(var(--color-cosmos-ink-900-hsl) / 0.4);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
   }
@@ -479,16 +483,18 @@
   .cosmos-panel-muted {
     background: linear-gradient(
       180deg,
-      hsl(222 45% 8% / 0.6),
-      hsl(222 45% 5% / 0.6)
+      hsl(var(--color-cosmos-surface-hsl) / 0.6),
+      hsl(var(--color-cosmos-surface-deep-hsl) / 0.6)
     );
-    border-color: hsl(220 25% 28% / 0.5);
+    border-color: hsl(248 25% 28% / 0.5);
   }
 
-  /* Chip-style toggle used in settings, filters, mode pickers */
+  /* Chip-style toggle used in settings, filters, mode pickers.
+     Active state is hairline + gradient only — the former triple
+     box-shadow glow was retired in the no-more-glow retheme. */
   .cosmos-chip {
     border-radius: 12px;
-    border: 1px solid hsl(220 25% 22%);
+    border: 1px solid hsl(248 25% 22%);
     background: hsl(var(--color-cosmos-surface-hsl) / 0.6);
     transition: all 0.18s ease;
   }
@@ -502,19 +508,9 @@
     background: linear-gradient(
       135deg,
       hsl(262 60% 30% / 0.55),
-      hsl(222 50% 12% / 0.55)
+      hsl(248 50% 12% / 0.55)
     );
-    box-shadow:
-      0 0 0 1px hsl(262 70% 55% / 0.4),
-      0 6px 20px hsl(262 70% 40% / 0.25),
-      inset 0 1px 0 hsl(262 80% 80% / 0.12);
-  }
-
-  /* Soft violet edge glow — compose on top of any block */
-  .cosmos-glow-edge {
-    box-shadow:
-      0 0 0 1px hsl(262 50% 40% / 0.4),
-      0 10px 40px hsl(262 70% 30% / 0.3);
+    box-shadow: inset 0 1px 0 hsl(262 80% 80% / 0.12);
   }
 
   /* KPI value — big tabular number */
@@ -557,10 +553,10 @@
     hsl(var(--color-cosmos-surface-hsl) / 0.7),
     hsl(var(--color-cosmos-surface-deep-hsl) / 0.7)
   );
-  border-color: hsl(var(--color-cosmos-violet-muted-hsl) / 0.35);
+  border-color: hsl(var(--color-cosmos-violet-muted-hsl) / 0.4);
   box-shadow:
     inset 0 1px 0 hsl(var(--color-cosmos-violet-200-hsl) / 0.05),
-    0 6px 22px hsl(var(--color-cosmos-ink-900-hsl) / 0.4);
+    0 5px 16px hsl(var(--color-cosmos-ink-900-hsl) / 0.4);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
@@ -568,8 +564,8 @@
 /* Nested cards (rare — e.g. card-inside-card) keep a subtler treatment */
 .dark .rounded-lg.border.border-border.bg-surface
   .rounded-lg.border.border-border.bg-surface {
-  background: hsl(222 42% 10% / 0.5);
-  border-color: hsl(220 25% 24% / 0.5);
+  background: hsl(246 38% 10% / 0.5);
+  border-color: hsl(248 25% 24% / 0.5);
   box-shadow: none;
 }
 
@@ -685,9 +681,10 @@
   flex-direction: column;
   gap: 2px;
   padding: 8px 12px;
-  border: 1px solid var(--color-cosmos-border-soft);
+  border: 1px solid hsl(var(--color-cosmos-violet-500-hsl) / 0.14);
   border-radius: 10px;
   background: var(--color-cosmos-surface-dim);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.05);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   min-width: 92px;
@@ -915,9 +912,11 @@
   padding: 0 16px 14px;
 }
 .event-card-tile {
-  border: 1px solid var(--color-cosmos-border-soft);
+  border: 1px solid var(--color-cosmos-tile-border);
   border-radius: 8px;
-  background: var(--surface-hover);
+  background:
+    linear-gradient(180deg, var(--color-cosmos-tile-bg), transparent 80%),
+    var(--surface-hover);
   padding: 10px 12px;
 }
 .event-card-tile-label {
@@ -1537,13 +1536,13 @@
   font-variant-numeric: tabular-nums;
 }
 .pick-history-strip-pill.is-win {
-  background: rgba(120, 210, 200, 0.16);
-  border-color: rgba(120, 210, 200, 0.4);
+  background: hsl(var(--color-cosmos-teal-hsl) / 0.16);
+  border-color: hsl(var(--color-cosmos-teal-hsl) / 0.4);
   color: var(--color-cosmos-pos);
 }
 .pick-history-strip-pill.is-loss {
-  background: rgba(170, 140, 235, 0.14);
-  border-color: rgba(170, 140, 235, 0.32);
+  background: hsl(var(--color-cosmos-violet-500-hsl) / 0.14);
+  border-color: hsl(var(--color-cosmos-violet-500-hsl) / 0.32);
   color: var(--color-cosmos-text-bright);
 }
 .pick-history-strip-pill.is-placeholder {
@@ -1568,7 +1567,7 @@
   margin: 0 2px 4px;
   padding: 2px 10px;
   border-radius: 999px;
-  background: rgba(120, 210, 200, 0.12);
+  background: hsl(var(--color-cosmos-teal-hsl) / 0.12);
   border: 1px solid var(--color-cosmos-border-soft);
   color: var(--color-cosmos-pos);
   font-size: 10px;
@@ -1579,7 +1578,7 @@
   transition: background 120ms ease, color 120ms ease;
 }
 .pick-history-strip-retry:hover {
-  background: rgba(120, 210, 200, 0.22);
+  background: hsl(var(--color-cosmos-teal-hsl) / 0.22);
 }
 .pick-history-strip-pill-letter {
   font-size: 13px;
@@ -1635,7 +1634,7 @@
 }
 .pick-history-strip-n-pill.is-active,
 .pick-history-strip-chip.is-active {
-  background: rgba(120, 210, 200, 0.18);
+  background: hsl(var(--color-cosmos-teal-hsl) / 0.18);
   color: var(--color-cosmos-pos);
 }
 
@@ -1794,6 +1793,7 @@
   border: 1px solid var(--color-cosmos-border-soft);
   border-radius: var(--radius);
   background: var(--color-cosmos-surface-dim);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.04);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
 }
@@ -1817,6 +1817,7 @@
   border-radius: 12px;
   border: 1px solid var(--color-cosmos-border-softer);
   background: var(--color-cosmos-surface-table);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.04);
 }
 .cosmos-table-wrap th {
   background: var(--color-cosmos-surface-thead);
@@ -2617,7 +2618,7 @@
     rgba(40, 30, 90, 0.7)
   );
   box-shadow:
-    0 0 40px 0 hsl(var(--color-cosmos-violet-500-hsl) / 0.35),
+    0 0 28px 0 hsl(var(--color-cosmos-violet-500-hsl) / 0.28),
     inset 0 0 12px 0 rgba(255, 255, 255, 0.2);
   opacity: 0.85;
 }
@@ -3550,7 +3551,7 @@
   background: rgba(255, 255, 255, 0.06);
 }
 .user-switcher-item.is-current {
-  background: rgba(120, 210, 200, 0.14);
+  background: hsl(var(--color-cosmos-teal-hsl) / 0.14);
   color: var(--color-positive);
 }
 .user-switcher-kalshi-badge {
@@ -3559,7 +3560,7 @@
   text-transform: lowercase;
   padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(120, 210, 200, 0.18);
+  background: hsl(var(--color-cosmos-teal-hsl) / 0.18);
   color: var(--color-positive);
 }
 .user-switcher-signout {
