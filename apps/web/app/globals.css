@@ -62,7 +62,7 @@
   /* Shadows */
   --shadow-surface: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
   --shadow-elevated: 0 4px 12px 0 rgb(0 0 0 / 0.5), 0 1px 3px -1px rgb(0 0 0 / 0.3);
-  --shadow-glow-accent: 0 0 16px 0 hsl(217 91% 60% / 0.2);
+  --shadow-glow-accent: 0 0 12px 0 hsl(262 68% 62% / 0.15);
   --shadow-glow-cosmos: 0 0 24px 0 hsl(262 60% 58% / 0.35);
 
   /* Animations */
@@ -103,36 +103,41 @@
   }
 }
 
-/* ── Light mode CSS variables ── */
+/* ── Semantic CSS variables ──
+   Light mode retired 2026-07-09: :root mirrors .dark so there is a single
+   visual source of truth and no divergent unreachable palette (see
+   DESIGN_SYSTEM.md §8). Accent unified on violet (blue retired) as part of
+   the "full cosmos" retheme; surfaces/borders hue-shifted 220 → ~248 at the
+   same lightness so panels read violet-cast without getting brighter. */
 :root {
-  --background: hsl(220 30% 97%);
-  --surface: hsl(0 0% 100%);
-  --surface-hover: hsl(220 25% 94%);
-  --border: hsl(220 20% 87%);
-  --border-bright: hsl(220 25% 80%);
-  --foreground: hsl(220 47% 10%);
-  --muted: hsl(220 20% 92%);
-  --muted-foreground: hsl(220 15% 45%);
-  --accent: hsl(217 91% 50%);
+  --background: hsl(0 0% 0%);
+  --surface: hsl(248 35% 8%);
+  --surface-hover: hsl(248 32% 12%);
+  --border: hsl(248 26% 17%);
+  --border-bright: hsl(250 24% 24%);
+  --foreground: hsl(213 31% 91%);
+  --muted: hsl(246 28% 12%);
+  --muted-foreground: hsl(215 18% 54%);
+  --accent-hsl: 262 68% 62%;
+  --accent: hsl(var(--accent-hsl));
   --accent-foreground: hsl(0 0% 100%);
-  --accent-dim: hsl(217 91% 50% / 0.1);
-  --positive: hsl(160 84% 35%);
-  --positive-dim: hsl(160 84% 35% / 0.12);
-  --negative: hsl(0 78% 55%);
-  --negative-dim: hsl(0 78% 55% / 0.12);
-  --warning: hsl(40 95% 48%);
+  --accent-dim: hsl(var(--accent-hsl) / 0.12);
+  --positive: hsl(160 72% 46%);
+  --positive-dim: hsl(160 72% 46% / 0.12);
+  --negative: hsl(0 85% 65%);
+  --negative-dim: hsl(0 85% 65% / 0.12);
+  --warning: hsl(40 95% 58%);
 
-  --cosmos-violet: hsl(262 60% 48%);
-  --cosmos-cyan: hsl(190 80% 50%);
+  --cosmos-violet: hsl(262 60% 58%);
+  --cosmos-cyan: hsl(190 80% 60%);
 
-  --sport-nba: hsl(248 80% 62%);
-  --sport-nfl: hsl(218 75% 50%);
-  --sport-mlb: hsl(285 70% 60%);
-  --sport-wnba: hsl(15 85% 58%);
-  --sport-tennis: hsl(195 75% 50%);
+  --sport-nba: hsl(248 85% 70%);
+  --sport-nfl: hsl(218 80% 65%);
+  --sport-mlb: hsl(285 75% 70%);
+  --sport-wnba: hsl(15 90% 68%);
+  --sport-tennis: hsl(195 80% 62%);
 
-  /* Cosmos feature-surface tokens (shared by light/dark feature cards) */
-  --color-cosmos-text-bright: hsl(258 100% 96%);
+  /* Cosmos feature-surface tokens (shared feature-card surfaces) */
   --color-cosmos-text-muted: hsl(215 18% 58%);
   --color-cosmos-title-hl: hsl(258 100% 86%);
 
@@ -142,13 +147,13 @@
   --color-cosmos-surface-thead: hsl(0 0% 0% / 0.4);
   --color-cosmos-border-soft: hsl(0 0% 100% / 0.08);
   --color-cosmos-border-softer: hsl(0 0% 100% / 0.06);
-  --color-cosmos-border-panel: hsl(220 25% 24% / 0.5);
-  --color-cosmos-border-panel-faint: hsl(220 25% 24% / 0.3);
-  --color-cosmos-surface-prop: hsl(220 25% 12% / 0.35);
-  --color-cosmos-surface-prop-hover: hsl(220 25% 14% / 0.5);
-  --color-cosmos-surface-ticket-stat: hsl(220 25% 12% / 0.4);
-  --color-cosmos-surface-stats-input: hsl(220 42% 6% / 0.6);
-  --color-cosmos-surface-stats-metric: hsl(220 42% 6% / 0.4);
+  --color-cosmos-border-panel: hsl(248 25% 24% / 0.5);
+  --color-cosmos-border-panel-faint: hsl(248 25% 24% / 0.3);
+  --color-cosmos-surface-prop: hsl(247 25% 12% / 0.35);
+  --color-cosmos-surface-prop-hover: hsl(247 25% 14% / 0.5);
+  --color-cosmos-surface-ticket-stat: hsl(247 25% 12% / 0.4);
+  --color-cosmos-surface-stats-input: hsl(247 42% 6% / 0.6);
+  --color-cosmos-surface-stats-metric: hsl(247 42% 6% / 0.4);
 
   --color-cosmos-violet-edge: hsl(262 60% 70% / 0.14);
   --color-cosmos-violet-edge-hover: hsl(262 60% 70% / 0.22);
@@ -190,8 +195,8 @@
   --color-cosmos-hero-ink-strong: hsl(250 55% 4% / 0.72);
   --color-cosmos-hero-shadow: hsl(0 0% 0% / 0.45);
 
-  --color-cosmos-accent-select: hsl(217 91% 60% / 0.08);
-  --color-cosmos-accent-select-strong: hsl(217 91% 60% / 0.12);
+  --color-cosmos-accent-select: hsl(var(--accent-hsl) / 0.08);
+  --color-cosmos-accent-select-strong: hsl(var(--accent-hsl) / 0.12);
 
   --color-cosmos-pos: hsl(150 65% 60%);
   --color-cosmos-pos-accent: hsl(190 80% 65%);
@@ -247,9 +252,13 @@
   --color-cosmos-cyan-300-hsl: 195 100% 81%;    /* rgb(156,230,255) */
   --color-cosmos-cyan-500-hsl: 198 100% 77%;    /* rgb(140,220,255) base */
 
+  /* Glow core — the bright violet mid-tone used at canvas hotspots
+     (probability-surface peaks). Was an unmapped rgba(200,160,255) literal. */
+  --color-cosmos-violet-glow-core-hsl: 265 100% 81%;
+
   /* Surface / overlay */
-  --color-cosmos-surface-hsl: 222 42% 9%;       /* panel surface base */
-  --color-cosmos-surface-deep-hsl: 222 45% 6%;  /* panel surface — deeper */
+  --color-cosmos-surface-hsl: 246 38% 9%;       /* panel surface base */
+  --color-cosmos-surface-deep-hsl: 248 42% 6%;  /* panel surface — deeper */
 
   /* Ink / neutrals — true-black floor for a deep-space feel. */
   --color-cosmos-ink-900-hsl: 0 0% 0%;          /* body base — pure black */
@@ -276,19 +285,22 @@
 
 }
 
-/* ── Dark mode CSS variables (product default) ── */
+/* ── Dark mode CSS variables (product default) ──
+   Identical to :root since light mode was retired — kept so the
+   next-themes `.dark` class mechanism and `.dark`-scoped selectors
+   (e.g. `.dark body`, the dark Card override) keep working unchanged. */
 .dark {
   --background: hsl(0 0% 0%);
-  --surface: hsl(220 42% 8%);
-  --surface-hover: hsl(220 40% 12%);
-  --border: hsl(220 28% 16%);
-  --border-bright: hsl(220 25% 22%);
+  --surface: hsl(248 35% 8%);
+  --surface-hover: hsl(248 32% 12%);
+  --border: hsl(248 26% 17%);
+  --border-bright: hsl(250 24% 24%);
   --foreground: hsl(213 31% 91%);
-  --muted: hsl(220 30% 12%);
+  --muted: hsl(246 28% 12%);
   --muted-foreground: hsl(215 18% 54%);
-  --accent: hsl(217 91% 60%);
+  --accent: hsl(var(--accent-hsl));
   --accent-foreground: hsl(0 0% 100%);
-  --accent-dim: hsl(217 91% 60% / 0.12);
+  --accent-dim: hsl(var(--accent-hsl) / 0.12);
   --positive: hsl(160 72% 46%);
   --positive-dim: hsl(160 72% 46% / 0.12);
   --negative: hsl(0 85% 65%);
