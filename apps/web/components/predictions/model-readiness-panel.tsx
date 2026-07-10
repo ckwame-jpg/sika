@@ -334,7 +334,7 @@ function ProgressStep({
           {ratio >= 1 ? "done" : `${Math.round(ratio * 100)}%`}
         </span>
       </div>
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-cosmos-violet/15">
         <div className="h-full rounded-full bg-positive" style={{ width: `${ratio * 100}%` }} />
       </div>
     </div>

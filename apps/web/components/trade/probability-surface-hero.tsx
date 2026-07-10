@@ -80,11 +80,16 @@ export function ProbabilitySurfaceHero({
     let raf = 0;
 
     const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      width = canvas.width = Math.max(320, rect.width) * dpr;
-      height = canvas.height = Math.max(180, rect.height) * dpr;
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
+      // Measure the wrap, not the canvas — reading the canvas's own rect
+      // feeds back the style.width we set below, so one zero-width layout
+      // pass (e.g. mid-viewport-resize) would collapse it permanently.
+      const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
+      const w = Math.max(320, rect.width);
+      const h = Math.max(180, rect.height);
+      width = canvas.width = w * dpr;
+      height = canvas.height = h * dpr;
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
     };
 
     const wave = (j: number, i: number, t: number) =>
