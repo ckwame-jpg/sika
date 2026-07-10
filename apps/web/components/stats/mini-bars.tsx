@@ -14,6 +14,8 @@
  *     ``(v) => v >= threshold ? "high" : "low"`` to color-code pass/fail.
  */
 
+import { getChartPalette } from "@/lib/chart-colors";
+
 export type MiniBarsTone = "high" | "low" | "mid";
 
 interface MiniBarsProps {
@@ -25,18 +27,18 @@ interface MiniBarsProps {
   ariaLabel?: string;
 }
 
-const TONE_FILL: Record<MiniBarsTone, string> = {
-  high: "rgba(120,210,200,0.78)",
-  low: "rgba(170,140,235,0.62)",
-  mid: "rgba(170,140,235,0.62)",
-};
-
 export function MiniBars({
   points,
   threshold,
   bandTone,
   ariaLabel = "Trend chart",
 }: MiniBarsProps) {
+  const palette = getChartPalette();
+  const toneFill: Record<MiniBarsTone, string> = {
+    high: palette.barHigh,
+    low: palette.barLow,
+    mid: palette.barLow,
+  };
   if (points.length === 0) return null;
 
   const min = Math.min(...points);
@@ -80,7 +82,7 @@ export function MiniBars({
           x2={W}
           y1={yFor(referenceLine)}
           y2={yFor(referenceLine)}
-          stroke="rgba(150,140,255,0.45)"
+          stroke={palette.threshold}
           strokeWidth={1}
           strokeDasharray="4 4"
           data-testid="mini-bars-reference"
@@ -98,7 +100,7 @@ export function MiniBars({
                 width={20}
                 height={h}
                 rx={2}
-                fill={TONE_FILL[tone]}
+                fill={toneFill[tone]}
                 data-testid={`mini-bars-bar-${index}`}
                 data-tone={tone}
               />
@@ -106,7 +108,7 @@ export function MiniBars({
                 x={x}
                 y={BAR_Y_TOP - 3}
                 textAnchor="middle"
-                fill="rgba(240,243,252,0.98)"
+                fill={palette.barLabel}
                 fontSize="13"
                 fontWeight="600"
                 fontFamily="var(--font-geist-sans), system-ui, sans-serif"

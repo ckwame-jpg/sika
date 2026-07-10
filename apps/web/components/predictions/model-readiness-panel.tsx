@@ -18,6 +18,7 @@ import { FreshnessAuditPanel } from "@/components/predictions/freshness-audit-pa
 import { IntervalModelsBadge } from "@/components/predictions/interval-models-badge";
 import { SettlementAgingBadge } from "@/components/predictions/settlement-aging-badge";
 import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
+import { getChartPalette } from "@/lib/chart-colors";
 
 type RuntimeMode = ModelReadinessSummaryRead["ml_serving_mode"];
 
@@ -204,6 +205,7 @@ function CalibrationCurve({
 }: {
   rows: ModelFamilyReadinessRead["calibration_buckets"];
 }) {
+  const palette = getChartPalette();
   const populated = rows.filter(
     (row) => row.settled_count > 0 && row.avg_predicted !== null && row.actual_yes_rate !== null,
   );
@@ -243,7 +245,7 @@ function CalibrationCurve({
             width={CURVE_PLOT_SIZE}
             height={CURVE_PLOT_SIZE}
             fill="none"
-            stroke="rgba(255,255,255,0.08)"
+            stroke={palette.frame}
             strokeWidth={1}
           />
           <line
@@ -251,7 +253,7 @@ function CalibrationCurve({
             y1={toY(0)}
             x2={toX(1)}
             y2={toY(1)}
-            stroke="rgba(255,255,255,0.18)"
+            stroke={palette.reference}
             strokeWidth={1}
             strokeDasharray="3 3"
           />
@@ -265,8 +267,8 @@ function CalibrationCurve({
                 cx={toX(predicted)}
                 cy={toY(actual)}
                 r={dotRadius(row.settled_count)}
-                fill="rgb(34 197 94 / 0.85)"
-                stroke="rgb(34 197 94)"
+                fill={palette.dotFill}
+                stroke={palette.dotStroke}
                 strokeWidth={1}
               >
                 <title>
@@ -332,7 +334,7 @@ function ProgressStep({
           {ratio >= 1 ? "done" : `${Math.round(ratio * 100)}%`}
         </span>
       </div>
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-cosmos-violet/15">
         <div className="h-full rounded-full bg-positive" style={{ width: `${ratio * 100}%` }} />
       </div>
     </div>

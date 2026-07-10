@@ -69,6 +69,9 @@ export function ProbabilitySurfaceHero({
     const violet500Hsl = rootStyles.getPropertyValue("--color-cosmos-violet-500-hsl").trim();
     const cyan500Hsl = rootStyles.getPropertyValue("--color-cosmos-cyan-500-hsl").trim();
     const textBright = rootStyles.getPropertyValue("--color-cosmos-text-bright").trim();
+    const glowCoreHsl = rootStyles
+      .getPropertyValue("--color-cosmos-violet-glow-core-hsl")
+      .trim();
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let width = 0;
@@ -77,11 +80,16 @@ export function ProbabilitySurfaceHero({
     let raf = 0;
 
     const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      width = canvas.width = Math.max(320, rect.width) * dpr;
-      height = canvas.height = Math.max(180, rect.height) * dpr;
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
+      // Measure the wrap, not the canvas — reading the canvas's own rect
+      // feeds back the style.width we set below, so one zero-width layout
+      // pass (e.g. mid-viewport-resize) would collapse it permanently.
+      const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
+      const w = Math.max(320, rect.width);
+      const h = Math.max(180, rect.height);
+      width = canvas.width = w * dpr;
+      height = canvas.height = h * dpr;
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
     };
 
     const wave = (j: number, i: number, t: number) =>
@@ -145,8 +153,7 @@ export function ProbabilitySurfaceHero({
         const i = Math.round(py * ROWS);
         const [x, y] = project(px, py, heightMap[i][j] + pa, skew, tilt);
         const glow = ctx.createRadialGradient(x, y, 0, x, y, 14 * dpr);
-        // TODO(phase4): "rgba(200,160,255,0.85)" is an unmapped violet mid-tone — flag to CD for naming.
-        glow.addColorStop(0, "rgba(200,160,255,0.85)");
+        glow.addColorStop(0, `hsl(${glowCoreHsl} / 0.85)`);
         glow.addColorStop(0.4, `hsl(${violet500Hsl} / 0.35)`);
         glow.addColorStop(1, "transparent");
         ctx.fillStyle = glow;

@@ -1,6 +1,7 @@
 # Sika Design System
 
-**Last reconciled:** 2026-05-17 · against `apps/web/app/globals.css` + every file in `apps/web/components/ui/` + a representative sample of composites.
+**Last reconciled:** 2026-07-09 · after the "full cosmos, no more glow" revamp (accent unified on violet, blue retired; light mode retired; real Geist Mono; nebula backdrop; chip de-glow; chart-color tokenization via `lib/chart-colors.ts`).
+**Previous reconciliation:** 2026-05-17 · against `apps/web/app/globals.css` + every file in `apps/web/components/ui/` + a representative sample of composites.
 **Drift cleanup:** late 2026-05-17 batch closed §5.1, §5.2, §5.3, §5.4 (partially), §5.5, §6.1 (partially), §6.2 (partially), §6.3 (audited; no fix needed), §6.4, §6.5, §1.6, and all 7 §9 open recommendations across [sika#196](https://github.com/ckwame-jpg/sika/pull/196), [#197](https://github.com/ckwame-jpg/sika/pull/197), [#198](https://github.com/ckwame-jpg/sika/pull/198), [#199](https://github.com/ckwame-jpg/sika/pull/199), [#200](https://github.com/ckwame-jpg/sika/pull/200), [#201](https://github.com/ckwame-jpg/sika/pull/201), [#202](https://github.com/ckwame-jpg/sika/pull/202), [#203](https://github.com/ckwame-jpg/sika/pull/203), [#204](https://github.com/ckwame-jpg/sika/pull/204), [#205](https://github.com/ckwame-jpg/sika/pull/205), and [#207](https://github.com/ckwame-jpg/sika/pull/207). The entire 2026-05-17 audit doc is now resolved.
 
 This is an **audit + documentation** pass. It catalogs what exists, names the conventions, and flags drift. It does NOT propose new patterns — extension is a separate workflow.
@@ -20,7 +21,7 @@ This is an **audit + documentation** pass. It catalogs what exists, names the co
 ## Repo at a glance
 
 - **Stack**: Next.js (App Router) · Tailwind v4 · CSS variables · cva for primitive variants
-- **Theme**: Dark "cosmos" theme is the product default. Light mode exists in `:root` but operators run dark.
+- **Theme**: Dark "cosmos" theme only. Light mode was retired 2026-07-09: `:root` mirrors `.dark` so there is a single visual source of truth (the `.dark` class mechanism is kept for `.dark`-scoped selectors).
 - **Token system**: All colors / fonts / radii / shadows / animations defined as CSS variables, mapped to Tailwind utilities via `@theme inline` in `globals.css:4-88`. New utilities (e.g. `bg-cosmos-violet`) work automatically once a token is defined.
 - **Primitives**: Live in `apps/web/components/ui/`. Mostly Radix wrappers + cva variants.
 - **Patterns**: Live as `.classname` blocks in `globals.css`. Each prefix corresponds to a feature surface (`event-card` → events feed, `sa-` → stats assistant, etc.).
@@ -45,9 +46,9 @@ Every token is defined as a CSS variable in `globals.css`. The Tailwind `@theme 
 | `--foreground` | `text-foreground` | `hsl(213 31% 91%)` | Default body text |
 | `--muted` | `bg-muted` | `hsl(220 30% 12%)` | Muted surfaces |
 | `--muted-foreground` | `text-muted-foreground` | `hsl(215 18% 54%)` | Secondary text |
-| `--accent` | `bg-accent`, `text-accent` | `hsl(217 91% 60%)` | Primary action color (blue) |
-| `--accent-dim` | `bg-accent-dim` | `hsl(217 91% 60% / 0.12)` | Tinted accent backgrounds |
-| `--positive` | `bg-positive`, `text-positive`, `border-positive` | `hsl(160 72% 46%)` | Wins, gains, "ok" status |
+| `--accent` | `bg-accent`, `text-accent` | `hsl(262 68% 62%)` (violet, via `--accent-hsl` triplet) | Primary action color. **Blue `hsl(217 91% 60%)` retired 2026-07-09** — the accent is now violet, unifying the old two-accent split. |
+| `--accent-dim` | `bg-accent-dim` | `hsl(var(--accent-hsl) / 0.12)` | Tinted accent backgrounds |
+| `--positive` | `bg-positive`, `text-positive`, `border-positive` | `hsl(160 72% 46%)` (via `--positive-hsl` triplet) | Wins, gains, "ok" status |
 | `--positive-dim` | `bg-positive-dim` | `hsl(160 72% 46% / 0.12)` | Tinted positive backgrounds |
 | `--negative` | `bg-negative`, `text-negative`, `border-negative` | `hsl(0 85% 65%)` | Losses, errors, "bad" status |
 | `--negative-dim` | `bg-negative-dim` | `hsl(0 85% 65% / 0.12)` | Tinted negative backgrounds |
@@ -69,6 +70,10 @@ background: hsl(var(--color-cosmos-violet-500-hsl) / 0.22);
 ```
 
 **When you'd use the ramp directly:** custom decorative effects (orbs, hero gradients, the probability surface canvas). The ramp is NOT for typical component work — use the flat semantic tokens above instead.
+
+Ramp additions (2026-07-09): `--color-cosmos-teal-hsl` (win-state teal — was a recurring `rgba(120,210,200)` literal across 7 call sites), `--color-cosmos-violet-glow-core-hsl` (bright violet canvas-hotspot tone — was an unmapped `rgba(200,160,255)` literal in the probability-surface hero).
+
+**Charts/SVG/canvas:** recharts props, SVG presentation attributes, and canvas APIs can't consume `var()`. Use `getChartPalette()` / `getToken()` from [`lib/chart-colors.ts`](lib/chart-colors.ts) — runtime-resolved token roles with static fallbacks for jsdom/SSR. Consumers: `price-chart.tsx`, `mini-bars.tsx`, `model-readiness-panel.tsx` (calibration curve). The probability-surface hero keeps its own triplet reads (same pattern, needs raw triplets).
 
 #### Sport tints
 
@@ -101,10 +106,10 @@ Approximately 70 cosmos-prefixed tokens at `globals.css:120-218` for specialized
 
 ```css
 --font-sans: var(--font-geist-sans), system-ui, sans-serif;
---font-mono: var(--font-geist-sans), system-ui, sans-serif;
+--font-mono: var(--font-geist-mono), ui-monospace, monospace;
 ```
 
-**Both font-sans AND font-mono resolve to Geist Sans.** Geist's tabular-numerals feature (`cv02`, `cv03`, `cv04`, `cv11` enabled in `globals.css:310`) gives the monospace look for numbers without a separate font. **Use `font-mono tabular-nums` for all numeric data** — this is the convention.
+**`font-mono` maps to real Geist Mono as of 2026-07-09** (it previously aliased Geist Sans and leaned on tabular figures). All ~150 `font-mono` call sites are numeric/data contexts and now render true monospace; overflow was verified in the dense tables (paper bets, prediction ledger, KPI tiles) down to ~290px. **Use `font-mono tabular-nums` for all numeric data** — this remains the convention.
 
 Body styles (`globals.css:313-320`):
 ```css
@@ -136,12 +141,13 @@ Use `rounded`, `rounded-md`, `rounded-lg`, `rounded-xl`, `rounded-2xl`. **Avoid 
 ```css
 --shadow-surface:        0 1px 3px 0 rgb(0 0 0 / 0.4), …
 --shadow-elevated:       0 4px 12px 0 rgb(0 0 0 / 0.5), …
---shadow-glow-accent:    0 0 16px 0 hsl(217 91% 60% / 0.2)
---shadow-glow-positive:  0 0 12px 0 hsl(160 72% 46% / 0.25)
+--shadow-glow-accent:    0 0 12px 0 hsl(262 68% 62% / 0.15)
 --shadow-glow-cosmos:    0 0 24px 0 hsl(262 60% 58% / 0.35)
 ```
 
 Usage: `shadow-surface`, `shadow-elevated`, `shadow-glow-accent`. **Use `shadow-elevated` for floating elements (modals, sheets), `shadow-surface` for inline cards, glows for celebratory or attention-grabbing moments only.**
+
+**No-more-glow directive (2026-07-09 revamp):** richness comes from gradients, depth layering, and hairline borders — not box-shadow bloom. `--shadow-glow-accent` was re-derived violet with reduced spread; `.cosmos-chip`'s triple-shadow active glow was replaced with hairline + gradient; the orphaned `.cosmos-glow-edge` utility was deleted; the `.sa-result-orb` halo was trimmed. Tiny dot glows (6–8px on status dots/orbs) are existing identity and stay. Don't add new glow shadows.
 
 ### 1.5 Animation
 
@@ -164,7 +170,9 @@ Plus custom keyframes for decorative effects: `lo-spin`, `nav-orbit`, `live-puls
 
 **Still present** (has at least one real consumer; left alone):
 
-- `--color-cosmos-hero-shadow` — used in one radial-gradient at `globals.css:638`. Single consumer but real; keep.
+- `--color-cosmos-hero-shadow` — used in one radial-gradient in the trade-hero block. Single consumer but real; keep.
+
+**Deleted 2026-07-09:** `.cosmos-glow-edge` utility (zero consumers) and the dead first definition of `--color-cosmos-text-bright` (it was defined twice; the later `hsl(0 0% 100%)` won).
 
 **Action when adding a new pattern:** prefer renaming/repurposing an existing token over creating a 71st cosmos token. If an orphan accumulates across two sessions, delete it.
 
@@ -400,7 +408,7 @@ Where `statusPillClass` maps domain status → variant class (`completed → set
 
 ### `.cosmos-chip` (defined `globals.css:464-486`, ~12 consumers)
 
-**What it is:** chip-style toggle with hover + active states. Active state (via `data-active="true"` attribute selector) uses a violet/cyan gradient + glow.
+**What it is:** chip-style toggle with hover + active states. Active state (via `data-active="true"` attribute selector) uses a violet gradient + cyan hairline border + inset top highlight (the former triple-shadow glow was retired 2026-07-09 per the no-more-glow directive).
 
 **Adopted 2026-05-17** via [sika#198](https://github.com/ckwame-jpg/sika/pull/198) (Settings page price-display tiles + pick-history chips + narrator toggles) and [sika#199](https://github.com/ckwame-jpg/sika/pull/199) (Mappings Desk confidence preset chips). Canonical pattern for any toggle / selectable chip.
 
@@ -424,7 +432,11 @@ Where `statusPillClass` maps domain status → variant class (`completed → set
 
 ### Sidebar / topbar / brand chrome (`.sidebar-*`, `.topbar-*`, `.brand-*`, `.nav-*`)
 
-Layout shell at `globals.css:2885-3372`. Includes the orbit brand mark, sync pill, crumb breadcrumbs, live/UTC/refreshing chips. **Don't touch these for individual component PRs** — they're the application shell.
+Layout shell in the "PHASE 3b" section of `globals.css`. Includes the orbit brand mark, sync pill, crumb breadcrumbs, live/UTC/refreshing chips. **Don't touch these for individual component PRs** — they're the application shell. Since 2026-07-09: `.nav-item.active` carries a violet tint gradient + inset left hairline; `.sync-pill` uses the cosmos panel gradient.
+
+### `.nebula-field` (application shell)
+
+Static cosmic backdrop under the starfield canvas: one fixed, full-viewport div (mounted in `shell.tsx` before `<StarfieldCanvas />`) with 4 low-alpha radial gradients (violet / cyan / warm amber). No animation, no blur, no box-shadow — zero per-frame cost — and it's the only cosmic backdrop `prefers-reduced-motion` users see (the starfield canvas bails for them). Shell-owned; don't reuse.
 
 ---
 
@@ -500,7 +512,7 @@ Two new translucent overlay tokens added to `@theme inline`:
 
 13 of 14 inline opacity literals migrated. Mode-independent (white at fixed alpha reads the same on light + dark backgrounds).
 
-**One literal preserved:** `bg-white/[0.08]` × 1 in `model-readiness-panel.tsx` (progress-bar track) — one-off "stronger" tint that doesn't fit either token.
+**One literal preserved:** ~~`bg-white/[0.08]` × 1 in `model-readiness-panel.tsx` (progress-bar track)~~ — resolved 2026-07-09: now `bg-cosmos-violet/15` (the white tint read off-palette against the violet-cast tiles).
 
 ### 5.3 Components built without the design system (resolved)
 
@@ -539,16 +551,9 @@ The `<RefreshCw className="animate-spin" />` inline-button spinners (4 occurrenc
 
 The disambiguation rule itself remains: **`.outcome-pill` for settled-outcome semantics (won / lost / pending / cancelled); `<Badge>` for general-purpose / categorical labels.**
 
-### 5.6 `font-sans` and `font-mono` are aliases of the same font
+### 5.6 `font-sans` and `font-mono` are aliases of the same font (resolved)
 
-`globals.css:34-35`:
-
-```css
---font-sans: var(--font-geist-sans), system-ui, sans-serif;
---font-mono: var(--font-geist-sans), system-ui, sans-serif;
-```
-
-Both resolve to Geist. The `font-mono` utility is used 90+ times across the codebase for numeric data — semantically meaningful even when visually identical. **Don't conflate them.** Keep `font-mono tabular-nums` as the contract for "this is data" even though the font is Geist either way.
+**Resolved 2026-07-09** in the revamp: `--font-mono` now maps to real Geist Mono (`var(--font-geist-mono), ui-monospace, monospace`), which was already loaded via `app/layout.tsx` but unused. All ~150 `font-mono` call sites render true monospace; dense-table overflow was checked down to ~290px viewports. The contract is unchanged: `font-mono tabular-nums` marks "this is data."
 
 ---
 
@@ -659,7 +664,7 @@ I need a new …
 - **Storybook / external tooling.** This is one-operator software; the doc + the codebase IS the design system. No tooling overhead.
 - **Visual design proposals.** Any recommendation to change how an existing pattern LOOKS belongs in a /frontend-design PR, not here.
 - **Component-by-component a11y audit.** The cross-cuts section above flags categories; full per-component audit is a separate `/accessibility-review` pass.
-- **Light-mode coverage.** Light-mode tokens exist (`:root`) but the product runs dark. Treat light mode as best-effort, not first-class.
+- **Light-mode coverage.** Light mode was retired 2026-07-09 — `:root` mirrors `.dark` (single visual source of truth, no divergent unreachable palette, no hydration-flash mismatch). The `next-themes` `.dark` class mechanism is kept so `.dark`-scoped selectors keep working. Reintroducing light mode would mean re-authoring a `:root` palette, not flipping a switch.
 
 ---
 

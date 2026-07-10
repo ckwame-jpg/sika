@@ -15,8 +15,9 @@ import type { MarketHistoryRead } from "@/lib/types";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { format, parseISO } from "date-fns";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { usePriceDisplay } from "@/lib/price-display";
+import { getChartPalette } from "@/lib/chart-colors";
 
 const RANGES = ["1D", "7D", "30D"] as const;
 type Range = (typeof RANGES)[number];
@@ -57,6 +58,7 @@ function CustomTooltip({
 
 export function PriceChart({ ticker }: PriceChartProps) {
   const { formatPrice } = usePriceDisplay();
+  const palette = useMemo(getChartPalette, []);
   const [range, setRange] = useState<Range>("1D");
   const { data, isLoading } = useSWR<MarketHistoryRead>(
     keys.marketHistory(ticker, range),
@@ -110,30 +112,30 @@ export function PriceChart({ ticker }: PriceChartProps) {
           <AreaChart data={points} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
             <defs>
               <linearGradient id="yesGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="hsl(217 91% 60%)" stopOpacity={0.15} />
-                <stop offset="95%" stopColor="hsl(217 91% 60%)" stopOpacity={0} />
+                <stop offset="5%" stopColor={palette.line} stopOpacity={0.15} />
+                <stop offset="95%" stopColor={palette.line} stopOpacity={0} />
               </linearGradient>
               <linearGradient id="meanGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="hsl(160 72% 46%)" stopOpacity={0.12} />
-                <stop offset="95%" stopColor="hsl(160 72% 46%)" stopOpacity={0} />
+                <stop offset="5%" stopColor={palette.positive} stopOpacity={0.12} />
+                <stop offset="95%" stopColor={palette.positive} stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid
               strokeDasharray="3 3"
-              stroke="hsl(220 28% 16%)"
+              stroke={palette.grid}
               vertical={false}
             />
             <XAxis
               dataKey="timestamp"
               tickFormatter={tickFormatter}
-              tick={{ fontSize: 11, fill: "hsl(215 18% 54%)" }}
+              tick={{ fontSize: 11, fill: palette.tick }}
               axisLine={false}
               tickLine={false}
               interval="preserveStartEnd"
             />
             <YAxis
               tickFormatter={(v) => formatPrice(v)}
-              tick={{ fontSize: 11, fill: "hsl(215 18% 54%)" }}
+              tick={{ fontSize: 11, fill: palette.tick }}
               axisLine={false}
               tickLine={false}
               domain={[0, 1]}
@@ -144,7 +146,7 @@ export function PriceChart({ ticker }: PriceChartProps) {
               <Area
                 type="monotone"
                 dataKey="mean_price"
-                stroke="hsl(160 72% 46%)"
+                stroke={palette.positive}
                 strokeWidth={1.5}
                 fill="url(#meanGradient)"
                 dot={false}
@@ -155,7 +157,7 @@ export function PriceChart({ ticker }: PriceChartProps) {
               <Area
                 type="monotone"
                 dataKey="yes_bid"
-                stroke="hsl(217 91% 60%)"
+                stroke={palette.line}
                 strokeWidth={1.5}
                 fill="url(#yesGradient)"
                 dot={false}
