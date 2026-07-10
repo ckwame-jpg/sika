@@ -69,6 +69,9 @@ export function ProbabilitySurfaceHero({
     const violet500Hsl = rootStyles.getPropertyValue("--color-cosmos-violet-500-hsl").trim();
     const cyan500Hsl = rootStyles.getPropertyValue("--color-cosmos-cyan-500-hsl").trim();
     const textBright = rootStyles.getPropertyValue("--color-cosmos-text-bright").trim();
+    const glowCoreHsl = rootStyles
+      .getPropertyValue("--color-cosmos-violet-glow-core-hsl")
+      .trim();
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     let width = 0;
@@ -145,8 +148,7 @@ export function ProbabilitySurfaceHero({
         const i = Math.round(py * ROWS);
         const [x, y] = project(px, py, heightMap[i][j] + pa, skew, tilt);
         const glow = ctx.createRadialGradient(x, y, 0, x, y, 14 * dpr);
-        // TODO(phase4): "rgba(200,160,255,0.85)" is an unmapped violet mid-tone — flag to CD for naming.
-        glow.addColorStop(0, "rgba(200,160,255,0.85)");
+        glow.addColorStop(0, `hsl(${glowCoreHsl} / 0.85)`);
         glow.addColorStop(0.4, `hsl(${violet500Hsl} / 0.35)`);
         glow.addColorStop(1, "transparent");
         ctx.fillStyle = glow;

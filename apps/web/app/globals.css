@@ -125,8 +125,9 @@
   --accent: hsl(var(--accent-hsl));
   --accent-foreground: hsl(0 0% 100%);
   --accent-dim: hsl(var(--accent-hsl) / 0.12);
-  --positive: hsl(160 72% 46%);
-  --positive-dim: hsl(160 72% 46% / 0.12);
+  --positive-hsl: 160 72% 46%;
+  --positive: hsl(var(--positive-hsl));
+  --positive-dim: hsl(var(--positive-hsl) / 0.12);
   --negative: hsl(0 85% 65%);
   --negative-dim: hsl(0 85% 65% / 0.12);
   --warning: hsl(40 95% 58%);
@@ -304,8 +305,9 @@
   --accent: hsl(var(--accent-hsl));
   --accent-foreground: hsl(0 0% 100%);
   --accent-dim: hsl(var(--accent-hsl) / 0.12);
-  --positive: hsl(160 72% 46%);
-  --positive-dim: hsl(160 72% 46% / 0.12);
+  --positive-hsl: 160 72% 46%;
+  --positive: hsl(var(--positive-hsl));
+  --positive-dim: hsl(var(--positive-hsl) / 0.12);
   --negative: hsl(0 85% 65%);
   --negative-dim: hsl(0 85% 65% / 0.12);
   --warning: hsl(40 95% 58%);

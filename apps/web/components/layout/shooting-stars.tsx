@@ -16,6 +16,9 @@ const MIN_DELAY_MS = 8000;
 const MAX_DELAY_MS = 14000;
 const LIFE_MS = 1200;
 const TAIL_PX = 120;
+/* Streak color: pure white RGB triplet (matches --color-cosmos-text-bright);
+   composed with a per-frame alpha, which canvas gradients need inline. */
+const STREAK_RGB = "255,255,255";
 
 export function ShootingStars() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -85,8 +88,8 @@ export function ShootingStars() {
         const tailX = streak.x - (streak.vx / Math.hypot(streak.vx, streak.vy)) * streak.length;
         const tailY = streak.y - (streak.vy / Math.hypot(streak.vx, streak.vy)) * streak.length;
         const grad = ctx!.createLinearGradient(streak.x, streak.y, tailX, tailY);
-        grad.addColorStop(0, `rgba(255,255,255,${headAlpha})`);
-        grad.addColorStop(1, "rgba(255,255,255,0)");
+        grad.addColorStop(0, `rgba(${STREAK_RGB},${headAlpha})`);
+        grad.addColorStop(1, `rgba(${STREAK_RGB},0)`);
         ctx!.strokeStyle = grad;
         ctx!.lineWidth = 2 * dpr;
         ctx!.lineCap = "round";
@@ -95,7 +98,7 @@ export function ShootingStars() {
         ctx!.lineTo(tailX, tailY);
         ctx!.stroke();
 
-        ctx!.fillStyle = `rgba(255,255,255,${headAlpha})`;
+        ctx!.fillStyle = `rgba(${STREAK_RGB},${headAlpha})`;
         ctx!.beginPath();
         ctx!.arc(streak.x, streak.y, 1.5 * dpr, 0, Math.PI * 2);
         ctx!.fill();

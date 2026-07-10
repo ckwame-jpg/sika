@@ -33,11 +33,11 @@ interface TradeKpis {
 import { sportTint as sharedSportTint } from "@/lib/sport-tints";
 
 // Bug #30 — keep the trade-desk-specific fallback color while sharing
-// the SPORT_TINTS map. The hsl literal is the historical visual default
-// for unmapped sports in this surface; passing it explicitly preserves
-// the prior look without re-duplicating the lookup table.
+// the SPORT_TINTS map. The fallback is only ever consumed as a CSS custom
+// property value, so var() is safe here; it resolves to the same violet
+// the literal used to spell out.
 function sportTint(sport: string): string {
-  return sharedSportTint(sport, "hsl(262 60% 70% / 0.6)");
+  return sharedSportTint(sport, "var(--color-cosmos-violet-default-tint)");
 }
 
 function sectionOrder(marketKind: string) {
