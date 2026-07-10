@@ -10,6 +10,7 @@ import { OrbitHint } from "./orbit-hint";
 export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <TooltipProvider delayDuration={300}>
+      <div className="nebula-field" aria-hidden />
       <StarfieldCanvas />
       <ShootingStars />
       <div className="app-shell">

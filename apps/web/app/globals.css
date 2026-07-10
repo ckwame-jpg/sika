@@ -2976,6 +2976,29 @@
   height: 100vh;
 }
 
+/* Nebula field — static cosmic backdrop layered under the starfield
+   canvas (DOM order keeps the canvas on top at the same z-index).
+   Pure composition per the no-more-glow directive: large radial
+   gradients at very low alpha — no animation, no blur, no box-shadow.
+   Zero per-frame cost, and it's the only cosmic backdrop
+   prefers-reduced-motion users see (the starfield bails entirely).
+   The faint warm pocket echoes the canvas galaxies' amber cores. */
+.nebula-field {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 60vw 44vh at 12% 8%,
+      hsl(var(--color-cosmos-violet-700-hsl) / 0.1), transparent 62%),
+    radial-gradient(ellipse 52vw 40vh at 88% 40%,
+      hsl(var(--color-cosmos-cyan-500-hsl) / 0.05), transparent 60%),
+    radial-gradient(ellipse 44vw 34vh at 66% 90%,
+      hsl(30 60% 40% / 0.04), transparent 60%),
+    radial-gradient(ellipse 38vw 30vh at 36% 62%,
+      hsl(var(--color-cosmos-violet-500-hsl) / 0.04), transparent 62%);
+}
+
 /* === PHASE 3b: Shell layout — app-shell, sidebar, topbar, orbit chrome === */
 /* Ported from sika-handoff/mockups/_shell.css. Class inventory limited
    to names emitted by components/layout/*.tsx (see Phase 3b handoff).
@@ -3047,7 +3070,7 @@
   pointer-events: none;
   background: linear-gradient(
     90deg,
-    hsl(var(--color-cosmos-ink-800-hsl) / 0.85) 0%,
+    hsl(var(--color-cosmos-ink-800-hsl) / 0.9) 0%,
     hsl(var(--color-cosmos-ink-800-hsl) / 0.55) 60%,
     transparent 100%
   );
@@ -3161,12 +3184,19 @@
 }
 .nav-item svg { flex: 0 0 14px; }
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: hsl(var(--color-cosmos-violet-500-hsl) / 0.06);
   color: var(--foreground);
   transform: translateX(3px);
 }
+/* Active nav gets presence via a violet tint + inset left hairline —
+   a border, not a glow. */
 .nav-item.active {
-  background: transparent;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--color-cosmos-violet-500-hsl) / 0.1),
+    transparent 70%
+  );
+  box-shadow: inset 2px 0 0 hsl(var(--color-cosmos-violet-500-hsl) / 0.6);
   color: hsl(var(--color-cosmos-violet-50-hsl));
   font-weight: 500;
 }
@@ -3217,8 +3247,12 @@
   gap: 10px;
   padding: 6px 10px;
   border-radius: 8px;
-  background: var(--muted);
-  border: 1px solid var(--border);
+  background: linear-gradient(
+    180deg,
+    hsl(var(--color-cosmos-surface-hsl) / 0.85),
+    hsl(var(--color-cosmos-surface-deep-hsl) / 0.85)
+  );
+  border: 1px solid var(--color-cosmos-border-panel);
 }
 .sync-orb {
   position: relative;
@@ -3311,8 +3345,8 @@
   background: linear-gradient(
     90deg,
     transparent,
-    hsl(var(--color-cosmos-violet-500-hsl) / 0.22),
-    hsl(var(--color-cosmos-cyan-500-hsl) / 0.18),
+    hsl(var(--color-cosmos-violet-500-hsl) / 0.28),
+    hsl(var(--color-cosmos-cyan-500-hsl) / 0.22),
     transparent
   );
   pointer-events: none;

@@ -198,7 +198,7 @@ export function StarfieldCanvas() {
         depth: 0.2 + Math.random() * 1.0,
         bloom: Math.random() < 0.18,
         tint:
-          Math.random() < 0.16
+          Math.random() < 0.2
             ? "180,140,255"
             : Math.random() < 0.28
               ? "140,220,255"
