@@ -29,6 +29,24 @@ test("trade uses mocked market data and never requests positions", async ({ page
       await route.abort();
       return;
     }
+    // Multi-user PR 2 (#227) — the topbar user switcher fetches these
+    // on every page; single-tenant responses keep it rendering nothing.
+    if (url.pathname === "/api/me") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ user: null }),
+      });
+      return;
+    }
+    if (url.pathname === "/api/users") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+      return;
+    }
     if (url.pathname === "/api/product/freshness") {
       // Shell-level freshness banner — not part of /trade regression scope.
       await route.fulfill({
@@ -116,38 +134,35 @@ test("trade uses mocked market data and never requests positions", async ({ page
 
   await page.goto("/trade", { waitUntil: "domcontentloaded" });
 
-  // KPI quad — new Phase 1 testids + values
-  await expect(page.getByTestId("trade-kpi-events")).toHaveText("1");
-  await expect(page.getByTestId("trade-kpi-candidate-markets")).toHaveText("7");
-  await expect(page.getByTestId("trade-kpi-recommendations")).toHaveText("7");
-  await expect(page.getByTestId("trade-kpi-avg-edge")).toHaveText("+11.2%");
-
-  // Hero chips
-  await expect(page.getByTestId("trade-hero-chip-avg-edge")).toContainText("+11.2%");
-  await expect(page.getByTestId("trade-hero-chip-top-quartile")).toContainText("+10.0%");
+  // Glass-instrument gauge row — spec 5a testids + values
+  await expect(page.getByTestId("trade-gauge-health")).toContainText("7 of 7 scored");
+  await expect(page.getByTestId("trade-gauge-avg-edge")).toContainText("+11.2%");
+  await expect(page.getByTestId("trade-gauge-top-quartile")).toContainText("+10.0%");
+  await expect(page.getByTestId("trade-gauge-events")).toContainText("1 · 0 live");
 
   await expect(page.getByText("Your Exposure")).toHaveCount(0);
   await expect(page.getByText("Event Context")).toHaveCount(0);
 
+  // Collapsed strip → expand into the featured game panel.
   await page.getByRole("button", { name: /Miami Heat at Toronto Raptors/i }).click();
 
   const ticketRail = page.getByTestId("trade-ticket-rail");
-  await page.getByRole("button", { name: /Toronto Raptors to win/i }).click();
+  const pickRows = page.getByTestId("trade-pick-row");
+  await expect(pickRows).toHaveCount(7);
+  // Flattened picks sort by edge desc; the hero row is the top pick.
+  await expect(pickRows.first()).toContainText("Davion Mitchell 10+ points");
+
+  await pickRows.filter({ hasText: "Toronto Raptors to win" }).click();
   await expect(ticketTitle).toHaveText("Toronto Raptors to win");
 
-  const propCard = page.getByTestId("trade-prop-card").first();
-  await propCard.getByRole("button", { name: "4+" }).click();
-  await expect(propCard.getByTestId("trade-prop-summary-label")).toHaveText("4+ assists");
-  await expect(propCard.getByTestId("trade-prop-summary-edge")).toHaveText("+4.4%");
+  await pickRows.filter({ hasText: "Davion Mitchell 4+ assists" }).click();
   await expect(ticketTitle).toHaveText("Davion Mitchell 4+ assists");
   await expect(ticketRail).toContainText("89.4%");
 
-  await propCard.getByRole("button", { name: "10+" }).click();
-  await expect(propCard.getByTestId("trade-prop-summary-label")).toHaveText("10+ points");
-  await expect(propCard.getByTestId("trade-prop-summary-edge")).toHaveText("+32.1%");
+  await pickRows.filter({ hasText: "Davion Mitchell 10+ points" }).click();
   await expect(ticketTitle).toHaveText("Davion Mitchell 10+ points");
   await expect(ticketRail).toContainText("72.1%");
-  await expect(propCard.locator('[data-testid="trade-threshold-chip"][aria-pressed="true"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid="trade-pick-row"].selected')).toHaveCount(1);
 
   expect(positionsRequested).toBe(false);
   expect(unexpectedApiRequests).toEqual([]);

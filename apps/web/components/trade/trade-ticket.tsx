@@ -1,8 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { ExternalLink } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { useParlayTray } from "@/components/parlays/parlay-tray-store";
 import { TradeDialog } from "@/components/positions/trade-dialog";
 import { PickHistoryStrip } from "./pick-history-strip";
@@ -87,11 +85,13 @@ export function TradeTicket({
     );
   }
 
+  const prob = selection.selectedSideProbability;
+
   return (
     <>
       <div className="trade-ticket" data-testid="trade-ticket">
         <div className="space-y-1">
-          <p className="ticket-eyebrow">{selection.eventName}</p>
+          <p className="gi-micro-label rail">ticket · {selection.eventName}</p>
           <h3 className="ticket-title" data-testid="trade-ticket-title">
             {selection.displayLabel}
           </h3>
@@ -109,24 +109,31 @@ export function TradeTicket({
           )}
         </div>
 
-        <div className="ticket-pair">
-          <div className="ticket-stat">
-            <p className="ticket-stat-label">{selection.selectedSide.toUpperCase()}</p>
-            <p className="ticket-stat-value">{fmtPrice(selection.entryPrice)}</p>
+        {/* Spec ticket instrument: 150px donut, fill = win probability. */}
+        <div
+          className="gi-donut"
+          style={{ "--gd-p": prob != null ? Math.max(0, Math.min(100, prob * 100)) : 0 } as React.CSSProperties}
+        >
+          <span className="gi-donut-ring" aria-hidden />
+          <span className="gi-donut-orbit" aria-hidden />
+          <div className="gi-donut-center">
+            <span className="gi-donut-value">{fmtPercent(prob)}</span>
+            <span className="gi-micro-label">win probability</span>
           </div>
-          <div className="ticket-stat">
-            <p className="ticket-stat-label">Win Prob</p>
-            <p className="ticket-stat-value">{fmtPercent(selection.selectedSideProbability)}</p>
+        </div>
+
+        <div className="ticket-chip-grid">
+          <div className="gi-stat-chip">
+            <span className="k">{selection.selectedSide}</span>
+            <span className="v">{fmtPrice(selection.entryPrice)}</span>
           </div>
-          <div className="ticket-stat">
-            <p className="ticket-stat-label">Edge</p>
-            <p className={cn("ticket-stat-value", selection.edge >= 0 ? "pos" : "neg")}>
-              {fmtEdge(selection.edge)}
-            </p>
+          <div className="gi-stat-chip">
+            <span className="k">edge</span>
+            <span className={cn("v", selection.edge >= 0 ? "pos" : "neg")}>{fmtEdge(selection.edge)}</span>
           </div>
-          <div className="ticket-stat">
-            <p className="ticket-stat-label">Confidence</p>
-            <p className="ticket-stat-value accent">{fmtPercent(selection.confidence)}</p>
+          <div className="gi-stat-chip">
+            <span className="k">conf</span>
+            <span className="v cyan">{fmtPercent(selection.confidence)}</span>
           </div>
         </div>
 
@@ -164,24 +171,28 @@ export function TradeTicket({
         <div className="ticket-section-divider" aria-hidden />
 
         <div className="grid gap-2">
-          <Button variant="primary" size="sm" onClick={() => setTradeDialogOpen(true)}>
+          <button type="button" className="gi-btn" onClick={() => setTradeDialogOpen(true)}>
             Paper trade
-          </Button>
-          <ParlayTrayButton selection={selection} />
-          {selection.kalshiUrl && (
-            <Button variant="ghost" size="sm" asChild>
-              <a href={selection.kalshiUrl} target="_blank" rel="noreferrer noopener">
-                Trade on Kalshi
-                <ExternalLink size={13} className="ml-1.5" />
+          </button>
+          <div className="ticket-ghost-row">
+            <ParlayTrayButton selection={selection} />
+            {selection.kalshiUrl && (
+              <a
+                className="gi-btn-ghost"
+                href={selection.kalshiUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                kalshi ↗
               </a>
-            </Button>
-          )}
+            )}
+          </div>
         </div>
 
         {onClose && (
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <button type="button" className="gi-btn-ghost" onClick={onClose}>
             Close
-          </Button>
+          </button>
         )}
       </div>
 
@@ -220,25 +231,25 @@ function ParlayTrayButton({ selection }: { selection: TradeSelection }) {
   // the button disables itself with a helpful label.
   if (alreadyInTray) {
     return (
-      <Button
-        variant="ghost"
-        size="sm"
+      <button
+        type="button"
+        className="gi-btn-ghost"
         onClick={() => removeLeg(selection.ticker)}
         data-testid="ticket-parlay-toggle"
       >
-        Remove from parlay
-      </Button>
+        − parlay
+      </button>
     );
   }
   return (
-    <Button
-      variant="ghost"
-      size="sm"
+    <button
+      type="button"
+      className="gi-btn-ghost"
       onClick={() => addLeg(selection)}
       disabled={isFull}
       data-testid="ticket-parlay-toggle"
     >
-      {isFull ? "Parlay full" : "Add to parlay"}
-    </Button>
+      {isFull ? "Parlay full" : "+ parlay"}
+    </button>
   );
 }
