@@ -85,8 +85,16 @@ export function ShootingStars() {
         const progress = streak.life / streak.maxLife;
         const headAlpha = Math.min(1, 1 - Math.pow(progress, 3));
 
-        const tailX = streak.x - (streak.vx / Math.hypot(streak.vx, streak.vy)) * streak.length;
-        const tailY = streak.y - (streak.vy / Math.hypot(streak.vx, streak.vy)) * streak.length;
+        // Zero-width window (mid-resize) spawns a zero-velocity streak;
+        // hypot(0,0) division would feed NaN into createLinearGradient.
+        const speed = Math.hypot(streak.vx, streak.vy);
+        if (!Number.isFinite(speed) || speed === 0) {
+          streak = null;
+          raf = requestAnimationFrame(frame);
+          return;
+        }
+        const tailX = streak.x - (streak.vx / speed) * streak.length;
+        const tailY = streak.y - (streak.vy / speed) * streak.length;
         const grad = ctx!.createLinearGradient(streak.x, streak.y, tailX, tailY);
         grad.addColorStop(0, `rgba(${STREAK_RGB},${headAlpha})`);
         grad.addColorStop(1, `rgba(${STREAK_RGB},0)`);

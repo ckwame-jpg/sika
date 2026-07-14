@@ -3,17 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  CandlestickChart,
-  BarChart3,
-  ChevronRight,
-  DatabaseZap,
-  FileText,
-  Link2,
-  RefreshCw,
-  Settings2,
-  Target,
-} from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   getMarketSyncBadge,
@@ -27,20 +17,20 @@ import { SPORT_OPTIONS, cn } from "@/lib/utils";
 import { useSportQueryParam } from "@/components/filters/sport-filter-select";
 import { OrbitMark } from "./orbit-mark";
 
+/* Orbit-dock nav (glass-instrument spec §Sidebar): every primary item
+   is a tiny orbital in its own accent, carrying a live badge. */
 const PRIMARY_NAV = [
-  { href: "/trade", label: "Trade", icon: CandlestickChart },
-  { href: "/predictions", label: "Predictions", icon: Target },
-  { href: "/positions", label: "Portfolio", icon: FileText },
-];
-
-const RESEARCH_NAV = [
-  { href: "/stats", label: "Stats", icon: BarChart3 },
+  { href: "/trade", label: "trade", accent: "var(--color-cosmos-cyan-500)" },
+  { href: "/events", label: "events", accent: "var(--gi-green-pale)" },
+  { href: "/predictions", label: "predictions", accent: "var(--color-cosmos-violet-300)" },
+  { href: "/positions", label: "portfolio", accent: "var(--gi-magenta)" },
+  { href: "/stats", label: "stats", accent: "var(--gi-orange)" },
 ];
 
 const OPS_NAV = [
-  { href: "/runs", label: "Runs", icon: DatabaseZap },
-  { href: "/mappings", label: "Mappings", icon: Link2 },
-  { href: "/settings", label: "Settings", icon: Settings2 },
+  { href: "/runs", label: "runs" },
+  { href: "/mappings", label: "mappings" },
+  { href: "/settings", label: "settings" },
 ];
 
 function isActivePath(pathname: string, href: string, exact: boolean) {
@@ -51,13 +41,15 @@ function isActivePath(pathname: string, href: string, exact: boolean) {
 function NavItem({
   href,
   label,
-  icon: Icon,
+  accent,
+  badge,
   exact = false,
   onNavigate,
 }: {
   href: string;
   label: string;
-  icon: React.ElementType;
+  accent: string;
+  badge?: React.ReactNode;
   exact?: boolean;
   onNavigate?: () => void;
 }) {
@@ -69,10 +61,11 @@ function NavItem({
       href={href}
       onClick={onNavigate}
       className={cn("nav-item", active && "active")}
+      style={{ "--na": accent } as React.CSSProperties}
     >
-      <Icon size={14} className="shrink-0" />
+      <span className="nav-orbital" aria-hidden />
       <span>{label}</span>
-      {active && <ChevronRight size={12} className="chev" />}
+      {badge}
     </Link>
   );
 }
@@ -96,7 +89,7 @@ function SportFilter({ onNavigate }: { onNavigate?: () => void }) {
       <button
         type="button"
         onClick={() => handleSelect("")}
-        className={cn("nav-item", currentSport === "" && "active")}
+        className={cn("nav-item sport-row", currentSport === "" && "active")}
       >
         <span className="dot" />
         <span>All Sports</span>
@@ -108,7 +101,7 @@ function SportFilter({ onNavigate }: { onNavigate?: () => void }) {
             key={option.value}
             type="button"
             onClick={() => handleSelect(option.value)}
-            className={cn("nav-item", isActive && "active")}
+            className={cn("nav-item sport-row", isActive && "active")}
           >
             <span
               className="dot"
@@ -116,6 +109,39 @@ function SportFilter({ onNavigate }: { onNavigate?: () => void }) {
             />
             <span>{option.label}</span>
           </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function OpsNav({ onNavigate }: { onNavigate?: () => void }) {
+  const pathname = usePathname();
+  const { data: health } = useHealthStatus();
+  const syncState = getSyncState(health);
+  const runBusy = syncState === "queued" || syncState === "refreshing";
+
+  return (
+    <div className="nav-section">
+      <div className="nav-label">Operator</div>
+      {OPS_NAV.map((item) => {
+        const active = isActivePath(pathname, item.href, false);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={onNavigate}
+            className={cn("nav-item", active && "active")}
+          >
+            <span>{item.label}</span>
+            {item.href === "/runs" && (
+              <span
+                className={cn("nav-status-dot", runBusy && "busy")}
+                title={runBusy ? "run in progress" : "no run in progress"}
+                aria-hidden
+              />
+            )}
+          </Link>
         );
       })}
     </div>
@@ -233,19 +259,7 @@ function SidebarBody({ onNavigate }: { onNavigate?: () => void }) {
 
         <SportFilter onNavigate={onNavigate} />
 
-        <div className="nav-section">
-          <div className="nav-label">Research</div>
-          {RESEARCH_NAV.map((item) => (
-            <NavItem key={item.href} {...item} onNavigate={onNavigate} />
-          ))}
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-label">Operator</div>
-          {OPS_NAV.map((item) => (
-            <NavItem key={item.href} {...item} onNavigate={onNavigate} />
-          ))}
-        </div>
+        <OpsNav onNavigate={onNavigate} />
       </div>
 
       <div className="sidebar-cosmos-foot">
