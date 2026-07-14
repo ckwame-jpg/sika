@@ -4573,6 +4573,157 @@
 }
 .gi-toggle-row.off { color: var(--gi-micro); }
 
+/* ── Stats assistant chat (spec 5f) ── */
+.gi-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.gi-chat-day {
+  text-align: center;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  color: var(--gi-faint);
+  letter-spacing: 0.08em;
+}
+.gi-chat-user {
+  align-self: flex-end;
+  max-width: min(520px, 92%);
+  padding: 10px 14px;
+  border-radius: 14px 14px 4px 14px;
+  background: linear-gradient(135deg, rgba(140, 92, 230, 0.25), rgba(91, 63, 192, 0.15));
+  border: 1px solid rgba(180, 140, 255, 0.35);
+  color: hsl(var(--color-cosmos-violet-50-hsl));
+  font-size: 13.5px;
+}
+.gi-chat-card {
+  align-self: flex-start;
+  width: min(760px, 100%);
+  border: 1px solid var(--gi-border-panel);
+  border-radius: 14px 14px 14px 4px;
+  background: linear-gradient(170deg, rgba(22, 19, 45, 0.5), rgba(5, 4, 14, 0.6));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 16px 48px rgba(0, 0, 0, 0.5);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.gi-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.gi-chat-orb {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  transform-style: preserve-3d;
+}
+.gi-chat-orb::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--color-cosmos-cyan-500-hsl) / 0.5);
+  transform: rotateX(65deg);
+  animation: navOrbit 4s linear infinite;
+}
+.gi-chat-orb::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--color-cosmos-cyan-500) 60%);
+  box-shadow: 0 0 6px hsl(var(--color-cosmos-cyan-500-hsl) / 0.7);
+}
+.gi-chat-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-cosmos-text-bright);
+}
+.gi-chat-meta {
+  margin-left: auto;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  color: var(--gi-faint);
+  font-variant-numeric: tabular-nums;
+}
+.gi-chat-prose {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--foreground);
+}
+/* Mini-gauge chip grid inside an assistant card */
+.gi-chat-gauges {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .gi-chat-gauges { grid-template-columns: 1fr; }
+}
+/* Chart card inside an assistant card */
+.gi-chart-card {
+  border: 1px solid rgba(140, 220, 255, 0.14);
+  border-radius: 12px;
+  background: var(--gi-deep-strip);
+  padding: 12px 14px;
+}
+.gi-chart-card-head,
+.gi-chart-card-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9.5px;
+  color: var(--gi-faint);
+  font-variant-numeric: tabular-nums;
+}
+.gi-chart-card-head { margin-bottom: 8px; }
+.gi-chart-card-foot { margin-top: 8px; }
+/* Composer (rail surface, radius 14) */
+.gi-composer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--gi-border-rail);
+  border-radius: 14px;
+  background: linear-gradient(165deg, rgba(34, 28, 66, 0.6), rgba(8, 6, 20, 0.7));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 20px 56px rgba(0, 0, 0, 0.6);
+  padding: 10px 12px;
+}
+.gi-composer input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--foreground);
+  font-size: 13px;
+}
+.gi-composer input[type="text"]::placeholder { color: var(--gi-faint); }
+.gi-composer-send {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid rgba(140, 220, 255, 0.5);
+  background: linear-gradient(180deg, rgba(140, 220, 255, 0.25), rgba(140, 92, 230, 0.3));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 4px 20px rgba(140, 220, 255, 0.15);
+  color: var(--color-cosmos-text-bright);
+  font-size: 15px;
+  cursor: pointer;
+  transition: filter 150ms ease-out;
+}
+.gi-composer-send:hover { filter: brightness(1.12); }
+.gi-composer-send:disabled { opacity: 0.5; cursor: default; }
+
 /* ── Orb stat card (events-tracked / settles-tonight cards) ── */
 .gi-orb-stat {
   position: relative;
