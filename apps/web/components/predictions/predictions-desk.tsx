@@ -13,14 +13,6 @@ import { QualityFilterSelect, type RecommendationViewMode } from "@/components/f
 import { ParlayFilterControls } from "@/components/parlays/parlay-filter-controls";
 import { ParlayPredictionsSection } from "@/components/parlays/parlay-predictions-section";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -30,13 +22,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Badge, SportBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton, SkeletonRow } from "@/components/ui/skeleton";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Sparkline } from "@/components/ui/sparkline";
-import { cn, fmtContractPnl, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
+import { cn, fmtDatetime, fmtEdge, fmtPercent } from "@/lib/utils";
 import { ENTRY_LABEL, RELIABILITY_LABEL, WIN_PROB_LABEL } from "@/lib/market-copy";
+import { sportTint } from "@/lib/sport-tints";
 import { RefreshCw } from "lucide-react";
 import { useState } from "react";
+import Link from "next/link";
 import { SportFilterSelect, useSportQueryParam } from "@/components/filters/sport-filter-select";
 import { usePriceDisplay } from "@/lib/price-display";
 import { matchesRecommendationViewMode } from "@/lib/recommendation-quality";
@@ -57,48 +50,6 @@ function settlementPillClass(status: string): string {
   return "";
 }
 
-interface KpiSpec {
-  label: string;
-  value: string;
-  sub?: string;
-  tone?: "pos" | "neg" | "warn";
-  series: number[];
-}
-
-function KpiCard({ spec }: { spec: KpiSpec }) {
-  return (
-    <div className="trade-kpi">
-      <div className="trade-kpi-orb" aria-hidden />
-      <p className="trade-kpi-label">{spec.label}</p>
-      <p className={cn("trade-kpi-value", spec.tone)}>{spec.value}</p>
-      {spec.sub && <p className="trade-kpi-sub">{spec.sub}</p>}
-      {spec.series.length >= 2 && (
-        <Sparkline values={spec.series} width={120} height={16} className="trade-kpi-spark" />
-      )}
-    </div>
-  );
-}
-
-const SPARK_BUCKETS = 14;
-
-interface PredictionSeries {
-  total: number[];
-  pending: number[];
-  winRate: number[];
-  avgEdge: number[];
-  avgConfidence: number[];
-  avgPnl: number[];
-}
-
-const EMPTY_SERIES: PredictionSeries = {
-  total: [],
-  pending: [],
-  winRate: [],
-  avgEdge: [],
-  avgConfidence: [],
-  avgPnl: [],
-};
-
 function mean(values: number[]): number | null {
   if (values.length === 0) return null;
   let sum = 0;
@@ -106,178 +57,148 @@ function mean(values: number[]): number | null {
   return sum / values.length;
 }
 
-function buildPredictionSeries(predictions: PredictionRead[]): PredictionSeries {
-  if (predictions.length === 0) return EMPTY_SERIES;
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
 
-  const sorted = [...predictions].sort(
-    (a, b) => new Date(a.captured_at).getTime() - new Date(b.captured_at).getTime(),
+function clampPct(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+function rowLabel(row: PredictionRead): string {
+  const displayTitle = row.display_market_title ?? row.market_title;
+  return row.subject_name
+    ? `${row.subject_name}${row.stat_key ? ` · ${row.stat_key}` : ""}${row.threshold != null ? ` ${row.threshold}` : ""}`
+    : displayTitle;
+}
+
+/** Spec 5b gauge row: model hit rate / avg confidence / surfaced today. */
+function GaugeRow({ summary, predictions }: { summary: PredictionSummaryRead; predictions: PredictionRead[] }) {
+  const hitRate = summary.win_rate;
+  const hitTone =
+    hitRate == null ? "var(--gi-micro-rail)" : hitRate >= 0.5 ? "var(--gi-green)" : "var(--gi-orange)";
+
+  const avgConf = summary.average_confidence;
+
+  const today = new Date().toDateString();
+  const surfacedToday = predictions.filter(
+    (row) => new Date(row.captured_at).toDateString() === today,
+  ).length;
+  const surfacedPct = predictions.length > 0 ? (surfacedToday / predictions.length) * 100 : 0;
+
+  return (
+    <div className="gi-gauge-row three">
+      <div className="gi-card gi-gauge-card" data-testid="pred-gauge-hit-rate">
+        <div
+          className="gi-gauge"
+          style={{ "--gg-p": clampPct((hitRate ?? 0) * 100), "--gg-c": hitTone } as React.CSSProperties}
+          aria-hidden
+        >
+          <span className="gi-gauge-value">{hitRate != null ? `${Math.round(hitRate * 100)}%` : "—"}</span>
+        </div>
+        <div className="gi-gauge-meta">
+          <span className="gi-micro-label">model hit rate</span>
+          <span className="gi-gauge-title">{fmtPercent(hitRate)}</span>
+          <span className="gi-gauge-sub">
+            {summary.settled_predictions} graded · {summary.won_predictions}w / {summary.lost_predictions}l
+          </span>
+        </div>
+      </div>
+      <div className="gi-card gi-gauge-card" data-testid="pred-gauge-confidence">
+        <div
+          className="gi-gauge"
+          style={{ "--gg-p": clampPct((avgConf ?? 0) * 100), "--gg-c": "var(--color-cosmos-cyan-500)" } as React.CSSProperties}
+          aria-hidden
+        >
+          <span className="gi-gauge-value">{avgConf != null ? (avgConf * 100).toFixed(0) : "—"}</span>
+        </div>
+        <div className="gi-gauge-meta">
+          <span className="gi-micro-label">avg {RELIABILITY_LABEL}</span>
+          <span className="gi-gauge-title">{fmtPercent(avgConf)}</span>
+          <span className="gi-gauge-sub">
+            {summary.average_edge != null ? `${fmtEdge(summary.average_edge)} avg edge` : "across shown picks"}
+          </span>
+        </div>
+      </div>
+      <div className="gi-card gi-gauge-card" data-testid="pred-gauge-surfaced">
+        <div
+          className="gi-gauge"
+          style={{ "--gg-p": clampPct(surfacedPct), "--gg-c": "var(--color-cosmos-violet-500)" } as React.CSSProperties}
+          aria-hidden
+        >
+          <span className="gi-gauge-value">{surfacedToday}</span>
+        </div>
+        <div className="gi-gauge-meta">
+          <span className="gi-micro-label">surfaced today</span>
+          <span className="gi-gauge-title">{surfacedToday} picks</span>
+          <span className="gi-gauge-sub">of {summary.total_predictions} in view</span>
+        </div>
+      </div>
+    </div>
   );
-  const bucketSize = Math.max(1, Math.ceil(sorted.length / SPARK_BUCKETS));
-  const series: PredictionSeries = {
-    total: [],
-    pending: [],
-    winRate: [],
-    avgEdge: [],
-    avgConfidence: [],
-    avgPnl: [],
-  };
-
-  let lastWinRate = 0;
-  let lastAvgPnl = 0;
-
-  for (let i = 0; i < SPARK_BUCKETS; i++) {
-    const upTo = Math.min((i + 1) * bucketSize, sorted.length);
-    if (upTo === 0) continue;
-    const cumulative = sorted.slice(0, upTo);
-    const bucket = sorted.slice(i * bucketSize, upTo);
-
-    series.total.push(cumulative.length);
-    series.pending.push(
-      cumulative.filter((p) => p.settlement_status.toLowerCase() === "pending").length,
-    );
-
-    const settled = cumulative.filter((p) => p.settlement_status.toLowerCase() === "settled");
-    if (settled.length > 0) {
-      const won = settled.filter((p) => p.prediction_outcome.toLowerCase() === "won").length;
-      lastWinRate = won / settled.length;
-      const pnls = settled.map((p) => p.realized_pnl).filter((v): v is number => v != null);
-      lastAvgPnl = mean(pnls) ?? lastAvgPnl;
-    }
-    series.winRate.push(lastWinRate);
-    series.avgPnl.push(lastAvgPnl);
-
-    series.avgEdge.push(mean(bucket.map((p) => p.edge)) ?? 0);
-    series.avgConfidence.push(mean(bucket.map((p) => p.confidence)) ?? 0);
-
-    if (upTo === sorted.length) break;
-  }
-
-  return series;
 }
 
-function buildSummaryKpis(
-  summary: PredictionSummaryRead,
-  series: PredictionSeries,
-): KpiSpec[] {
-  const winRateTone =
-    summary.win_rate == null
-      ? undefined
-      : summary.win_rate >= 0.55
-        ? "pos"
-        : summary.win_rate >= 0.45
-          ? "warn"
-          : "neg";
-  const pnlTone =
-    summary.average_realized_pnl == null
-      ? undefined
-      : summary.average_realized_pnl >= 0
-        ? "pos"
-        : "neg";
+type BoardSort = "edge" | "prob" | "captured";
 
-  return [
-    {
-      label: "Total",
-      value: String(summary.total_predictions),
-      sub: `${summary.settled_predictions} settled`,
-      series: series.total,
-    },
-    {
-      label: "Pending",
-      value: String(summary.pending_predictions),
-      sub: `${summary.unresolved_predictions} unresolved`,
-      series: series.pending,
-    },
-    {
-      label: "Win Rate",
-      value: fmtPercent(summary.win_rate),
-      sub: `${summary.won_predictions}W / ${summary.lost_predictions}L / ${summary.push_predictions}P`,
-      tone: winRateTone,
-      series: series.winRate,
-    },
-    {
-      label: "Avg Edge",
-      value: summary.average_edge != null ? fmtEdge(summary.average_edge) : "—",
-      series: series.avgEdge,
-    },
-    {
-      label: "Avg Confidence",
-      value: fmtPercent(summary.average_confidence),
-      series: series.avgConfidence,
-    },
-    {
-      label: "Avg PnL",
-      value: fmtContractPnl(summary.average_realized_pnl),
-      tone: pnlTone,
-      series: series.avgPnl,
-    },
-  ];
-}
-
-function PredictionRow({ row }: { row: PredictionRead }) {
+function BoardRow({ row, hero }: { row: PredictionRead; hero: boolean }) {
   const { formatPrice } = usePriceDisplay();
   const displayTitle = row.display_market_title ?? row.market_title;
   const winProbability = row.selected_side_probability ?? row.confidence;
-  const label = row.subject_name
-    ? `${row.subject_name}${row.stat_key ? ` · ${row.stat_key}` : ""}${row.threshold != null ? ` ${row.threshold}` : ""}`
-    : displayTitle;
+  const label = rowLabel(row);
+  const dimBar = row.edge >= 0 && row.edge < 0.04;
+  const tint = row.sport_key ? sportTint(row.sport_key, "var(--color-cosmos-violet-default-tint)") : null;
 
   return (
-    <TableRow>
-      <TableCell className="font-mono text-xs text-muted-foreground">
-        {fmtDatetime(row.captured_at)}
-      </TableCell>
-      <TableCell>
-        <div className="max-w-[280px]">
-          <p className="truncate text-sm text-foreground">{label}</p>
-          <div className="flex flex-wrap items-center gap-2">
-            {row.subject_name && (
-              <p className="truncate text-xs text-muted-foreground">{displayTitle}</p>
-            )}
-            {row.source_badge_label && <Badge variant="outline">{row.source_badge_label}</Badge>}
-          </div>
+    <div className={cn("gi-board-row", hero && "gi-hero-row")} data-testid="pred-board-row">
+      <div className="min-w-0">
+        <div className="gi-pick-title">
+          {tint && <span className="dot" style={{ background: tint, width: 5, height: 5, borderRadius: 999, flex: "none", opacity: 0.8 }} aria-hidden />}
+          <span className="t">{label}</span>
+          {row.source_badge_label && <span className="gi-tag">{row.source_badge_label}</span>}
         </div>
-      </TableCell>
-      <TableCell>
-        {row.sport_key ? (
-          <SportBadge sport={row.sport_key} />
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </TableCell>
-      <TableCell>
-        <span className={cn(
-          "font-mono text-xs font-medium",
-          row.side.toLowerCase() === "yes" ? "text-positive" : "text-negative",
-        )}>
-          {row.side.toUpperCase()}
-        </span>
-        <span className="ml-1 font-mono text-xs text-muted-foreground">
-          {formatPrice(row.suggested_price)}
-        </span>
-      </TableCell>
-      <TableCell className="font-mono text-xs">
+        <div className="gi-pick-sub">
+          {row.subject_name ? `${displayTitle} · ` : ""}
+          {row.side.toLowerCase()} · captured {fmtDatetime(row.captured_at)}
+        </div>
+      </div>
+      <div className="gi-board-hide-sm">
+        <div className="gi-probbar-labels">
+          <span>{WIN_PROB_LABEL}</span>
+          <span className="val">{fmtPercent(winProbability)}</span>
+        </div>
+        <div
+          className={cn("gi-probbar", hero && "hot", dimBar && "dim")}
+          style={
+            {
+              "--pb-p": winProbability != null ? clampPct(winProbability * 100) : 0,
+              "--pb-tick": row.suggested_price != null ? clampPct(row.suggested_price * 100) : 0,
+            } as React.CSSProperties
+          }
+          aria-hidden
+        >
+          <span className="gi-probbar-fill" />
+          {row.suggested_price != null && <span className="gi-probbar-tick" />}
+        </div>
+      </div>
+      <span className="mono gi-board-hide-md">{formatPrice(row.suggested_price)}</span>
+      <span className={cn("gi-edge", row.edge >= 0.08 ? "strong" : row.edge < 0 ? "neg" : row.edge < 0.04 ? "neutral" : "")}>
         {fmtEdge(row.edge)}
-      </TableCell>
-      <TableCell className="font-mono text-xs text-muted-foreground">
-        <div className="space-y-1">
-          <p>{fmtPercent(winProbability)}</p>
-          <p className="text-[11px]">{RELIABILITY_LABEL} {fmtPercent(row.confidence)}</p>
-        </div>
-      </TableCell>
-      <TableCell>
+      </span>
+      <span className="mono gi-board-hide-md">{Math.round(row.confidence * 100)}%</span>
+      <span className="gi-board-hide-sm">
         <span className={cn("outcome-pill", settlementPillClass(row.settlement_status))}>
           {row.settlement_status}
         </span>
-      </TableCell>
-      <TableCell>
+      </span>
+      <span>
         <span className={cn("outcome-pill", outcomePillClass(row.prediction_outcome))}>
           {row.prediction_outcome}
         </span>
-      </TableCell>
-      <TableCell className="font-mono text-xs text-muted-foreground">
-        {fmtDatetime(row.settled_at)}
-      </TableCell>
-    </TableRow>
+      </span>
+    </div>
   );
 }
 
@@ -285,9 +206,7 @@ function PredictionCard({ row }: { row: PredictionRead }) {
   const { formatPrice } = usePriceDisplay();
   const displayTitle = row.display_market_title ?? row.market_title;
   const winProbability = row.selected_side_probability ?? row.confidence;
-  const label = row.subject_name
-    ? `${row.subject_name}${row.stat_key ? ` · ${row.stat_key}` : ""}${row.threshold != null ? ` ${row.threshold}` : ""}`
-    : displayTitle;
+  const label = rowLabel(row);
   const sideTone = row.side.toLowerCase() === "yes" ? "pos" : "neg";
 
   return (
@@ -341,6 +260,91 @@ function PredictionCard({ row }: { row: PredictionRead }) {
   );
 }
 
+/** Edge-distribution rail: histogram over 0…+12%, median/top, top signal. */
+function EdgeRail({ predictions }: { predictions: PredictionRead[] }) {
+  const edges = predictions.map((row) => row.edge);
+  const BUCKETS = 8;
+  const MAX_EDGE = 0.12;
+  const counts = new Array(BUCKETS).fill(0);
+  for (const edge of edges) {
+    const clamped = Math.max(0, Math.min(MAX_EDGE - 1e-9, edge));
+    counts[Math.floor((clamped / MAX_EDGE) * BUCKETS)] += 1;
+  }
+  const peak = Math.max(...counts, 1);
+  const med = median(edges);
+  const top = edges.length > 0 ? Math.max(...edges) : null;
+
+  const pending = predictions.filter((row) => row.settlement_status.toLowerCase() === "pending");
+  const signalPool = pending.length > 0 ? pending : predictions;
+  const topSignal =
+    signalPool.length > 0
+      ? signalPool.reduce((best, row) => (row.edge > best.edge ? row : best), signalPool[0])
+      : null;
+  const signalProb = topSignal ? (topSignal.selected_side_probability ?? topSignal.confidence) : null;
+
+  return (
+    <div className="gi-rail" data-testid="pred-edge-rail">
+      <span className="gi-micro-label rail">edge distribution · {predictions.length} picks</span>
+      <div>
+        <div className="gi-histo" aria-hidden>
+          {counts.map((count, index) => (
+            <span
+              key={index}
+              className={cn("gi-histo-bar", count === peak && count > 0 && "peak")}
+              style={{ "--hb-p": clampPct((count / peak) * 100) } as React.CSSProperties}
+            />
+          ))}
+        </div>
+        <div className="gi-histo-axis">
+          <span>0%</span>
+          <span>+4%</span>
+          <span>+8%</span>
+          <span>+12%</span>
+        </div>
+      </div>
+      <div className="gi-rail-stat">
+        <span>median edge</span>
+        <span className="v" style={{ color: "var(--color-cosmos-violet-300)" }}>
+          {med != null ? fmtEdge(med) : "—"}
+        </span>
+      </div>
+      <div className="gi-rail-stat">
+        <span>top edge</span>
+        <span className="v" style={{ color: "var(--gi-green)" }}>{top != null ? fmtEdge(top) : "—"}</span>
+      </div>
+      {topSignal && (
+        <>
+          <div className="gi-rail-divider" />
+          <span className="gi-micro-label rail">top signal</span>
+          <div className="gi-stat-chip" style={{ flexDirection: "row", gap: 12, textAlign: "left", alignItems: "center" }}>
+            <div
+              className="gi-donut sm"
+              style={{ "--gd-p": signalProb != null ? clampPct(signalProb * 100) : 0 } as React.CSSProperties}
+              aria-hidden
+            >
+              <span className="gi-donut-ring" />
+              <div className="gi-donut-center">
+                <span className="gi-donut-value">
+                  {signalProb != null ? `${Math.round(signalProb * 100)}%` : "—"}
+                </span>
+              </div>
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-[12.5px] font-medium text-foreground">{rowLabel(topSignal)}</p>
+              <p className="text-[10.5px] text-muted-foreground">
+                strongest {pending.length > 0 ? "pending " : ""}pick · {fmtEdge(topSignal.edge)}
+              </p>
+            </div>
+          </div>
+        </>
+      )}
+      <Link href="/trade" className="gi-btn">
+        open ticket
+      </Link>
+    </div>
+  );
+}
+
 export function PredictionsDesk() {
   const { sport } = useSportQueryParam();
   const { view, setView } = useViewQueryParam();
@@ -353,6 +357,7 @@ export function PredictionsDesk() {
   const [settling, setSettling] = useState(false);
   const [parlaySportScope, setParlaySportScope] = useState("all");
   const [parlayLegCount, setParlayLegCount] = useState("all");
+  const [sort, setSort] = useState<BoardSort>("edge");
 
   const filterArgs = {
     sport,
@@ -414,11 +419,18 @@ export function PredictionsDesk() {
     ? predsError.message
     : "Unknown error";
   const filteredPredictions = (predictions ?? []).filter((item) => matchesRecommendationViewMode(item, qualityMode));
-  const kpiSeries = buildPredictionSeries(predictions ?? []);
-  const summaryKpis = summary ? buildSummaryKpis(summary, kpiSeries) : null;
+  const sortedPredictions = [...filteredPredictions].sort((a, b) => {
+    if (sort === "edge") return b.edge - a.edge;
+    if (sort === "prob") {
+      return (b.selected_side_probability ?? b.confidence) - (a.selected_side_probability ?? a.confidence);
+    }
+    return new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime();
+  });
+
+  const boardDate = new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="gi-screen">
       <div className="cosmos-toolbar">
         <ViewSwitch view={view} onChange={setView} />
         {view === "singles" ? (
@@ -506,108 +518,125 @@ export function PredictionsDesk() {
       {view === "singles" ? (
         <>
           {summaryLoading ? (
-            <div className="pred-kpis">
-              {Array.from({ length: 6 }).map((_, index) => (
+            <div className="gi-gauge-row three">
+              {Array.from({ length: 3 }).map((_, index) => (
                 <Skeleton key={index} className="h-24 w-full rounded-xl" />
               ))}
             </div>
-          ) : summaryKpis ? (
-            <div className="pred-kpis">
-              {summaryKpis.map((spec) => (
-                <KpiCard key={spec.label} spec={spec} />
-              ))}
-            </div>
+          ) : summary ? (
+            <GaugeRow summary={summary} predictions={predictions ?? []} />
           ) : null}
 
-          <section className="cosmos-panel">
-            <div className="cosmos-panel-head">
-              <div className="cosmos-panel-head-text">
-                <h2 className="cosmos-panel-title">Prediction Ledger</h2>
-              </div>
-            </div>
-            <div className="cosmos-panel-body flush">
-              {predsError ? (
-                <EmptyState
-                  tone="error"
-                  title="Couldn&rsquo;t load the ledger."
-                  description={
-                    predictionErrorMessage ||
-                    "The prediction service didn\u2019t respond. Try again in a moment."
-                  }
-                />
-              ) : (
-                <>
-                  <div className="space-y-3 p-4 lg:hidden">
-                    {predsLoading
-                      ? Array.from({ length: 4 }).map((_, index) => (
-                          <div key={index} className="pred-card">
-                            <Skeleton className="h-4 w-40" />
-                            <div className="pred-card-grid">
-                              <Skeleton className="h-10 w-full" />
-                              <Skeleton className="h-10 w-full" />
-                              <Skeleton className="h-10 w-full" />
-                              <Skeleton className="h-10 w-full" />
+          <div className="gi-cols">
+            <div className="gi-cols-main">
+              <section className="gi-panel">
+                <div className="gi-panel-head">
+                  <span className="gi-glow-dot" aria-hidden />
+                  <h2 className="gi-panel-title">model board — {boardDate}</h2>
+                  <span className="ml-auto flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      className={cn("gi-chip", sort === "edge" && "active")}
+                      onClick={() => setSort("edge")}
+                    >
+                      sort: edge
+                    </button>
+                    <button
+                      type="button"
+                      className={cn("gi-chip", sort === "prob" && "active")}
+                      onClick={() => setSort("prob")}
+                    >
+                      prob
+                    </button>
+                    <button
+                      type="button"
+                      className={cn("gi-chip", sort === "captured" && "active")}
+                      onClick={() => setSort("captured")}
+                    >
+                      captured
+                    </button>
+                  </span>
+                </div>
+                {predsError ? (
+                  <EmptyState
+                    tone="error"
+                    title="Couldn&rsquo;t load the ledger."
+                    description={
+                      predictionErrorMessage ||
+                      "The prediction service didn’t respond. Try again in a moment."
+                    }
+                  />
+                ) : (
+                  <>
+                    <div className="space-y-3 p-4 lg:hidden">
+                      {predsLoading
+                        ? Array.from({ length: 4 }).map((_, index) => (
+                            <div key={index} className="pred-card">
+                              <Skeleton className="h-4 w-40" />
+                              <div className="pred-card-grid">
+                                <Skeleton className="h-10 w-full" />
+                                <Skeleton className="h-10 w-full" />
+                                <Skeleton className="h-10 w-full" />
+                                <Skeleton className="h-10 w-full" />
+                              </div>
                             </div>
-                          </div>
-                        ))
-                      : filteredPredictions.length === 0
-                        ? (
-                          <div className="cosmos-table-empty">
-                            {hasFilters
-                              ? "No predictions matched the current filters."
-                              : "No predictions matched the current view yet."}
-                          </div>
-                        )
-                        : filteredPredictions.map((row) => (
-                            <PredictionCard key={row.id} row={row} />
-                          ))}
-                  </div>
-
-                  <div className="hidden lg:block">
-                    <div className="cosmos-table-wrap">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="w-32">Captured</TableHead>
-                            <TableHead>Market / Subject</TableHead>
-                            <TableHead className="w-20">Sport</TableHead>
-                            <TableHead className="w-24">Side / {ENTRY_LABEL}</TableHead>
-                            <TableHead className="w-20">Edge</TableHead>
-                            <TableHead className="w-24">{WIN_PROB_LABEL}</TableHead>
-                            <TableHead className="w-28">Settlement</TableHead>
-                            <TableHead className="w-24">Outcome</TableHead>
-                            <TableHead className="w-32">Settled At</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {predsLoading
-                            ? Array.from({ length: 8 }).map((_, index) => (
-                                <SkeletonRow key={index} cols={9} />
-                              ))
-                            : filteredPredictions.length === 0
-                              ? (
-                                <TableRow>
-                                  <TableCell
-                                    colSpan={9}
-                                    className="cosmos-table-empty"
-                                  >
-                                    {hasFilters
-                                      ? "No predictions matched the current filters."
-                                      : "No predictions matched the current view yet."}
-                                  </TableCell>
-                                </TableRow>
-                              )
-                              : filteredPredictions.map((row) => (
-                                  <PredictionRow key={row.id} row={row} />
-                                ))}
-                        </TableBody>
-                      </Table>
+                          ))
+                        : sortedPredictions.length === 0
+                          ? (
+                            <div className="cosmos-table-empty">
+                              {hasFilters
+                                ? "No predictions matched the current filters."
+                                : "No predictions matched the current view yet."}
+                            </div>
+                          )
+                          : sortedPredictions.map((row) => (
+                              <PredictionCard key={row.id} row={row} />
+                            ))}
                     </div>
-                  </div>
-                </>
-              )}
+
+                    <div className="hidden lg:block">
+                      <div className="gi-board-colhead">
+                        <span>market</span>
+                        <span className="gi-board-hide-sm">model vs market</span>
+                        <span className="gi-board-hide-md">{ENTRY_LABEL}</span>
+                        <span>edge</span>
+                        <span className="gi-board-hide-md">conf</span>
+                        <span className="gi-board-hide-sm">settlement</span>
+                        <span>outcome</span>
+                      </div>
+                      <div className="gi-board-rows">
+                        {predsLoading
+                          ? Array.from({ length: 8 }).map((_, index) => (
+                              <div key={index} className="gi-board-row">
+                                <Skeleton className="h-9 w-full" />
+                              </div>
+                            ))
+                          : sortedPredictions.length === 0
+                            ? (
+                              <div className="cosmos-table-empty px-[18px] py-8">
+                                {hasFilters
+                                  ? "No predictions matched the current filters."
+                                  : "No predictions matched the current view yet."}
+                              </div>
+                            )
+                            : sortedPredictions.map((row, index) => (
+                                <BoardRow key={row.id} row={row} hero={sort === "edge" && index === 0} />
+                              ))}
+                      </div>
+                      {sortedPredictions.length > 0 && (
+                        <div className="gi-panel-foot">
+                          showing {sortedPredictions.length} of {predictions?.length ?? 0} captured picks
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </section>
             </div>
-          </section>
+            <div className="gi-cols-rail hidden xl:block">
+              <EdgeRail predictions={sortedPredictions} />
+            </div>
+          </div>
         </>
       ) : (
         <ParlayPredictionsSection

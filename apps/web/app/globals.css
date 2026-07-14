@@ -4157,12 +4157,17 @@
 .gi-donut {
   --gd-p: 0;
   --gd-from: 220deg;
+  --gd-hole: 58px;
   position: relative;
   width: 150px;
   height: 150px;
   margin: 0 auto;
   flex: none;
 }
+/* Small variant (top-signal chip card): 48px ring, 18px hole. */
+.gi-donut.sm { width: 48px; height: 48px; --gd-hole: 18px; margin: 0; }
+.gi-donut.sm .gi-donut-orbit { display: none; }
+.gi-donut.sm .gi-donut-value { font-size: 11px; font-weight: 600; }
 .gi-donut-ring {
   position: absolute;
   inset: 0;
@@ -4173,8 +4178,8 @@
     var(--color-cosmos-cyan-500) calc(var(--gd-p) * 1%),
     rgba(255, 255, 255, 0.06) calc(var(--gd-p) * 1%)
   );
-  -webkit-mask: radial-gradient(circle, transparent 58px, #000 59px);
-  mask: radial-gradient(circle, transparent 58px, #000 59px);
+  -webkit-mask: radial-gradient(circle, transparent var(--gd-hole), #000 calc(var(--gd-hole) + 1px));
+  mask: radial-gradient(circle, transparent var(--gd-hole), #000 calc(var(--gd-hole) + 1px));
 }
 .gi-donut-ring.seg {
   background: conic-gradient(var(--gd-stops));
@@ -4201,6 +4206,94 @@
   font-weight: 700;
   color: var(--color-cosmos-text-bright);
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Histogram (edge distribution rail card) ──
+   Bars: cyan→violet vertical gradient, rounded tops, peak glow. */
+.gi-histo {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 72px;
+  padding: 2px 2px 0;
+}
+.gi-histo-bar {
+  flex: 1;
+  min-width: 0;
+  height: calc(var(--hb-p, 0) * 1%);
+  min-height: 3px;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, var(--color-cosmos-cyan-500), hsl(var(--color-cosmos-violet-700-hsl) / 0.6));
+  opacity: 0.9;
+}
+.gi-histo-bar.peak {
+  box-shadow: 0 0 13px rgba(140, 220, 255, 0.4);
+  opacity: 1;
+}
+.gi-histo-axis {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  color: var(--gi-faint);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rail stat rows (label left, mono value right) */
+.gi-rail-stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--gi-micro-rail);
+}
+.gi-rail-stat .v {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.gi-rail-divider { border-top: 1px solid var(--gi-border-head); margin: 2px 0; }
+
+/* ── Model board rows (predictions, spec 5b) ──
+   grid: market / model-vs-market / price / edge / conf / status / settled */
+.gi-board-colhead,
+.gi-board-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px 60px 74px 52px 96px 110px;
+  gap: 14px;
+  align-items: center;
+  padding: 11px 18px;
+}
+.gi-board-colhead {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--gi-border-head);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase !important;
+  color: var(--gi-faint);
+}
+.gi-board-rows { display: flex; flex-direction: column; }
+.gi-board-rows > .gi-board-row + .gi-board-row { border-top: 1px solid var(--gi-divider); }
+.gi-board-row { width: 100%; text-align: left; background: transparent; border: none; }
+.gi-board-row .mono {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  color: var(--gi-micro-rail);
+  font-variant-numeric: tabular-nums;
+}
+.gi-board-row .gi-edge { font-size: 15px; }
+@media (max-width: 1350px) {
+  .gi-board-colhead, .gi-board-row { grid-template-columns: minmax(0, 1fr) 170px 60px 74px 96px; }
+  .gi-board-hide-md { display: none; }
+}
+@media (max-width: 900px) {
+  .gi-board-colhead, .gi-board-row { grid-template-columns: minmax(0, 1fr) 74px 96px; }
+  .gi-board-hide-sm { display: none; }
 }
 
 /* ── Orb stat card (events-tracked / settles-tonight cards) ── */
