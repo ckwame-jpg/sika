@@ -3522,6 +3522,9 @@
   color: var(--muted-foreground);
   font-weight: 400;
   max-width: 40ch;
+  /* Keep a readable stub when the pills row squeezes the crumbs —
+     without a floor, flex-shrink collapses this span to 0px. */
+  min-width: 6ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4294,6 +4297,133 @@
 @media (max-width: 900px) {
   .gi-board-colhead, .gi-board-row { grid-template-columns: minmax(0, 1fr) 74px 96px; }
   .gi-board-hide-sm { display: none; }
+}
+
+/* ── Recent runs table (ops, spec 5d) ── */
+.gi-run-colhead,
+.gi-run-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 78px 88px 104px;
+  gap: 14px;
+  align-items: center;
+  padding: 11px 18px;
+}
+.gi-run-colhead {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--gi-border-head);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase !important;
+  color: var(--gi-faint);
+}
+.gi-run-rows { display: flex; flex-direction: column; }
+.gi-run-rows > .gi-run-row + .gi-run-row { border-top: 1px solid var(--gi-divider); }
+.gi-run-row {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 150ms ease-out;
+}
+.gi-run-row:hover { background: rgba(255, 255, 255, 0.03); }
+.gi-run-row.selected { background: rgba(140, 220, 255, 0.05); }
+.gi-run-row.running {
+  background: linear-gradient(90deg, rgba(140, 220, 255, 0.08), transparent 70%);
+  box-shadow: inset 3px 0 0 var(--color-cosmos-cyan-500);
+}
+.gi-run-title {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gi-run-sub { font-size: 10.5px; color: var(--gi-micro); margin-top: 2px; }
+.gi-run-sub.err { color: var(--gi-amber); }
+.gi-run-row .mono {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11.5px;
+  color: var(--gi-micro-rail);
+  font-variant-numeric: tabular-nums;
+}
+/* Indeterminate progress under a running run's title. */
+.gi-run-progress {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  margin-top: 6px;
+  max-width: 220px;
+}
+.gi-run-progress::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-cosmos-violet-700), var(--color-cosmos-cyan-500));
+  animation: giIndeterminate 1.4s ease-in-out infinite;
+}
+@keyframes giIndeterminate {
+  to { left: 100%; }
+}
+
+/* Status chips (success / running / failed) — 9.5px uppercase outline. */
+.gi-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase !important;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--gi-micro-rail);
+  white-space: nowrap;
+}
+.gi-status-chip.success {
+  border-color: rgba(33, 202, 145, 0.4);
+  background: rgba(33, 202, 145, 0.07);
+  color: var(--gi-green);
+}
+.gi-status-chip.running {
+  border-color: rgba(140, 220, 255, 0.45);
+  background: rgba(140, 220, 255, 0.1);
+  color: var(--gi-cyan-text);
+}
+.gi-status-chip.running .gi-glow-dot { width: 5px; height: 5px; }
+.gi-status-chip.failed {
+  border-color: rgba(247, 141, 108, 0.45);
+  background: rgba(247, 141, 108, 0.1);
+  color: var(--gi-orange);
+}
+
+/* Coverage bar (mapping health rail) */
+.gi-coverage-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.gi-coverage-bar > span {
+  display: block;
+  height: 100%;
+  width: calc(var(--cv-p, 0) * 1%);
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-cosmos-violet-700), var(--color-cosmos-cyan-500));
+}
+.gi-coverage-bar.clean > span {
+  background: linear-gradient(90deg, var(--gi-green), var(--gi-green-pale));
 }
 
 /* ── Orb stat card (events-tracked / settles-tonight cards) ── */
