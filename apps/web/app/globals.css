@@ -4426,6 +4426,153 @@
   background: linear-gradient(90deg, var(--gi-green), var(--gi-green-pale));
 }
 
+/* ── Timeline (events feed, spec 5e) ──
+   Absolute-positioned timestamp column + node on a gradient spine. */
+.gi-timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-left: 96px;
+}
+.gi-timeline::before {
+  content: "";
+  position: absolute;
+  left: 76px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: linear-gradient(180deg, var(--gi-green-pale), hsl(var(--color-cosmos-violet-500-hsl) / 0.35) 40%, transparent);
+}
+.gi-tl-item { position: relative; }
+.gi-tl-time {
+  position: absolute;
+  left: -96px;
+  top: 14px;
+  width: 58px;
+  text-align: right;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  color: var(--gi-faint);
+  font-variant-numeric: tabular-nums;
+}
+.gi-tl-time.now { color: var(--gi-green); }
+.gi-tl-node {
+  position: absolute;
+  left: -23.5px;
+  top: 16px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--tl-c, var(--color-cosmos-cyan-500));
+  box-shadow: 0 0 6px var(--tl-c, var(--color-cosmos-cyan-500));
+}
+.gi-tl-node.now {
+  width: 9px;
+  height: 9px;
+  left: -24.5px;
+  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--gi-green) 60%);
+}
+.gi-tl-node.now::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  border: 1px solid rgba(33, 202, 145, 0.5);
+  animation: live-pulse 2.2s ease-out infinite;
+}
+.gi-tl-node.dim { opacity: 0.5; box-shadow: none; }
+@media (max-width: 700px) {
+  .gi-timeline { padding-left: 0; }
+  .gi-timeline::before { display: none; }
+  .gi-tl-time, .gi-tl-node { display: none; }
+}
+
+/* Glass event card row */
+.gi-event-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--ev-border, rgba(140, 220, 255, 0.18));
+  border-radius: 12px;
+  background: linear-gradient(170deg, rgba(22, 19, 45, 0.5), rgba(5, 4, 14, 0.6));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+.gi-event-row.live {
+  --ev-border: rgba(33, 202, 145, 0.32);
+  background: linear-gradient(170deg, rgba(14, 40, 34, 0.5), rgba(5, 4, 14, 0.6));
+}
+.gi-event-row.done { opacity: 0.72; }
+.gi-event-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gi-event-sub { font-size: 11px; color: var(--gi-micro); margin-top: 2px; }
+/* Impact chip (right-aligned outline chip) */
+.gi-impact-chip {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--ic-c, rgba(140, 220, 255, 0.35));
+  color: var(--ic-t, var(--gi-cyan-text));
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase !important;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* ── Toggle (30×17 switch, spec §Shared components) ── */
+.gi-toggle {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  flex: none;
+  border-radius: 999px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: background 150ms ease-out, box-shadow 150ms ease-out;
+}
+.gi-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: var(--gi-micro-rail);
+  transition: transform 150ms ease-out, background 150ms ease-out;
+}
+.gi-toggle[aria-checked="true"] {
+  background: linear-gradient(90deg, hsl(var(--color-cosmos-violet-700-hsl) / 0.8), hsl(var(--color-cosmos-cyan-500-hsl) / 0.6));
+  box-shadow: 0 0 10px hsl(var(--color-cosmos-cyan-500-hsl) / 0.25);
+}
+.gi-toggle[aria-checked="true"]::after {
+  transform: translateX(13px);
+  background: var(--color-cosmos-text-bright);
+}
+.gi-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--gi-text-2);
+}
+.gi-toggle-row.off { color: var(--gi-micro); }
+
 /* ── Orb stat card (events-tracked / settles-tonight cards) ── */
 .gi-orb-stat {
   position: relative;
