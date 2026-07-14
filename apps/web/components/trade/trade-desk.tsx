@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { ChevronRight, RefreshCw, X } from "lucide-react";
+import { RefreshCw, X } from "lucide-react";
 import { fetchTradeDesk, keys } from "@/lib/api";
 import type {
   TradeDeskArchivedSlate,
@@ -12,13 +12,9 @@ import type {
   TradeDeskThreshold,
 } from "@/lib/types";
 import { cn, fmtDatetime, fmtEdge, fmtPercent, fmtPrice, fmtRelative, fmtStartsAt, sportLabel } from "@/lib/utils";
-import { PlayerPropGroup } from "@/components/trade/player-prop-group";
-import { TimeToCloseBadge } from "@/components/trade/time-to-close-badge";
 import { PaperParlayDialog } from "@/components/parlays/paper-parlay-dialog";
 import { ParlayTray } from "@/components/parlays/parlay-tray";
 import { TradeSelection, TradeTicket } from "@/components/trade/trade-ticket";
-import { ProbabilitySurfaceHero } from "@/components/trade/probability-surface-hero";
-import { Sparkline } from "@/components/ui/sparkline";
 
 interface TradeKpis {
   events: number;
@@ -40,13 +36,6 @@ function sportTint(sport: string): string {
   return sharedSportTint(sport, "var(--color-cosmos-violet-default-tint)");
 }
 
-function sectionOrder(marketKind: string) {
-  if (marketKind === "game_winner" || marketKind === "first_five_winner") return 0;
-  if (marketKind === "spread") return 1;
-  if (marketKind === "total") return 2;
-  return 99;
-}
-
 /**
  * Short badge text for a game-line market_kind. Multiple kinds can
  * share the same ``display_label`` (e.g. both the full-game winner
@@ -61,7 +50,7 @@ function formatMarketKindBadge(marketKind: string): string | null {
       return "F5";
     case "game_winner":
     case "moneyline":
-      return "Full game";
+      return "FG";
     default:
       return null;
   }
@@ -110,6 +99,17 @@ function quantileNearestRank(values: number[], q: number): number | null {
   return sorted[idx];
 }
 
+/** "4h 29m" / "29m" close countdown for pick sub-lines. */
+function fmtClose(minutes: number | null | undefined): string | null {
+  if (minutes == null || !Number.isFinite(minutes)) return null;
+  if (minutes <= 0) return "closing";
+  const rounded = Math.round(minutes);
+  const h = Math.floor(rounded / 60);
+  const m = rounded % 60;
+  if (h === 0) return `closes ${m}m`;
+  return `closes ${h}h ${String(m).padStart(2, "0")}m`;
+}
+
 function SlateStatusPill({ data }: { data: TradeDeskResponse }) {
   if (data.freshness_status === "fresh") return null;
   const generatedAt = data.generated_at ?? null;
@@ -149,62 +149,6 @@ function SlateHealthDetails({ data }: { data: TradeDeskResponse }) {
   );
 }
 
-function GameLineRow({
-  line,
-  selectedTicker,
-  onSelect,
-}: {
-  line: TradeDeskGameLine;
-  selectedTicker?: string;
-  onSelect: () => void;
-}) {
-  const isSelected = selectedTicker === line.ticker;
-  const up = line.edge >= 0;
-  // Bug #37: render real captured prices straight from the API.
-  // ``Sparkline`` falls back to a flat baseline when ``price_history``
-  // has fewer than two points, so cold-start markets (just discovered,
-  // no MarketSnapshot rows yet) render as a flat line rather than a
-  // synthetic walk that lied about the price trajectory.
-  const series = line.price_history;
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn("line-row focus-visible:ring-focus", isSelected && "selected")}
-    >
-      <div className="min-w-0">
-        <div className="line-row-label truncate">
-          <span>{line.display_label}</span>
-          {/* Bug: two game-line rows share the same display_label
-              (e.g. "Kansas City Royals to win" appears for both the
-              full-game winner and the first-five-innings winner). The
-              underlying markets are different but the operator can't
-              tell without ticker spelunking. Surface the kind as a
-              compact badge so they read distinctly at a glance. */}
-          {formatMarketKindBadge(line.market_kind) && (
-            <span className="line-row-kind-badge" data-testid="line-row-kind-badge">
-              {formatMarketKindBadge(line.market_kind)}
-            </span>
-          )}
-        </div>
-        <div className="line-row-lean">
-          {line.projected_side_label
-            ? `Model leans ${line.projected_side_label}`
-            : `Selected side ${line.selected_side.toUpperCase()}`}
-          <TimeToCloseBadge minutes={line.time_to_close_minutes} />
-        </div>
-      </div>
-      <div className="line-row-price">{fmtPrice(line.entry_price)}</div>
-      <div className="line-row-prob">{fmtPercent(line.selected_side_probability)}</div>
-      <div className="line-row-spark">
-        <Sparkline values={series} width={64} height={24} trend={up ? "up" : "down"} />
-      </div>
-      <div className={cn("line-row-edge", up ? "pos" : "neg")}>{fmtEdge(line.edge)}</div>
-    </button>
-  );
-}
-
-
 function computeTradeKpis(data: TradeDeskResponse): TradeKpis {
   const events = data.events;
   const live = events.filter((event) => event.event_status === "in_progress").length;
@@ -221,61 +165,114 @@ function computeTradeKpis(data: TradeDeskResponse): TradeKpis {
   };
 }
 
-interface KpiCardProps {
-  label: string;
-  value: string | number;
-  sub?: string;
-  testIdRoot: string;
-  testIdValue: string;
+/** Minutes until the next market close across the whole slate. */
+function nextCloseMinutes(events: TradeDeskEvent[]): number | null {
+  let min: number | null = null;
+  const consider = (value: number | null | undefined) => {
+    if (value == null || value <= 0) return;
+    if (min == null || value < min) min = value;
+  };
+  for (const event of events) {
+    for (const line of event.game_lines) consider(line.time_to_close_minutes);
+    for (const player of event.player_props) {
+      for (const group of player.stat_groups) {
+        for (const threshold of group.thresholds) consider(threshold.time_to_close_minutes);
+      }
+    }
+  }
+  return min;
 }
 
-function KpiCard({ label, value, sub, testIdRoot, testIdValue }: KpiCardProps) {
+function clampPct(value: number): number {
+  return Math.max(0, Math.min(100, value));
+}
+
+interface GaugeCardProps {
+  micro: string;
+  title: string;
+  sub: string;
+  gauge:
+    | { kind: "ring"; pct: number; value: string; color: string }
+    | { kind: "orb" };
+  titleClassName?: string;
+  testId: string;
+}
+
+function GaugeCard({ micro, title, sub, gauge, titleClassName, testId }: GaugeCardProps) {
   return (
-    <div className="trade-kpi" data-testid={testIdRoot}>
-      <div className="trade-kpi-orb" aria-hidden />
-      <div className="trade-kpi-label">{label}</div>
-      <div className="trade-kpi-value" data-testid={testIdValue}>
-        {value}
+    <div className="gi-card gi-gauge-card" data-testid={testId}>
+      {gauge.kind === "ring" ? (
+        <div
+          className="gi-gauge"
+          style={{ "--gg-p": clampPct(gauge.pct), "--gg-c": gauge.color } as React.CSSProperties}
+          aria-hidden
+        >
+          <span className="gi-gauge-value">{gauge.value}</span>
+        </div>
+      ) : (
+        <div className="gi-orb-stat" aria-hidden>
+          <span className="core" />
+        </div>
+      )}
+      <div className="gi-gauge-meta">
+        <span className="gi-micro-label">{micro}</span>
+        <span className={cn("gi-gauge-title", titleClassName)}>{title}</span>
+        <span className="gi-gauge-sub">{sub}</span>
       </div>
-      {sub && <div className="trade-kpi-sub">{sub}</div>}
     </div>
   );
 }
 
-function MarketSummaryStrip({ kpis }: { kpis: TradeKpis }) {
+/** Spec 5a gauge row: slate health / avg edge / top quartile / events orb. */
+function GaugeRow({ data, kpis }: { data: TradeDeskResponse; kpis: TradeKpis }) {
+  const scored = data.scored_market_count;
+  const candidates = data.candidate_market_count;
+  const healthPct = candidates > 0 ? Math.round((scored / candidates) * 100) : 0;
+  const fresh = data.freshness_status;
+  const healthColor =
+    fresh === "fresh" ? "var(--gi-green)" : fresh === "empty" ? "var(--gi-micro-rail)" : "var(--gi-amber)";
+
+  const nextClose = fmtClose(nextCloseMinutes(data.events));
+
   return (
-    <div className="trade-kpis">
-      <KpiCard
-        label="Events on the board"
-        value={kpis.events}
-        sub={`${kpis.live} live · ${kpis.upcoming} upcoming`}
-        testIdRoot="trade-kpi-card-events"
-        testIdValue="trade-kpi-events"
+    <div className="gi-gauge-row">
+      <GaugeCard
+        testId="trade-gauge-health"
+        micro="slate health"
+        title={fresh}
+        sub={`${scored} of ${candidates} scored`}
+        gauge={{ kind: "ring", pct: healthPct, value: `${healthPct}%`, color: healthColor }}
       />
-      <KpiCard
-        label="Candidate markets"
-        value={kpis.candidateMarkets}
-        sub="scored"
-        testIdRoot="trade-kpi-card-candidate-markets"
-        testIdValue="trade-kpi-candidate-markets"
+      <GaugeCard
+        testId="trade-gauge-avg-edge"
+        micro="avg edge"
+        title={kpis.avgEdge != null ? fmtEdge(kpis.avgEdge) : "—"}
+        sub="gauge vs +10% cap"
+        gauge={{
+          kind: "ring",
+          pct: kpis.avgEdge != null ? clampPct((kpis.avgEdge / 0.1) * 100) : 0,
+          value: kpis.avgEdge != null ? (kpis.avgEdge * 100).toFixed(1) : "—",
+          color: "var(--color-cosmos-violet-500)",
+        }}
       />
-      <KpiCard
-        label="Current picks"
-        value={kpis.recommendations}
-        sub="past edge threshold"
-        testIdRoot="trade-kpi-card-recommendations"
-        testIdValue="trade-kpi-recommendations"
+      <GaugeCard
+        testId="trade-gauge-top-quartile"
+        micro="top quartile"
+        title={kpis.topQuartileEdge != null ? fmtEdge(kpis.topQuartileEdge) : "—"}
+        sub={`${kpis.recommendations} picks past bar`}
+        gauge={{
+          kind: "ring",
+          pct: kpis.topQuartileEdge != null ? clampPct((kpis.topQuartileEdge / 0.1) * 100) : 0,
+          value: kpis.topQuartileEdge != null ? (kpis.topQuartileEdge * 100).toFixed(1) : "—",
+          color: "var(--color-cosmos-cyan-500)",
+        }}
       />
-      <KpiCard
-        label="Avg edge"
-        value={kpis.avgEdge != null ? fmtEdge(kpis.avgEdge) : "—"}
-        sub={
-          kpis.topQuartileEdge != null
-            ? `top-quartile ${fmtEdge(kpis.topQuartileEdge)}`
-            : "top-quartile —"
-        }
-        testIdRoot="trade-kpi-card-avg-edge"
-        testIdValue="trade-kpi-avg-edge"
+      <GaugeCard
+        testId="trade-gauge-events"
+        micro="events tracked"
+        title={`${kpis.events} · ${kpis.live} live`}
+        sub={nextClose ? `next ${nextClose.replace(/^closes /, "close ")}` : `${kpis.upcoming} upcoming`}
+        gauge={{ kind: "orb" }}
       />
     </div>
   );
@@ -338,16 +335,125 @@ function buildPlayerPropSelection(
   };
 }
 
-function countPropThresholds(event: TradeDeskEvent): number {
-  return event.player_props.reduce(
-    (total, player) =>
-      total + player.stat_groups.reduce((groupTotal, group) => groupTotal + group.thresholds.length, 0),
-    0,
+/** One flattened, edge-sorted pick (game line or prop threshold). */
+interface PickRowData {
+  selection: TradeSelection;
+  kindTag: string | null;
+  closeMinutes: number | null;
+}
+
+function flattenEventPicks(event: TradeDeskEvent): PickRowData[] {
+  const rows: PickRowData[] = [];
+  for (const line of event.game_lines) {
+    rows.push({
+      selection: buildGameLineSelection(event, line),
+      kindTag: formatMarketKindBadge(line.market_kind),
+      closeMinutes: line.time_to_close_minutes,
+    });
+  }
+  for (const player of event.player_props) {
+    for (const group of player.stat_groups) {
+      for (const threshold of group.thresholds) {
+        rows.push({
+          selection: buildPlayerPropSelection(
+            event,
+            player.subject_name,
+            player.subject_team,
+            group.stat_key,
+            threshold,
+          ),
+          kindTag: null,
+          closeMinutes: threshold.time_to_close_minutes,
+        });
+      }
+    }
+  }
+  return rows.sort((a, b) => b.selection.edge - a.selection.edge);
+}
+
+function countEventPicks(event: TradeDeskEvent): number {
+  return (
+    event.game_lines.length +
+    event.player_props.reduce(
+      (total, player) =>
+        total + player.stat_groups.reduce((groupTotal, group) => groupTotal + group.thresholds.length, 0),
+      0,
+    )
   );
 }
 
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function edgeToneClass(edge: number): string {
+  if (edge < 0) return "neg";
+  if (edge >= 0.08) return "strong";
+  if (edge < 0.04) return "neutral";
+  return "";
+}
+
+function PickRowButton({
+  row,
+  hero,
+  isSelected,
+  onSelect,
+}: {
+  row: PickRowData;
+  hero: boolean;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const { selection } = row;
+  const prob = selection.selectedSideProbability;
+  const price = selection.entryPrice;
+  const closeText = fmtClose(row.closeMinutes);
+  const dimBar = selection.edge >= 0 && selection.edge < 0.04;
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      data-testid="trade-pick-row"
+      className={cn("gi-pick-row focus-visible:ring-focus", hero && !isSelected && "gi-hero-row", isSelected && "selected")}
+    >
+      <div className="min-w-0">
+        <div className="gi-pick-title">
+          <span className="t">{selection.displayLabel}</span>
+          {row.kindTag && (
+            <span className="gi-tag" data-testid="line-row-kind-badge">
+              {row.kindTag}
+            </span>
+          )}
+        </div>
+        <div className="gi-pick-sub">
+          {selection.selectedSide} {fmtPrice(price)}
+          {closeText ? ` · ${closeText}` : ""}
+        </div>
+      </div>
+      <div className="gi-pick-probcol">
+        <div className="gi-probbar-labels">
+          <span>win prob</span>
+          <span className="val">{fmtPercent(prob)}</span>
+        </div>
+        <div
+          className={cn("gi-probbar", hero && "hot", dimBar && "dim")}
+          style={
+            {
+              "--pb-p": prob != null ? clampPct(prob * 100) : 0,
+              "--pb-tick": price != null ? clampPct(price * 100) : 0,
+            } as React.CSSProperties
+          }
+          aria-hidden
+        >
+          <span className="gi-probbar-fill" />
+          {price != null && <span className="gi-probbar-tick" />}
+        </div>
+      </div>
+      <div className="gi-pick-edge-col">
+        <span className={cn("gi-edge", edgeToneClass(selection.edge))}>{fmtEdge(selection.edge)}</span>
+      </div>
+    </button>
+  );
 }
 
 interface TradeEventListProps {
@@ -370,113 +476,97 @@ function TradeEventList({
   return (
     <>
       {events.map((event) => {
-        const showGameLines = event.game_lines.length > 0;
-        const showPlayerProps = event.player_props.length > 0;
         const candidateCount = event.candidate_market_count ?? 0;
         const scoredCount = event.scored_market_count ?? 0;
         const coverageCount = event.coverage_prediction_count ?? 0;
-        const showCoverageOnly = candidateCount > 0 || scoredCount > 0 || coverageCount > 0;
-        if (!showGameLines && !showPlayerProps && !showCoverageOnly) {
+        const picks = flattenEventPicks(event);
+        const showCoverageOnly = picks.length === 0 && (candidateCount > 0 || scoredCount > 0 || coverageCount > 0);
+        if (picks.length === 0 && !showCoverageOnly) {
           return null;
         }
 
-        const groupedGameLines = [...event.game_lines].sort(
-          (left, right) => sectionOrder(left.market_kind) - sectionOrder(right.market_kind),
-        );
         const isExpanded = expandedEventIds.has(event.event_id);
         const marketsId = `${idPrefix}-trade-event-${event.event_id}-markets`;
-        const selectedInEvent = selected?.eventId === event.event_id;
-        const pickCount = event.game_lines.length + countPropThresholds(event);
-        const ladderCount = event.player_props.length;
-        const summaryParts = [
-          pluralize(pickCount, "pick"),
-          pluralize(ladderCount, "ladder"),
-          coverageCount > 0 ? `${coverageCount} coverage` : null,
-        ].filter(Boolean);
+        const live = event.event_status === "in_progress";
+        const tint = sportTint(event.sport_key);
+        const stripSummary = [
+          pluralize(picks.length, "pick"),
+          coverageCount > 0 && picks.length === 0 ? `${coverageCount} coverage` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
+        if (!isExpanded) {
+          return (
+            <button
+              key={`${idPrefix}-${event.event_id}`}
+              type="button"
+              className="gi-game-strip focus-visible:ring-focus"
+              aria-expanded={false}
+              aria-controls={marketsId}
+              onClick={() => onToggleEvent(event.event_id)}
+              data-testid="trade-event-toggle"
+              style={{ "--gd": tint } as React.CSSProperties}
+            >
+              <span className="gi-glow-dot" aria-hidden />
+              <span className="name">{event.event_name}</span>
+              {live ? (
+                <span className="gi-live-chip">live</span>
+              ) : (
+                <span className="when">{fmtStartsAt(event.starts_at)}</span>
+              )}
+              <span className="count">{stripSummary} ›</span>
+            </button>
+          );
+        }
 
         return (
-          <article
+          <section
             key={`${idPrefix}-${event.event_id}`}
-            className={cn("event-card", isExpanded && "open")}
-            style={{ ["--sport-tint" as string]: sportTint(event.sport_key) }}
+            className="gi-panel"
+            style={{ "--gd": tint } as React.CSSProperties}
           >
             <button
               type="button"
-              className="event-card-head event-card-toggle focus-visible:ring-focus"
-              aria-expanded={isExpanded}
+              className="gi-panel-head w-full text-left focus-visible:ring-focus"
+              aria-expanded
               aria-controls={marketsId}
               onClick={() => onToggleEvent(event.event_id)}
               data-testid="trade-event-toggle"
             >
-              <ChevronRight className="event-card-chev" size={16} aria-hidden />
-              <span
-                className="sport-pill"
-                style={{ ["--tint" as string]: sportTint(event.sport_key) }}
-              >
-                <span className="dot" aria-hidden />
-                {sportLabel(event.sport_key)}
+              <span className="gi-glow-dot" aria-hidden />
+              <h2 className="gi-panel-title">{event.event_name}</h2>
+              <span className="gi-panel-sub">
+                {sportLabel(event.sport_key)} · {fmtStartsAt(event.starts_at)}
               </span>
-              <h2>{event.event_name}</h2>
-              <span className="event-card-summary">
-                {summaryParts.join(" · ")}
-              </span>
-              {selectedInEvent ? <span className="event-status-pill live">selected</span> : null}
-              <span className="event-card-when">{fmtStartsAt(event.starts_at)}</span>
+              {live && <span className="gi-live-chip">live</span>}
+              <span className="gi-count-chip">{pluralize(picks.length, "pick")}</span>
             </button>
 
-            <div id={marketsId} className="event-card-markets" hidden={!isExpanded}>
-              {isExpanded && showGameLines ? (
-                <div className="market-section">
-                  <div className="market-section-head">
-                    <h3>Game Lines</h3>
-                    <span className="count">{groupedGameLines.length} markets</span>
-                  </div>
-                  {groupedGameLines.map((line) => (
-                    <GameLineRow
-                      key={line.ticker}
-                      line={line}
-                      selectedTicker={selected?.ticker}
-                      onSelect={() => onSelect(buildGameLineSelection(event, line))}
-                    />
-                  ))}
-                </div>
-              ) : null}
-
-              {isExpanded && !showGameLines && !showPlayerProps && showCoverageOnly ? (
-                <div className="market-section">
-                  <div className="market-section-head">
-                    <h3>Coverage</h3>
-                    <span className="count">
-                      {pluralize(scoredCount, "scored market")}
-                    </span>
-                  </div>
-                  <div className="rounded-lg border border-border bg-surface-hover px-4 py-3 text-sm text-muted-foreground">
+            <div id={marketsId} className="gi-pick-rows">
+              {picks.map((row, index) => (
+                <PickRowButton
+                  key={row.selection.ticker}
+                  row={row}
+                  hero={index === 0 && picks.length > 0}
+                  isSelected={selected?.ticker === row.selection.ticker}
+                  onSelect={() => onSelect(row.selection)}
+                />
+              ))}
+              {showCoverageOnly && (
+                <div className="px-[18px] py-4">
+                  <p className="gi-micro-label">Coverage</p>
+                  <p className="mt-2 text-sm text-muted-foreground">
                     No bet cleared bet filters for this event.
                     {coverageCount > 0 ? ` ${coverageCount} coverage predictions were captured.` : ""}
-                  </div>
+                  </p>
                 </div>
-              ) : null}
-
-              {isExpanded && showPlayerProps ? (
-                <div className="market-section">
-                  <div className="market-section-head">
-                    <h3>Player Props</h3>
-                    <span className="count">{event.player_props.length} ladders</span>
-                  </div>
-                  {event.player_props.map((player) => (
-                    <PlayerPropGroup
-                      key={`${idPrefix}-${event.event_id}-${player.subject_name}`}
-                      player={player}
-                      selectedTicker={selected?.ticker}
-                      onSelectThreshold={(subjectName, subjectTeam, statKey, threshold) =>
-                        onSelect(buildPlayerPropSelection(event, subjectName, subjectTeam, statKey, threshold))
-                      }
-                    />
-                  ))}
-                </div>
-              ) : null}
+              )}
             </div>
-          </article>
+            {showCoverageOnly && (
+              <div className="gi-panel-foot">{pluralize(scoredCount, "scored market")}</div>
+            )}
+          </section>
         );
       })}
     </>
@@ -502,35 +592,37 @@ function ArchivedSlateSection({
 }) {
   const panelId = "trade-previous-slate";
   return (
-    <section className={cn("archived-slate", expanded && "open")} data-testid="trade-previous-slate">
+    <section className="gi-panel" data-testid="trade-previous-slate">
       <button
         type="button"
-        className="archived-slate-head focus-visible:ring-focus"
+        className="gi-panel-head w-full text-left focus-visible:ring-focus"
         aria-expanded={expanded}
         aria-controls={panelId}
         onClick={onToggle}
       >
-        <ChevronRight className="archived-slate-chev" size={16} aria-hidden />
-        <span className="archived-slate-title">Last good slate · {fmtDatetime(slate.generated_at)}</span>
-        <span className="archived-slate-summary">
+        <span className="gi-glow-dot" style={{ "--gd": "var(--gi-amber)" } as React.CSSProperties} aria-hidden />
+        <h2 className="gi-panel-title">Last good slate · {fmtDatetime(slate.generated_at)}</h2>
+        <span className="gi-count-chip">
           {slate.recommendation_count} picks · {slate.scored_market_count} scored
         </span>
       </button>
-      <div id={panelId} className="archived-slate-body" hidden={!expanded}>
-        <div className="archived-slate-kpis">
+      <div id={panelId} hidden={!expanded}>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 px-[18px] py-3 text-[11px] text-muted-foreground">
           <span>{slate.event_count} events</span>
           <span>{slate.candidate_market_count} candidates</span>
           <span>{slate.coverage_prediction_count} coverage</span>
           {slate.generated_from_run_id ? <span>run #{slate.generated_from_run_id}</span> : null}
         </div>
-        <TradeEventList
-          events={slate.events}
-          expandedEventIds={expandedEventIds}
-          idPrefix="archived"
-          selected={selected}
-          onToggleEvent={onToggleEvent}
-          onSelect={onSelect}
-        />
+        <div className="flex flex-col gap-3 px-3 pb-3">
+          <TradeEventList
+            events={slate.events}
+            expandedEventIds={expandedEventIds}
+            idPrefix="archived"
+            selected={selected}
+            onToggleEvent={onToggleEvent}
+            onSelect={onSelect}
+          />
+        </div>
       </div>
     </section>
   );
@@ -651,7 +743,6 @@ export function TradeDesk({ sport }: { sport?: string }) {
   }
 
   const kpis = computeTradeKpis(data);
-  const scoredCount = data.scored_market_count;
   const previousSlate = data.previous_slate;
   const archiveKey = previousSlate?.generated_at ?? null;
   const archiveDefaultExpanded = Boolean(
@@ -668,19 +759,12 @@ export function TradeDesk({ sport }: { sport?: string }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="gi-screen">
       <SlateStatusPill data={data} />
-      <ProbabilitySurfaceHero
-        scoredCount={scoredCount}
-        recommendationCount={data.recommendation_count}
-        avgEdge={kpis.avgEdge}
-        topQuartileEdge={kpis.topQuartileEdge}
-        generatedAt={data.generated_at}
-      />
-      <MarketSummaryStrip kpis={kpis} />
+      <GaugeRow data={data} kpis={kpis} />
 
-      <div className="flex gap-6">
-        <div className="flex min-w-0 flex-1 flex-col gap-4">
+      <div className="gi-cols">
+        <div className="gi-cols-main">
           <TradeEventList
             events={data.events}
             expandedEventIds={expandedEventIds}
@@ -691,7 +775,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
           />
 
           {data.events.length === 0 && (
-            <div className="rounded-2xl border border-border bg-surface px-4 py-8 text-center">
+            <div className="gi-panel px-4 py-8 text-center">
               <p className="text-sm font-medium text-foreground">
                 {data.freshness_status === "empty"
                   ? `No markets cleared thresholds${sport ? ` for ${sportLabel(sport)}` : ""}.`
@@ -722,15 +806,13 @@ export function TradeDesk({ sport }: { sport?: string }) {
 
           {data.research_sports.length > 0 && (
             <div className="space-y-2">
-              <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Research Only</p>
+              <p className="gi-micro-label">Research Only</p>
               <div className="grid gap-3 md:grid-cols-3">
                 {data.research_sports.map((sportRow) => (
-                  <div key={sportRow.sport_key} className="rounded-2xl border border-border bg-surface px-4 py-3">
+                  <div key={sportRow.sport_key} className="gi-card">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium text-foreground">{sportLabel(sportRow.sport_key)}</p>
-                      <span className="rounded-full border border-border px-2 py-0.5 text-2xs uppercase tracking-[0.12em] text-muted-foreground">
-                        Research
-                      </span>
+                      <span className="gi-tag">Research</span>
                     </div>
                     <div className="mt-3 space-y-1 text-xs text-muted-foreground">
                       <p>{sportRow.events_count} tracked events</p>
@@ -744,7 +826,7 @@ export function TradeDesk({ sport }: { sport?: string }) {
           )}
         </div>
 
-        <div className="trade-ticket-rail hidden w-80 shrink-0 lg:block" data-testid="trade-ticket-rail">
+        <div className="gi-cols-rail trade-ticket-rail hidden lg:block" data-testid="trade-ticket-rail">
           <TradeTicket selection={selected} />
         </div>
       </div>

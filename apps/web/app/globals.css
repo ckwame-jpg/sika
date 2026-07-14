@@ -293,6 +293,42 @@
 
 }
 
+/* === GLASS INSTRUMENT tokens — 2026-07-13 revamp ===
+   Source: design_handoff_glass_instrument/README.md (turn-5 spec).
+   Values are spec-exact hex/rgba; violet + cyan reuse the cosmos ramp
+   (violet-500 = #b48cff, cyan-500 = #8cdcff — identical by design). */
+:root {
+  /* text ramp */
+  --gi-text-2: #c9d6e8;        /* secondary */
+  --gi-faint: #4e5871;         /* faint / axis / sublines */
+  --gi-micro: #818fa1;         /* micro-labels on cards */
+  --gi-micro-rail: #8ea0b8;    /* micro-labels on rails, neutral values */
+
+  /* status ramps (green = existing --positive tone) */
+  --gi-green: #21ca91;
+  --gi-green-soft: #5fd4a8;
+  --gi-green-pale: #85e0b3;
+  --gi-orange: #f78d6c;
+  --gi-amber: #f7b28d;
+  --gi-cyan-text: #8ed5ea;     /* cyan text-on-dark */
+  --gi-cyan-deep: #2a6a9c;
+  --gi-magenta: #c77ae8;
+  --gi-violet-mid: #8c5ce6;    /* rgba(140,92,230,*) gradient stop */
+
+  /* instrument backgrounds */
+  --gi-gauge-center: #0a0817;
+  --gi-deep-strip: rgba(4, 3, 12, 0.5);
+  --gi-chip-bg: rgba(10, 8, 24, 0.6);
+
+  /* structural borders (cyan-tinted) + dividers */
+  --gi-border-card: rgba(140, 220, 255, 0.22);
+  --gi-border-panel: rgba(140, 220, 255, 0.18);
+  --gi-border-rail: rgba(140, 220, 255, 0.25);
+  --gi-border-head: rgba(140, 220, 255, 0.14);
+  --gi-border-chrome: rgba(140, 220, 255, 0.12);
+  --gi-divider: rgba(255, 255, 255, 0.05);
+}
+
 /* ── Dark mode CSS variables (product default) ──
    Identical to :root since light mode was retired — kept so the
    next-themes `.dark` class mechanism and `.dark`-scoped selectors
@@ -1366,13 +1402,13 @@
   overflow-y: auto;
   padding-bottom: 8px;
 }
+/* Glass-instrument rail surface (spec elevation 3). */
 .trade-ticket {
-  border: 1px solid var(--color-cosmos-border-soft);
-  border-radius: var(--radius);
-  background: var(--color-cosmos-surface-dimmer);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  padding: 16px;
+  border: 1px solid var(--gi-border-rail);
+  border-radius: 18px;
+  background: linear-gradient(165deg, rgba(34, 28, 66, 0.6), rgba(8, 6, 20, 0.7));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 20px 56px rgba(0, 0, 0, 0.6);
+  padding: 18px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1447,12 +1483,28 @@
   color: var(--color-cosmos-text-muted);
 }
 .trade-ticket .ticket-title {
-  font-size: 14px;
+  font-size: 15.5px;
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.3;
   color: var(--color-cosmos-text-bright);
 }
+/* Ticket instrument grids (spec 5a rail) */
+.ticket-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.ticket-ghost-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.ticket-ghost-row > :only-child { grid-column: 1 / -1; }
+.gi-stat-chip .v.pos { color: var(--gi-green); }
+.gi-stat-chip .v.neg { color: var(--gi-orange); }
+.gi-stat-chip .v.cyan { color: var(--gi-cyan-text); }
+.gi-btn-ghost:disabled { opacity: 0.45; cursor: default; }
 .trade-ticket .ticket-lean {
   font-size: 12px;
   color: var(--color-cosmos-text-muted);
@@ -2989,15 +3041,14 @@
   inset: 0;
   z-index: 0;
   pointer-events: none;
+  /* Glass-instrument spec backdrop: two nebulas (violet top-left,
+     cyan bottom-right). Static star dots from the mockup are skipped —
+     the kept starfield canvas provides real stars. */
   background:
-    radial-gradient(ellipse 60vw 44vh at 12% 8%,
-      hsl(var(--color-cosmos-violet-700-hsl) / 0.1), transparent 62%),
-    radial-gradient(ellipse 52vw 40vh at 88% 40%,
-      hsl(var(--color-cosmos-cyan-500-hsl) / 0.05), transparent 60%),
-    radial-gradient(ellipse 44vw 34vh at 66% 90%,
-      hsl(30 60% 40% / 0.04), transparent 60%),
-    radial-gradient(ellipse 38vw 30vh at 36% 62%,
-      hsl(var(--color-cosmos-violet-500-hsl) / 0.04), transparent 62%);
+    radial-gradient(ellipse 64% 48% at 20% 0%,
+      rgba(91, 63, 192, 0.14), transparent 62%),
+    radial-gradient(ellipse 56% 42% at 90% 70%,
+      rgba(140, 220, 255, 0.08), transparent 60%);
 }
 
 /* === PHASE 3b: Shell layout — app-shell, sidebar, topbar, orbit chrome === */
@@ -3042,7 +3093,7 @@
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 224px 1fr;
+  grid-template-columns: 236px 1fr;
   min-height: 100vh;
 }
 
@@ -3071,8 +3122,8 @@
   pointer-events: none;
   background: linear-gradient(
     90deg,
-    hsl(var(--color-cosmos-ink-800-hsl) / 0.9) 0%,
-    hsl(var(--color-cosmos-ink-800-hsl) / 0.55) 60%,
+    rgba(1, 1, 4, 0.9) 0%,
+    rgba(1, 1, 4, 0.5) 60%,
     transparent 100%
   );
   z-index: 0;
@@ -3085,7 +3136,7 @@
   align-items: center;
   gap: 10px;
   padding: 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--gi-border-chrome);
 }
 .brand-name {
   font-weight: 600;
@@ -3110,8 +3161,9 @@
   width: 6px; height: 6px;
   margin: -3px 0 0 -3px;
   border-radius: 999px;
-  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--color-cosmos-violet-300) 40%, var(--color-cosmos-violet-700) 100%);
-  box-shadow: 0 0 8px hsl(var(--color-cosmos-violet-500-hsl) / 0.80);
+  /* Spec logo orb: cyan core, violet + cyan rings. */
+  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--color-cosmos-cyan-500) 45%, var(--gi-cyan-deep) 100%);
+  box-shadow: 0 0 8px hsl(var(--color-cosmos-cyan-500-hsl) / 0.80);
 }
 .brand-mark .lo-ring {
   position: absolute;
@@ -3125,6 +3177,7 @@
   inset: 5px;
   border-color: hsl(var(--color-cosmos-cyan-500-hsl) / 0.45);
   transform: rotateX(30deg) rotateY(60deg);
+  animation-name: loSpin2;
   animation-duration: 6.5s;
   animation-direction: reverse;
 }
@@ -3149,56 +3202,63 @@
   box-shadow: 0 0 6px var(--color-cosmos-cyan-300);
 }
 @keyframes loSpin { to { transform: rotateX(68deg) rotateZ(360deg); } }
+@keyframes loSpin2 { to { transform: rotateX(30deg) rotateY(60deg) rotateZ(360deg); } }
 
 /* Sidebar body — sidebar-cosmos-body replaces mockup's .sidebar-body */
 .sidebar-cosmos-body {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 8px;
+  padding: 14px 10px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.nav-section { display: flex; flex-direction: column; gap: 2px; }
+.nav-section { display: flex; flex-direction: column; gap: 3px; }
 .nav-label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted-foreground);
-  padding: 0 10px 4px;
+  /* Spec micro-header is uppercase; !important outranks the global
+     lowercase rule (class beats `body *` at equal importance). */
+  text-transform: uppercase !important;
+  letter-spacing: 0.14em;
+  color: var(--gi-faint);
+  padding: 6px 10px 4px;
 }
 
+/* Glass-instrument orbit-dock item. Per-item accent flows through the
+   --na custom property (set inline from the nav config). */
 .nav-item {
+  --na: var(--color-cosmos-cyan-500);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  color: var(--muted-foreground);
+  gap: 11px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #78869c;
   font-size: 13px;
   text-decoration: none;
-  transition: color 0.12s, background 0.12s, transform 0.22s ease;
+  transition: color 0.15s ease-out, background 0.15s ease-out, border-color 0.15s ease-out;
   position: relative;
   white-space: nowrap;
 }
 .nav-item svg { flex: 0 0 14px; }
 .nav-item:hover {
-  background: hsl(var(--color-cosmos-violet-500-hsl) / 0.06);
-  color: var(--foreground);
-  transform: translateX(3px);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--gi-text-2);
 }
-/* Active nav gets presence via a violet tint + inset left hairline —
-   a border, not a glow. */
+/* Active = glass pill (spec: cyan/violet gradient, cyan border, inner
+   top highlight) + spinning orbital. */
 .nav-item.active {
   background: linear-gradient(
-    90deg,
-    hsl(var(--color-cosmos-violet-500-hsl) / 0.1),
-    transparent 70%
+    135deg,
+    rgba(140, 220, 255, 0.13),
+    rgba(140, 92, 230, 0.09)
   );
-  box-shadow: inset 2px 0 0 hsl(var(--color-cosmos-violet-500-hsl) / 0.6);
-  color: hsl(var(--color-cosmos-violet-50-hsl));
+  border-color: rgba(140, 220, 255, 0.3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  color: var(--color-cosmos-text-bright);
   font-weight: 500;
 }
 .nav-item.active .chev {
@@ -3206,54 +3266,128 @@
   opacity: 0.6;
 }
 
+/* Orbital icon — 18px elliptical ring + center dot in the item accent. */
+.nav-orbital {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: grid;
+  place-items: center;
+  transform-style: preserve-3d;
+}
+.nav-orbital::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--na) 40%, transparent);
+  transform: rotateX(65deg);
+}
+.nav-orbital::after {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--na);
+  opacity: 0.8;
+}
+.nav-item.active .nav-orbital::before {
+  border-color: color-mix(in srgb, var(--na) 65%, transparent);
+  animation: navOrbit 3s linear infinite;
+}
+.nav-item.active .nav-orbital::after {
+  width: 5px;
+  height: 5px;
+  opacity: 1;
+  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--na) 60%);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--na) 80%, transparent);
+}
+
+/* Live badge — right-aligned mono pill tinted by the item accent. */
+.nav-badge {
+  margin-left: auto;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--na) 30%, transparent);
+  background: color-mix(in srgb, var(--na) 7%, transparent);
+  color: var(--na);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Right-aligned plain count (sport rows). */
+.nav-count {
+  margin-left: auto;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  color: var(--gi-faint);
+  font-variant-numeric: tabular-nums;
+}
+.nav-count.live { color: var(--gi-green); }
+.nav-item.active .nav-count { color: var(--gi-micro-rail); }
+
 /* .dot — base (sport indicator in sidebar). Overridden per-context below. */
 .nav-item .dot {
   position: relative;
-  width: 6px; height: 6px;
+  width: 5px; height: 5px;
   border-radius: 999px;
   background: currentColor;
-  opacity: 0.4;
+  opacity: 0.7;
+  flex: 0 0 5px;
 }
-.nav-item.active .dot {
-  width: 8px; height: 8px;
+/* Sport rows keep a lighter active treatment than primary nav: cyan
+   tint + glowing dot instead of the full glass pill. */
+.nav-item.sport-row.active {
+  background: rgba(140, 220, 255, 0.08);
+  border-color: rgba(140, 220, 255, 0.2);
+  box-shadow: none;
+  font-weight: 500;
+}
+.nav-item.sport-row.active .dot {
+  width: 6px; height: 6px;
+  flex-basis: 6px;
   opacity: 1;
-  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--color-cosmos-violet-300) 60%, var(--color-cosmos-violet-700));
-  box-shadow: 0 0 8px hsl(var(--color-cosmos-violet-500-hsl) / 0.80);
+  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--color-cosmos-cyan-500) 60%);
+  box-shadow: 0 0 8px hsl(var(--color-cosmos-cyan-500-hsl) / 0.8);
 }
-.nav-item.active .dot::before {
-  content: "";
-  position: absolute;
-  left: 50%; top: 50%;
-  width: 18px; height: 18px;
-  margin: -9px 0 0 -9px;
+/* Operator status dot (runs row) — glows cyan while a run is active. */
+.nav-status-dot {
+  margin-left: auto;
+  width: 6px; height: 6px;
   border-radius: 999px;
-  border: 1px solid hsl(var(--color-cosmos-violet-500-hsl) / 0.45);
-  transform: rotateX(65deg);
-  animation: navOrbit 3s linear infinite;
+  background: var(--gi-faint);
+  opacity: 0.6;
 }
+.nav-status-dot.busy {
+  background: var(--color-cosmos-cyan-500);
+  box-shadow: 0 0 8px hsl(var(--color-cosmos-cyan-500-hsl) / 0.8);
+  opacity: 1;
+  animation: pulse-soft 1.6s ease-in-out infinite alternate;
+}
+@keyframes pulse-soft { from { opacity: 0.55; } to { opacity: 1; } }
 @keyframes navOrbit { to { transform: rotateX(65deg) rotateZ(360deg); } }
 
 /* Sidebar foot — sidebar-cosmos-foot replaces mockup's .sidebar-foot */
 .sidebar-cosmos-foot {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--gi-border-chrome);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
+/* Spec footer is quiet: orb + "orbits aligned · Nm", no panel chrome. */
 .sync-pill {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 10px;
+  padding: 4px 4px;
   border-radius: 8px;
-  background: linear-gradient(
-    180deg,
-    hsl(var(--color-cosmos-surface-hsl) / 0.85),
-    hsl(var(--color-cosmos-surface-deep-hsl) / 0.85)
-  );
-  border: 1px solid var(--color-cosmos-border-panel);
+  background: transparent;
+  border: none;
 }
 .sync-orb {
   position: relative;
@@ -3295,13 +3429,13 @@
 }
 .sync-label {
   font-size: 11px;
-  font-weight: 500;
-  color: var(--foreground);
+  font-weight: 400;
+  color: #78869c;
 }
 .sync-sub {
-  font-size: 10.5px;
-  font-family: var(--font-sans, system-ui, sans-serif);
-  color: var(--muted-foreground);
+  font-size: 10px;
+  font-family: var(--font-geist-mono), monospace;
+  color: var(--gi-faint);
 }
 .sync-refresh {
   background: transparent;
@@ -3323,6 +3457,7 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- Topbar (sticky header) ---------- */
+/* Spec: 48px bar, rgba(1,1,4,.85), cyan-tinted bottom hairline. */
 .topbar {
   position: sticky;
   top: 0;
@@ -3330,27 +3465,13 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 12px 20px;
-  background: hsl(var(--color-cosmos-ink-800-hsl) / 0.92);
+  min-height: 48px;
+  padding: 6px 20px;
+  background: rgba(1, 1, 4, 0.85);
   backdrop-filter: blur(14px) saturate(1.1);
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--gi-border-chrome);
   font-size: 13px;
-}
-.topbar::after {
-  content: "";
-  position: absolute;
-  left: 0; right: 0;
-  bottom: -1px;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    hsl(var(--color-cosmos-violet-500-hsl) / 0.28),
-    hsl(var(--color-cosmos-cyan-500-hsl) / 0.22),
-    transparent
-  );
-  pointer-events: none;
 }
 
 .crumbs {
@@ -3401,6 +3522,9 @@
   color: var(--muted-foreground);
   font-weight: 400;
   max-width: 40ch;
+  /* Keep a readable stub when the pills row squeezes the crumbs —
+     without a floor, flex-shrink collapses this span to 0px. */
+  min-width: 6ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3452,32 +3576,44 @@
     font-size: 10.5px;
   }
 }
+/* Status pills (spec): radius 999, 11px, padding 4px 12px.
+   Variants — cyan info, green live, violet model. */
 .topbar-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px;
+  padding: 4px 12px;
   border-radius: 999px;
   font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 11px;
-  border: 1px solid var(--border);
-  background: var(--muted);
-  color: var(--muted-foreground);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--gi-micro-rail);
   white-space: nowrap;
 }
 .topbar-chip .dot {
-  width: 6px; height: 6px;
+  width: 5px; height: 5px;
   border-radius: 999px;
   background: currentColor;
 }
+.topbar-chip.chip-info {
+  color: var(--gi-cyan-text);
+  border-color: rgba(140, 220, 255, 0.3);
+  background: rgba(140, 220, 255, 0.08);
+}
+.topbar-chip.chip-violet {
+  color: var(--color-cosmos-violet-300);
+  border-color: rgba(180, 140, 255, 0.35);
+  background: rgba(180, 140, 255, 0.08);
+}
 .topbar-chip.chip-live {
-  color: var(--positive);
-  border-color: hsl(160 72% 46% / 0.35);
-  background: var(--positive-dim);
+  color: var(--gi-green);
+  border-color: rgba(33, 202, 145, 0.35);
+  background: rgba(33, 202, 145, 0.12);
 }
 .topbar-chip.chip-live .dot {
-  background: var(--positive);
-  box-shadow: 0 0 6px var(--positive);
+  background: var(--gi-green);
+  box-shadow: 0 0 6px var(--gi-green);
   animation: pulse 1.6s ease-in-out infinite;
 }
 .topbar-chip.chip-utc {
@@ -3612,6 +3748,1035 @@
     background: hsl(var(--color-cosmos-violet-500-hsl) / 0.28);
   }
 }
+
+/* ================================================================
+   GLASS INSTRUMENT component kit — 2026-07-13 revamp
+   Shared surfaces + instruments per design_handoff_glass_instrument
+   README (§Surfaces, §Instruments, §Shared components). Screens
+   compose these; screen-specific layout lives with each screen.
+   ================================================================ */
+
+/* Uppercase escape hatch — outranks the global `body *` lowercase
+   rule (class specificity beats element+universal at equal
+   importance). Spec micro-labels/chips are uppercase. */
+.gi-upper { text-transform: uppercase !important; }
+
+/* ── Surfaces (three elevations) ── */
+.gi-card {
+  border: 1px solid var(--gi-border-card);
+  border-radius: 14px;
+  background: linear-gradient(160deg, rgba(30, 26, 58, 0.55), rgba(6, 5, 16, 0.65));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 12px 32px rgba(0, 0, 0, 0.5);
+  padding: 14px 16px;
+}
+.gi-panel {
+  border: 1px solid var(--gi-border-panel);
+  border-radius: 16px;
+  background: linear-gradient(170deg, rgba(22, 19, 45, 0.5), rgba(5, 4, 14, 0.6));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 16px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.gi-rail {
+  border: 1px solid var(--gi-border-rail);
+  border-radius: 18px;
+  background: linear-gradient(165deg, rgba(34, 28, 66, 0.6), rgba(8, 6, 20, 0.7));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 20px 56px rgba(0, 0, 0, 0.6);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Panel header / footer strips */
+.gi-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--gi-border-head);
+}
+.gi-panel-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--color-cosmos-text-bright);
+}
+.gi-panel-sub {
+  font-size: 11px;
+  color: var(--gi-micro);
+}
+.gi-panel-foot {
+  background: var(--gi-deep-strip);
+  border-top: 1px solid var(--gi-border-head);
+  padding: 10px 18px;
+  font-size: 11px;
+  color: var(--gi-faint);
+}
+.gi-glow-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: none;
+  background: var(--gd, var(--color-cosmos-cyan-500));
+  box-shadow: 0 0 8px var(--gd, var(--color-cosmos-cyan-500));
+}
+
+/* Micro-label (uppercase eyebrow) */
+.gi-micro-label {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase !important;
+  letter-spacing: 0.13em;
+  color: var(--gi-micro);
+}
+.gi-micro-label.rail { color: var(--gi-micro-rail); letter-spacing: 0.16em; }
+
+/* ── Conic gauge (58px; .sm = 44px) ──
+   Usage: <div class="gi-gauge" style="--gg-p:62; --gg-c:#21ca91">
+            <span class="gi-gauge-value">62%</span>
+          </div> */
+.gi-gauge {
+  --gg-p: 0;
+  --gg-c: var(--color-cosmos-cyan-500);
+  position: relative;
+  width: 58px;
+  height: 58px;
+  flex: none;
+  border-radius: 999px;
+  background: conic-gradient(var(--gg-c) calc(var(--gg-p) * 1%), rgba(255, 255, 255, 0.07) 0);
+  display: grid;
+  place-items: center;
+}
+.gi-gauge::before {
+  content: "";
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: var(--gi-gauge-center);
+}
+.gi-gauge-value {
+  position: relative;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gg-c);
+  font-variant-numeric: tabular-nums;
+}
+.gi-gauge.sm { width: 44px; height: 44px; }
+.gi-gauge.sm::before { width: 33px; height: 33px; }
+.gi-gauge.sm .gi-gauge-value { font-size: 10px; }
+
+/* Gauge stat card layout (gauge + text block) */
+.gi-gauge-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+.gi-gauge-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.gi-gauge-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-cosmos-text-bright);
+}
+.gi-gauge-sub {
+  font-size: 10.5px;
+  color: var(--gi-faint);
+}
+
+/* ── Probability bar with market tick ──
+   Usage: <div class="gi-probbar" style="--pb-p:71.4; --pb-tick:62">
+            <span class="gi-probbar-fill"></span>
+            <span class="gi-probbar-tick"></span>
+          </div> */
+.gi-probbar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.gi-probbar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(var(--pb-p) * 1%);
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-cosmos-violet-700), var(--color-cosmos-cyan-500));
+  transition: width 300ms ease-out;
+}
+.gi-probbar-tick {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--pb-tick) * 1%);
+  width: 1.5px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  background: var(--color-cosmos-text-bright);
+  opacity: 0.7;
+  border-radius: 1px;
+}
+.gi-probbar.hot .gi-probbar-fill { box-shadow: 0 0 12px rgba(140, 220, 255, 0.5); }
+.gi-probbar.dim .gi-probbar-fill { opacity: 0.7; }
+.gi-probbar-labels {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9.5px;
+  color: var(--gi-faint);
+  margin-bottom: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.gi-probbar-labels .val { color: var(--gi-cyan-text); }
+
+/* ── Buttons ── */
+.gi-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(140, 220, 255, 0.5);
+  background: linear-gradient(180deg, rgba(140, 220, 255, 0.25), rgba(140, 92, 230, 0.3));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 4px 20px rgba(140, 220, 255, 0.15);
+  color: var(--color-cosmos-text-bright);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 150ms ease-out, box-shadow 150ms ease-out;
+}
+.gi-btn:hover { filter: brightness(1.12); }
+.gi-btn:disabled { opacity: 0.5; cursor: default; filter: none; }
+.gi-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(140, 220, 255, 0.2);
+  background: transparent;
+  color: var(--gi-micro-rail);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 150ms ease-out, border-color 150ms ease-out, background 150ms ease-out;
+}
+.gi-btn-ghost:hover {
+  color: var(--gi-text-2);
+  border-color: rgba(140, 220, 255, 0.35);
+  background: rgba(140, 220, 255, 0.05);
+}
+
+/* ── Chips ── */
+/* Sort/filter chip (radius 999) */
+.gi-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: #78869c;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 150ms ease-out, border-color 150ms ease-out, background 150ms ease-out;
+}
+.gi-chip:hover { color: var(--gi-text-2); }
+.gi-chip.active {
+  border-color: rgba(140, 220, 255, 0.45);
+  background: rgba(140, 220, 255, 0.11);
+  color: var(--gi-cyan-text);
+}
+/* Live chip (green outline, uppercase 9.5px) */
+.gi-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(33, 202, 145, 0.4);
+  background: rgba(33, 202, 145, 0.08);
+  color: var(--gi-green);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase !important;
+  font-variant-numeric: tabular-nums;
+}
+/* Small square tag ("fg") */
+.gi-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(180, 140, 255, 0.35);
+  background: rgba(180, 140, 255, 0.1);
+  color: var(--color-cosmos-violet-300);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+/* Mini stat chip card (ticket 3-col grid, chip-bg surface) */
+.gi-stat-chip {
+  border: 1px solid rgba(140, 220, 255, 0.16);
+  border-radius: 12px;
+  background: var(--gi-chip-bg);
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  text-align: center;
+}
+.gi-stat-chip .k {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase !important;
+  color: var(--gi-faint);
+}
+.gi-stat-chip .v {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-cosmos-text-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Screen scaffolding ── */
+.gi-screen { display: flex; flex-direction: column; gap: 16px; }
+.gi-gauge-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+.gi-gauge-row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1200px) {
+  .gi-gauge-row, .gi-gauge-row.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .gi-gauge-row, .gi-gauge-row.three { grid-template-columns: 1fr; }
+}
+.gi-cols { display: flex; gap: 16px; align-items: flex-start; }
+.gi-cols-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.gi-cols-rail { width: 320px; flex: none; }
+@media (max-width: 1100px) {
+  .gi-cols { flex-direction: column; }
+  .gi-cols-rail { width: 100%; }
+}
+
+/* ── Pick rows (trade desk): grid minmax(0,1fr) 220px 90px ── */
+.gi-pick-rows { display: flex; flex-direction: column; }
+.gi-pick-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px 90px;
+  gap: 18px;
+  align-items: center;
+  padding: 13px 18px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 150ms ease-out;
+}
+.gi-pick-rows > .gi-pick-row + .gi-pick-row { border-top: 1px solid var(--gi-divider); }
+.gi-pick-row:hover { background: rgba(255, 255, 255, 0.03); }
+.gi-pick-row.selected {
+  background: rgba(140, 220, 255, 0.07);
+  box-shadow: inset 3px 0 0 var(--color-cosmos-cyan-500);
+}
+.gi-pick-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-bright);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.gi-pick-title .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gi-pick-sub { font-size: 10.5px; color: var(--gi-micro); margin-top: 3px; }
+.gi-pick-edge-col { text-align: right; }
+@media (max-width: 860px) {
+  .gi-pick-row { grid-template-columns: minmax(0, 1fr) 84px; }
+  .gi-pick-probcol { display: none; }
+}
+
+/* ── Collapsed game strip ── */
+.gi-game-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 18px;
+  border: 1px solid var(--gi-border-panel);
+  border-radius: 16px;
+  background: var(--gi-deep-strip);
+  cursor: pointer;
+  transition: border-color 150ms ease-out, background 150ms ease-out;
+  text-align: left;
+}
+.gi-game-strip:hover {
+  border-color: var(--gi-border-card);
+  background: rgba(10, 8, 24, 0.55);
+}
+.gi-game-strip .name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gi-game-strip .when { font-size: 11px; color: var(--gi-micro); white-space: nowrap; }
+.gi-game-strip .count { margin-left: auto; font-size: 11px; color: var(--gi-micro-rail); white-space: nowrap; }
+
+/* Count chip (panel-head right) */
+.gi-count-chip {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(140, 220, 255, 0.3);
+  background: rgba(140, 220, 255, 0.07);
+  color: var(--gi-cyan-text);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Donut (150px masked conic ring + dashed inner orbit) ──
+   Usage: <div class="gi-donut" style="--gd-p:71.4">
+            <span class="gi-donut-ring"></span>
+            <span class="gi-donut-orbit"></span>
+            <div class="gi-donut-center">…</div>
+          </div>
+   Multi-segment variant: style="--gd-stops: <conic stops>" + ring.seg */
+.gi-donut {
+  --gd-p: 0;
+  --gd-from: 220deg;
+  --gd-hole: 58px;
+  position: relative;
+  width: 150px;
+  height: 150px;
+  margin: 0 auto;
+  flex: none;
+}
+/* Small variant (top-signal chip card): 48px ring, 18px hole. */
+.gi-donut.sm { width: 48px; height: 48px; --gd-hole: 18px; margin: 0; }
+.gi-donut.sm .gi-donut-orbit { display: none; }
+.gi-donut.sm .gi-donut-value { font-size: 11px; font-weight: 600; }
+.gi-donut-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: conic-gradient(
+    from var(--gd-from),
+    var(--color-cosmos-violet-700),
+    var(--color-cosmos-cyan-500) calc(var(--gd-p) * 1%),
+    rgba(255, 255, 255, 0.06) calc(var(--gd-p) * 1%)
+  );
+  -webkit-mask: radial-gradient(circle, transparent var(--gd-hole), #000 calc(var(--gd-hole) + 1px));
+  mask: radial-gradient(circle, transparent var(--gd-hole), #000 calc(var(--gd-hole) + 1px));
+}
+.gi-donut-ring.seg {
+  background: conic-gradient(var(--gd-stops));
+}
+.gi-donut-orbit {
+  position: absolute;
+  inset: 13px;
+  border-radius: 999px;
+  border: 1px dashed rgba(180, 140, 255, 0.3);
+}
+.gi-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  text-align: center;
+}
+.gi-donut-value {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--color-cosmos-text-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Histogram (edge distribution rail card) ──
+   Bars: cyan→violet vertical gradient, rounded tops, peak glow. */
+.gi-histo {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 72px;
+  padding: 2px 2px 0;
+}
+.gi-histo-bar {
+  flex: 1;
+  min-width: 0;
+  height: calc(var(--hb-p, 0) * 1%);
+  min-height: 3px;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, var(--color-cosmos-cyan-500), hsl(var(--color-cosmos-violet-700-hsl) / 0.6));
+  opacity: 0.9;
+}
+.gi-histo-bar.peak {
+  box-shadow: 0 0 13px rgba(140, 220, 255, 0.4);
+  opacity: 1;
+}
+.gi-histo-axis {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  color: var(--gi-faint);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rail stat rows (label left, mono value right) */
+.gi-rail-stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--gi-micro-rail);
+}
+.gi-rail-stat .v {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.gi-rail-divider { border-top: 1px solid var(--gi-border-head); margin: 2px 0; }
+
+/* ── Model board rows (predictions, spec 5b) ──
+   grid: market / model-vs-market / price / edge / conf / status / settled */
+.gi-board-colhead,
+.gi-board-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px 60px 74px 52px 96px 110px;
+  gap: 14px;
+  align-items: center;
+  padding: 11px 18px;
+}
+.gi-board-colhead {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--gi-border-head);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase !important;
+  color: var(--gi-faint);
+}
+.gi-board-rows { display: flex; flex-direction: column; }
+.gi-board-rows > .gi-board-row + .gi-board-row { border-top: 1px solid var(--gi-divider); }
+.gi-board-row { width: 100%; text-align: left; background: transparent; border: none; }
+.gi-board-row .mono {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  color: var(--gi-micro-rail);
+  font-variant-numeric: tabular-nums;
+}
+.gi-board-row .gi-edge { font-size: 15px; }
+@media (max-width: 1350px) {
+  .gi-board-colhead, .gi-board-row { grid-template-columns: minmax(0, 1fr) 170px 60px 74px 96px; }
+  .gi-board-hide-md { display: none; }
+}
+@media (max-width: 900px) {
+  .gi-board-colhead, .gi-board-row { grid-template-columns: minmax(0, 1fr) 74px 96px; }
+  .gi-board-hide-sm { display: none; }
+}
+
+/* ── Recent runs table (ops, spec 5d) ── */
+.gi-run-colhead,
+.gi-run-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 78px 88px 104px;
+  gap: 14px;
+  align-items: center;
+  padding: 11px 18px;
+}
+.gi-run-colhead {
+  padding-top: 9px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--gi-border-head);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase !important;
+  color: var(--gi-faint);
+}
+.gi-run-rows { display: flex; flex-direction: column; }
+.gi-run-rows > .gi-run-row + .gi-run-row { border-top: 1px solid var(--gi-divider); }
+.gi-run-row {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 150ms ease-out;
+}
+.gi-run-row:hover { background: rgba(255, 255, 255, 0.03); }
+.gi-run-row.selected { background: rgba(140, 220, 255, 0.05); }
+.gi-run-row.running {
+  background: linear-gradient(90deg, rgba(140, 220, 255, 0.08), transparent 70%);
+  box-shadow: inset 3px 0 0 var(--color-cosmos-cyan-500);
+}
+.gi-run-title {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gi-run-sub { font-size: 10.5px; color: var(--gi-micro); margin-top: 2px; }
+.gi-run-sub.err { color: var(--gi-amber); }
+.gi-run-row .mono {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11.5px;
+  color: var(--gi-micro-rail);
+  font-variant-numeric: tabular-nums;
+}
+/* Indeterminate progress under a running run's title. */
+.gi-run-progress {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  margin-top: 6px;
+  max-width: 220px;
+}
+.gi-run-progress::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-cosmos-violet-700), var(--color-cosmos-cyan-500));
+  animation: giIndeterminate 1.4s ease-in-out infinite;
+}
+@keyframes giIndeterminate {
+  to { left: 100%; }
+}
+
+/* Status chips (success / running / failed) — 9.5px uppercase outline. */
+.gi-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase !important;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--gi-micro-rail);
+  white-space: nowrap;
+}
+.gi-status-chip.success {
+  border-color: rgba(33, 202, 145, 0.4);
+  background: rgba(33, 202, 145, 0.07);
+  color: var(--gi-green);
+}
+.gi-status-chip.running {
+  border-color: rgba(140, 220, 255, 0.45);
+  background: rgba(140, 220, 255, 0.1);
+  color: var(--gi-cyan-text);
+}
+.gi-status-chip.running .gi-glow-dot { width: 5px; height: 5px; }
+.gi-status-chip.failed {
+  border-color: rgba(247, 141, 108, 0.45);
+  background: rgba(247, 141, 108, 0.1);
+  color: var(--gi-orange);
+}
+
+/* Coverage bar (mapping health rail) */
+.gi-coverage-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.gi-coverage-bar > span {
+  display: block;
+  height: 100%;
+  width: calc(var(--cv-p, 0) * 1%);
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--color-cosmos-violet-700), var(--color-cosmos-cyan-500));
+}
+.gi-coverage-bar.clean > span {
+  background: linear-gradient(90deg, var(--gi-green), var(--gi-green-pale));
+}
+
+/* ── Timeline (events feed, spec 5e) ──
+   Absolute-positioned timestamp column + node on a gradient spine. */
+.gi-timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-left: 96px;
+}
+.gi-timeline::before {
+  content: "";
+  position: absolute;
+  left: 76px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: linear-gradient(180deg, var(--gi-green-pale), hsl(var(--color-cosmos-violet-500-hsl) / 0.35) 40%, transparent);
+}
+.gi-tl-item { position: relative; }
+.gi-tl-time {
+  position: absolute;
+  left: -96px;
+  top: 14px;
+  width: 58px;
+  text-align: right;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  color: var(--gi-faint);
+  font-variant-numeric: tabular-nums;
+}
+.gi-tl-time.now { color: var(--gi-green); }
+.gi-tl-node {
+  position: absolute;
+  left: -23.5px;
+  top: 16px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--tl-c, var(--color-cosmos-cyan-500));
+  box-shadow: 0 0 6px var(--tl-c, var(--color-cosmos-cyan-500));
+}
+.gi-tl-node.now {
+  width: 9px;
+  height: 9px;
+  left: -24.5px;
+  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--gi-green) 60%);
+}
+.gi-tl-node.now::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  border: 1px solid rgba(33, 202, 145, 0.5);
+  animation: live-pulse 2.2s ease-out infinite;
+}
+.gi-tl-node.dim { opacity: 0.5; box-shadow: none; }
+@media (max-width: 700px) {
+  .gi-timeline { padding-left: 0; }
+  .gi-timeline::before { display: none; }
+  .gi-tl-time, .gi-tl-node { display: none; }
+}
+
+/* Glass event card row */
+.gi-event-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--ev-border, rgba(140, 220, 255, 0.18));
+  border-radius: 12px;
+  background: linear-gradient(170deg, rgba(22, 19, 45, 0.5), rgba(5, 4, 14, 0.6));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+.gi-event-row.live {
+  --ev-border: rgba(33, 202, 145, 0.32);
+  background: linear-gradient(170deg, rgba(14, 40, 34, 0.5), rgba(5, 4, 14, 0.6));
+}
+.gi-event-row.done { opacity: 0.72; }
+.gi-event-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-cosmos-text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gi-event-sub { font-size: 11px; color: var(--gi-micro); margin-top: 2px; }
+/* Impact chip (right-aligned outline chip) */
+.gi-impact-chip {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--ic-c, rgba(140, 220, 255, 0.35));
+  color: var(--ic-t, var(--gi-cyan-text));
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase !important;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* ── Toggle (30×17 switch, spec §Shared components) ── */
+.gi-toggle {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  flex: none;
+  border-radius: 999px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: background 150ms ease-out, box-shadow 150ms ease-out;
+}
+.gi-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  background: var(--gi-micro-rail);
+  transition: transform 150ms ease-out, background 150ms ease-out;
+}
+.gi-toggle[aria-checked="true"] {
+  background: linear-gradient(90deg, hsl(var(--color-cosmos-violet-700-hsl) / 0.8), hsl(var(--color-cosmos-cyan-500-hsl) / 0.6));
+  box-shadow: 0 0 10px hsl(var(--color-cosmos-cyan-500-hsl) / 0.25);
+}
+.gi-toggle[aria-checked="true"]::after {
+  transform: translateX(13px);
+  background: var(--color-cosmos-text-bright);
+}
+.gi-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--gi-text-2);
+}
+.gi-toggle-row.off { color: var(--gi-micro); }
+
+/* ── Stats assistant chat (spec 5f) ── */
+.gi-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.gi-chat-day {
+  text-align: center;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  color: var(--gi-faint);
+  letter-spacing: 0.08em;
+}
+.gi-chat-user {
+  align-self: flex-end;
+  max-width: min(520px, 92%);
+  padding: 10px 14px;
+  border-radius: 14px 14px 4px 14px;
+  background: linear-gradient(135deg, rgba(140, 92, 230, 0.25), rgba(91, 63, 192, 0.15));
+  border: 1px solid rgba(180, 140, 255, 0.35);
+  color: hsl(var(--color-cosmos-violet-50-hsl));
+  font-size: 13.5px;
+}
+.gi-chat-card {
+  align-self: flex-start;
+  width: min(760px, 100%);
+  border: 1px solid var(--gi-border-panel);
+  border-radius: 14px 14px 14px 4px;
+  background: linear-gradient(170deg, rgba(22, 19, 45, 0.5), rgba(5, 4, 14, 0.6));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 16px 48px rgba(0, 0, 0, 0.5);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.gi-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.gi-chat-orb {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  transform-style: preserve-3d;
+}
+.gi-chat-orb::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--color-cosmos-cyan-500-hsl) / 0.5);
+  transform: rotateX(65deg);
+  animation: navOrbit 4s linear infinite;
+}
+.gi-chat-orb::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--color-cosmos-cyan-500) 60%);
+  box-shadow: 0 0 6px hsl(var(--color-cosmos-cyan-500-hsl) / 0.7);
+}
+.gi-chat-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-cosmos-text-bright);
+}
+.gi-chat-meta {
+  margin-left: auto;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  color: var(--gi-faint);
+  font-variant-numeric: tabular-nums;
+}
+.gi-chat-prose {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--foreground);
+}
+/* Mini-gauge chip grid inside an assistant card */
+.gi-chat-gauges {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .gi-chat-gauges { grid-template-columns: 1fr; }
+}
+/* Chart card inside an assistant card */
+.gi-chart-card {
+  border: 1px solid rgba(140, 220, 255, 0.14);
+  border-radius: 12px;
+  background: var(--gi-deep-strip);
+  padding: 12px 14px;
+}
+.gi-chart-card-head,
+.gi-chart-card-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9.5px;
+  color: var(--gi-faint);
+  font-variant-numeric: tabular-nums;
+}
+.gi-chart-card-head { margin-bottom: 8px; }
+.gi-chart-card-foot { margin-top: 8px; }
+/* Composer (rail surface, radius 14) */
+.gi-composer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--gi-border-rail);
+  border-radius: 14px;
+  background: linear-gradient(165deg, rgba(34, 28, 66, 0.6), rgba(8, 6, 20, 0.7));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 20px 56px rgba(0, 0, 0, 0.6);
+  padding: 10px 12px;
+}
+.gi-composer input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--foreground);
+  font-size: 13px;
+}
+.gi-composer input[type="text"]::placeholder { color: var(--gi-faint); }
+.gi-composer-send {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid rgba(140, 220, 255, 0.5);
+  background: linear-gradient(180deg, rgba(140, 220, 255, 0.25), rgba(140, 92, 230, 0.3));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 4px 20px rgba(140, 220, 255, 0.15);
+  color: var(--color-cosmos-text-bright);
+  font-size: 15px;
+  cursor: pointer;
+  transition: filter 150ms ease-out;
+}
+.gi-composer-send:hover { filter: brightness(1.12); }
+.gi-composer-send:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Orb stat card (events-tracked / settles-tonight cards) ── */
+.gi-orb-stat {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  transform-style: preserve-3d;
+}
+.gi-orb-stat::before,
+.gi-orb-stat::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--color-cosmos-violet-500-hsl) / 0.4);
+  transform: rotateX(68deg);
+  animation: loSpin 4.5s linear infinite;
+}
+.gi-orb-stat::after {
+  inset: 6px;
+  border-color: hsl(var(--color-cosmos-cyan-500-hsl) / 0.4);
+  transform: rotateX(30deg) rotateY(60deg);
+  animation: loSpin2 6.5s linear infinite reverse;
+}
+.gi-orb-stat .core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, var(--color-cosmos-text-bright), var(--color-cosmos-cyan-500) 50%, var(--gi-cyan-deep));
+  box-shadow: 0 0 10px hsl(var(--color-cosmos-cyan-500-hsl) / 0.8);
+}
+
+/* ── Hero row highlight (top pick) ── */
+.gi-hero-row {
+  box-shadow: inset 3px 0 0 var(--color-cosmos-violet-500);
+  background: linear-gradient(90deg, rgba(140, 92, 230, 0.12), transparent 65%);
+}
+
+/* ── Edge numerals ── */
+.gi-edge {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--gi-green);
+  font-variant-numeric: tabular-nums;
+}
+.gi-edge.strong { color: var(--gi-green-soft); }
+.gi-edge.neutral { color: var(--gi-micro-rail); }
+.gi-edge.neg { color: var(--gi-orange); }
 
 /* ---------- Reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {

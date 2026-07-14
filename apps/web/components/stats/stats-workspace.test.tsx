@@ -2,8 +2,11 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 // Mock the data-layer call BEFORE importing the component under test.
+// keys/fetchHealth are consumed by the sources rail's useHealthStatus.
 vi.mock("@/lib/api", () => ({
   queryStats: vi.fn(),
+  fetchHealth: vi.fn().mockResolvedValue(null),
+  keys: { health: "/health" },
 }));
 
 import { queryStats } from "@/lib/api";
@@ -147,7 +150,7 @@ describe("StatsWorkspace — Phase 2 sa-* rewrite", () => {
     fireEvent.click(screen.getByTestId("sa-run"));
 
     const answer = await screen.findByTestId("sa-answer");
-    expect(within(answer).getByText(/model v7\.2/)).toBeInTheDocument();
+    expect(within(answer).getAllByText(/model v7\.2/).length).toBeGreaterThan(0);
   });
 
   it("renders the loading state while queryStats is pending", async () => {

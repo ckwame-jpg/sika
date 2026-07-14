@@ -7,7 +7,7 @@ export default function RunsPage() {
   return (
     <>
       <Header title="Runs" />
-      <main className="flex-1 overflow-hidden p-4">
+      <main className="flex-1 overflow-y-auto p-5">
         <RunsDesk />
       </main>
     </>

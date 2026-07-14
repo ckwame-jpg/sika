@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { queryStats } from "@/lib/api";
 import { SPORT_LABELS, type SportKey, type StatsQueryRead } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useHealthStatus, getSyncState } from "@/lib/health-status";
 import { AdvancedMetricsGrid } from "./advanced-metrics-grid";
 import { MiniBars } from "./mini-bars";
 
@@ -72,6 +73,12 @@ function resolveSeasonYear(season: string, sport: SportKey): number | undefined 
   return sport === "NBA" || sport === "TENNIS" ? startYear + 1 : startYear;
 }
 
+interface ChatTurn {
+  id: number;
+  question: string;
+  result: StatsQueryRead;
+}
+
 interface StatsWorkspaceProps {
   initialSport?: SportKey;
 }
@@ -82,7 +89,9 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
   const [season, setSeason] = useState(() => defaultSeasonForSport(initialSport));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<StatsQueryRead | null>(null);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const turnCounter = useRef(0);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   async function runSearch(nextQuestion?: string) {
     const finalQuestion = (nextQuestion ?? question).trim();
@@ -99,7 +108,8 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
         season: resolveSeasonYear(season, sportKey),
       });
       setQuestion(finalQuestion);
-      setResult(next);
+      turnCounter.current += 1;
+      setTurns((current) => [...current, { id: turnCounter.current, question: finalQuestion, result: next }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to query stats");
     } finally {
@@ -107,71 +117,114 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
     }
   }
 
-  return (
-    <div className="stats-assistant-wrap" data-testid="stats-workspace">
-      <section className="stats-assistant" data-testid="stats-assistant-card">
-        <div className="sa-header">
-          <div className="sa-icon" aria-hidden>
-            <svg viewBox="0 0 24 24" width="18" height="18">
-              <path d="M3 3v18h18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M7 15l3-4 3 2 4-6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              <circle cx="17" cy="7" r="1.5" fill="currentColor" />
-            </svg>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="sa-title-row">
-              <span className="sa-eyebrow">Research desk</span>
-              <span className="sa-dot" />
-              <span className="sa-endpoint">/research/stats/query</span>
-            </div>
-            <div className="sa-title">Stats Assistant</div>
-            <div className="sa-sub">
-              Cross-sport player query desk. Ask for recent form, season totals, or matchup context
-              across NBA, NFL, MLB, WNBA, and Tennis.
-            </div>
-          </div>
-          <span className="sa-status">
-            <span className="sa-live-dot" />
-            <span>ready</span>
-          </span>
-        </div>
+  // Keep the newest turn in view as the conversation grows.
+  useEffect(() => {
+    if (turns.length > 0) {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [turns.length]);
 
-        <div className="sa-prompts" role="list">
+  const lastResult = turns.length > 0 ? turns[turns.length - 1].result : null;
+  const recentQuestions = [...new Set(turns.map((turn) => turn.question))].slice(-3).reverse();
+
+  return (
+    <div className="gi-cols" data-testid="stats-workspace">
+      <div className="gi-cols-main">
+        {/* Compact desk header — keeps the research-desk framing. */}
+        <section className="gi-panel" data-testid="stats-assistant-card">
+          <div className="gi-panel-head">
+            <span className="gi-chat-orb" aria-hidden />
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-2">
+                <h2 className="gi-panel-title">Stats Assistant</h2>
+                <span className="gi-micro-label">Research desk</span>
+              </div>
+              <p className="gi-panel-sub">
+                Ask about any player, team, or matchup across NBA, NFL, MLB, WNBA, and Tennis.
+              </p>
+            </div>
+            <span className="ml-auto flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+              <span className="gi-glow-dot" style={{ "--gd": "var(--gi-green)" } as React.CSSProperties} aria-hidden />
+              <span>ready</span>
+              <span className="opacity-50">·</span>
+              <span>/research/stats/query</span>
+            </span>
+          </div>
+
+          <div className="gi-chat p-4" data-testid="sa-result">
+            {turns.length === 0 && !loading && (
+              <div className="sa-result-empty py-10 text-center" data-testid="sa-result-empty">
+                <div className="gi-orb-stat mx-auto mb-3" aria-hidden>
+                  <span className="core" />
+                </div>
+                <div className="text-sm font-medium text-foreground">Run a player stats query</div>
+                <div className="mx-auto mt-1 max-w-[420px] text-xs text-muted-foreground">
+                  Answers appear here as a conversation — mini gauges, a trend chart, and the exact
+                  source the assistant used.
+                </div>
+              </div>
+            )}
+
+            {turns.length > 0 && (
+              <div className="gi-chat-day">
+                today · {new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+              </div>
+            )}
+
+            {turns.map((turn) => (
+              <div key={turn.id} className="gi-chat contents">
+                <div className="gi-chat-user" data-testid="sa-user-turn">{turn.question}</div>
+                <AssistantCard result={turn.result} onFollowUp={(next) => void runSearch(next)} />
+              </div>
+            ))}
+
+            {loading && (
+              <div className="gi-chat-card" data-testid="sa-result-loading">
+                <div className="gi-chat-head">
+                  <span className="gi-chat-orb" aria-hidden />
+                  <span className="gi-chat-name">sika stats</span>
+                  <span className="gi-chat-meta">scanning {sportKey} logs…</span>
+                </div>
+                <div className="gi-run-progress" aria-hidden />
+              </div>
+            )}
+
+            {error && (
+              <p className="text-xs text-negative" role="alert">
+                {error}
+              </p>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+        </section>
+
+        <div className="flex flex-wrap gap-2" role="list">
           {SUGGESTIONS.map((chip) => (
             <button
               key={chip}
               type="button"
-              className="sa-prompt focus-visible:ring-focus"
+              className="gi-chip focus-visible:ring-focus"
               onClick={() => runSearch(chip)}
               data-testid="sa-prompt"
             >
-              <span className="sa-prompt-mark" aria-hidden>✦</span>
-              <span>{chip}</span>
+              ✦ {chip}
             </button>
           ))}
         </div>
 
-        <div className="sa-input-row">
-          <label className="sa-input">
-            <span className="sa-input-icon" aria-hidden>
-              <svg viewBox="0 0 24 24" width="14" height="14">
-                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="1.6" />
-                <path d="M20 20l-4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-            </span>
-            <input
-              type="text"
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ask about a player, team, or matchup…"
-              onKeyDown={(event) => {
-                if (event.key === "Enter") runSearch();
-              }}
-              data-testid="sa-input"
-              aria-label="Stats question"
-            />
-            <span className="sa-kbd" aria-hidden>↵</span>
-          </label>
+        <div className="gi-composer">
+          <span className="gi-chat-orb" aria-hidden />
+          <input
+            type="text"
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder="ask about any player, team, or market…"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") runSearch();
+            }}
+            data-testid="sa-input"
+            aria-label="Stats question"
+          />
           <div className="sa-select">
             <select
               value={sportKey}
@@ -203,56 +256,97 @@ export function StatsWorkspace({ initialSport = "NBA" }: StatsWorkspaceProps) {
             </select>
           </div>
           <button
-            className="sa-run focus-visible:ring-focus"
+            className="gi-composer-send focus-visible:ring-focus"
             type="button"
             onClick={() => runSearch()}
             disabled={loading}
+            aria-label="Run query"
             data-testid="sa-run"
           >
-            {loading ? "Querying…" : "Run query"}
+            ↑
           </button>
         </div>
-        {error && <p className="mt-2 text-xs text-negative" role="alert">{error}</p>}
-      </section>
+      </div>
 
-      <section className="sa-result" data-testid="sa-result">
-        {loading ? (
-          <LoadingState sportKey={sportKey} />
-        ) : result ? (
-          <StatsAnswer result={result} />
-        ) : (
-          <EmptyOrbState />
-        )}
-      </section>
-    </div>
-  );
-}
-
-function EmptyOrbState() {
-  return (
-    <div className="sa-result-empty" data-testid="sa-result-empty">
-      <div className="sa-result-orb" aria-hidden />
-      <div className="sa-result-title">Run a player stats query</div>
-      <div className="sa-result-sub">
-        Answers appear here with a compact splits table, a mini trend chart,
-        and the exact source the assistant used.
+      <div className="gi-cols-rail hidden xl:block">
+        <SourcesRail lastResult={lastResult} recentQuestions={recentQuestions} onAsk={(next) => void runSearch(next)} />
       </div>
     </div>
   );
 }
 
-function LoadingState({ sportKey }: { sportKey: SportKey }) {
+/** Sources + recent questions rail (spec 5f right column). */
+function SourcesRail({
+  lastResult,
+  recentQuestions,
+  onAsk,
+}: {
+  lastResult: StatsQueryRead | null;
+  recentQuestions: string[];
+  onAsk: (question: string) => void;
+}) {
+  const { data: health } = useHealthStatus();
+  const syncState = getSyncState(health);
+
   return (
-    <div className="sa-result-loading" data-testid="sa-result-loading">
-      <span className="sa-result-bar" />
-      <span className="sa-result-bar" />
-      <span className="sa-result-bar" />
-      <div className="sa-result-scan">scanning {sportKey} logs…</div>
+    <div className="gi-rail" data-testid="stats-sources-rail">
+      <span className="gi-micro-label rail">sources</span>
+      <div className="gi-rail-stat">
+        <span className="flex items-center gap-2">
+          <span
+            className="gi-glow-dot"
+            style={{ "--gd": lastResult ? "var(--gi-green)" : "var(--gi-faint)" } as React.CSSProperties}
+            aria-hidden
+          />
+          stats feed
+        </span>
+        <span className="v">{lastResult ? lastResult.source : "idle"}</span>
+      </div>
+      <div className="gi-rail-stat">
+        <span className="flex items-center gap-2">
+          <span
+            className="gi-glow-dot"
+            style={{ "--gd": syncState === "synced" ? "var(--gi-green)" : "var(--gi-amber)" } as React.CSSProperties}
+            aria-hidden
+          />
+          kalshi markets
+        </span>
+        <span className="v">{syncState ?? "—"}</span>
+      </div>
+      <div className="gi-rail-stat">
+        <span className="flex items-center gap-2">
+          <span className="gi-glow-dot" style={{ "--gd": "var(--color-cosmos-violet-500)" } as React.CSSProperties} aria-hidden />
+          scheduler
+        </span>
+        <span className="v">{health?.scheduler_enabled ? "on" : "off"}</span>
+      </div>
+      <div className="gi-rail-divider" />
+      <span className="gi-micro-label rail">recent questions</span>
+      {recentQuestions.length === 0 ? (
+        <p className="text-[11.5px] text-muted-foreground">nothing asked yet this session.</p>
+      ) : (
+        recentQuestions.map((entry) => (
+          <button
+            key={entry}
+            type="button"
+            className="gi-btn-ghost justify-start text-left"
+            onClick={() => onAsk(entry)}
+          >
+            {entry}
+          </button>
+        ))
+      )}
     </div>
   );
 }
 
-function StatsAnswer({ result }: { result: StatsQueryRead }) {
+function AssistantCard({
+  result,
+  onFollowUp,
+}: {
+  result: StatsQueryRead;
+  onFollowUp: (question: string) => void;
+}) {
   // Metric grid: when the backend tags metrics with categories, the basic
   // ones render here and the advanced ones drop into AdvancedMetricsGrid
   // below. When categories are absent (older API responses), every metric
@@ -301,23 +395,62 @@ function StatsAnswer({ result }: { result: StatsQueryRead }) {
   }
   const showChart = chartPoints.length > 0;
 
+  // Spec mini-gauge grid: first three metrics as tiny conic gauges; ring
+  // fill uses the backend percentile when present.
+  const percentiles = result.summary.percentiles ?? {};
+  const gaugeEntries = metricEntries.slice(0, 3);
+
+  const followUps = EXAMPLES[result.sport_key as SportKey] ?? [];
+
   return (
-    <div className="sa-answer" data-testid="sa-answer">
-      <header className="sa-answer-header">
-        <div>
-          <div className="sa-answer-eyebrow">ANSWER · {result.sport_key}</div>
-          <div className="sa-answer-title">{result.entity_name}</div>
-        </div>
-        <span className="sa-answer-source">
-          <span className="sa-live-dot" aria-hidden />
-          <span>
-            {result.games_analyzed} games · {result.query_type.replaceAll("_", " ")}
-          </span>
+    <div className="gi-chat-card" data-testid="sa-answer">
+      <div className="gi-chat-head">
+        <span className="gi-chat-orb" aria-hidden />
+        <span className="gi-chat-name">sika stats</span>
+        <span className="gi-chat-meta">
+          {result.source} · {result.games_analyzed} game sample
         </span>
-      </header>
+      </div>
+
+      <div>
+        <div className="sa-answer-eyebrow">ANSWER · {result.sport_key}</div>
+        <div className="sa-answer-title">{result.entity_name}</div>
+      </div>
 
       {result.summary.stat_line && (
-        <div className="sa-answer-line">{result.summary.stat_line}</div>
+        <p className="gi-chat-prose">{result.summary.stat_line}</p>
+      )}
+
+      {gaugeEntries.length > 0 && (
+        <div className="gi-chat-gauges">
+          {gaugeEntries.map(([key, value]) => {
+            const pct = percentiles[key];
+            return (
+              <div key={key} className="gi-stat-chip" style={{ flexDirection: "row", gap: 10, textAlign: "left" }}>
+                <div
+                  className="gi-gauge sm"
+                  style={
+                    {
+                      "--gg-p": Math.max(0, Math.min(100, pct ?? 60)),
+                      "--gg-c": "var(--color-cosmos-cyan-500)",
+                    } as React.CSSProperties
+                  }
+                  aria-hidden
+                >
+                  <span className="gi-gauge-value">
+                    {value == null ? "—" : Number.isInteger(value) ? String(value) : value.toFixed(1)}
+                  </span>
+                </div>
+                <div className="min-w-0">
+                  <p className="k">{result.metric_labels[key] ?? key}</p>
+                  <p className="v">
+                    {value == null ? "—" : Number.isInteger(value) ? String(value) : value.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       <div className="sa-answer-grid">
@@ -345,14 +478,20 @@ function StatsAnswer({ result }: { result: StatsQueryRead }) {
       </div>
 
       {showChart && (
-        <div className="sa-answer-chart" data-testid="sa-answer-chart">
-          <div className="sa-answer-chart-label">
+        <div className="gi-chart-card" data-testid="sa-answer-chart">
+          <div className="gi-chart-card-head">
             <span>{result.metric_labels[activeMetric!] ?? activeMetric} · last {chartPoints.length}</span>
-            <span className="sa-answer-chart-meta">
+            <span>
               avg {(chartPoints.reduce((s, p) => s + p.value, 0) / chartPoints.length).toFixed(1)}
             </span>
           </div>
           <MiniBars points={chartPoints.map((p) => p.value)} />
+          {result.game_logs.length > 0 && (
+            <div className="gi-chart-card-foot">
+              <span>{result.game_logs[Math.min(chartPoints.length, result.game_logs.length) - 1]?.game_date ?? ""}</span>
+              <span>{result.game_logs[0]?.game_date ?? ""}</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -391,6 +530,21 @@ function StatsAnswer({ result }: { result: StatsQueryRead }) {
         </div>
       )}
 
+      {followUps.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {followUps.map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              className="gi-chip"
+              onClick={() => onFollowUp(chip)}
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="sa-answer-foot">
         <span>Source: /research/stats/query</span>
         <span className="sa-dot" />
@@ -399,4 +553,3 @@ function StatsAnswer({ result }: { result: StatsQueryRead }) {
     </div>
   );
 }
-

@@ -29,50 +29,29 @@ function expectAnyTicketTitleToContain(expected: string) {
 }
 
 describe("TradeDesk", () => {
-  it("renders the Phase 1 KPI quad and hero chips from trade-desk data", async () => {
+  it("renders the glass-instrument gauge row from trade-desk data", async () => {
     mockFetchTradeDesk.mockResolvedValue(tradeDeskFixture);
 
     renderWithProviders(<TradeDesk sport="NBA" />);
 
     await screen.findByText("Miami Heat at Toronto Raptors");
+    // Collapsed by default: the event renders as a strip, not a panel.
     const eventToggle = screen.getByRole("button", { name: /miami heat at toronto raptors/i });
     expect(eventToggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByText("Game Lines")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("trade-prop-card")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("trade-pick-row")).not.toBeInTheDocument();
+    expect(eventToggle).toHaveTextContent("7 picks");
 
-    // KPI quad — 4 cards, new labels + sub-lines
-    expect(screen.getByTestId("trade-kpi-events")).toHaveTextContent("1");
-    expect(screen.getByTestId("trade-kpi-card-events")).toHaveTextContent("Events on the board");
-    expect(screen.getByTestId("trade-kpi-card-events")).toHaveTextContent("0 live · 1 upcoming");
-
-    expect(screen.getByTestId("trade-kpi-candidate-markets")).toHaveTextContent("7");
-    expect(screen.getByTestId("trade-kpi-card-candidate-markets")).toHaveTextContent("Candidate markets");
-    expect(screen.getByTestId("trade-kpi-card-candidate-markets")).toHaveTextContent("scored");
-
-    expect(screen.getByTestId("trade-kpi-recommendations")).toHaveTextContent("7");
-    expect(screen.getByTestId("trade-kpi-card-recommendations")).toHaveTextContent("Current picks");
-    expect(screen.getByTestId("trade-kpi-card-recommendations")).toHaveTextContent("past edge threshold");
+    // Gauge row — slate health / avg edge / top quartile / events orb.
+    expect(screen.getByTestId("trade-gauge-health")).toHaveTextContent("fresh");
+    expect(screen.getByTestId("trade-gauge-health")).toHaveTextContent("7 of 7 scored");
 
     // Fixture edges: [0.08, 0.09, 0.10, 0.321, 0.098, 0.044, 0.051]
     // mean = 0.1120 → "+11.2%"; nearest-rank p75 = sorted[5] = 0.10 → "+10.0%"
-    expect(screen.getByTestId("trade-kpi-avg-edge")).toHaveTextContent("+11.2%");
-    expect(screen.getByTestId("trade-kpi-card-avg-edge")).toHaveTextContent("Avg edge");
-    expect(screen.getByTestId("trade-kpi-card-avg-edge")).toHaveTextContent("top-quartile +10.0%");
-
-    // Hero: two-clause headline + chip row. Match on the count
-    // numbers + the surrounding "shown rn fr" / "current picks rn"
-    // phrasing — the exact words are operator-chosen copy so the
-    // assertion stays loose around the live numbers.
-    expect(screen.getByText(/shown rn fr/)).toBeInTheDocument();
-    expect(screen.getByText(/current picks rn/)).toBeInTheDocument();
-    expect(screen.getByTestId("trade-hero-chip-avg-edge")).toHaveTextContent("+11.2%");
-    expect(screen.getByTestId("trade-hero-chip-top-quartile")).toHaveTextContent("+10.0%");
-
-    // Filter tabs removed; positions never fetched
-    expect(screen.queryByRole("button", { name: "Player Props" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Game Lines" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Your Exposure")).not.toBeInTheDocument();
-    expect(screen.queryByText("Event Context")).not.toBeInTheDocument();
+    expect(screen.getByTestId("trade-gauge-avg-edge")).toHaveTextContent("+11.2%");
+    expect(screen.getByTestId("trade-gauge-avg-edge")).toHaveTextContent("gauge vs +10% cap");
+    expect(screen.getByTestId("trade-gauge-top-quartile")).toHaveTextContent("+10.0%");
+    expect(screen.getByTestId("trade-gauge-top-quartile")).toHaveTextContent("7 picks past bar");
+    expect(screen.getByTestId("trade-gauge-events")).toHaveTextContent("1 · 0 live");
 
     await waitFor(() => {
       expect(mockFetchTradeDesk).toHaveBeenCalledWith("NBA");
@@ -80,7 +59,7 @@ describe("TradeDesk", () => {
     expect(mockFetchPositions).not.toHaveBeenCalled();
   });
 
-  it("keeps the prop-card header, selected chip, and ticket in sync across threshold clicks", async () => {
+  it("expands an event into edge-sorted pick rows and loads the ticket on row click", async () => {
     const user = userEvent.setup();
     mockFetchTradeDesk.mockResolvedValue(tradeDeskFixture);
 
@@ -88,21 +67,25 @@ describe("TradeDesk", () => {
     await screen.findByText("Miami Heat at Toronto Raptors");
     await user.click(screen.getByRole("button", { name: /miami heat at toronto raptors/i }));
 
-    const propCard = await screen.findByTestId("trade-prop-card");
+    // Flattened picks (3 game lines + 4 prop thresholds), sorted by edge desc.
+    const rows = await screen.findAllByTestId("trade-pick-row");
+    expect(rows).toHaveLength(7);
+    expect(rows[0]).toHaveTextContent("Davion Mitchell 10+ points");
+    expect(rows[0]).toHaveClass("gi-hero-row");
+    expect(rows[1]).toHaveTextContent("Over 219.5");
+    // Full-game winner keeps its market-kind tag.
+    const fgRow = rows.find((row) => row.textContent?.includes("Toronto Raptors to win"));
+    expect(fgRow).toBeDefined();
+    expect(within(fgRow!).getByTestId("line-row-kind-badge")).toHaveTextContent("FG");
 
-    await user.click(within(propCard).getByRole("button", { name: "4+" }));
-    expect(within(propCard).getByTestId("trade-prop-summary-label")).toHaveTextContent("4+ assists");
-    expect(within(propCard).getByText("89.4%")).toBeInTheDocument();
-    expect(within(propCard).getByTestId("trade-prop-summary-edge")).toHaveTextContent("+4.4%");
-    expectAnyTicketTitleToContain("Davion Mitchell 4+ assists");
-    expect(within(propCard).getAllByTestId("trade-threshold-chip").filter((chip) => chip.getAttribute("aria-pressed") === "true")).toHaveLength(1);
-
-    await user.click(within(propCard).getByRole("button", { name: "10+" }));
-    expect(within(propCard).getByTestId("trade-prop-summary-label")).toHaveTextContent("10+ points");
-    expect(within(propCard).getByText("72.1%")).toBeInTheDocument();
-    expect(within(propCard).getByTestId("trade-prop-summary-edge")).toHaveTextContent("+32.1%");
+    await user.click(rows[0]);
     expectAnyTicketTitleToContain("Davion Mitchell 10+ points");
-    expect(within(propCard).getAllByTestId("trade-threshold-chip").filter((chip) => chip.getAttribute("aria-pressed") === "true")).toHaveLength(1);
+    expect(rows[0]).toHaveClass("selected");
+
+    // Selecting a different row swaps the ticket.
+    const assistsRow = rows.find((row) => row.textContent?.includes("Davion Mitchell 4+ assists"));
+    await user.click(assistsRow!);
+    expectAnyTicketTitleToContain("Davion Mitchell 4+ assists");
   });
 
   it("toggles event cards while preserving the selected trade ticket", async () => {
@@ -115,15 +98,19 @@ describe("TradeDesk", () => {
     expect(screen.getByTestId("trade-ticket-rail")).toHaveClass("trade-ticket-rail");
 
     await user.click(eventToggle);
-    expect(eventToggle).toHaveAttribute("aria-expanded", "true");
+    // Expanded: the toggle re-renders as the panel head.
+    const panelToggle = screen.getByRole("button", { name: /miami heat at toronto raptors/i });
+    expect(panelToggle).toHaveAttribute("aria-expanded", "true");
 
-    const propCard = await screen.findByTestId("trade-prop-card");
-    await user.click(within(propCard).getByRole("button", { name: "4+" }));
+    const rows = await screen.findAllByTestId("trade-pick-row");
+    const assistsRow = rows.find((row) => row.textContent?.includes("Davion Mitchell 4+ assists"));
+    await user.click(assistsRow!);
     expectAnyTicketTitleToContain("Davion Mitchell 4+ assists");
 
-    await user.click(eventToggle);
-    expect(eventToggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByTestId("trade-prop-card")).not.toBeInTheDocument();
+    await user.click(panelToggle);
+    const stripToggle = screen.getByRole("button", { name: /miami heat at toronto raptors/i });
+    expect(stripToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("trade-pick-row")).not.toBeInTheDocument();
     expectAnyTicketTitleToContain("Davion Mitchell 4+ assists");
   });
 
@@ -144,9 +131,9 @@ describe("TradeDesk", () => {
 
     await screen.findByText("Current slate is degraded for NBA.");
     expect(screen.getByTestId("trade-desk-status-pill")).toHaveTextContent("Current NBA/MLB/WNBA events exist");
+    expect(screen.getByTestId("trade-gauge-health")).toHaveTextContent("degraded");
     expect(screen.getByText("Current events")).toBeInTheDocument();
-    // "Candidate markets" now appears both in SlateHealthDetails and the KPI quad label.
-    expect(screen.getAllByText("Candidate markets").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("Candidate markets").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders last good slate as a separate collapsible archive", async () => {
@@ -178,7 +165,7 @@ describe("TradeDesk", () => {
     renderWithProviders(<TradeDesk sport="NBA" />);
 
     await screen.findByText("Current slate is degraded for NBA.");
-    expect(screen.getByTestId("trade-kpi-recommendations")).toHaveTextContent("0");
+    expect(screen.getByTestId("trade-gauge-top-quartile")).toHaveTextContent("0 picks past bar");
 
     const archiveToggle = screen.getByRole("button", { name: /last good slate/i });
     expect(archiveToggle).toHaveAttribute("aria-expanded", "true");
@@ -247,8 +234,7 @@ describe("TradeDesk", () => {
 
     expect(screen.getByText("Coverage")).toBeInTheDocument();
     expect(screen.getByText(/No bet cleared bet filters/)).toBeInTheDocument();
-    expect(screen.queryByText("Game Lines")).not.toBeInTheDocument();
-    expect(screen.queryByText("Player Props")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("trade-pick-row")).not.toBeInTheDocument();
   });
 
   it("shows a retry button on fetch error that refetches and renders the desk", async () => {

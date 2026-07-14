@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { healthFixture, tradeDeskFixture } from "../fixtures/trade-fixtures";
 
+// The flattened glass-instrument pick list puts low-edge rows at the
+// bottom of the panel, where the floating parlay tray overlaps them at
+// the default 720px viewport. A taller viewport keeps every pick row
+// clear of the tray so clicks land without interception.
+test.use({ viewport: { width: 1280, height: 1500 } });
+
 /**
  * PAPER_PARLAY_SCOPE.md step 8 — end-to-end happy path for the
  * operator-built paper parlay flow.
@@ -189,13 +195,14 @@ test("operator builds a 2-leg paper parlay end-to-end", async ({ page }) => {
   const ticketRail = page.getByTestId("trade-ticket-rail");
 
   // Add Davion Mitchell 10+ points to the tray via the ticket flow.
-  await page.getByRole("button", { name: "10+" }).first().click();
+  const pickRows = page.getByTestId("trade-pick-row");
+  await pickRows.filter({ hasText: "Davion Mitchell 10+ points" }).click();
   await ticketRail.getByTestId("ticket-parlay-toggle").click();
   await expect(page.getByTestId("parlay-tray")).toBeVisible();
 
-  // Add a second leg: 4+ assists for the same player. Same ticket,
-  // same player_prop card — just a different threshold.
-  await page.getByRole("button", { name: "4+" }).first().click();
+  // Add a second leg: 4+ assists for the same player — its own
+  // flattened pick row in the same game panel.
+  await pickRows.filter({ hasText: "Davion Mitchell 4+ assists" }).click();
   await ticketRail.getByTestId("ticket-parlay-toggle").click();
   const trayChips = page.getByTestId("parlay-tray-chips").locator("li");
   await expect(trayChips).toHaveCount(2);
@@ -219,10 +226,11 @@ test("operator builds a 2-leg paper parlay end-to-end", async ({ page }) => {
   await expect(page.getByTestId("parlay-tray")).toBeHidden();
   await expect(page.getByTestId("paper-parlay-dialog-submit")).toBeHidden();
 
-  // Navigate to /positions and verify the parlay row appears.
+  // Navigate to /positions and verify the parlay lands in the unified
+  // Paper Bets table (testid updated when singles + parlays merged).
   await page.goto("/positions");
-  const parlayRow = page.getByTestId("paper-parlay-row-42");
+  const parlayRow = page.getByTestId("paper-bet-parlay-42");
   await expect(parlayRow).toBeVisible();
   await expect(parlayRow).toContainText("$75.00");
-  await expect(page.getByTestId("paper-parlay-status-42")).toHaveText("pending");
+  await expect(parlayRow).toContainText("pending");
 });

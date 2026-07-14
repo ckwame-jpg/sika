@@ -141,7 +141,9 @@ describe("RunsDesk", () => {
     renderWithProviders(<RunsDesk />);
 
     expect((await screen.findAllByText("Settlement #1111")).length).toBeGreaterThan(0);
-    expect(screen.getByText("102 updates")).toBeInTheDocument();
+    // Failed rows surface the error as the amber subline (spec 5d).
+    expect(screen.getAllByText(/stalled - reconciled automatically/).length).toBeGreaterThan(0);
+    expect(screen.getByText("run_1111 · settlement")).toBeInTheDocument();
     expect(await screen.findByText("Single Updates")).toBeInTheDocument();
     expect(screen.getByText("Parlay Updates")).toBeInTheDocument();
     expect(screen.getAllByText("won")).toHaveLength(2);
