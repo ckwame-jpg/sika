@@ -143,12 +143,19 @@ test("trade uses mocked market data and never requests positions", async ({ page
   await expect(page.getByText("Your Exposure")).toHaveCount(0);
   await expect(page.getByText("Event Context")).toHaveCount(0);
 
-  // Collapsed strip → expand into the featured game panel.
-  await page.getByRole("button", { name: /Miami Heat at Toronto Raptors/i }).click();
+  // The featured game auto-expands; its hero pick preloads the rail.
+  await expect(page.getByTestId("trade-event-toggle")).toHaveAttribute("aria-expanded", "true");
 
   const ticketRail = page.getByTestId("trade-ticket-rail");
   const pickRows = page.getByTestId("trade-pick-row");
   await expect(pickRows).toHaveCount(7);
+  await expect(ticketTitle).toHaveText("Davion Mitchell 10+ points");
+
+  // Slate instruments fill the desk below the game list.
+  await expect(page.getByTestId("trade-edge-histogram")).toContainText("7 picks");
+  await expect(page.getByTestId("trade-closing-next")).toContainText("Over 219.5");
+  await expect(page.getByTestId("trade-closing-next")).toContainText("closes 2h 34m");
+  await expect(page.getByTestId("trade-next-up")).toContainText("next up");
   // Flattened picks sort by edge desc; the hero row is the top pick.
   await expect(pickRows.first()).toContainText("Davion Mitchell 10+ points");
 

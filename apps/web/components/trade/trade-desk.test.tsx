@@ -34,12 +34,14 @@ describe("TradeDesk", () => {
 
     renderWithProviders(<TradeDesk sport="NBA" />);
 
-    await screen.findByText("Miami Heat at Toronto Raptors");
-    // Collapsed by default: the event renders as a strip, not a panel.
-    const eventToggle = screen.getByRole("button", { name: /miami heat at toronto raptors/i });
-    expect(eventToggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByTestId("trade-pick-row")).not.toBeInTheDocument();
+    await screen.findByTestId("trade-event-toggle");
+    // The featured game (holder of the slate's top-edge pick) opens
+    // expanded, with its hero pick preloaded into the desktop rail.
+    const eventToggle = screen.getByTestId("trade-event-toggle");
+    expect(eventToggle).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findAllByTestId("trade-pick-row")).toHaveLength(7);
     expect(eventToggle).toHaveTextContent("7 picks");
+    expectAnyTicketTitleToContain("Davion Mitchell 10+ points");
 
     // Gauge row — slate health / avg edge / top quartile / events orb.
     expect(screen.getByTestId("trade-gauge-health")).toHaveTextContent("fresh");
@@ -59,13 +61,12 @@ describe("TradeDesk", () => {
     expect(mockFetchPositions).not.toHaveBeenCalled();
   });
 
-  it("expands an event into edge-sorted pick rows and loads the ticket on row click", async () => {
+  it("renders edge-sorted pick rows in the auto-expanded panel and loads the ticket on row click", async () => {
     const user = userEvent.setup();
     mockFetchTradeDesk.mockResolvedValue(tradeDeskFixture);
 
     renderWithProviders(<TradeDesk sport="NBA" />);
-    await screen.findByText("Miami Heat at Toronto Raptors");
-    await user.click(screen.getByRole("button", { name: /miami heat at toronto raptors/i }));
+    await screen.findByTestId("trade-event-toggle");
 
     // Flattened picks (3 game lines + 4 prop thresholds), sorted by edge desc.
     const rows = await screen.findAllByTestId("trade-pick-row");
@@ -94,13 +95,10 @@ describe("TradeDesk", () => {
 
     renderWithProviders(<TradeDesk sport="NBA" />);
 
-    const eventToggle = await screen.findByRole("button", { name: /miami heat at toronto raptors/i });
-    expect(screen.getByTestId("trade-ticket-rail")).toHaveClass("trade-ticket-rail");
-
-    await user.click(eventToggle);
-    // Expanded: the toggle re-renders as the panel head.
-    const panelToggle = screen.getByRole("button", { name: /miami heat at toronto raptors/i });
+    // Auto-expanded on load: the toggle renders as the panel head.
+    const panelToggle = await screen.findByTestId("trade-event-toggle");
     expect(panelToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("trade-ticket-rail")).toHaveClass("trade-ticket-rail");
 
     const rows = await screen.findAllByTestId("trade-pick-row");
     const assistsRow = rows.find((row) => row.textContent?.includes("Davion Mitchell 4+ assists"));
@@ -108,10 +106,49 @@ describe("TradeDesk", () => {
     expectAnyTicketTitleToContain("Davion Mitchell 4+ assists");
 
     await user.click(panelToggle);
-    const stripToggle = screen.getByRole("button", { name: /miami heat at toronto raptors/i });
+    const stripToggle = screen.getByTestId("trade-event-toggle");
     expect(stripToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("trade-pick-row")).not.toBeInTheDocument();
     expectAnyTicketTitleToContain("Davion Mitchell 4+ assists");
+  });
+
+  it("fills the desk with slate instruments and a next-up queue", async () => {
+    const user = userEvent.setup();
+    mockFetchTradeDesk.mockResolvedValue(tradeDeskFixture);
+
+    renderWithProviders(<TradeDesk sport="NBA" />);
+    await screen.findByTestId("trade-event-toggle");
+
+    // Edge histogram over all 7 picks. Fixture edges sorted:
+    // [.044,.051,.08,.09,.098,.10,.321] → median +9.0%, top +32.1%.
+    const histogram = screen.getByTestId("trade-edge-histogram");
+    expect(histogram).toHaveTextContent("edge distribution");
+    expect(histogram).toHaveTextContent("7 picks");
+    expect(histogram).toHaveTextContent("+9.0%");
+    expect(histogram).toHaveTextContent("+32.1%");
+
+    // Closing next: the three game lines carry close minutes, soonest
+    // first (total 154m → winner 269m → spread 322m).
+    const closingRows = screen.getAllByTestId("trade-closing-row");
+    expect(closingRows).toHaveLength(3);
+    expect(closingRows[0]).toHaveTextContent("Over 219.5");
+    expect(closingRows[0]).toHaveTextContent("closes 2h 34m");
+    expect(closingRows[2]).toHaveTextContent("Toronto Raptors -3.5");
+
+    // Clicking a closing row loads that market into the ticket.
+    await user.click(closingRows[0]);
+    expectAnyTicketTitleToContain("Over 219.5");
+
+    // Next-up queue: top edges minus the pick already in the rail
+    // (Over 219.5 selected → hero prop leads the queue).
+    const queueRows = screen.getAllByTestId("trade-next-up-row");
+    expect(queueRows).toHaveLength(3);
+    expect(queueRows[0]).toHaveTextContent("Davion Mitchell 10+ points");
+    expect(queueRows.some((row) => row.textContent?.includes("Over 219.5"))).toBe(false);
+
+    // Selecting from the queue swaps the ticket.
+    await user.click(queueRows[0]);
+    expectAnyTicketTitleToContain("Davion Mitchell 10+ points");
   });
 
   it("renders degraded slate health instead of a generic empty state", async () => {
@@ -170,7 +207,7 @@ describe("TradeDesk", () => {
     const archiveToggle = screen.getByRole("button", { name: /last good slate/i });
     expect(archiveToggle).toHaveAttribute("aria-expanded", "true");
     expect(archiveToggle).toHaveTextContent("7 picks");
-    expect(screen.getByRole("button", { name: /miami heat at toronto raptors/i })).toBeInTheDocument();
+    expect(screen.getByTestId("trade-event-toggle")).toBeInTheDocument();
 
     await user.click(archiveToggle);
 
@@ -260,7 +297,7 @@ describe("TradeDesk", () => {
       expect(screen.queryByTestId("trade-desk-error")).not.toBeInTheDocument(),
     );
     // Second call resolves with the fixture → desk renders the event.
-    await screen.findByText("Miami Heat at Toronto Raptors");
+    await screen.findByTestId("trade-event-toggle");
     expect(mockFetchTradeDesk).toHaveBeenCalledTimes(2);
   });
 });
