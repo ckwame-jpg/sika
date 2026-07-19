@@ -47,6 +47,18 @@ test("trade uses mocked market data and never requests positions", async ({ page
       });
       return;
     }
+    // Kalshi live orders — the ticket + header probe for connected
+    // credentials on every trade-desk render. Not configured here, so
+    // the live-order affordances stay hidden in this regression scope
+    // (test/e2e/kalshi-order.spec.ts covers the configured path).
+    if (url.pathname === "/api/me/kalshi-credentials") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ configured: false }),
+      });
+      return;
+    }
     if (url.pathname === "/api/product/freshness") {
       // Shell-level freshness banner — not part of /trade regression scope.
       await route.fulfill({

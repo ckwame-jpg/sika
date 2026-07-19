@@ -11,6 +11,12 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   testDir: "./test/e2e",
   fullyParallel: false,
+  // One worker: every spec hits the same dev server, and Next's
+  // on-demand page compilation under parallel workers pushes cold
+  // first-render past assertion timeouts (roaming flakes that pass
+  // solo). The suite is compile-bound, not test-bound — serial is
+  // barely slower and deterministic.
+  workers: 1,
   retries: 0,
   reporter: "list",
   use: {
