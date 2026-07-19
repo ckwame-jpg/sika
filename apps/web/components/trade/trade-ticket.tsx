@@ -1,8 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import useSWR from "swr";
 import { useParlayTray } from "@/components/parlays/parlay-tray-store";
 import { TradeDialog } from "@/components/positions/trade-dialog";
+import { KalshiOrderDialog } from "./kalshi-order-dialog";
+import { fetchMyKalshiCredentials, keys } from "@/lib/api";
+import { kalshiEnvLabel } from "@/lib/kalshi-env";
 import { PickHistoryStrip } from "./pick-history-strip";
 import { PredictionIntervalBand } from "./prediction-interval-band";
 import { FreshnessBadge } from "./freshness-badge";
@@ -73,6 +77,12 @@ export function TradeTicket({
   // the dedicated /positions/demo page and the market-detail sheet still
   // surface it. See PAPER_PARLAY_SCOPE.md sibling discussion.
   const [tradeDialogOpen, setTradeDialogOpen] = useState(false);
+  const [kalshiDialogOpen, setKalshiDialogOpen] = useState(false);
+  // Real-order affordance only exists once the user connected Kalshi
+  // credentials in settings — no creds, no button, nothing can fire.
+  const { data: kalshiCreds } = useSWR(keys.myKalshiCredentials, fetchMyKalshiCredentials);
+  const kalshiConfigured = Boolean(kalshiCreds?.configured);
+  const kalshiEnv = kalshiEnvLabel(kalshiCreds?.base_url);
 
   if (!selection) {
     return (
@@ -174,6 +184,16 @@ export function TradeTicket({
           <button type="button" className="gi-btn" onClick={() => setTradeDialogOpen(true)}>
             Paper trade
           </button>
+          {kalshiConfigured && (
+            <button
+              type="button"
+              className="gi-btn-live"
+              onClick={() => setKalshiDialogOpen(true)}
+              data-testid="ticket-place-on-kalshi"
+            >
+              place on kalshi{kalshiEnv === "demo" ? " · demo" : ""}
+            </button>
+          )}
           <div className="ticket-ghost-row">
             <ParlayTrayButton selection={selection} />
             {selection.kalshiUrl && (
@@ -208,6 +228,21 @@ export function TradeTicket({
         }}
         description="Open a paper trade for this pick without leaving the trade desk."
       />
+
+      {kalshiConfigured && (
+        <KalshiOrderDialog
+          open={kalshiDialogOpen}
+          onOpenChange={setKalshiDialogOpen}
+          environment={kalshiEnv}
+          defaults={{
+            ticker: selection.ticker,
+            side: selection.selectedSide.toLowerCase() as "yes" | "no",
+            price: selection.entryPrice ?? undefined,
+            displayLabel: selection.displayLabel,
+            eventName: selection.eventName,
+          }}
+        />
+      )}
     </>
   );
 }

@@ -178,6 +178,13 @@ export type CreateUserPayload = Schema<"CreateUserPayload">;
 export type UserKalshiCredentialsCreate = Schema<"UserKalshiCredentialsCreate">;
 export type UserKalshiCredentialsRead = Wire<Schema<"UserKalshiCredentialsRead">>;
 
+// ── Real Kalshi orders (singles; combo Create/Preview types land with
+// the phase-D routes — OpenAPI only emits route-referenced schemas) ──
+export type KalshiOrderCreate = Schema<"KalshiOrderCreate">;
+export type KalshiOrderRead = Wire<Schema<"KalshiOrderRead">>;
+export type TradingSettingsRead = Wire<Schema<"TradingSettingsRead">>;
+export type TradingSettingsUpdate = Schema<"TradingSettingsUpdate">;
+
 // ── /stats-query + /team-history endpoint family ──
 export type StatsSummaryRead = Wire<Schema<"StatsSummaryRead">>;
 export type StatsGameLogRead = Wire<Schema<"StatsGameLogRead">>;

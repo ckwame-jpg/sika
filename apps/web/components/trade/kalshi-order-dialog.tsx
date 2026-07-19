@@ -1,0 +1,357 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import useSWR, { mutate } from "swr";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { fetchTradingSettings, keys, placeKalshiOrder } from "@/lib/api";
+import { estimateTakerFeeDollars } from "@/lib/kalshi-fees";
+import { usePriceDisplay } from "@/lib/price-display";
+import { cn } from "@/lib/utils";
+
+interface KalshiOrderDialogDefaults {
+  ticker: string;
+  side: "yes" | "no";
+  price?: number;
+  displayLabel?: string;
+  eventName?: string;
+}
+
+interface KalshiOrderDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  defaults: KalshiOrderDialogDefaults;
+  /** "live" | "demo" — from the user's stored credentials base_url. */
+  environment: "live" | "demo";
+}
+
+const QUICK_STAKE_AMOUNTS = [5, 10, 20, 50, 100] as const;
+
+/**
+ * Real-order dialog — the live-money sibling of ``TradeDialog``.
+ *
+ * Same dollar-first UX (stake + limit price → contracts), but with a
+ * mandatory two-stage flow: the form computes the order, the CONFIRM
+ * stage restates exactly what will hit the exchange (side, limit
+ * price, contracts, total cost, estimated taker fee, payout, the
+ * operator's per-order cap) and only then allows "place real order".
+ * The order itself is a LIMIT at the shown price — it can rest; the
+ * portfolio orders panel is where resting orders get cancelled.
+ */
+export function KalshiOrderDialog({
+  open,
+  onOpenChange,
+  defaults,
+  environment,
+}: KalshiOrderDialogProps) {
+  const { mode, formatEditablePrice, formatPrice, parsePriceInput } = usePriceDisplay();
+  const [stage, setStage] = useState<"form" | "confirm">("form");
+  const [stakeInput, setStakeInput] = useState("");
+  const [priceInput, setPriceInput] = useState("");
+  const [parsedPrice, setParsedPrice] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { data: tradingSettings } = useSWR(keys.tradingSettings, fetchTradingSettings);
+  const capDollars = tradingSettings?.max_order_cost_dollars ?? null;
+
+  // Reset on the OPEN TRANSITION only — ``defaults`` is a fresh object
+  // literal every parent render; depending on it would wipe in-progress
+  // input on the trade desk's 30s poll (same footgun as TradeDialog).
+  useEffect(() => {
+    if (!open) return;
+    const initialPrice = defaults.price ?? null;
+    setStage("form");
+    setStakeInput("");
+    setPriceInput(formatEditablePrice(initialPrice));
+    setParsedPrice(initialPrice);
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setPriceInput(formatEditablePrice(parsedPrice));
+  }, [formatEditablePrice, mode, open, parsedPrice]);
+
+  const order = useMemo(() => {
+    const stake = parseStake(stakeInput);
+    if (stake == null || parsedPrice == null || parsedPrice <= 0 || parsedPrice >= 1) {
+      return null;
+    }
+    const quantity = Math.max(1, Math.round(stake / parsedPrice));
+    const cost = quantity * parsedPrice;
+    const fee = estimateTakerFeeDollars(quantity, parsedPrice);
+    const payout = quantity; // $1 per contract if the side hits
+    return { stake, quantity, cost, fee, payout, profit: payout - cost - fee };
+  }, [parsedPrice, stakeInput]);
+
+  const overCap = order != null && capDollars != null && order.cost > capDollars;
+
+  function handleReview() {
+    const price = parsePriceInput(priceInput);
+    if (parseStake(stakeInput) == null) {
+      setError("Enter a dollar amount.");
+      return;
+    }
+    if (price == null || price <= 0 || price >= 1) {
+      setError(
+        `Enter a valid ${
+          mode === "american" ? "American odds" : mode === "prediction" ? "probability" : "Kalshi cents"
+        } price.`,
+      );
+      return;
+    }
+    setError(null);
+    setStage("confirm");
+  }
+
+  async function handleConfirm() {
+    if (!order || parsedPrice == null) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await placeKalshiOrder({
+        ticker: defaults.ticker.toUpperCase(),
+        side: defaults.side,
+        action: "buy",
+        quantity: order.quantity,
+        limit_price: parsedPrice,
+        approved: true,
+        time_in_force: "good_till_canceled",
+      });
+      await Promise.all([mutate(keys.kalshiOrders), mutate(keys.positions)]);
+      onOpenChange(false);
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : "Failed to place order",
+      );
+      setStage("form");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            Place on Kalshi
+            <span
+              className={cn(
+                "rounded-full border px-2 py-0.5 font-mono text-2xs uppercase tracking-wide",
+                environment === "live"
+                  ? "border-warning/50 bg-warning/10 text-warning"
+                  : "border-border/60 bg-surface-hover/40 text-muted-foreground",
+              )}
+              data-testid="kalshi-order-env-badge"
+            >
+              {environment === "live" ? "live · real money" : "demo / sandbox"}
+            </span>
+          </DialogTitle>
+          <DialogDescription>
+            Limit order at your price — it never fills worse than shown, but may rest
+            until the market meets it.
+          </DialogDescription>
+        </DialogHeader>
+
+        {stage === "form" ? (
+          <DialogBody className="space-y-4">
+            <div className="rounded-md border border-border/60 bg-surface-hover/30 px-3 py-2">
+              <p className="text-2xs uppercase tracking-wide text-muted-foreground/70">Market</p>
+              <p className="mt-0.5 truncate text-sm text-foreground">
+                {defaults.displayLabel ?? defaults.ticker}
+              </p>
+              <p className="truncate font-mono text-2xs text-muted-foreground">
+                {defaults.side.toUpperCase()} · {defaults.ticker}
+              </p>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs text-muted-foreground">
+                How much you&apos;re putting in
+              </label>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                  $
+                </span>
+                <Input
+                  mono
+                  className="pl-6"
+                  inputMode="decimal"
+                  placeholder="10"
+                  value={stakeInput}
+                  onChange={(event) => setStakeInput(event.target.value)}
+                  data-testid="kalshi-order-stake"
+                  autoFocus
+                />
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {QUICK_STAKE_AMOUNTS.map((amount) => (
+                  <button
+                    key={amount}
+                    type="button"
+                    onClick={() => setStakeInput(String(amount))}
+                    className={cn(
+                      "rounded-full border border-border/60 px-2.5 py-0.5 font-mono text-2xs text-muted-foreground transition-colors duration-[120ms]",
+                      "hover:border-accent/40 hover:text-foreground focus-visible:ring-focus",
+                      parseStake(stakeInput) === amount && "border-accent/60 bg-accent/10 text-accent",
+                    )}
+                  >
+                    ${amount}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs text-muted-foreground">
+                {mode === "american"
+                  ? "Limit price (American odds)"
+                  : mode === "prediction"
+                    ? "Limit price (prediction %)"
+                    : "Limit price (Kalshi cents)"}
+              </label>
+              <Input
+                mono
+                placeholder={mode === "american" ? "-110" : mode === "prediction" ? "54.0" : "55"}
+                value={priceInput}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setPriceInput(value);
+                  const parsed = parsePriceInput(value);
+                  if (parsed != null) setParsedPrice(parsed);
+                }}
+                data-testid="kalshi-order-price"
+              />
+            </div>
+
+            <div className="rounded-md border border-border/40 bg-surface-hover/20 px-3 py-2.5">
+              <p className="text-2xs uppercase tracking-wide text-muted-foreground/70">Order</p>
+              {order ? (
+                <p className="mt-1 font-mono text-sm text-foreground" data-testid="kalshi-order-preview">
+                  {order.quantity} contract{order.quantity === 1 ? "" : "s"} · cost $
+                  {order.cost.toFixed(2)} · pays ${order.payout.toFixed(2)} if{" "}
+                  {defaults.side === "yes" ? "yes" : "no"}
+                </p>
+              ) : (
+                <p className="mt-1 font-mono text-sm text-muted-foreground/60">—</p>
+              )}
+              {overCap && capDollars != null && (
+                <p className="mt-1 text-2xs text-negative" data-testid="kalshi-order-cap-warning">
+                  Over your ${capDollars.toFixed(0)} per-order cap — lower the stake or raise
+                  the cap in settings.
+                </p>
+              )}
+            </div>
+
+            {error && <p className="text-xs text-negative">{error}</p>}
+          </DialogBody>
+        ) : (
+          <DialogBody className="space-y-3">
+            <div
+              className="rounded-md border border-warning/40 bg-warning/5 px-3 py-3"
+              data-testid="kalshi-order-confirm-summary"
+            >
+              <p className="text-2xs uppercase tracking-wide text-muted-foreground/70">
+                Confirm {environment === "live" ? "real" : "sandbox"} order
+              </p>
+              <p className="mt-1.5 text-sm text-foreground">
+                {defaults.displayLabel ?? defaults.ticker}
+              </p>
+              <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                LIMIT {defaults.side.toUpperCase()} @ {parsedPrice != null ? formatPrice(parsedPrice) : "—"}
+              </p>
+              {order && (
+                <dl className="mt-2 space-y-1 font-mono text-xs">
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Contracts</dt>
+                    <dd className="text-foreground">{order.quantity}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Total cost</dt>
+                    <dd className="text-foreground">${order.cost.toFixed(2)}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Est. fee (taker)</dt>
+                    <dd className="text-foreground">${order.fee.toFixed(2)}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Pays if it hits</dt>
+                    <dd className="text-positive">${order.payout.toFixed(2)}</dd>
+                  </div>
+                  {capDollars != null && (
+                    <div className="flex justify-between">
+                      <dt className="text-muted-foreground">Per-order cap</dt>
+                      <dd className="text-muted-foreground">${capDollars.toFixed(0)}</dd>
+                    </div>
+                  )}
+                </dl>
+              )}
+            </div>
+            <p className="text-2xs text-muted-foreground">
+              Limit orders can rest until filled — cancel anytime from the portfolio
+              orders panel. Resting fills are charged the lower maker fee.
+            </p>
+            {error && <p className="text-xs text-negative">{error}</p>}
+          </DialogBody>
+        )}
+
+        <DialogFooter>
+          {stage === "form" ? (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleReview}
+                disabled={!order || overCap}
+                data-testid="kalshi-order-review"
+              >
+                Review order
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => setStage("form")}>
+                Back
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleConfirm}
+                disabled={loading || !order || overCap}
+                data-testid="kalshi-order-confirm"
+              >
+                {loading
+                  ? "Placing..."
+                  : environment === "live"
+                    ? "Confirm — place real order"
+                    : "Confirm — place sandbox order"}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function parseStake(raw: string): number | null {
+  if (!raw.trim()) return null;
+  const value = Number(raw.replace(/[$,\s]/g, ""));
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value;
+}

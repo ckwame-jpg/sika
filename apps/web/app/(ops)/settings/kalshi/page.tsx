@@ -10,9 +10,12 @@ import {
   deleteMyKalshiCredentials,
   fetchMe,
   fetchMyKalshiCredentials,
+  fetchTradingSettings,
   keys,
   saveMyKalshiCredentials,
+  updateTradingSettings,
 } from "@/lib/api";
+import { KALSHI_DEMO_URL, KALSHI_PROD_URL } from "@/lib/kalshi-env";
 import type { CurrentUserRead, UserKalshiCredentialsRead } from "@/lib/types";
 import { fmtDatetime } from "@/lib/utils";
 
@@ -30,8 +33,10 @@ import { fmtDatetime } from "@/lib/utils";
  * this page doesn't expose the saved key.
  */
 
-const PROD_URL = "https://api.elections.kalshi.com/trade-api/v2";
-const DEMO_URL = "https://demo-api.kalshi.co/trade-api/v2";
+// Canonical env URLs live in lib/kalshi-env.ts — shared with the
+// trade ticket's live-order affordances and the header env chip.
+const PROD_URL = KALSHI_PROD_URL;
+const DEMO_URL = KALSHI_DEMO_URL;
 
 export default function SettingsKalshiPage() {
   const { data: me } = useSWR<CurrentUserRead>(keys.me, fetchMe);
@@ -245,8 +250,104 @@ export default function SettingsKalshiPage() {
               </form>
             </div>
           </section>
+
+          <TradingGuardrailsSection />
         </div>
       </main>
     </>
+  );
+}
+
+/**
+ * Per-order max-cost cap for REAL Kalshi orders. The server is the
+ * authority (create endpoints 400 past the cap); this section just
+ * lets the operator read/raise it. Deliberately on the same page as
+ * credentials — the cap is part of "what can this connection do".
+ */
+function TradingGuardrailsSection() {
+  const { data: settings } = useSWR(keys.tradingSettings, fetchTradingSettings);
+  const [capInput, setCapInput] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  const effectiveValue =
+    capInput ?? (settings ? String(settings.max_order_cost_dollars) : "");
+
+  async function handleSave(event: React.FormEvent) {
+    event.preventDefault();
+    const parsed = Number(effectiveValue);
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 10_000) {
+      setError("Enter a cap between $0 and $10,000.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSavedFlash(false);
+    try {
+      await mutate(
+        keys.tradingSettings,
+        updateTradingSettings({ max_order_cost_dollars: parsed }),
+        { revalidate: false },
+      );
+      setCapInput(null);
+      setSavedFlash(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save cap.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="cosmos-panel" data-testid="settings-trading-guardrails">
+      <div className="cosmos-panel-head">
+        <div className="cosmos-panel-head-text">
+          <h2 className="cosmos-panel-title">Trading guardrails</h2>
+          <p className="cosmos-panel-desc">
+            Every real order is checked server-side against this per-order cap
+            (contracts × limit price). A fat-fingered stake can never cost more
+            than the cap.
+          </p>
+        </div>
+      </div>
+      <div className="cosmos-panel-body">
+        <form onSubmit={handleSave} className="flex max-w-xl items-end gap-3">
+          <label className="grid flex-1 gap-1" htmlFor="kalshi-max-cost">
+            <span className="text-xs uppercase tracking-[0.08em] text-muted-foreground">
+              Max cost per order (USD)
+            </span>
+            <Input
+              id="kalshi-max-cost"
+              mono
+              inputMode="decimal"
+              value={effectiveValue}
+              onChange={(e) => setCapInput(e.target.value)}
+              placeholder="25"
+              data-testid="settings-trading-cap"
+            />
+          </label>
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            disabled={saving || !settings}
+            data-testid="settings-trading-cap-save"
+          >
+            {saving ? "Saving…" : "Save cap"}
+          </Button>
+        </form>
+        {error && (
+          <p role="alert" className="mt-2 text-xs text-negative">
+            {error}
+          </p>
+        )}
+        {savedFlash && (
+          <p role="status" className="mt-2 text-xs text-positive">
+            Cap saved — applies to every new real order immediately.
+          </p>
+        )}
+      </div>
+    </section>
   );
 }
