@@ -29,7 +29,7 @@ const DEFAULTS = {
 
 function renderDialog(environment: "live" | "demo" = "live") {
   return renderWithProviders(
-    <PriceDisplayProvider initialMode="cents">
+    <PriceDisplayProvider initialMode="kalshi">
       <KalshiOrderDialog
         open
         onOpenChange={() => {}}

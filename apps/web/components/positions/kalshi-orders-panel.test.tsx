@@ -7,7 +7,7 @@ import { renderWithProviders } from "@/test/render";
 
 function renderPanel() {
   return renderWithProviders(
-    <PriceDisplayProvider initialMode="cents">
+    <PriceDisplayProvider initialMode="kalshi">
       <KalshiOrdersPanel />
     </PriceDisplayProvider>,
   );
@@ -110,6 +110,58 @@ describe("KalshiOrdersPanel", () => {
     expect(screen.getByTestId("kalshi-order-status")).toHaveTextContent("submission failed");
     // terminal + no kalshi id → no cancel affordance
     expect(screen.queryByTestId("kalshi-order-cancel")).not.toBeInTheDocument();
+  });
+
+  it("expands combo legs under the combo row", async () => {
+    const user = userEvent.setup();
+    mockFetchKalshiOrders.mockResolvedValue([
+      {
+        ...RESTING_ORDER,
+        id: 9,
+        kind: "combo",
+        ticker: "KXCOMBO-MINTED",
+        collection_ticker: "KXMLBCOMBO",
+        combo_event_ticker: "EVCOMBO",
+        fills: [],
+        legs: [
+          {
+            id: 1,
+            leg_index: 0,
+            market_ticker: "KXA",
+            event_ticker: "EV-NYY",
+            side: "yes",
+            entry_price: 0.5,
+            market_title: "Aaron Judge 2+ total bases",
+            subject_name: "Aaron Judge",
+            stat_key: "total_bases",
+            threshold: 2,
+          },
+          {
+            id: 2,
+            leg_index: 1,
+            market_ticker: "KXB",
+            event_ticker: "EV-BOS",
+            side: "no",
+            entry_price: 0.35,
+            market_title: null,
+            subject_name: "Rafael Devers",
+            stat_key: "home_runs",
+            threshold: 1,
+          },
+        ],
+      },
+    ]);
+    renderPanel();
+
+    const toggle = await screen.findByTestId("kalshi-order-legs-toggle");
+    expect(toggle).toHaveTextContent("combo · 2 legs");
+    expect(screen.queryByTestId("kalshi-order-legs")).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    const legs = screen.getByTestId("kalshi-order-legs");
+    expect(legs).toHaveTextContent("Aaron Judge 2+ total bases");
+    expect(legs).toHaveTextContent("Rafael Devers 1+ home runs");
+    expect(legs).toHaveTextContent("50¢");
   });
 
   it("shows the empty state when connected with no orders", async () => {

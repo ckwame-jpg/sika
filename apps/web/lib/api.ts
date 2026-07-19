@@ -23,6 +23,9 @@ import type {
   UserKalshiCredentialsRead,
   KalshiOrderCreate,
   KalshiOrderRead,
+  KalshiComboOrderCreate,
+  KalshiComboPreviewRequest,
+  KalshiComboPreviewRead,
   TradingSettingsRead,
   TradingSettingsUpdate,
   UserRead,
@@ -264,8 +267,21 @@ export const fetchKalshiOrders = (options: { openOnly?: boolean; sync?: boolean 
 export const cancelKalshiOrder = (id: number) =>
   request<KalshiOrderRead>(`/kalshi-orders/${id}/cancel`, { method: "POST" });
 
-// (previewKalshiCombo / placeKalshiCombo land with the phase-D combo
-// routes — their contract types don't exist until those routes do.)
+export const previewKalshiCombo = (body: KalshiComboPreviewRequest) =>
+  request<KalshiComboPreviewRead>("/kalshi-combos/preview", {
+    method: "POST",
+    body: JSON.stringify(body),
+    // The preview talks to Kalshi (collections + lookup) server-side;
+    // tray keystrokes shouldn't queue retries behind it.
+    noRetry: true,
+    timeoutMs: 20_000,
+  });
+
+export const placeKalshiCombo = (body: KalshiComboOrderCreate) =>
+  request<KalshiOrderRead>("/kalshi-combos", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
 export const fetchTradingSettings = () =>
   request<TradingSettingsRead>("/settings/trading");

@@ -1,12 +1,81 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import useSWR from "swr";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useParlayTray, MAX_TRAY_LEGS } from "./parlay-tray-store";
 import { computePaperParlayQuote } from "./paper-parlay-quote";
+import { KalshiComboDialog } from "./kalshi-combo-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { fetchMyKalshiCredentials, keys, previewKalshiCombo } from "@/lib/api";
+import { kalshiEnvLabel } from "@/lib/kalshi-env";
+import type { KalshiComboPreviewRead } from "@/lib/types";
+import type { TradeSelection } from "@/components/trade/trade-ticket";
 import { cn } from "@/lib/utils";
+
+/**
+ * Debounced combo combinability check against Kalshi's collections.
+ * Re-runs 500ms after the leg SET (tickers + sides) changes — price
+ * drift alone doesn't re-query. Null result = check not applicable
+ * (no creds / fewer than 2 legs / in flight).
+ */
+function useComboPreview(legs: TradeSelection[], enabled: boolean) {
+  const [preview, setPreview] = useState<KalshiComboPreviewRead | null>(null);
+  const [checking, setChecking] = useState(false);
+  const requestRef = useRef(0);
+
+  const legKey = legs
+    .map((leg) => `${leg.ticker}:${leg.selectedSide.toLowerCase()}`)
+    .join("|");
+
+  useEffect(() => {
+    if (!enabled || legs.length < 2) {
+      setPreview(null);
+      setChecking(false);
+      return;
+    }
+    const requestId = ++requestRef.current;
+    setChecking(true);
+    const timer = setTimeout(() => {
+      previewKalshiCombo({
+        legs: legs.map((leg) => ({
+          ticker: leg.ticker,
+          side: leg.selectedSide.toLowerCase() as "yes" | "no",
+          entry_price: leg.entryPrice ?? null,
+          market_title: leg.displayLabel ?? leg.marketTitle ?? null,
+          subject_name: leg.subjectName ?? null,
+          stat_key: leg.statKey ?? null,
+          threshold: leg.threshold ?? null,
+        })),
+      })
+        .then((result) => {
+          if (requestRef.current === requestId) setPreview(result);
+        })
+        .catch(() => {
+          if (requestRef.current === requestId) {
+            setPreview({
+              combinable: false,
+              reason: "couldn't check kalshi — try again",
+              collection_ticker: null,
+              existing_market_ticker: null,
+              implied_price: null,
+              quote_yes_bid: null,
+              quote_yes_ask: null,
+            });
+          }
+        })
+        .finally(() => {
+          if (requestRef.current === requestId) setChecking(false);
+        });
+    }, 500);
+    return () => clearTimeout(timer);
+    // legKey is the deliberate dependency — see docstring.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, legKey]);
+
+  return { preview, checking };
+}
 
 /**
  * PAPER_PARLAY_SCOPE.md step 5 — docked tray for the operator-built
@@ -36,9 +105,17 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
   // back to the store on each keystroke that parses cleanly.
   const [stakeInput, setStakeInput] = useState(stake != null ? String(stake) : "");
 
+  // Real-combo affordance — only when Kalshi credentials are connected.
+  const { data: kalshiCreds } = useSWR(keys.myKalshiCredentials, fetchMyKalshiCredentials);
+  const kalshiConfigured = Boolean(kalshiCreds?.configured);
+  const kalshiEnv = kalshiEnvLabel(kalshiCreds?.base_url);
+  const { preview, checking } = useComboPreview(legs, kalshiConfigured);
+  const [comboDialogOpen, setComboDialogOpen] = useState(false);
+
   if (legs.length === 0) return null;
 
   const canSave = legs.length >= 2 && Boolean(onSave);
+  const canPlaceCombo = legs.length >= 2 && Boolean(preview?.combinable);
   const edgePositive = quote.edge > 0;
 
   // Live projection — uses the live tray combined price (a sweep over
@@ -193,6 +270,30 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
           </div>
         </div>
 
+        {/* Kalshi combinability — mirrors what the mobile app's combo
+            builder would tell you, BEFORE any order intent. */}
+        {kalshiConfigured && legs.length >= 2 && (
+          <div
+            className="mt-2 flex items-center gap-2 text-2xs"
+            data-testid="parlay-tray-combinability"
+          >
+            {checking ? (
+              <span className="text-muted-foreground">checking kalshi combinability…</span>
+            ) : preview?.combinable ? (
+              <span className="text-positive">
+                combinable on kalshi ✓
+                {preview.existing_market_ticker
+                  ? " · live combo market exists"
+                  : " · will mint the combo market"}
+                {preview.quote_yes_ask != null &&
+                  ` · ask ${(preview.quote_yes_ask * 100).toFixed(0)}¢`}
+              </span>
+            ) : preview ? (
+              <span className="text-warning">{preview.reason}</span>
+            ) : null}
+          </div>
+        )}
+
         <div className="parlay-tray-actions">
           <Button
             variant="primary"
@@ -203,8 +304,29 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
           >
             {legs.length < 2 ? "Add another leg" : "Save paper parlay"}
           </Button>
+          {kalshiConfigured && (
+            <button
+              type="button"
+              className="gi-btn-live"
+              style={{ padding: "7px 12px", fontSize: 12, borderRadius: 10 }}
+              disabled={!canPlaceCombo}
+              onClick={() => setComboDialogOpen(true)}
+              data-testid="parlay-tray-place-kalshi"
+            >
+              place combo on kalshi{kalshiEnv === "demo" ? " · demo" : ""}
+            </button>
+          )}
         </div>
       </div>
+
+      {kalshiConfigured && (
+        <KalshiComboDialog
+          open={comboDialogOpen}
+          onOpenChange={setComboDialogOpen}
+          environment={kalshiEnv}
+          preview={preview}
+        />
+      )}
     </section>
   );
 }

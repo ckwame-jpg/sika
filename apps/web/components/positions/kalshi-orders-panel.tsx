@@ -121,19 +121,33 @@ function OrderRow({
   onCancel: () => void;
 }) {
   const { formatPrice } = usePriceDisplay();
+  const [legsOpen, setLegsOpen] = useState(false);
   const filled = order.fills.reduce((sum, fill) => sum + (fill.count ?? 0), 0);
-  const label =
-    order.kind === "combo"
-      ? `combo · ${order.legs.length} legs`
-      : order.ticker ?? order.client_order_id;
+  const isCombo = order.kind === "combo";
+  const label = isCombo
+    ? `combo · ${order.legs.length} legs`
+    : order.ticker ?? order.client_order_id;
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-white/5 px-[18px] py-3 first:border-t-0"
+      className="border-t border-white/5 px-[18px] py-3 first:border-t-0"
       data-testid="kalshi-order-row"
     >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium text-foreground">{label}</span>
+        {isCombo ? (
+          <button
+            type="button"
+            className="block truncate text-[13px] font-medium text-foreground hover:text-accent focus-visible:ring-focus"
+            onClick={() => setLegsOpen((current) => !current)}
+            aria-expanded={legsOpen}
+            data-testid="kalshi-order-legs-toggle"
+          >
+            {label} {legsOpen ? "▾" : "▸"}
+          </button>
+        ) : (
+          <span className="block truncate text-[13px] font-medium text-foreground">{label}</span>
+        )}
         <span className="block truncate font-mono text-[10.5px] text-muted-foreground">
           {order.side.toUpperCase()} · {order.quantity} @ {formatPrice(order.limit_price)}
           {filled > 0 ? ` · filled ${filled}/${order.quantity}` : ""}
@@ -179,6 +193,26 @@ function OrderRow({
         >
           {cancelling ? "cancelling…" : "cancel"}
         </button>
+      )}
+      </div>
+
+      {isCombo && legsOpen && (
+        <ul className="mt-2 space-y-1 pl-3" data-testid="kalshi-order-legs">
+          {order.legs.map((leg) => (
+            <li key={leg.id} className="truncate text-[11.5px] text-muted-foreground">
+              <span className="font-mono text-[10px] uppercase">{leg.side}</span>{" "}
+              <span className="text-foreground/90">
+                {leg.market_title ??
+                  (leg.subject_name && leg.stat_key && leg.threshold != null
+                    ? `${leg.subject_name} ${leg.threshold}+ ${leg.stat_key.replace(/_/g, " ")}`
+                    : leg.market_ticker)}
+              </span>
+              {leg.entry_price != null && (
+                <span className="font-mono text-[10px]"> · {(leg.entry_price * 100).toFixed(0)}¢</span>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
