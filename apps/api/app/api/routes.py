@@ -54,6 +54,9 @@ from app.schemas import (
     ParlayPredictionRead,
     CreateUserPayload,
     SwitchUserPayload,
+    KalshiComboOrderCreate,
+    KalshiComboPreviewRead,
+    KalshiComboPreviewRequest,
     KalshiOrderCreate,
     KalshiOrderRead,
     TradingSettingsRead,
@@ -112,6 +115,10 @@ from app.services.operator_settings import (
     set_pick_history_default_n,
     set_sportsbook_disagreement_min_book_count,
     set_sportsbook_disagreement_threshold,
+)
+from app.services.kalshi_combos import (
+    create_kalshi_combo_order,
+    preview_kalshi_combo,
 )
 from app.services.kalshi_orders import (
     cancel_kalshi_order,
@@ -2250,6 +2257,32 @@ def get_kalshi_orders(
         db.commit()
     orders = list_kalshi_orders(db, user_id=current_user.id, open_only=open_only)
     return [KalshiOrderRead.model_validate(order) for order in orders]
+
+
+@router.post("/kalshi-combos/preview", response_model=KalshiComboPreviewRead)
+def preview_kalshi_combo_route(
+    payload: KalshiComboPreviewRequest,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+) -> KalshiComboPreviewRead:
+    """Tray combinability check — never mints, returns a human reason
+    when the legs can't combine (including "connect kalshi first")."""
+    user_id = current_user.id if current_user is not None else None
+    return preview_kalshi_combo(db, payload, user_id=user_id)
+
+
+@router.post("/kalshi-combos", response_model=KalshiOrderRead)
+def submit_kalshi_combo(
+    payload: KalshiComboOrderCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> KalshiOrderRead:
+    """Place a REAL combo: mint (if needed) + limit order on the combo
+    market, via the outbox."""
+    order = create_kalshi_combo_order(db, payload, user_id=current_user.id)
+    db.commit()
+    db.refresh(order)
+    return KalshiOrderRead.model_validate(order)
 
 
 @router.post("/kalshi-orders/{order_id}/cancel", response_model=KalshiOrderRead)

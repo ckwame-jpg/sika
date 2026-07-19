@@ -529,6 +529,7 @@ def _drain_outbox_job() -> None:
     # happen during pytest collection).
     from app.services import orders as _orders  # noqa: F401 — registers handlers
     from app.services import kalshi_orders as _kalshi_orders  # noqa: F401 — live handlers
+    from app.services import kalshi_combos as _kalshi_combos  # noqa: F401 — combo handler
     from app.services.outbox import drain_once
 
     with SessionLocal() as db:

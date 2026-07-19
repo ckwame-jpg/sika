@@ -1222,6 +1222,86 @@
         "title": "KalshiAccountRead",
         "type": "object"
       },
+      "KalshiComboLegCreate": {
+        "description": "One leg of a real combo order. ``event_ticker`` is resolved\nserver-side from the tracked Market row; the optional display\nfields are denormalized snapshots for rendering the order later.",
+        "properties": {
+          "entry_price": {
+            "anyOf": [
+              {
+                "exclusiveMaximum": 1.0,
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Price"
+          },
+          "market_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Title"
+          },
+          "side": {
+            "enum": [
+              "yes",
+              "no"
+            ],
+            "title": "Side",
+            "type": "string"
+          },
+          "stat_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stat Key"
+          },
+          "subject_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Name"
+          },
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "side"
+        ],
+        "title": "KalshiComboLegCreate",
+        "type": "object"
+      },
       "KalshiComboLegRead": {
         "properties": {
           "entry_price": {
@@ -1308,6 +1388,151 @@
           "side"
         ],
         "title": "KalshiComboLegRead",
+        "type": "object"
+      },
+      "KalshiComboOrderCreate": {
+        "description": "POST body for /kalshi-combos \u2014 mint (if needed) + order on the\ncombo market for these legs.",
+        "properties": {
+          "approved": {
+            "default": false,
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/KalshiComboLegCreate"
+            },
+            "maxItems": 6,
+            "minItems": 2,
+            "title": "Legs",
+            "type": "array"
+          },
+          "limit_price": {
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Limit Price",
+            "type": "number"
+          },
+          "quantity": {
+            "minimum": 1.0,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "time_in_force": {
+            "default": "good_till_canceled",
+            "enum": [
+              "good_till_canceled",
+              "immediate_or_cancel",
+              "fill_or_kill"
+            ],
+            "title": "Time In Force",
+            "type": "string"
+          }
+        },
+        "required": [
+          "legs",
+          "quantity",
+          "limit_price"
+        ],
+        "title": "KalshiComboOrderCreate",
+        "type": "object"
+      },
+      "KalshiComboPreviewRead": {
+        "properties": {
+          "collection_ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Ticker"
+          },
+          "combinable": {
+            "title": "Combinable",
+            "type": "boolean"
+          },
+          "existing_market_ticker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Market Ticker"
+          },
+          "implied_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Implied Price"
+          },
+          "quote_yes_ask": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Yes Ask"
+          },
+          "quote_yes_bid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Yes Bid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "combinable"
+        ],
+        "title": "KalshiComboPreviewRead",
+        "type": "object"
+      },
+      "KalshiComboPreviewRequest": {
+        "description": "Tray combinability check \u2014 never mints anything.",
+        "properties": {
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/KalshiComboLegCreate"
+            },
+            "maxItems": 6,
+            "minItems": 1,
+            "title": "Legs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "legs"
+        ],
+        "title": "KalshiComboPreviewRequest",
         "type": "object"
       },
       "KalshiOrderCreate": {
@@ -8266,6 +8491,84 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/kalshi-combos": {
+      "post": {
+        "description": "Place a REAL combo: mint (if needed) + limit order on the combo\nmarket, via the outbox.",
+        "operationId": "submit_kalshi_combo_kalshi_combos_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KalshiComboOrderCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KalshiOrderRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Kalshi Combo"
+      }
+    },
+    "/kalshi-combos/preview": {
+      "post": {
+        "description": "Tray combinability check \u2014 never mints, returns a human reason\nwhen the legs can't combine (including \"connect kalshi first\").",
+        "operationId": "preview_kalshi_combo_route_kalshi_combos_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KalshiComboPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KalshiComboPreviewRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Kalshi Combo Route"
       }
     },
     "/kalshi-orders": {

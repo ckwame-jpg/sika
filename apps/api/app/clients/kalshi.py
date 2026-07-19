@@ -485,6 +485,13 @@ class KalshiTradeClient(KalshiAuthenticatedClient):
     def list_fills(self) -> list[dict[str, Any]]:
         return self._request("GET", "/portfolio/fills").get("fills") or []
 
+    def get_market(self, ticker: str) -> dict[str, Any]:
+        """Single-market read on THIS client's host — used for combo
+        market quotes, which only exist on the environment where the
+        combo was minted (the public prod client can't see a sandbox
+        combo)."""
+        return self._request("GET", f"/markets/{ticker}", timeout=8).get("market") or {}
+
     # ── Combos (multivariate event collections) ─────────────────────
     # A combo/parlay on Kalshi is a real market minted from a
     # collection: lookup (free existence probe) → create (mint) →

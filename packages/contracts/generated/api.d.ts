@@ -97,6 +97,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/kalshi-combos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Kalshi Combo
+         * @description Place a REAL combo: mint (if needed) + limit order on the combo
+         *     market, via the outbox.
+         */
+        post: operations["submit_kalshi_combo_kalshi_combos_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/kalshi-combos/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Kalshi Combo Route
+         * @description Tray combinability check — never mints, returns a human reason
+         *     when the legs can't combine (including "connect kalshi first").
+         */
+        post: operations["preview_kalshi_combo_route_kalshi_combos_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/kalshi-orders": {
         parameters: {
             query?: never;
@@ -1492,6 +1534,31 @@ export interface components {
              */
             status: "connected" | "not_configured" | "error";
         };
+        /**
+         * KalshiComboLegCreate
+         * @description One leg of a real combo order. ``event_ticker`` is resolved
+         *     server-side from the tracked Market row; the optional display
+         *     fields are denormalized snapshots for rendering the order later.
+         */
+        KalshiComboLegCreate: {
+            /** Entry Price */
+            entry_price?: number | null;
+            /** Market Title */
+            market_title?: string | null;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "yes" | "no";
+            /** Stat Key */
+            stat_key?: string | null;
+            /** Subject Name */
+            subject_name?: string | null;
+            /** Threshold */
+            threshold?: number | null;
+            /** Ticker */
+            ticker: string;
+        };
         /** KalshiComboLegRead */
         KalshiComboLegRead: {
             /** Entry Price */
@@ -1514,6 +1581,55 @@ export interface components {
             subject_name?: string | null;
             /** Threshold */
             threshold?: number | null;
+        };
+        /**
+         * KalshiComboOrderCreate
+         * @description POST body for /kalshi-combos — mint (if needed) + order on the
+         *     combo market for these legs.
+         */
+        KalshiComboOrderCreate: {
+            /**
+             * Approved
+             * @default false
+             */
+            approved: boolean;
+            /** Legs */
+            legs: components["schemas"]["KalshiComboLegCreate"][];
+            /** Limit Price */
+            limit_price: number;
+            /** Quantity */
+            quantity: number;
+            /**
+             * Time In Force
+             * @default good_till_canceled
+             * @enum {string}
+             */
+            time_in_force: "good_till_canceled" | "immediate_or_cancel" | "fill_or_kill";
+        };
+        /** KalshiComboPreviewRead */
+        KalshiComboPreviewRead: {
+            /** Collection Ticker */
+            collection_ticker?: string | null;
+            /** Combinable */
+            combinable: boolean;
+            /** Existing Market Ticker */
+            existing_market_ticker?: string | null;
+            /** Implied Price */
+            implied_price?: number | null;
+            /** Quote Yes Ask */
+            quote_yes_ask?: number | null;
+            /** Quote Yes Bid */
+            quote_yes_bid?: number | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * KalshiComboPreviewRequest
+         * @description Tray combinability check — never mints anything.
+         */
+        KalshiComboPreviewRequest: {
+            /** Legs */
+            legs: components["schemas"]["KalshiComboLegCreate"][];
         };
         /**
          * KalshiOrderCreate
@@ -4040,6 +4156,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    submit_kalshi_combo_kalshi_combos_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KalshiComboOrderCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KalshiOrderRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_kalshi_combo_route_kalshi_combos_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KalshiComboPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KalshiComboPreviewRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
