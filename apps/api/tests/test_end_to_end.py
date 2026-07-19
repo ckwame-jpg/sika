@@ -79,7 +79,7 @@ class EmptyKalshiPublicClient:
 
 
 class FakeDemoClient:
-    def create_order(self, *, ticker, side, action, quantity, limit_price, time_in_force):
+    def create_order(self, *, ticker, side, action, quantity, limit_price, time_in_force, client_order_id=None):
         return {
             "request": {"ticker": ticker, "side": side, "action": action, "quantity": quantity},
             "order": {

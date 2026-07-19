@@ -792,6 +792,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/trading": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Trading Settings
+         * @description Lightweight guardrail read for the order dialogs and
+         *     /settings/kalshi — deliberately separate from the ops readiness
+         *     summary (which is a heavy 20s+ aggregation).
+         */
+        get: operations["get_trading_settings_settings_trading_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Trading Settings
+         * @description Update the per-order max cost cap for real Kalshi orders.
+         */
+        patch: operations["update_trading_settings_settings_trading_patch"];
+        trace?: never;
+    };
     "/sports": {
         parameters: {
             query?: never;
@@ -3454,6 +3480,26 @@ export interface components {
             time_to_close_minutes?: number | null;
         };
         /**
+         * TradingSettingsRead
+         * @description Guardrails for real Kalshi order placement — read by the order
+         *     dialogs (to disable submit past the cap) and /settings/kalshi.
+         */
+        TradingSettingsRead: {
+            /** Max Order Cost Dollars */
+            max_order_cost_dollars: number;
+        };
+        /**
+         * TradingSettingsUpdate
+         * @description PATCH body for /settings/trading. The clamp lives in
+         *     ``effective_kalshi_max_order_cost`` — values outside (0, 10k]
+         *     fall back to the default at read time, but reject the obvious
+         *     garbage here so the UI gets a 422 instead of a silent fallback.
+         */
+        TradingSettingsUpdate: {
+            /** Max Order Cost Dollars */
+            max_order_cost_dollars: number;
+        };
+        /**
          * UpstreamSourceHealthRead
          * @description Smarter #23 — per-upstream-source freshness for the /health surface.
          */
@@ -4915,6 +4961,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TeamHistoryRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trading_settings_settings_trading_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradingSettingsRead"];
+                };
+            };
+        };
+    };
+    update_trading_settings_settings_trading_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TradingSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TradingSettingsRead"];
                 };
             };
             /** @description Validation Error */

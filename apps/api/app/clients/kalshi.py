@@ -373,6 +373,13 @@ class KalshiAuthenticatedClient:
         params: dict[str, Any] | None = None,
         timeout: float = 20,
     ) -> dict[str, Any]:
+        # Share the process-wide token bucket with the public client so
+        # authenticated portfolio/order traffic can't stampede Kalshi
+        # alongside a refresh burst. No auto-retry here on purpose:
+        # write retries are the outbox's job (idempotent via
+        # client_order_id) — a silent low-level POST retry is exactly
+        # the ambiguity the outbox exists to remove.
+        _KALSHI_RATE_LIMITER.acquire()
         url = f"{self.base_url}{path}"
         response = httpx.request(
             method,
@@ -427,24 +434,33 @@ class KalshiAccountClient(KalshiAuthenticatedClient):
         return self._request("GET", "/portfolio/fills", params=params, timeout=8)
 
 
-class KalshiDemoClient(KalshiAuthenticatedClient):
-    def __init__(
-        self,
-        key_id: str | None = None,
-        private_key_path: str | Path | None = None,
-        base_url: str | None = None,
-        private_key_pem: bytes | None = None,
-    ) -> None:
-        settings = get_settings()
-        super().__init__(
-            private_key_pem=private_key_pem,
-            key_id=key_id,
-            private_key_path=private_key_path,
-            base_url=base_url or settings.kalshi_demo_base_url,
-        )
+class KalshiTradeClient(KalshiAuthenticatedClient):
+    """Order writes + order/fill reads against whatever ``base_url`` the
+    client was built with. This is the ONLY class that mutates Kalshi
+    state. Environment routing happens at construction time:
+    ``KalshiDemoClient`` pins the sandbox; ``build_trade_client_for_user``
+    (services/user_kalshi.py) honors the user's stored environment
+    choice from /settings/kalshi, which is what makes an order "real".
+    """
 
-    def create_order(self, *, ticker: str, side: str, action: str, quantity: int, limit_price: float, time_in_force: str) -> dict[str, Any]:
-        client_order_id = str(uuid.uuid4())
+    def create_order(
+        self,
+        *,
+        ticker: str,
+        side: str,
+        action: str,
+        quantity: int,
+        limit_price: float,
+        time_in_force: str,
+        client_order_id: str | None = None,
+    ) -> dict[str, Any]:
+        # ``client_order_id`` is Kalshi's idempotency key: a re-submit
+        # with the same id returns the existing order instead of
+        # creating a duplicate. Callers that persist an order row MUST
+        # pass the persisted id so outbox retries can't double-submit
+        # (real money on the live host). The uuid fallback exists only
+        # for ad-hoc/manual calls.
+        client_order_id = client_order_id or str(uuid.uuid4())
         payload: dict[str, Any] = {
             "ticker": ticker,
             "side": side,
@@ -468,6 +484,90 @@ class KalshiDemoClient(KalshiAuthenticatedClient):
 
     def list_fills(self) -> list[dict[str, Any]]:
         return self._request("GET", "/portfolio/fills").get("fills") or []
+
+    # ── Combos (multivariate event collections) ─────────────────────
+    # A combo/parlay on Kalshi is a real market minted from a
+    # collection: lookup (free existence probe) → create (mint) →
+    # normal order on the returned market ticker.
+
+    def get_multivariate_event_collections(
+        self,
+        *,
+        status: str = "open",
+        associated_event_ticker: str | None = None,
+        series_ticker: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"status": status, "limit": 200}
+        if associated_event_ticker:
+            params["associated_event_ticker"] = associated_event_ticker
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        response = self._request("GET", "/multivariate_event_collections", params=params)
+        return response.get("multivariate_contracts") or []
+
+    def lookup_combo_market(
+        self,
+        collection_ticker: str,
+        selected_markets: list[dict[str, str]],
+    ) -> dict[str, Any] | None:
+        """Existence probe for a combo market. Returns the
+        ``{event_ticker, market_ticker}`` payload when the combination
+        was minted before, ``None`` on Kalshi's 404 (never minted).
+        Never creates anything — safe to call from previews/retries.
+        """
+        try:
+            return self._request(
+                "PUT",
+                f"/multivariate_event_collections/{collection_ticker}/lookup",
+                json_body={"selected_markets": selected_markets},
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
+
+    def create_combo_market(
+        self,
+        collection_ticker: str,
+        selected_markets: list[dict[str, str]],
+        *,
+        with_market_payload: bool = True,
+    ) -> dict[str, Any]:
+        """Mint the combo market for ``selected_markets`` (items are
+        ``{"market_ticker", "event_ticker", "side"}``). Idempotent on
+        Kalshi's side for an existing combination, but callers should
+        still ``lookup_combo_market`` first — creations are
+        rate-limited (5k/week account-wide).
+        """
+        return self._request(
+            "POST",
+            f"/multivariate_event_collections/{collection_ticker}",
+            json_body={
+                "selected_markets": selected_markets,
+                "with_market_payload": with_market_payload,
+            },
+        )
+
+
+class KalshiDemoClient(KalshiTradeClient):
+    """Trade client pinned to the Kalshi sandbox. Kept as a distinct
+    type so the demo-order pipeline can never route to the live host
+    even if handed prod credentials."""
+
+    def __init__(
+        self,
+        key_id: str | None = None,
+        private_key_path: str | Path | None = None,
+        base_url: str | None = None,
+        private_key_pem: bytes | None = None,
+    ) -> None:
+        settings = get_settings()
+        super().__init__(
+            private_key_pem=private_key_pem,
+            key_id=key_id,
+            private_key_path=private_key_path,
+            base_url=base_url or settings.kalshi_demo_base_url,
+        )
 
 
 def snapshot_from_market_payload(market: dict[str, Any]) -> dict[str, float | None]:

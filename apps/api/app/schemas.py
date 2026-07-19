@@ -1605,3 +1605,19 @@ class UserKalshiCredentialsCreate(BaseModel):
     key_id: str = Field(min_length=1)
     private_key_pem: str = Field(min_length=1)
     base_url: str = Field(min_length=1)
+
+
+class TradingSettingsRead(BaseModel):
+    """Guardrails for real Kalshi order placement — read by the order
+    dialogs (to disable submit past the cap) and /settings/kalshi."""
+
+    max_order_cost_dollars: float
+
+
+class TradingSettingsUpdate(BaseModel):
+    """PATCH body for /settings/trading. The clamp lives in
+    ``effective_kalshi_max_order_cost`` — values outside (0, 10k]
+    fall back to the default at read time, but reject the obvious
+    garbage here so the UI gets a 422 instead of a silent fallback."""
+
+    max_order_cost_dollars: float = Field(gt=0, le=10_000)

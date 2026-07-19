@@ -19,7 +19,12 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.clients.kalshi import KalshiAccountClient, KalshiAuthenticatedClient, KalshiDemoClient
+from app.clients.kalshi import (
+    KalshiAccountClient,
+    KalshiAuthenticatedClient,
+    KalshiDemoClient,
+    KalshiTradeClient,
+)
 from app.config import Settings, get_settings
 from app.models import User, UserKalshiCredentials
 
@@ -124,6 +129,37 @@ def build_demo_client_for_user(
         # Demo client always uses the demo base URL; the row's
         # base_url is for the account client (prod vs sandbox).
         base_url=settings.kalshi_demo_base_url,
+    )
+
+
+def build_trade_client_for_user(
+    db: Session, user_id: int | None
+) -> KalshiTradeClient | None:
+    """Per-user order-placement client that HONORS the user's stored
+    ``base_url`` — this is the live/sandbox switch. Choosing
+    "Production" on /settings/kalshi routes orders to the real
+    exchange; "Demo" routes them to the sandbox.
+
+    Environment safety: the env-var fallback deliberately returns the
+    sandbox-pinned ``KalshiDemoClient`` — real-money routing can only
+    ever come from an explicit per-user row created through the UI,
+    never from ambient env configuration. (Contrast with
+    ``build_demo_client_for_user`` above, which pins the sandbox even
+    for users whose row says prod — that one serves the toy demo-order
+    pipeline.)
+    """
+    if user_id is None:
+        return _env_var_demo_client_or_none()
+    row = get_user_credentials(db, user_id)
+    if row is None:
+        user = db.get(User, user_id)
+        if user is not None and user.is_kalshi_owner:
+            return _env_var_demo_client_or_none()
+        return None
+    return KalshiTradeClient(
+        key_id=row.key_id,
+        private_key_pem=row.private_key_pem.encode("utf-8"),
+        base_url=row.base_url,
     )
 
 

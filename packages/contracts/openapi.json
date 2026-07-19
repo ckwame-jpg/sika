@@ -7011,6 +7011,36 @@
         "title": "TradeDeskThresholdRead",
         "type": "object"
       },
+      "TradingSettingsRead": {
+        "description": "Guardrails for real Kalshi order placement \u2014 read by the order\ndialogs (to disable submit past the cap) and /settings/kalshi.",
+        "properties": {
+          "max_order_cost_dollars": {
+            "title": "Max Order Cost Dollars",
+            "type": "number"
+          }
+        },
+        "required": [
+          "max_order_cost_dollars"
+        ],
+        "title": "TradingSettingsRead",
+        "type": "object"
+      },
+      "TradingSettingsUpdate": {
+        "description": "PATCH body for /settings/trading. The clamp lives in\n``effective_kalshi_max_order_cost`` \u2014 values outside (0, 10k]\nfall back to the default at read time, but reject the obvious\ngarbage here so the UI gets a 422 instead of a silent fallback.",
+        "properties": {
+          "max_order_cost_dollars": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 10000.0,
+            "title": "Max Order Cost Dollars",
+            "type": "number"
+          }
+        },
+        "required": [
+          "max_order_cost_dollars"
+        ],
+        "title": "TradingSettingsUpdate",
+        "type": "object"
+      },
       "UpstreamSourceHealthRead": {
         "description": "Smarter #23 \u2014 per-upstream-source freshness for the /health surface.",
         "properties": {
@@ -9690,6 +9720,62 @@
         "tags": [
           "research"
         ]
+      }
+    },
+    "/settings/trading": {
+      "get": {
+        "description": "Lightweight guardrail read for the order dialogs and\n/settings/kalshi \u2014 deliberately separate from the ops readiness\nsummary (which is a heavy 20s+ aggregation).",
+        "operationId": "get_trading_settings_settings_trading_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradingSettingsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Trading Settings"
+      },
+      "patch": {
+        "description": "Update the per-order max cost cap for real Kalshi orders.",
+        "operationId": "update_trading_settings_settings_trading_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TradingSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TradingSettingsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Trading Settings"
       }
     },
     "/sports": {

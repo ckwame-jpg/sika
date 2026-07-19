@@ -54,6 +54,8 @@ from app.schemas import (
     ParlayPredictionRead,
     CreateUserPayload,
     SwitchUserPayload,
+    TradingSettingsRead,
+    TradingSettingsUpdate,
     UserKalshiCredentialsCreate,
     UserKalshiCredentialsRead,
     UserRead,
@@ -100,7 +102,9 @@ from app.services.narrator import (
     generate_narration,
 )
 from app.services.operator_settings import (
+    effective_kalshi_max_order_cost,
     effective_narrator_enabled,
+    set_kalshi_max_order_cost,
     set_ml_serving_mode,
     set_narrator_enabled,
     set_pick_history_default_n,
@@ -1238,6 +1242,29 @@ def delete_my_kalshi_credentials(
     delete_user_credentials(db, current_user.id)
     db.commit()
     return UserKalshiCredentialsRead(configured=False)
+
+
+@router.get("/settings/trading", response_model=TradingSettingsRead)
+def get_trading_settings(db: Session = Depends(get_db)) -> TradingSettingsRead:
+    """Lightweight guardrail read for the order dialogs and
+    /settings/kalshi — deliberately separate from the ops readiness
+    summary (which is a heavy 20s+ aggregation)."""
+    return TradingSettingsRead(
+        max_order_cost_dollars=effective_kalshi_max_order_cost(db)
+    )
+
+
+@router.patch("/settings/trading", response_model=TradingSettingsRead)
+def update_trading_settings(
+    payload: TradingSettingsUpdate,
+    db: Session = Depends(get_db),
+) -> TradingSettingsRead:
+    """Update the per-order max cost cap for real Kalshi orders."""
+    set_kalshi_max_order_cost(db, payload.max_order_cost_dollars)
+    db.commit()
+    return TradingSettingsRead(
+        max_order_cost_dollars=effective_kalshi_max_order_cost(db)
+    )
 
 
 @router.post("/users/sign-out", response_model=CurrentUserRead)
