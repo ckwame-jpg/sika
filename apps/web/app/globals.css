@@ -3796,6 +3796,11 @@
   border-bottom: 1px solid var(--gi-border-head);
 }
 .gi-panel-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14.5px;
   font-weight: 600;
   color: var(--color-cosmos-text-bright);
@@ -4067,7 +4072,12 @@
 .gi-cols-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
 .gi-cols-rail { width: 320px; flex: none; }
 @media (max-width: 1100px) {
-  .gi-cols { flex-direction: column; }
+  /* Stacking the columns flips the cross axis to horizontal — the base
+     `align-items: flex-start` (which keeps the desktop rail from
+     stretching tall) would now let the main column size to its content
+     and blow past the viewport. Stretch so both columns take the full
+     width and their min-width:0 children can shrink to fit. */
+  .gi-cols { flex-direction: column; align-items: stretch; }
   .gi-cols-rail { width: 100%; }
 }
 
@@ -4128,6 +4138,8 @@
   background: rgba(10, 8, 24, 0.55);
 }
 .gi-game-strip .name {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 500;
   color: var(--color-cosmos-text-bright);
