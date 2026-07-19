@@ -97,6 +97,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/kalshi-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Kalshi Orders
+         * @description The user's real orders, newest first. ``sync=true`` runs an
+         *     inline reconcile against Kalshi first (used by the panel's manual
+         *     refresh; the 15-minute cron covers the background).
+         */
+        get: operations["get_kalshi_orders_kalshi_orders_get"];
+        put?: never;
+        /**
+         * Submit Kalshi Order
+         * @description Place a REAL single-market limit order, routed to the user's
+         *     configured environment. ``require_current_user`` (not optional) —
+         *     real orders are never anonymous.
+         */
+        post: operations["submit_kalshi_order_kalshi_orders_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/kalshi-orders/{order_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Kalshi Order Route */
+        post: operations["cancel_kalshi_order_route_kalshi_orders__order_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/markets": {
         parameters: {
             query?: never;
@@ -1446,6 +1491,126 @@ export interface components {
              * @enum {string}
              */
             status: "connected" | "not_configured" | "error";
+        };
+        /** KalshiComboLegRead */
+        KalshiComboLegRead: {
+            /** Entry Price */
+            entry_price?: number | null;
+            /** Event Ticker */
+            event_ticker: string;
+            /** Id */
+            id: number;
+            /** Leg Index */
+            leg_index: number;
+            /** Market Ticker */
+            market_ticker: string;
+            /** Market Title */
+            market_title?: string | null;
+            /** Side */
+            side: string;
+            /** Stat Key */
+            stat_key?: string | null;
+            /** Subject Name */
+            subject_name?: string | null;
+            /** Threshold */
+            threshold?: number | null;
+        };
+        /**
+         * KalshiOrderCreate
+         * @description POST body for /kalshi-orders — a REAL single-market limit order
+         *     routed to the user's configured environment (prod or sandbox).
+         *     Same shape as ``DemoOrderCreate``; the server additionally enforces
+         *     the per-order max-cost cap (quantity × limit_price ≤ cap).
+         */
+        KalshiOrderCreate: {
+            /**
+             * Action
+             * @default buy
+             * @enum {string}
+             */
+            action: "buy" | "sell";
+            /**
+             * Approved
+             * @default false
+             */
+            approved: boolean;
+            /** Limit Price */
+            limit_price: number;
+            /** Quantity */
+            quantity: number;
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "yes" | "no";
+            /** Ticker */
+            ticker: string;
+            /**
+             * Time In Force
+             * @default good_till_canceled
+             * @enum {string}
+             */
+            time_in_force: "good_till_canceled" | "immediate_or_cancel" | "fill_or_kill";
+        };
+        /** KalshiOrderFillRead */
+        KalshiOrderFillRead: {
+            /** Count */
+            count: number;
+            /** Created At */
+            created_at: string;
+            /** Fee Dollars */
+            fee_dollars?: number | null;
+            /** Id */
+            id: number;
+            /** Kalshi Fill Id */
+            kalshi_fill_id?: string | null;
+            /** Price */
+            price: number;
+            /** Side */
+            side: string;
+        };
+        /** KalshiOrderRead */
+        KalshiOrderRead: {
+            /** Action */
+            action: string;
+            /** Approved By User */
+            approved_by_user: boolean;
+            /** Client Order Id */
+            client_order_id: string;
+            /** Collection Ticker */
+            collection_ticker?: string | null;
+            /** Combo Event Ticker */
+            combo_event_ticker?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Environment */
+            environment: string;
+            /** Error Detail */
+            error_detail?: string | null;
+            /** Fills */
+            fills?: components["schemas"]["KalshiOrderFillRead"][];
+            /** Id */
+            id: number;
+            /** Kalshi Order Id */
+            kalshi_order_id?: string | null;
+            /** Kind */
+            kind: string;
+            /** Last Synced At */
+            last_synced_at?: string | null;
+            /** Legs */
+            legs?: components["schemas"]["KalshiComboLegRead"][];
+            /** Limit Price */
+            limit_price: number;
+            /** Quantity */
+            quantity: number;
+            /** Side */
+            side: string;
+            /** Status */
+            status: string;
+            /** Submitted At */
+            submitted_at?: string | null;
+            /** Ticker */
+            ticker?: string | null;
         };
         /** MarketDetailRead */
         MarketDetailRead: {
@@ -3875,6 +4040,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    get_kalshi_orders_kalshi_orders_get: {
+        parameters: {
+            query?: {
+                open_only?: boolean;
+                sync?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KalshiOrderRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_kalshi_order_kalshi_orders_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KalshiOrderCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KalshiOrderRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_kalshi_order_route_kalshi_orders__order_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KalshiOrderRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

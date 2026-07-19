@@ -54,6 +54,8 @@ from app.schemas import (
     ParlayPredictionRead,
     CreateUserPayload,
     SwitchUserPayload,
+    KalshiOrderCreate,
+    KalshiOrderRead,
     TradingSettingsRead,
     TradingSettingsUpdate,
     UserKalshiCredentialsCreate,
@@ -110,6 +112,12 @@ from app.services.operator_settings import (
     set_pick_history_default_n,
     set_sportsbook_disagreement_min_book_count,
     set_sportsbook_disagreement_threshold,
+)
+from app.services.kalshi_orders import (
+    cancel_kalshi_order,
+    create_kalshi_order,
+    list_kalshi_orders,
+    reconcile_kalshi_live_state,
 )
 from app.services.orders import (
     cancel_demo_order,
@@ -2210,6 +2218,50 @@ def cancel_order(
     db.commit()
     db.refresh(order)
     return DemoOrderRead.model_validate(order)
+
+
+@router.post("/kalshi-orders", response_model=KalshiOrderRead)
+def submit_kalshi_order(
+    payload: KalshiOrderCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> KalshiOrderRead:
+    """Place a REAL single-market limit order, routed to the user's
+    configured environment. ``require_current_user`` (not optional) —
+    real orders are never anonymous."""
+    order = create_kalshi_order(db, payload, user_id=current_user.id)
+    db.commit()
+    db.refresh(order)
+    return KalshiOrderRead.model_validate(order)
+
+
+@router.get("/kalshi-orders", response_model=list[KalshiOrderRead])
+def get_kalshi_orders(
+    open_only: bool = False,
+    sync: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> list[KalshiOrderRead]:
+    """The user's real orders, newest first. ``sync=true`` runs an
+    inline reconcile against Kalshi first (used by the panel's manual
+    refresh; the 15-minute cron covers the background)."""
+    if sync:
+        reconcile_kalshi_live_state(db)
+        db.commit()
+    orders = list_kalshi_orders(db, user_id=current_user.id, open_only=open_only)
+    return [KalshiOrderRead.model_validate(order) for order in orders]
+
+
+@router.post("/kalshi-orders/{order_id}/cancel", response_model=KalshiOrderRead)
+def cancel_kalshi_order_route(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> KalshiOrderRead:
+    order = cancel_kalshi_order(db, order_id, user_id=current_user.id)
+    db.commit()
+    db.refresh(order)
+    return KalshiOrderRead.model_validate(order)
 
 
 @ops_router.post("/jobs/refresh", response_model=JobRefreshResponse, status_code=202)

@@ -1194,6 +1194,114 @@ class DemoOrderRead(BaseModel):
     last_synced_at: UTCDateTime | None = None
 
 
+class KalshiOrderCreate(BaseModel):
+    """POST body for /kalshi-orders — a REAL single-market limit order
+    routed to the user's configured environment (prod or sandbox).
+    Same shape as ``DemoOrderCreate``; the server additionally enforces
+    the per-order max-cost cap (quantity × limit_price ≤ cap)."""
+
+    ticker: str
+    side: LowercaseSide
+    action: LowercaseAction = "buy"
+    quantity: int = Field(ge=1)
+    limit_price: float = Field(gt=0, lt=1)
+    approved: bool = False
+    time_in_force: LowercaseTimeInForce = "good_till_canceled"
+
+
+class KalshiComboLegCreate(BaseModel):
+    """One leg of a real combo order. ``event_ticker`` is resolved
+    server-side from the tracked Market row; the optional display
+    fields are denormalized snapshots for rendering the order later."""
+
+    ticker: str
+    side: LowercaseSide
+    entry_price: float | None = Field(default=None, gt=0, lt=1)
+    market_title: str | None = None
+    subject_name: str | None = None
+    stat_key: str | None = None
+    threshold: float | None = None
+
+
+class KalshiComboOrderCreate(BaseModel):
+    """POST body for /kalshi-combos — mint (if needed) + order on the
+    combo market for these legs."""
+
+    legs: list[KalshiComboLegCreate] = Field(min_length=2, max_length=6)
+    quantity: int = Field(ge=1)
+    limit_price: float = Field(gt=0, lt=1)
+    approved: bool = False
+    time_in_force: LowercaseTimeInForce = "good_till_canceled"
+
+
+class KalshiComboPreviewRequest(BaseModel):
+    """Tray combinability check — never mints anything."""
+
+    legs: list[KalshiComboLegCreate] = Field(min_length=1, max_length=6)
+
+
+class KalshiComboPreviewRead(BaseModel):
+    combinable: bool
+    reason: str | None = None
+    collection_ticker: str | None = None
+    existing_market_ticker: str | None = None
+    implied_price: float | None = None
+    quote_yes_bid: float | None = None
+    quote_yes_ask: float | None = None
+
+
+class KalshiComboLegRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    leg_index: int
+    market_ticker: str
+    event_ticker: str
+    side: str
+    entry_price: float | None = None
+    market_title: str | None = None
+    subject_name: str | None = None
+    stat_key: str | None = None
+    threshold: float | None = None
+
+
+class KalshiOrderFillRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    kalshi_fill_id: str | None = None
+    count: float
+    price: float
+    side: str
+    fee_dollars: float | None = None
+    created_at: UTCDateTime
+
+
+class KalshiOrderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    kind: str
+    ticker: str | None = None
+    environment: str
+    client_order_id: str
+    kalshi_order_id: str | None = None
+    side: str
+    action: str
+    quantity: int
+    limit_price: float
+    status: str
+    collection_ticker: str | None = None
+    combo_event_ticker: str | None = None
+    approved_by_user: bool
+    error_detail: str | None = None
+    created_at: UTCDateTime
+    submitted_at: UTCDateTime | None = None
+    last_synced_at: UTCDateTime | None = None
+    legs: list[KalshiComboLegRead] = Field(default_factory=list)
+    fills: list[KalshiOrderFillRead] = Field(default_factory=list)
+
+
 class KalshiAccountBalanceRead(BaseModel):
     cash_balance_dollars: float | None = None
     portfolio_value_dollars: float | None = None
