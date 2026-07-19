@@ -186,8 +186,9 @@ test("operator builds a 2-leg paper parlay end-to-end", async ({ page }) => {
 
   await page.goto("/trade");
 
-  // Expand the event row so the player-prop thresholds become clickable.
-  await page.getByRole("button", { name: /miami heat at toronto raptors/i }).click();
+  // The featured event auto-expands, so its player-prop thresholds are
+  // already clickable.
+  await expect(page.getByTestId("trade-event-toggle")).toHaveAttribute("aria-expanded", "true");
 
   // The trade-desk renders TWO ticket instances (desktop sidebar +
   // mobile bottom sheet) — scope locators to the desktop rail so

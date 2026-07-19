@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { RefreshCw, X } from "lucide-react";
 import { fetchTradeDesk, keys } from "@/lib/api";
@@ -371,6 +371,25 @@ function flattenEventPicks(event: TradeDeskEvent): PickRowData[] {
   return rows.sort((a, b) => b.selection.edge - a.selection.edge);
 }
 
+// Spec 5a: the trade desk opens with the featured game already expanded
+// and its hero pick loaded in the ticket rail — not a wall of collapsed
+// strips over empty starfield. Featured = the event holding the slate's
+// top-edge pick (flattenEventPicks sorts desc, so picks[0] is each
+// event's best; the global max lives in exactly one event).
+function findFeaturedPick(
+  events: TradeDeskEvent[],
+): { eventId: number; hero: TradeSelection } | null {
+  let best: { eventId: number; hero: TradeSelection } | null = null;
+  for (const event of events) {
+    const top = flattenEventPicks(event)[0];
+    if (!top) continue;
+    if (!best || top.selection.edge > best.hero.edge) {
+      best = { eventId: event.event_id, hero: top.selection };
+    }
+  }
+  return best;
+}
+
 function countEventPicks(event: TradeDeskEvent): number {
   return (
     event.game_lines.length +
@@ -628,6 +647,181 @@ function ArchivedSlateSection({
   );
 }
 
+// ---- Slate instruments -------------------------------------------------
+// The 5a mock was drawn against a dense slate; real slates are often two
+// or three strips, which left the lower half of the desk as bare
+// starfield. These panels are the designed fill: they read the slate the
+// operator already loaded (no extra fetches) and turn the void into
+// instrument surface — the shape of the board, and what closes next.
+
+function pickMedian(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+function SlateInstruments({
+  picks,
+  onSelect,
+  selectedTicker,
+}: {
+  picks: PickRowData[];
+  onSelect: (selection: TradeSelection) => void;
+  selectedTicker: string | null;
+}) {
+  if (picks.length === 0) return null;
+
+  const edges = picks.map((row) => row.selection.edge);
+  const BUCKETS = 8;
+  const MAX_EDGE = 0.12;
+  const counts = new Array<number>(BUCKETS).fill(0);
+  for (const edge of edges) {
+    const clamped = Math.max(0, Math.min(MAX_EDGE - 1e-9, edge));
+    counts[Math.floor((clamped / MAX_EDGE) * BUCKETS)] += 1;
+  }
+  const peak = Math.max(...counts, 1);
+  const med = pickMedian(edges);
+  const top = Math.max(...edges);
+
+  const closing = picks
+    .filter((row) => row.closeMinutes != null)
+    .sort((a, b) => a.closeMinutes! - b.closeMinutes!)
+    .slice(0, 5);
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-2" data-testid="trade-slate-instruments">
+      <section className="gi-panel" data-testid="trade-edge-histogram">
+        <div className="gi-panel-head">
+          <span className="gi-glow-dot" aria-hidden />
+          <h2 className="gi-panel-title">edge distribution</h2>
+          <span className="gi-count-chip">{pluralize(picks.length, "pick")}</span>
+        </div>
+        <div className="px-[18px] pb-4 pt-4">
+          <div className="gi-histo" aria-hidden>
+            {counts.map((count, index) => (
+              <span
+                key={index}
+                className={cn("gi-histo-bar", count === peak && count > 0 && "peak")}
+                style={{ "--hb-p": clampPct((count / peak) * 100) } as React.CSSProperties}
+              />
+            ))}
+          </div>
+          <div className="gi-histo-axis">
+            <span>0%</span>
+            <span>+4%</span>
+            <span>+8%</span>
+            <span>+12%</span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="gi-stat-chip">
+              <span className="k">median edge</span>
+              <span className="v" style={{ color: "var(--color-cosmos-violet-300)" }}>
+                {med != null ? fmtEdge(med) : "—"}
+              </span>
+            </div>
+            <div className="gi-stat-chip">
+              <span className="k">top edge</span>
+              <span className="v pos">{fmtEdge(top)}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {closing.length > 0 && (
+        <section className="gi-panel" data-testid="trade-closing-next">
+          <div className="gi-panel-head">
+            <span
+              className="gi-glow-dot"
+              style={{ "--gd": "var(--color-cosmos-violet-500)" } as React.CSSProperties}
+              aria-hidden
+            />
+            <h2 className="gi-panel-title">closing next</h2>
+            <span className="gi-count-chip">{pluralize(closing.length, "market")}</span>
+          </div>
+          <div>
+            {closing.map((row) => {
+              const closeText = fmtClose(row.closeMinutes);
+              return (
+                <button
+                  key={row.selection.ticker}
+                  type="button"
+                  onClick={() => onSelect(row.selection)}
+                  data-testid="trade-closing-row"
+                  className={cn(
+                    "flex w-full items-center gap-4 border-t border-white/5 px-[18px] py-3 text-left transition first:border-t-0 hover:bg-white/[.03] focus-visible:ring-focus",
+                    selectedTicker === row.selection.ticker && "bg-white/[.04]",
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium text-foreground">
+                      {row.selection.displayLabel}
+                    </span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {row.selection.eventName}
+                    </span>
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{closeText}</span>
+                  <span className={cn("gi-edge shrink-0 text-[13px]", edgeToneClass(row.selection.edge))}>
+                    {fmtEdge(row.selection.edge)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+// Rail queue under the ticket: the next-strongest picks one click away,
+// so the 320px rail column carries more than a lone ticket card.
+function NextUpQueue({
+  picks,
+  excludeTicker,
+  onSelect,
+}: {
+  picks: PickRowData[];
+  excludeTicker: string | null;
+  onSelect: (selection: TradeSelection) => void;
+}) {
+  const queue = picks
+    .filter((row) => row.selection.ticker !== excludeTicker)
+    .sort((a, b) => b.selection.edge - a.selection.edge)
+    .slice(0, 3);
+  if (queue.length === 0) return null;
+
+  return (
+    <div className="gi-card mt-4" data-testid="trade-next-up">
+      <p className="gi-micro-label">next up</p>
+      <div className="mt-2">
+        {queue.map((row) => (
+          <button
+            key={row.selection.ticker}
+            type="button"
+            onClick={() => onSelect(row.selection)}
+            data-testid="trade-next-up-row"
+            className="flex w-full items-center gap-3 border-t border-white/5 py-2.5 text-left transition first:border-t-0 hover:bg-white/[.03] focus-visible:ring-focus"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12.5px] font-medium text-foreground">
+                {row.selection.displayLabel}
+              </span>
+              <span className="block truncate text-[10.5px] text-muted-foreground">
+                {row.selection.eventName}
+              </span>
+            </span>
+            <span className={cn("gi-edge shrink-0 text-[13px]", edgeToneClass(row.selection.edge))}>
+              {fmtEdge(row.selection.edge)}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function TradeDesk({ sport }: { sport?: string }) {
   const [selected, setSelected] = useState<TradeSelection | null>(null);
   const [expandedEventIds, setExpandedEventIds] = useState<Set<number>>(() => new Set());
@@ -677,6 +871,26 @@ export function TradeDesk({ sport }: { sport?: string }) {
       return next.size === current.size ? current : next;
     });
   }, [data]);
+
+  // Auto-expand the featured game once per sport view. The ref (not
+  // state) records that we've initialized, so the 30s SWR refresh can't
+  // re-open a panel the user deliberately collapsed. It re-arms on
+  // sport switch, and stays unarmed while the slate has no picks — if
+  // picks land on a later refresh, the desk fills itself in.
+  const featured = useMemo(() => findFeaturedPick(data?.events ?? []), [data]);
+  const allPicks = useMemo(() => (data?.events ?? []).flatMap(flattenEventPicks), [data]);
+  const autoExpandedFor = useRef<string | null>(null);
+  useEffect(() => {
+    const viewKey = sport ?? "all";
+    if (!featured || autoExpandedFor.current === viewKey) return;
+    autoExpandedFor.current = viewKey;
+    setExpandedEventIds((current) => {
+      if (current.has(featured.eventId)) return current;
+      const next = new Set(current);
+      next.add(featured.eventId);
+      return next;
+    });
+  }, [featured, sport]);
 
   function toggleEvent(eventId: number) {
     setExpandedEventIds((current) => {
@@ -792,6 +1006,12 @@ export function TradeDesk({ sport }: { sport?: string }) {
             </div>
           )}
 
+          <SlateInstruments
+            picks={allPicks}
+            onSelect={selectOrToggle}
+            selectedTicker={selected?.ticker ?? null}
+          />
+
           {previousSlate ? (
             <ArchivedSlateSection
               slate={previousSlate}
@@ -826,8 +1046,17 @@ export function TradeDesk({ sport }: { sport?: string }) {
           )}
         </div>
 
+        {/* Desktop rail falls back to the hero pick so it never opens on
+            the "pick a market." empty state (spec 5a preloads the ticket).
+            The mobile sheet below intentionally keeps `selected` — a
+            fallback there would slide the drawer open on page load. */}
         <div className="gi-cols-rail trade-ticket-rail hidden lg:block" data-testid="trade-ticket-rail">
-          <TradeTicket selection={selected} />
+          <TradeTicket selection={selected ?? featured?.hero ?? null} />
+          <NextUpQueue
+            picks={allPicks}
+            excludeTicker={(selected ?? featured?.hero)?.ticker ?? null}
+            onSelect={selectOrToggle}
+          />
         </div>
       </div>
 
