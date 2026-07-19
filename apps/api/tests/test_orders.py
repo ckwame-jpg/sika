@@ -22,12 +22,19 @@ from app.services.outbox import (
 class FakeDemoClient:
     """Stand-in for ``KalshiDemoClient`` used by the outbox drain in tests."""
 
-    def create_order(self, *, ticker, side, action, quantity, limit_price, time_in_force):
+    def __init__(self):
+        self.seen_client_order_ids: list[str | None] = []
+
+    def create_order(self, *, ticker, side, action, quantity, limit_price, time_in_force, client_order_id=None):
+        # Recorded so tests can prove the handler passes the PERSISTED
+        # id (idempotent retries) instead of letting the client mint a
+        # fresh uuid per attempt.
+        self.seen_client_order_ids.append(client_order_id)
         return {
             "request": {"ticker": ticker},
             "order": {
                 "order_id": "ord_123",
-                "client_order_id": "client_123",
+                "client_order_id": client_order_id or "client_123",
                 "status": "resting",
             },
         }
@@ -127,6 +134,35 @@ def test_demo_order_drain_reconciles_remote_status(db_session, monkeypatch):
     ).all()
     assert entries[0].status == STATUS_DONE
     assert entries[0].completed_at is not None
+
+
+def test_demo_order_drain_passes_persisted_client_order_id(db_session, monkeypatch):
+    """Money-safety: the submit handler must pass the client_order_id
+    PERSISTED on the order row, so an outbox retry re-submits the same
+    order (Kalshi dedupes on the id) instead of minting a duplicate
+    under a fresh uuid. This was a real bug — the client used to
+    generate its own uuid per call."""
+    seen: list[str | None] = []
+
+    class RecordingClient(FakeDemoClient):
+        def create_order(self, **kwargs):
+            seen.append(kwargs.get("client_order_id"))
+            return super().create_order(**kwargs)
+
+    monkeypatch.setattr("app.services.orders.KalshiDemoClient", RecordingClient)
+    market = Market(ticker="NBA-IDEM", title="Idempotency market", status="open")
+    db_session.add(market)
+    db_session.commit()
+
+    order = create_demo_order(
+        db_session,
+        DemoOrderCreate(ticker="NBA-IDEM", side="yes", quantity=1, limit_price=0.5, approved=True),
+    )
+    db_session.commit()
+    assert order.client_order_id
+
+    drain_once(db_session)
+    assert seen == [order.client_order_id]
 
 
 def test_demo_order_cancel_roundtrip_via_outbox(db_session, monkeypatch):

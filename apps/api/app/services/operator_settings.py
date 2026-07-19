@@ -289,3 +289,51 @@ def set_sportsbook_disagreement_min_book_count(db: Session, min_book_count: int)
     row.updated_at = _now_utc()
     db.flush()
     return row
+
+
+# Kalshi live trading guardrail — per-order max cost cap. The server
+# is the authority: create endpoints 400 any order whose
+# quantity × limit_price exceeds the cap, regardless of what the UI
+# showed. Default is deliberately small ($25) so a fat-fingered stake
+# on the live host is bounded until the operator raises it on
+# /settings/kalshi.
+KALSHI_MAX_ORDER_COST_KEY = "kalshi_max_order_cost_dollars"
+
+DEFAULT_KALSHI_MAX_ORDER_COST = 25.0
+_KALSHI_MAX_ORDER_COST_CEILING = 10_000.0
+
+
+def effective_kalshi_max_order_cost(db: Session | None = None) -> float:
+    if db is None:
+        return DEFAULT_KALSHI_MAX_ORDER_COST
+    row = db.scalar(
+        select(OperatorSetting).where(OperatorSetting.key == KALSHI_MAX_ORDER_COST_KEY)
+    )
+    if row is None:
+        return DEFAULT_KALSHI_MAX_ORDER_COST
+    raw = dict(row.value or {}).get("dollars")
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+        return DEFAULT_KALSHI_MAX_ORDER_COST
+    # Clamp to (0, 10k] — zero/negative would block all trading via a
+    # typo, and anything past $10k is outside this app's league; both
+    # fall back to the conservative default rather than silently
+    # disabling the guardrail.
+    if not 0.0 < float(raw) <= _KALSHI_MAX_ORDER_COST_CEILING:
+        return DEFAULT_KALSHI_MAX_ORDER_COST
+    return float(raw)
+
+
+def set_kalshi_max_order_cost(db: Session, dollars: float) -> OperatorSetting:
+    """Persist the per-order max cost cap. Idempotent. Values outside
+    ``(0, 10_000]`` get the default at read time — see
+    ``effective_kalshi_max_order_cost``."""
+    row = db.scalar(
+        select(OperatorSetting).where(OperatorSetting.key == KALSHI_MAX_ORDER_COST_KEY)
+    )
+    if row is None:
+        row = OperatorSetting(key=KALSHI_MAX_ORDER_COST_KEY)
+        db.add(row)
+    row.value = {"dollars": float(dollars), "source": "operator"}
+    row.updated_at = _now_utc()
+    db.flush()
+    return row

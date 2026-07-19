@@ -21,6 +21,13 @@ import type {
   SwitchUserPayload,
   UserKalshiCredentialsCreate,
   UserKalshiCredentialsRead,
+  KalshiOrderCreate,
+  KalshiOrderRead,
+  KalshiComboOrderCreate,
+  KalshiComboPreviewRequest,
+  KalshiComboPreviewRead,
+  TradingSettingsRead,
+  TradingSettingsUpdate,
   UserRead,
   PaperPositionExit,
   PaperPositionRead,
@@ -229,6 +236,60 @@ export const saveMyKalshiCredentials = (body: UserKalshiCredentialsCreate) =>
 export const deleteMyKalshiCredentials = () =>
   request<UserKalshiCredentialsRead>("/me/kalshi-credentials", {
     method: "DELETE",
+  });
+
+// -----------------------------------------------------------------------------
+// Real Kalshi orders (singles + combos) — routed to the user's
+// configured environment (prod or sandbox) server-side.
+// -----------------------------------------------------------------------------
+
+export const placeKalshiOrder = (body: KalshiOrderCreate) =>
+  request<KalshiOrderRead>("/kalshi-orders", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const fetchKalshiOrders = (options: { openOnly?: boolean; sync?: boolean } = {}) =>
+  request<KalshiOrderRead[]>(
+    pathWithQuery(
+      "/kalshi-orders",
+      serializeQuery({
+        open_only: options.openOnly ? "true" : undefined,
+        sync: options.sync ? "true" : undefined,
+      }),
+    ),
+    // An inline reconcile talks to Kalshi before responding — give it
+    // more headroom than the default and skip the GET retry (the next
+    // 15s poll covers transient failures).
+    options.sync ? { timeoutMs: 30_000, noRetry: true } : undefined,
+  );
+
+export const cancelKalshiOrder = (id: number) =>
+  request<KalshiOrderRead>(`/kalshi-orders/${id}/cancel`, { method: "POST" });
+
+export const previewKalshiCombo = (body: KalshiComboPreviewRequest) =>
+  request<KalshiComboPreviewRead>("/kalshi-combos/preview", {
+    method: "POST",
+    body: JSON.stringify(body),
+    // The preview talks to Kalshi (collections + lookup) server-side;
+    // tray keystrokes shouldn't queue retries behind it.
+    noRetry: true,
+    timeoutMs: 20_000,
+  });
+
+export const placeKalshiCombo = (body: KalshiComboOrderCreate) =>
+  request<KalshiOrderRead>("/kalshi-combos", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const fetchTradingSettings = () =>
+  request<TradingSettingsRead>("/settings/trading");
+
+export const updateTradingSettings = (body: TradingSettingsUpdate) =>
+  request<TradingSettingsRead>("/settings/trading", {
+    method: "PATCH",
+    body: JSON.stringify(body),
   });
 
 
@@ -522,6 +583,8 @@ export const keys = {
   me: "/me",
   users: "/users",
   myKalshiCredentials: "/me/kalshi-credentials",
+  kalshiOrders: "/kalshi-orders",
+  tradingSettings: "/settings/trading",
   health: "/health",
   sports: "/sports",
   sportAvailability: "/sports/availability",

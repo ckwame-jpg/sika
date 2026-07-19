@@ -147,3 +147,42 @@ def test_readiness_settings_endpoint_depth_only_does_not_clobber_serving_mode(cl
     summary = client.get("/ops/models/readiness").json()
     assert summary["pick_history_default_n"] == 10
     assert summary["ml_serving_mode"] == "shadow"
+
+
+# ── Kalshi live-trading guardrail: per-order max cost cap ──────────────
+
+
+def test_kalshi_max_order_cost_defaults_without_row(db_session):
+    from app.services.operator_settings import (
+        DEFAULT_KALSHI_MAX_ORDER_COST,
+        effective_kalshi_max_order_cost,
+    )
+
+    assert effective_kalshi_max_order_cost(None) == DEFAULT_KALSHI_MAX_ORDER_COST
+    assert effective_kalshi_max_order_cost(db_session) == DEFAULT_KALSHI_MAX_ORDER_COST
+
+
+def test_kalshi_max_order_cost_round_trips(db_session):
+    from app.services.operator_settings import (
+        effective_kalshi_max_order_cost,
+        set_kalshi_max_order_cost,
+    )
+
+    set_kalshi_max_order_cost(db_session, 120.0)
+    db_session.commit()
+    assert effective_kalshi_max_order_cost(db_session) == 120.0
+
+
+def test_kalshi_max_order_cost_clamps_garbage_to_default(db_session):
+    """Zero/negative would block all trading via a typo; huge values
+    would silently disable the guardrail — both read back as default."""
+    from app.services.operator_settings import (
+        DEFAULT_KALSHI_MAX_ORDER_COST,
+        effective_kalshi_max_order_cost,
+        set_kalshi_max_order_cost,
+    )
+
+    for bad in (0.0, -5.0, 10_001.0):
+        set_kalshi_max_order_cost(db_session, bad)
+        db_session.commit()
+        assert effective_kalshi_max_order_cost(db_session) == DEFAULT_KALSHI_MAX_ORDER_COST

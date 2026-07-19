@@ -178,6 +178,16 @@ export type CreateUserPayload = Schema<"CreateUserPayload">;
 export type UserKalshiCredentialsCreate = Schema<"UserKalshiCredentialsCreate">;
 export type UserKalshiCredentialsRead = Wire<Schema<"UserKalshiCredentialsRead">>;
 
+// ── Real Kalshi orders (singles + combos) ──
+export type KalshiOrderCreate = Schema<"KalshiOrderCreate">;
+export type KalshiOrderRead = Wire<Schema<"KalshiOrderRead">>;
+export type KalshiComboLegCreate = Schema<"KalshiComboLegCreate">;
+export type KalshiComboOrderCreate = Schema<"KalshiComboOrderCreate">;
+export type KalshiComboPreviewRequest = Schema<"KalshiComboPreviewRequest">;
+export type KalshiComboPreviewRead = Wire<Schema<"KalshiComboPreviewRead">>;
+export type TradingSettingsRead = Wire<Schema<"TradingSettingsRead">>;
+export type TradingSettingsUpdate = Schema<"TradingSettingsUpdate">;
+
 // ── /stats-query + /team-history endpoint family ──
 export type StatsSummaryRead = Wire<Schema<"StatsSummaryRead">>;
 export type StatsGameLogRead = Wire<Schema<"StatsGameLogRead">>;

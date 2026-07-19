@@ -505,6 +505,17 @@ def _reconcile_job() -> None:
         db.commit()
 
 
+def _kalshi_live_reconcile_job() -> None:
+    """Real-money sibling of ``_reconcile_job`` — syncs non-terminal
+    KalshiOrder rows + fills per (user, host). Offset 7 minutes from
+    the demo cron so the two reconciles don't stack on the same tick."""
+    from app.services.kalshi_orders import reconcile_kalshi_live_state
+
+    with SessionLocal() as db:
+        reconcile_kalshi_live_state(db)
+        db.commit()
+
+
 def _drain_outbox_job() -> None:
     """Bug #31 — drain pending outbox entries. Imported lazily so the
     handler-registration side effects in ``services/orders.py`` fire
@@ -517,6 +528,8 @@ def _drain_outbox_job() -> None:
     # not when ``services.scheduler`` is first imported (which can
     # happen during pytest collection).
     from app.services import orders as _orders  # noqa: F401 — registers handlers
+    from app.services import kalshi_orders as _kalshi_orders  # noqa: F401 — live handlers
+    from app.services import kalshi_combos as _kalshi_combos  # noqa: F401 — combo handler
     from app.services.outbox import drain_once
 
     with SessionLocal() as db:
@@ -632,6 +645,12 @@ def start_scheduler() -> None:
         _reconcile_job,
         trigger=CronTrigger(minute="*/15"),
         id="demo_reconcile",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _kalshi_live_reconcile_job,
+        trigger=CronTrigger(minute="7-59/15"),
+        id="kalshi_live_reconcile",
         replace_existing=True,
     )
     # Bug #31 — outbox drain. Polls every 5s so a freshly-enqueued

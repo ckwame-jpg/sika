@@ -289,6 +289,10 @@ def _kalshi_submit_handler(db: Session, entry: OutboxEntry) -> None:
         quantity=int(payload["quantity"]),
         limit_price=float(payload["limit_price"]),
         time_in_force=payload.get("time_in_force"),
+        # Pass the PERSISTED id so an outbox retry re-submits the same
+        # order instead of minting a duplicate under a fresh uuid —
+        # this is what makes the docstring's idempotency claim true.
+        client_order_id=payload.get("client_order_id"),
     )
 
     remote_order = response.get("order", {})

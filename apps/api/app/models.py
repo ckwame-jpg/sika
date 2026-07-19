@@ -1270,6 +1270,103 @@ class DemoFill(Base):
     order = relationship("DemoOrder", back_populates="fills")
 
 
+class KalshiOrder(Base):
+    """A REAL Kalshi order (single market or combo/parlay), routed to
+    whatever environment the user chose on /settings/kalshi — prod or
+    sandbox. Distinct from ``DemoOrder`` on purpose: that table's
+    semantics are explicitly toy-money (hard-deletable, sandbox-pinned),
+    while these rows are an audit trail of live-money intent.
+
+    ``environment``/``base_url`` are stamped at creation so cancel and
+    reconcile always talk to the host the order actually lives on, even
+    if the user flips their settings environment while it rests.
+
+    Combo orders (``kind="combo"``) run a two-phase submit: mint the
+    combo market from the legs (multivariate event collection), then
+    place a normal order on the minted ticker. ``ticker`` is null until
+    the mint succeeds; ``mint_failed`` is a terminal status for phase-1
+    failures.
+    """
+
+    __tablename__ = "kalshi_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    market_id = Column(Integer, ForeignKey("markets.id"), nullable=True, index=True)
+    kind = Column(String, nullable=False, default="single", index=True)  # single | combo
+    ticker = Column(String, nullable=True, index=True)  # combo: set after mint
+    environment = Column(String, nullable=False)  # live | demo
+    base_url = Column(String, nullable=False)  # audit: exact host targeted
+    client_order_id = Column(String, unique=True, nullable=False, index=True)
+    kalshi_order_id = Column(String, nullable=True, index=True)
+    side = Column(String, nullable=False)
+    action = Column(String, nullable=False, default="buy")
+    quantity = Column(Integer, nullable=False)
+    limit_price = Column(Float, nullable=False)
+    status = Column(String, nullable=False, default="pending_submission", index=True)
+    # combo-only, null for singles:
+    collection_ticker = Column(String, nullable=True)
+    combo_event_ticker = Column(String, nullable=True)
+    approved_by_user = Column(Boolean, nullable=False, default=False)
+    request_body = Column(JSON, default=dict)
+    response_body = Column(JSON, default=dict)
+    error_detail = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
+    submitted_at = Column(DateTime(timezone=True), nullable=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+
+    market = relationship("Market")
+    user = relationship("User")
+    fills = relationship(
+        "KalshiOrderFill", back_populates="order", cascade="all, delete-orphan"
+    )
+    legs = relationship(
+        "KalshiComboLeg",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="KalshiComboLeg.leg_index",
+    )
+
+
+class KalshiComboLeg(Base):
+    """One leg of a real combo order — both the mint input
+    (market_ticker/event_ticker/side feed ``selected_markets``) and a
+    display snapshot denormalized at save time so the order renders
+    after the underlying slate moves on."""
+
+    __tablename__ = "kalshi_combo_legs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kalshi_order_id = Column(Integer, ForeignKey("kalshi_orders.id"), nullable=False, index=True)
+    leg_index = Column(Integer, nullable=False)
+    market_ticker = Column(String, nullable=False)
+    event_ticker = Column(String, nullable=False)
+    side = Column(String, nullable=False)
+    entry_price = Column(Float, nullable=True)  # leg price snapshot at save
+    market_title = Column(String, nullable=True)
+    subject_name = Column(String, nullable=True)
+    stat_key = Column(String, nullable=True)
+    threshold = Column(Float, nullable=True)
+
+    order = relationship("KalshiOrder", back_populates="legs")
+
+
+class KalshiOrderFill(Base):
+    __tablename__ = "kalshi_order_fills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kalshi_order_id = Column(Integer, ForeignKey("kalshi_orders.id"), nullable=False, index=True)
+    kalshi_fill_id = Column(String, unique=True, nullable=True, index=True)
+    count = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    side = Column(String, nullable=False)
+    fee_dollars = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    raw_data = Column(JSON, default=dict)
+
+    order = relationship("KalshiOrder", back_populates="fills")
+
+
 class Run(Base):
     __tablename__ = "runs"
 

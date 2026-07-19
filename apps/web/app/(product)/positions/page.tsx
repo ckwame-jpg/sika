@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Header } from "@/components/layout/header";
 import { KalshiAccountPanel } from "@/components/positions/kalshi-account-panel";
+import { KalshiOrdersPanel } from "@/components/positions/kalshi-orders-panel";
 import { LegacyBucketPanel } from "@/components/positions/legacy-bucket-panel";
 import { PaperBetsTable } from "@/components/positions/paper-bets-table";
 import { ExposureRail, PaperGaugeRow } from "@/components/positions/paper-earnings-card";
@@ -54,6 +55,10 @@ export default function PaperPositionsPage() {
                   <KalshiAccountPanel />
                 </div>
               </section>
+
+              {/* Real orders placed through sika — renders nothing until
+                  Kalshi credentials are connected. */}
+              <KalshiOrdersPanel />
 
               {/* Multi-user batch follow-up — pre-multi-user historical data
                   (paper trades / demo orders / parlays with no owner).

@@ -47,6 +47,13 @@ logger = logging.getLogger(__name__)
 # require an enum migration. The handler registry is the source of truth.
 INTENT_KALSHI_ORDER_SUBMIT = "kalshi_order_submit"
 INTENT_KALSHI_ORDER_CANCEL = "kalshi_order_cancel"
+# Real-money order intents are DISTINCT from the sandbox demo intents
+# above: the registry dispatches on intent_kind, so the demo handlers
+# stay untouched, and a dead-lettered ``kalshi_live_*`` entry is
+# unambiguously a real-money incident in ops triage.
+INTENT_KALSHI_LIVE_ORDER_SUBMIT = "kalshi_live_order_submit"
+INTENT_KALSHI_LIVE_ORDER_CANCEL = "kalshi_live_order_cancel"
+INTENT_KALSHI_COMBO_SUBMIT = "kalshi_combo_submit"
 
 
 # Outbox-entry status values. ``pending`` rows are eligible for drain;

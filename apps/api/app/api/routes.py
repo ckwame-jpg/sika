@@ -54,6 +54,13 @@ from app.schemas import (
     ParlayPredictionRead,
     CreateUserPayload,
     SwitchUserPayload,
+    KalshiComboOrderCreate,
+    KalshiComboPreviewRead,
+    KalshiComboPreviewRequest,
+    KalshiOrderCreate,
+    KalshiOrderRead,
+    TradingSettingsRead,
+    TradingSettingsUpdate,
     UserKalshiCredentialsCreate,
     UserKalshiCredentialsRead,
     UserRead,
@@ -100,12 +107,24 @@ from app.services.narrator import (
     generate_narration,
 )
 from app.services.operator_settings import (
+    effective_kalshi_max_order_cost,
     effective_narrator_enabled,
+    set_kalshi_max_order_cost,
     set_ml_serving_mode,
     set_narrator_enabled,
     set_pick_history_default_n,
     set_sportsbook_disagreement_min_book_count,
     set_sportsbook_disagreement_threshold,
+)
+from app.services.kalshi_combos import (
+    create_kalshi_combo_order,
+    preview_kalshi_combo,
+)
+from app.services.kalshi_orders import (
+    cancel_kalshi_order,
+    create_kalshi_order,
+    list_kalshi_orders,
+    reconcile_kalshi_live_state,
 )
 from app.services.orders import (
     cancel_demo_order,
@@ -1240,6 +1259,29 @@ def delete_my_kalshi_credentials(
     return UserKalshiCredentialsRead(configured=False)
 
 
+@router.get("/settings/trading", response_model=TradingSettingsRead)
+def get_trading_settings(db: Session = Depends(get_db)) -> TradingSettingsRead:
+    """Lightweight guardrail read for the order dialogs and
+    /settings/kalshi — deliberately separate from the ops readiness
+    summary (which is a heavy 20s+ aggregation)."""
+    return TradingSettingsRead(
+        max_order_cost_dollars=effective_kalshi_max_order_cost(db)
+    )
+
+
+@router.patch("/settings/trading", response_model=TradingSettingsRead)
+def update_trading_settings(
+    payload: TradingSettingsUpdate,
+    db: Session = Depends(get_db),
+) -> TradingSettingsRead:
+    """Update the per-order max cost cap for real Kalshi orders."""
+    set_kalshi_max_order_cost(db, payload.max_order_cost_dollars)
+    db.commit()
+    return TradingSettingsRead(
+        max_order_cost_dollars=effective_kalshi_max_order_cost(db)
+    )
+
+
 @router.post("/users/sign-out", response_model=CurrentUserRead)
 def sign_out(response: Response) -> CurrentUserRead:
     """Clear the ``sika.userId`` cookie. Returns ``{user: null}``.
@@ -2183,6 +2225,76 @@ def cancel_order(
     db.commit()
     db.refresh(order)
     return DemoOrderRead.model_validate(order)
+
+
+@router.post("/kalshi-orders", response_model=KalshiOrderRead)
+def submit_kalshi_order(
+    payload: KalshiOrderCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> KalshiOrderRead:
+    """Place a REAL single-market limit order, routed to the user's
+    configured environment. ``require_current_user`` (not optional) —
+    real orders are never anonymous."""
+    order = create_kalshi_order(db, payload, user_id=current_user.id)
+    db.commit()
+    db.refresh(order)
+    return KalshiOrderRead.model_validate(order)
+
+
+@router.get("/kalshi-orders", response_model=list[KalshiOrderRead])
+def get_kalshi_orders(
+    open_only: bool = False,
+    sync: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> list[KalshiOrderRead]:
+    """The user's real orders, newest first. ``sync=true`` runs an
+    inline reconcile against Kalshi first (used by the panel's manual
+    refresh; the 15-minute cron covers the background)."""
+    if sync:
+        reconcile_kalshi_live_state(db)
+        db.commit()
+    orders = list_kalshi_orders(db, user_id=current_user.id, open_only=open_only)
+    return [KalshiOrderRead.model_validate(order) for order in orders]
+
+
+@router.post("/kalshi-combos/preview", response_model=KalshiComboPreviewRead)
+def preview_kalshi_combo_route(
+    payload: KalshiComboPreviewRequest,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+) -> KalshiComboPreviewRead:
+    """Tray combinability check — never mints, returns a human reason
+    when the legs can't combine (including "connect kalshi first")."""
+    user_id = current_user.id if current_user is not None else None
+    return preview_kalshi_combo(db, payload, user_id=user_id)
+
+
+@router.post("/kalshi-combos", response_model=KalshiOrderRead)
+def submit_kalshi_combo(
+    payload: KalshiComboOrderCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> KalshiOrderRead:
+    """Place a REAL combo: mint (if needed) + limit order on the combo
+    market, via the outbox."""
+    order = create_kalshi_combo_order(db, payload, user_id=current_user.id)
+    db.commit()
+    db.refresh(order)
+    return KalshiOrderRead.model_validate(order)
+
+
+@router.post("/kalshi-orders/{order_id}/cancel", response_model=KalshiOrderRead)
+def cancel_kalshi_order_route(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> KalshiOrderRead:
+    order = cancel_kalshi_order(db, order_id, user_id=current_user.id)
+    db.commit()
+    db.refresh(order)
+    return KalshiOrderRead.model_validate(order)
 
 
 @ops_router.post("/jobs/refresh", response_model=JobRefreshResponse, status_code=202)
