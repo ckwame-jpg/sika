@@ -276,6 +276,34 @@ def test_cancel_before_submission_conflicts(db_session):
     assert err.value.status_code == 409
 
 
+def test_drain_ioc_no_fill_sets_friendly_detail(db_session, monkeypatch):
+    """Fill-now (IOC) that found an empty book lands as cancelled with
+    a plain-language explanation — never a silent mystery row."""
+    user = _seed(db_session)
+
+    class NoLiquidityClient(FakeTradeClient):
+        def create_order(self, **kwargs):
+            return {
+                "request": {"ticker": kwargs["ticker"]},
+                "order": {
+                    "order_id": "ioc_1",
+                    "client_order_id": kwargs.get("client_order_id"),
+                    "status": "cancelled",
+                },
+            }
+
+    monkeypatch.setattr(ko, "client_for_order", lambda db, order: NoLiquidityClient())
+    order = ko.create_kalshi_order(
+        db_session, _payload(time_in_force="immediate_or_cancel"), user_id=user.id
+    )
+    db_session.commit()
+    drain_once(db_session)
+    db_session.refresh(order)
+
+    assert order.status == "cancelled"
+    assert "nothing was charged" in order.error_detail
+
+
 # ── dismiss ─────────────────────────────────────────────────────────
 
 

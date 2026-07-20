@@ -315,6 +315,16 @@ def _kalshi_live_submit_handler(db: Session, entry) -> None:
     order.response_body = response
     order.submitted_at = order.submitted_at or now
     order.last_synced_at = now
+    if (
+        order.status == "cancelled"
+        and payload.get("time_in_force") == "immediate_or_cancel"
+    ):
+        # Fill-now that found no liquidity — make the outcome explicit
+        # so the panel row reads as "nothing happened", not a mystery.
+        order.error_detail = (
+            "no fill available up to your limit — the book was empty. "
+            "nothing was charged; try again or rest a bid."
+        )
 
 
 def _kalshi_live_cancel_handler(db: Session, entry) -> None:

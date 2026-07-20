@@ -422,6 +422,15 @@ def _kalshi_combo_submit_handler(db: Session, entry) -> None:
     order.response_body = response_body
     order.submitted_at = order.submitted_at or now
     order.last_synced_at = now
+    if (
+        order.status == "cancelled"
+        and payload.get("time_in_force") == "immediate_or_cancel"
+    ):
+        order.error_detail = (
+            "no fill available up to your limit — the combo book was empty. "
+            "nothing was charged; try again shortly (fresh combos get quoted "
+            "within minutes) or rest a bid."
+        )
 
 
 register_intent_handler(INTENT_KALSHI_COMBO_SUBMIT, _kalshi_combo_submit_handler)

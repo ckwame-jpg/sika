@@ -55,18 +55,18 @@ describe("KalshiOrderDialog", () => {
     expect(screen.getByTestId("kalshi-order-env-badge")).toHaveTextContent("live · real money");
 
     await user.type(screen.getByTestId("kalshi-order-stake"), "10");
-    // price prefilled from defaults (40¢) → 25 contracts, $10 cost
+    // fill-now prefills reference 40¢ + 3¢ buffer = 43¢ → 23 contracts
     expect(screen.getByTestId("kalshi-order-preview")).toHaveTextContent(
-      "25 contracts · cost $10.00 · pays $25.00 if yes",
+      "23 contracts · cost $9.89 · pays $23.00 if yes",
     );
 
     await user.click(screen.getByTestId("kalshi-order-review"));
     const summary = screen.getByTestId("kalshi-order-confirm-summary");
-    expect(summary).toHaveTextContent("LIMIT YES @");
-    expect(summary).toHaveTextContent("Total cost$10.00");
-    // taker fee: ceil(0.07 × 25 × .4 × .6 × 100)/100 = $0.42
-    expect(summary).toHaveTextContent("Est. fee (taker)$0.42");
-    expect(summary).toHaveTextContent("Pays if it hits$25.00");
+    expect(summary).toHaveTextContent("FILL NOW · YES up to");
+    expect(summary).toHaveTextContent("Total cost$9.89");
+    // taker fee at the max price: ceil(0.07 × 23 × .43 × .57 × 100)/100
+    expect(summary).toHaveTextContent("Est. fee (taker)$0.40");
+    expect(summary).toHaveTextContent("Pays if it hits$23.00");
     expect(summary).toHaveTextContent("Per-order cap$25");
 
     await user.click(screen.getByTestId("kalshi-order-confirm"));
@@ -75,11 +75,38 @@ describe("KalshiOrderDialog", () => {
       ticker: "KXNBAPTS-DAVION-10",
       side: "yes",
       action: "buy",
-      quantity: 25,
-      limit_price: 0.4,
+      quantity: 23,
+      limit_price: 0.43,
       approved: true,
-      time_in_force: "good_till_canceled",
+      time_in_force: "immediate_or_cancel",
     });
+  });
+
+  it("rest mode keeps the reference price and places GTC", async () => {
+    const user = userEvent.setup();
+    mockPlaceKalshiOrder.mockResolvedValue({ id: 2 });
+    renderDialog("live");
+
+    await user.click(screen.getByTestId("kalshi-order-mode-rest"));
+    await user.type(screen.getByTestId("kalshi-order-stake"), "10");
+    // rest prefills the reference price itself (40¢) → 25 contracts
+    expect(screen.getByTestId("kalshi-order-preview")).toHaveTextContent(
+      "25 contracts · cost $10.00 · pays $25.00 if yes",
+    );
+
+    await user.click(screen.getByTestId("kalshi-order-review"));
+    expect(screen.getByTestId("kalshi-order-confirm-summary")).toHaveTextContent(
+      "REST · YES up to",
+    );
+    await user.click(screen.getByTestId("kalshi-order-confirm"));
+    await waitFor(() => expect(mockPlaceKalshiOrder).toHaveBeenCalledTimes(1));
+    expect(mockPlaceKalshiOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        quantity: 25,
+        limit_price: 0.4,
+        time_in_force: "good_till_canceled",
+      }),
+    );
   });
 
   it("blocks review when the order exceeds the per-order cap", async () => {

@@ -503,7 +503,17 @@ class KalshiTradeClient(KalshiAuthenticatedClient):
         response = self._request("POST", "/portfolio/events/orders", json_body=payload)
         remaining = float(response.get("remaining_count") or 0)
         filled = float(response.get("fill_count") or 0)
-        status = "executed" if remaining <= 0 and filled > 0 else "resting"
+        if filled > 0 and remaining <= 0:
+            status = "executed"
+        elif remaining > 0:
+            # GTC resting (possibly partially filled).
+            status = "resting"
+        elif filled > 0:
+            status = "executed"
+        else:
+            # Nothing filled and nothing resting — an IOC/FOK that found
+            # no liquidity. The exchange charged nothing.
+            status = "cancelled"
         return {
             "order": {
                 "order_id": response.get("order_id"),
