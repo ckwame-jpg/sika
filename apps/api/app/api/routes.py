@@ -123,6 +123,7 @@ from app.services.kalshi_combos import (
 from app.services.kalshi_orders import (
     cancel_kalshi_order,
     create_kalshi_order,
+    delete_kalshi_order,
     list_kalshi_orders,
     reconcile_kalshi_live_state,
 )
@@ -2283,6 +2284,18 @@ def submit_kalshi_combo(
     db.commit()
     db.refresh(order)
     return KalshiOrderRead.model_validate(order)
+
+
+@router.delete("/kalshi-orders/{order_id}", response_model=dict)
+def dismiss_kalshi_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_current_user),
+) -> dict:
+    """Dismiss a terminal (failed/cancelled) row from the panel."""
+    delete_kalshi_order(db, order_id, user_id=current_user.id)
+    db.commit()
+    return {"deleted": True}
 
 
 @router.post("/kalshi-orders/{order_id}/cancel", response_model=KalshiOrderRead)

@@ -8663,6 +8663,48 @@
         "summary": "Submit Kalshi Order"
       }
     },
+    "/kalshi-orders/{order_id}": {
+      "delete": {
+        "description": "Dismiss a terminal (failed/cancelled) row from the panel.",
+        "operationId": "dismiss_kalshi_order_kalshi_orders__order_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "title": "Order Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Dismiss Kalshi Order Kalshi Orders  Order Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss Kalshi Order"
+      }
+    },
     "/kalshi-orders/{order_id}/cancel": {
       "post": {
         "operationId": "cancel_kalshi_order_route_kalshi_orders__order_id__cancel_post",

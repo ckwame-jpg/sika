@@ -306,21 +306,23 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
           </div>
         )}
 
+        {/* One button system, two tints (same pairing as the trade
+            ticket): violet gi-btn = paper, amber gi-btn-live = real
+            money. Identical geometry — only the tint says "careful". */}
         <div className="parlay-tray-actions">
-          <Button
-            variant="primary"
-            size="sm"
+          <button
+            type="button"
+            className="gi-btn"
             disabled={!canSave}
             onClick={onSave}
             data-testid="parlay-tray-save"
           >
             {legs.length < 2 ? "Add another leg" : "Save paper parlay"}
-          </Button>
+          </button>
           {kalshiConfigured && (
             <button
               type="button"
               className="gi-btn-live"
-              style={{ padding: "7px 12px", fontSize: 12, borderRadius: 10 }}
               disabled={!canPlaceCombo}
               onClick={() => setComboDialogOpen(true)}
               data-testid="parlay-tray-place-kalshi"

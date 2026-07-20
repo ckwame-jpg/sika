@@ -200,6 +200,40 @@ def cancel_kalshi_order(
     return order
 
 
+# Rows the operator may clear from the panel. Failed submissions/mints
+# never created anything on the exchange; cancelled orders live on in
+# Kalshi's own account history. Resting/submitting stay (cancel first);
+# executed stays — it's the local audit trail of a real fill.
+DISMISSIBLE_STATUSES = ("submission_failed", "mint_failed", "cancelled")
+
+
+def delete_kalshi_order(
+    db: Session,
+    order_id: int,
+    *,
+    user_id: int | None = None,
+) -> None:
+    """Dismiss a terminal row (owner-only). See DISMISSIBLE_STATUSES
+    for the rationale on what can go."""
+    order = db.get(KalshiOrder, order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Kalshi order not found")
+    if user_id is not None and order.user_id != user_id:
+        raise HTTPException(
+            status_code=403, detail="You can only dismiss orders you submitted."
+        )
+    if order.status not in DISMISSIBLE_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Only failed or cancelled orders can be dismissed (this one is "
+                f"{order.status}). Cancel resting orders first."
+            ),
+        )
+    db.delete(order)
+    db.flush()
+
+
 def list_kalshi_orders(
     db: Session,
     *,
