@@ -240,6 +240,7 @@ export function TradeTicket({
             price: selection.entryPrice ?? undefined,
             displayLabel: selection.displayLabel,
             eventName: selection.eventName,
+            probability: selection.selectedSideProbability,
           }}
         />
       )}

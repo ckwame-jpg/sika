@@ -148,13 +148,22 @@ export function KalshiComboDialog({
             Place combo on Kalshi
             <span
               className={cn(
-                "rounded-full border px-2 py-0.5 font-mono text-2xs uppercase tracking-wide",
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-2xs uppercase tracking-wide",
                 environment === "live"
                   ? "border-warning/50 bg-warning/10 text-warning"
                   : "border-border/60 bg-surface-hover/40 text-muted-foreground",
               )}
               data-testid="kalshi-combo-env-badge"
             >
+              <span
+                className={cn(
+                  "h-[5px] w-[5px] rounded-full",
+                  environment === "live"
+                    ? "bg-warning shadow-[0_0_6px_rgba(247,141,108,0.8)]"
+                    : "bg-muted-foreground/60",
+                )}
+                aria-hidden
+              />
               {environment === "live" ? "live · real money" : "demo / sandbox"}
             </span>
           </DialogTitle>
@@ -166,17 +175,26 @@ export function KalshiComboDialog({
 
         {stage === "form" ? (
           <DialogBody className="space-y-4">
-            <div className="rounded-md border border-border/60 bg-surface-hover/30 px-3 py-2">
-              <p className="text-2xs uppercase tracking-wide text-muted-foreground/70">
-                {legs.length} legs
+            {/* Arrival — the combo's identity as tray-style chips before
+                any money input. */}
+            <div className="gi-card" data-testid="kalshi-combo-legs">
+              <p className="gi-micro-label">
+                {legs.length}-leg combo · all must hit
               </p>
-              <ul className="mt-1 space-y-0.5" data-testid="kalshi-combo-legs">
+              <ul className="mt-2 space-y-1.5">
                 {legs.map((leg) => (
-                  <li key={leg.ticker} className="truncate text-xs text-foreground">
-                    <span className="font-mono text-2xs text-muted-foreground">
+                  <li
+                    key={leg.ticker}
+                    className="flex items-center gap-2 rounded-lg border border-border/40 bg-surface-hover/25 px-2.5 py-1.5"
+                  >
+                    <span className="h-[5px] w-[5px] shrink-0 rounded-full bg-accent/70" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                      {leg.displayLabel}
+                    </span>
+                    <span className="shrink-0 font-mono text-2xs text-muted-foreground">
                       {leg.selectedSide.toUpperCase()}
-                    </span>{" "}
-                    {leg.displayLabel}
+                      {leg.entryPrice != null && ` ${(leg.entryPrice * 100).toFixed(0)}¢`}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -241,8 +259,8 @@ export function KalshiComboDialog({
               />
             </div>
 
-            <div className="rounded-md border border-border/40 bg-surface-hover/20 px-3 py-2.5">
-              <p className="text-2xs uppercase tracking-wide text-muted-foreground/70">Order</p>
+            <div className="gi-card !py-2.5">
+              <p className="gi-micro-label">Order</p>
               {order ? (
                 <p className="mt-1 font-mono text-sm text-foreground" data-testid="kalshi-combo-preview-line">
                   {order.quantity} contract{order.quantity === 1 ? "" : "s"} · cost $
@@ -263,42 +281,52 @@ export function KalshiComboDialog({
         ) : (
           <DialogBody className="space-y-3">
             <div
-              className="rounded-md border border-warning/40 bg-warning/5 px-3 py-3"
+              className="gi-armed-card px-4 py-3.5"
               data-testid="kalshi-combo-confirm-summary"
             >
-              <p className="text-2xs uppercase tracking-wide text-muted-foreground/70">
+              <p className="gi-micro-label">
                 Confirm {environment === "live" ? "real" : "sandbox"} combo ·{" "}
                 {legs.length} legs
               </p>
-              <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+              <p className="mt-1 font-mono text-xs text-muted-foreground">
                 LIMIT YES @ {parsedPrice != null ? formatPrice(parsedPrice) : "—"} on the
                 combo market
               </p>
               {order && (
-                <dl className="mt-2 space-y-1 font-mono text-xs">
-                  <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Contracts</dt>
-                    <dd className="text-foreground">{order.quantity}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Total cost</dt>
-                    <dd className="text-foreground">${order.cost.toFixed(2)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Est. fee (taker)</dt>
-                    <dd className="text-foreground">${order.fee.toFixed(2)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Pays if ALL legs hit</dt>
-                    <dd className="text-positive">${order.payout.toFixed(2)}</dd>
-                  </div>
-                  {capDollars != null && (
-                    <div className="flex justify-between">
-                      <dt className="text-muted-foreground">Per-order cap</dt>
-                      <dd className="text-muted-foreground">${capDollars.toFixed(0)}</dd>
+                <>
+                  <p className="mt-2.5 text-[13px] leading-snug text-foreground/90" data-testid="kalshi-combo-human-line">
+                    risking{" "}
+                    <span className="font-mono text-foreground">${order.cost.toFixed(2)}</span> for a
+                    shot at{" "}
+                    <span className="font-mono text-positive">${order.payout.toFixed(2)}</span> if all{" "}
+                    {legs.length} legs hit — fee ~
+                    <span className="font-mono text-foreground">${order.fee.toFixed(2)}</span>.
+                  </p>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <div className="gi-stat-chip">
+                      <span className="k">Contracts</span>
+                      <span className="v">{order.quantity}</span>
                     </div>
-                  )}
-                </dl>
+                    <div className="gi-stat-chip">
+                      <span className="k">Total cost</span>
+                      <span className="v">${order.cost.toFixed(2)}</span>
+                    </div>
+                    <div className="gi-stat-chip">
+                      <span className="k">Est. fee (taker)</span>
+                      <span className="v">${order.fee.toFixed(2)}</span>
+                    </div>
+                    <div className="gi-stat-chip col-span-2">
+                      <span className="k">Pays if ALL legs hit</span>
+                      <span className="v pos">${order.payout.toFixed(2)}</span>
+                    </div>
+                    {capDollars != null && (
+                      <div className="gi-stat-chip">
+                        <span className="k">Per-order cap</span>
+                        <span className="v">${capDollars.toFixed(0)}</span>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
             <p className="text-2xs text-muted-foreground">
@@ -317,34 +345,35 @@ export function KalshiComboDialog({
               <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button
-                variant="primary"
-                size="sm"
+              <button
+                type="button"
+                className="gi-btn"
                 onClick={handleReview}
                 disabled={!order || overCap || legs.length < 2}
                 data-testid="kalshi-combo-review"
               >
                 Review combo
-              </Button>
+              </button>
             </>
           ) : (
             <>
               <Button variant="ghost" size="sm" onClick={() => setStage("form")}>
                 Back
               </Button>
-              <Button
-                variant="primary"
-                size="sm"
+              <button
+                type="button"
+                className="gi-btn-live"
                 onClick={handleConfirm}
                 disabled={loading || !order || overCap}
                 data-testid="kalshi-combo-confirm"
               >
+                {environment === "live" && !loading && <span className="dot" aria-hidden />}
                 {loading
                   ? "Placing..."
                   : environment === "live"
                     ? "Confirm — place real combo"
                     : "Confirm — place sandbox combo"}
-              </Button>
+              </button>
             </>
           )}
         </DialogFooter>

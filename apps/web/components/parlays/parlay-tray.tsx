@@ -271,16 +271,25 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
         </div>
 
         {/* Kalshi combinability — mirrors what the mobile app's combo
-            builder would tell you, BEFORE any order intent. */}
+            builder would tell you, BEFORE any order intent. Status-pill
+            construction with a glow dot, matching the app's chip
+            language (green = go, amber = reason, cyan = in motion). */}
         {kalshiConfigured && legs.length >= 2 && (
-          <div
-            className="mt-2 flex items-center gap-2 text-2xs"
-            data-testid="parlay-tray-combinability"
-          >
+          <div className="mt-2" data-testid="parlay-tray-combinability">
             {checking ? (
-              <span className="text-muted-foreground">checking kalshi combinability…</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/5 px-2.5 py-1 text-2xs text-muted-foreground">
+                <span
+                  className="h-[5px] w-[5px] animate-pulse rounded-full bg-accent/80 shadow-[0_0_6px_rgba(140,220,255,0.6)]"
+                  aria-hidden
+                />
+                checking kalshi combinability…
+              </span>
             ) : preview?.combinable ? (
-              <span className="text-positive">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-positive/35 bg-positive/10 px-2.5 py-1 text-2xs text-positive">
+                <span
+                  className="h-[5px] w-[5px] rounded-full bg-positive shadow-[0_0_6px_rgba(33,202,145,0.7)]"
+                  aria-hidden
+                />
                 combinable on kalshi ✓
                 {preview.existing_market_ticker
                   ? " · live combo market exists"
@@ -289,7 +298,10 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
                   ` · ask ${(preview.quote_yes_ask * 100).toFixed(0)}¢`}
               </span>
             ) : preview ? (
-              <span className="text-warning">{preview.reason}</span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-warning/35 bg-warning/5 px-2.5 py-1 text-2xs text-warning">
+                <span className="h-[5px] w-[5px] rounded-full bg-warning" aria-hidden />
+                {preview.reason}
+              </span>
             ) : null}
           </div>
         )}
