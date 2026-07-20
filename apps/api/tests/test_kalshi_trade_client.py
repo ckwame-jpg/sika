@@ -73,14 +73,18 @@ def _patch_http(monkeypatch, responses: list[httpx.Response]) -> _CapturingTrans
     return transport
 
 
-# ── create_order idempotency ─────────────────────────────────────────
+# ── create_order (V2 endpoint) ───────────────────────────────────────
+# The legacy POST /portfolio/orders 410s on prod
+# (deprecated_v1_order_endpoint) — everything below pins the V2
+# contract: YES-book bid/ask sides, fixed-point strings, cent-snapped
+# prices, and normalization back to the legacy {"order": ...} shape.
+
+V2_RESTING = {"order_id": "o1", "client_order_id": "cid", "fill_count": "0.00", "remaining_count": "3.00", "ts_ms": 1}
 
 
-def test_create_order_sends_caller_client_order_id(monkeypatch, client) -> None:
-    transport = _patch_http(
-        monkeypatch, [httpx.Response(200, json={"order": {"order_id": "o1"}})]
-    )
-    client.create_order(
+def test_create_order_uses_v2_endpoint_and_contract(monkeypatch, client) -> None:
+    transport = _patch_http(monkeypatch, [httpx.Response(200, json=V2_RESTING)])
+    result = client.create_order(
         ticker="KXTEST",
         side="yes",
         action="buy",
@@ -89,27 +93,86 @@ def test_create_order_sends_caller_client_order_id(monkeypatch, client) -> None:
         time_in_force="good_till_canceled",
         client_order_id="persisted-id-123",
     )
-    body = transport.calls[0]["json"]
-    assert body["client_order_id"] == "persisted-id-123"
-    assert body["count"] == 3
-    assert body["yes_price_dollars"] == "0.4200"
+    call = transport.calls[0]
+    assert call["method"] == "POST"
+    assert call["url"].endswith("/portfolio/events/orders")
+    body = call["json"]
+    assert body == {
+        "ticker": "KXTEST",
+        "side": "bid",  # buy YES = bid on the yes book
+        "count": "3.00",
+        "price": "0.42",
+        "time_in_force": "good_till_canceled",
+        "self_trade_prevention_type": "taker_at_cross",
+        "client_order_id": "persisted-id-123",
+    }
+    # Normalized for the outbox handlers.
+    assert result["order"]["order_id"] == "o1"
+    assert result["order"]["status"] == "resting"
 
 
-def test_create_order_generates_uuid_only_when_caller_omits_id(monkeypatch, client) -> None:
-    transport = _patch_http(
-        monkeypatch, [httpx.Response(200, json={"order": {}})]
-    )
+def test_create_order_maps_no_side_to_yes_book_ask(monkeypatch, client) -> None:
+    transport = _patch_http(monkeypatch, [httpx.Response(200, json=V2_RESTING)])
     client.create_order(
         ticker="KXTEST",
         side="no",
         action="buy",
         quantity=1,
-        limit_price=0.5,
+        limit_price=0.35,
         time_in_force="good_till_canceled",
     )
     body = transport.calls[0]["json"]
+    assert body["side"] == "ask"  # buy NO = ask on the yes book
+    assert body["price"] == "0.65"  # 1 − 0.35
     assert body["client_order_id"]  # uuid fallback for ad-hoc calls
-    assert body["no_price_dollars"] == "0.5000"
+
+
+def test_create_order_quantizes_subcent_prices(monkeypatch, client) -> None:
+    """+245 american odds parse to 0.2899… — the exchange 400s
+    (invalid_price) on sub-cent limits, so the client snaps to the
+    1¢ tick."""
+    transport = _patch_http(monkeypatch, [httpx.Response(200, json=V2_RESTING)])
+    client.create_order(
+        ticker="KXTEST",
+        side="yes",
+        action="buy",
+        quantity=2,
+        limit_price=0.2899,
+        time_in_force="good_till_canceled",
+    )
+    assert transport.calls[0]["json"]["price"] == "0.29"
+
+
+def test_create_order_normalizes_immediate_fill_to_executed(monkeypatch, client) -> None:
+    filled = {"order_id": "o2", "fill_count": "2.00", "remaining_count": "0.00", "ts_ms": 1}
+    _patch_http(monkeypatch, [httpx.Response(200, json=filled)])
+    result = client.create_order(
+        ticker="KXTEST",
+        side="yes",
+        action="buy",
+        quantity=2,
+        limit_price=0.5,
+        time_in_force="immediate_or_cancel",
+    )
+    assert result["order"]["status"] == "executed"
+
+
+def test_cancel_order_uses_v2_path_and_normalizes(monkeypatch, client) -> None:
+    transport = _patch_http(
+        monkeypatch,
+        [httpx.Response(200, json={"order_id": "o1", "reduced_by": "3.00", "ts_ms": 1})],
+    )
+    result = client.cancel_order("o1")
+    call = transport.calls[0]
+    assert call["method"] == "DELETE"
+    assert call["url"].endswith("/portfolio/events/orders/o1")
+    assert result["order"] == {"order_id": "o1", "status": "cancelled"}
+
+
+def test_quantize_price_clamps_to_tradable_band() -> None:
+    assert KalshiTradeClient.quantize_price(0.2899) == 0.29
+    assert KalshiTradeClient.quantize_price(0.005) == 0.01
+    assert KalshiTradeClient.quantize_price(0.999) == 0.99
 
 
 # ── combo endpoints ──────────────────────────────────────────────────

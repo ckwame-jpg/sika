@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { fetchTradingSettings, keys, placeKalshiOrder } from "@/lib/api";
-import { estimateTakerFeeDollars } from "@/lib/kalshi-fees";
+import { estimateTakerFeeDollars, quantizeToCentPrice } from "@/lib/kalshi-fees";
 import { usePriceDisplay } from "@/lib/price-display";
 import { cn } from "@/lib/utils";
 
@@ -72,7 +72,8 @@ export function KalshiOrderDialog({
   // input on the trade desk's 30s poll (same footgun as TradeDialog).
   useEffect(() => {
     if (!open) return;
-    const initialPrice = defaults.price ?? null;
+    // Cent-snap up front — the exchange only takes whole-cent limits.
+    const initialPrice = defaults.price != null ? quantizeToCentPrice(defaults.price) : null;
     setStage("form");
     setStakeInput("");
     setPriceInput(formatEditablePrice(initialPrice));
@@ -269,7 +270,10 @@ export function KalshiOrderDialog({
                   const value = event.target.value;
                   setPriceInput(value);
                   const parsed = parsePriceInput(value);
-                  if (parsed != null) setParsedPrice(parsed);
+                  // american odds → probability produces sub-cent
+                  // values; snap so the math matches what Kalshi
+                  // will actually accept.
+                  if (parsed != null) setParsedPrice(quantizeToCentPrice(parsed));
                 }}
                 data-testid="kalshi-order-price"
               />

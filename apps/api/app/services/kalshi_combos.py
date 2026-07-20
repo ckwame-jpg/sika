@@ -31,7 +31,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.clients.kalshi import KalshiTradeClient, parse_price_dollars
+from app.clients.kalshi import KalshiTradeClient, parse_price_dollars, quantize_price_cents
 from app.models import KalshiComboLeg, KalshiOrder, Market
 from app.schemas import (
     KalshiComboLegCreate,
@@ -43,6 +43,7 @@ from app.services.kalshi_orders import (
     client_for_order,
     enforce_order_cost_cap,
     environment_for_base_url,
+    friendly_kalshi_rejection,
     require_user_credentials,
 )
 from app.services.outbox import (
@@ -270,7 +271,11 @@ def create_kalshi_combo_order(
             detail="Manual approval is required before submitting real orders",
         )
     creds = require_user_credentials(db, user_id)
-    enforce_order_cost_cap(db, quantity=payload.quantity, limit_price=payload.limit_price)
+    # Snap to Kalshi's 1¢ tick — implied multiplicative combo prices
+    # are almost never cent-aligned (0.157…), and the exchange rejects
+    # sub-cent limits with invalid_price.
+    limit_price = quantize_price_cents(payload.limit_price)
+    enforce_order_cost_cap(db, quantity=payload.quantity, limit_price=limit_price)
 
     client = KalshiTradeClient(
         key_id=creds.key_id,
@@ -296,7 +301,7 @@ def create_kalshi_combo_order(
         side="yes",
         action="buy",
         quantity=payload.quantity,
-        limit_price=payload.limit_price,
+        limit_price=limit_price,
         collection_ticker=collection.get("collection_ticker"),
         approved_by_user=True,
         status="submitting",
@@ -365,9 +370,8 @@ def _kalshi_combo_submit_handler(db: Session, entry) -> None:
         except httpx.HTTPStatusError as exc:
             if 400 <= exc.response.status_code < 500:
                 order.status = "mint_failed"
-                order.error_detail = (
-                    f"Kalshi couldn't create the combo market "
-                    f"({exc.response.status_code}): {exc.response.text[:500]}"
+                order.error_detail = friendly_kalshi_rejection(
+                    "Kalshi couldn't create the combo market", exc
                 )
                 order.last_synced_at = now
                 logger.warning("combo mint failed for order %s: %s", order.id, order.error_detail)
@@ -402,10 +406,7 @@ def _kalshi_combo_submit_handler(db: Session, entry) -> None:
     except httpx.HTTPStatusError as exc:
         if 400 <= exc.response.status_code < 500:
             order.status = "submission_failed"
-            order.error_detail = (
-                f"Kalshi rejected the combo order ({exc.response.status_code}): "
-                f"{exc.response.text[:500]}"
-            )
+            order.error_detail = friendly_kalshi_rejection("Kalshi rejected the combo order", exc)
             order.last_synced_at = datetime.now(timezone.utc)
             logger.warning("combo order %s rejected: %s", order.id, order.error_detail)
             return
