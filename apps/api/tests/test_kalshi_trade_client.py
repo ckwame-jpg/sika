@@ -157,6 +157,23 @@ def test_create_order_normalizes_immediate_fill_to_executed(monkeypatch, client)
     assert result["order"]["status"] == "executed"
 
 
+def test_create_order_normalizes_ioc_zero_fill_to_cancelled(monkeypatch, client) -> None:
+    """An IOC that finds no liquidity fills nothing and rests nothing —
+    the row must read ``cancelled`` (nothing happened), never
+    ``resting``."""
+    empty = {"order_id": "o3", "fill_count": "0.00", "remaining_count": "0.00", "ts_ms": 1}
+    _patch_http(monkeypatch, [httpx.Response(200, json=empty)])
+    result = client.create_order(
+        ticker="KXTEST",
+        side="yes",
+        action="buy",
+        quantity=2,
+        limit_price=0.5,
+        time_in_force="immediate_or_cancel",
+    )
+    assert result["order"]["status"] == "cancelled"
+
+
 def test_cancel_order_uses_v2_path_and_normalizes(monkeypatch, client) -> None:
     transport = _patch_http(
         monkeypatch,

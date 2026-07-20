@@ -30,6 +30,12 @@ interface KalshiComboDialogProps {
 
 const QUICK_STAKE_AMOUNTS = [5, 10, 20, 50] as const;
 
+/** Same fill-now buffer as the single-order dialog — bid a few cents
+ * over the reference so a thin combo book can't dodge the order. */
+const FILL_NOW_BUFFER = 0.03;
+
+type FillMode = "fill_now" | "rest";
+
 /**
  * Real combo (parlay) order dialog — the tray's live-money exit.
  *
@@ -48,6 +54,7 @@ export function KalshiComboDialog({
   const { mode, formatEditablePrice, formatPrice, parsePriceInput } = usePriceDisplay();
   const { legs, clear } = useParlayTray();
   const [stage, setStage] = useState<"form" | "confirm">("form");
+  const [fillMode, setFillMode] = useState<FillMode>("fill_now");
   const [stakeInput, setStakeInput] = useState("");
   const [priceInput, setPriceInput] = useState("");
   const [parsedPrice, setParsedPrice] = useState<number | null>(null);
@@ -57,19 +64,39 @@ export function KalshiComboDialog({
   const { data: tradingSettings } = useSWR(keys.tradingSettings, fetchTradingSettings);
   const capDollars = tradingSettings?.max_order_cost_dollars ?? null;
 
-  // Cent-snap: implied multiplicative prices are essentially never
-  // cent-aligned, and Kalshi rejects sub-cent limits (invalid_price).
+  // Reference price: the live combo ask when the market exists, else
+  // the implied multiplicative price. Cent-snapped (Kalshi rejects
+  // sub-cent limits); fill-now adds the buffer on top.
   const rawSuggested = preview?.quote_yes_ask ?? preview?.implied_price ?? null;
-  const suggestedPrice = rawSuggested != null ? quantizeToCentPrice(rawSuggested) : null;
+  const referencePrice = rawSuggested != null ? quantizeToCentPrice(rawSuggested) : null;
   const mintNeeded = !preview?.existing_market_ticker;
+
+  const prefillFor = (nextMode: FillMode) =>
+    referencePrice == null
+      ? null
+      : nextMode === "fill_now"
+        ? quantizeToCentPrice(referencePrice + FILL_NOW_BUFFER)
+        : referencePrice;
+
+  function switchFillMode(nextMode: FillMode) {
+    setFillMode(nextMode);
+    const price = prefillFor(nextMode);
+    setParsedPrice(price);
+    setPriceInput(formatEditablePrice(price));
+  }
 
   // Reset on open transition only (same footgun note as TradeDialog).
   useEffect(() => {
     if (!open) return;
+    const initialPrice =
+      referencePrice != null
+        ? quantizeToCentPrice(referencePrice + FILL_NOW_BUFFER)
+        : null;
     setStage("form");
+    setFillMode("fill_now");
     setStakeInput("");
-    setPriceInput(formatEditablePrice(suggestedPrice));
-    setParsedPrice(suggestedPrice);
+    setPriceInput(formatEditablePrice(initialPrice));
+    setParsedPrice(initialPrice);
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -128,7 +155,7 @@ export function KalshiComboDialog({
         quantity: order.quantity,
         limit_price: parsedPrice,
         approved: true,
-        time_in_force: "good_till_canceled",
+        time_in_force: fillMode === "fill_now" ? "immediate_or_cancel" : "good_till_canceled",
       });
       await Promise.all([mutate(keys.kalshiOrders), mutate(keys.positions)]);
       clear();
@@ -240,14 +267,54 @@ export function KalshiComboDialog({
               </div>
             </div>
 
+            <div className="flex gap-1.5" role="radiogroup" aria-label="Order mode">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={fillMode === "fill_now"}
+                onClick={() => switchFillMode("fill_now")}
+                className={cn(
+                  "flex-1 rounded-lg border px-3 py-2 text-left transition-colors duration-[120ms] focus-visible:ring-focus",
+                  fillMode === "fill_now"
+                    ? "border-accent/60 bg-accent/10"
+                    : "border-border/60 hover:border-accent/40",
+                )}
+                data-testid="kalshi-combo-mode-fill"
+              >
+                <span className="block text-xs font-medium text-foreground">fill now</span>
+                <span className="block text-2xs text-muted-foreground">
+                  takes the market price · instant or nothing
+                </span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={fillMode === "rest"}
+                onClick={() => switchFillMode("rest")}
+                className={cn(
+                  "flex-1 rounded-lg border px-3 py-2 text-left transition-colors duration-[120ms] focus-visible:ring-focus",
+                  fillMode === "rest"
+                    ? "border-accent/60 bg-accent/10"
+                    : "border-border/60 hover:border-accent/40",
+                )}
+                data-testid="kalshi-combo-mode-rest"
+              >
+                <span className="block text-xs font-medium text-foreground">rest at my price</span>
+                <span className="block text-2xs text-muted-foreground">
+                  waits on the book · better odds, may never fill
+                </span>
+              </button>
+            </div>
+
             <div>
               <label className="mb-1.5 block text-xs text-muted-foreground">
-                Combo limit price
+                {fillMode === "fill_now" ? "Max combo price" : "Combo limit price"}
                 {preview?.quote_yes_ask != null
-                  ? " (live ask)"
+                  ? " (live ask"
                   : preview?.implied_price != null
-                    ? " (implied from legs)"
-                    : ""}
+                    ? " (implied from legs"
+                    : "("}
+                {fillMode === "fill_now" ? " + buffer)" : ")"}
               </label>
               <Input
                 mono
@@ -292,8 +359,8 @@ export function KalshiComboDialog({
                 {legs.length} legs
               </p>
               <p className="mt-1 font-mono text-xs text-muted-foreground">
-                LIMIT YES @ {parsedPrice != null ? formatPrice(parsedPrice) : "—"} on the
-                combo market
+                {fillMode === "fill_now" ? "FILL NOW" : "REST"} · YES up to{" "}
+                {parsedPrice != null ? formatPrice(parsedPrice) : "—"} on the combo market
               </p>
               {order && (
                 <>
@@ -334,9 +401,11 @@ export function KalshiComboDialog({
             </div>
             <p className="text-2xs text-muted-foreground">
               {mintNeeded
-                ? "The combo market will be created on Kalshi if it doesn't exist yet — fresh books are thin, so the order will likely rest at first. "
+                ? "The combo market will be created on Kalshi first. Fresh books can be empty for a minute — if fill-now finds nothing, nothing is charged; try again shortly. "
                 : ""}
-              Cancel anytime from the portfolio orders panel.
+              {fillMode === "fill_now"
+                ? "Executes instantly at the best available price up to your max — cost shown is the worst case."
+                : "Rests on the book until someone meets your price — cancel anytime from the portfolio orders panel."}
             </p>
             {error && <p className="text-xs text-negative">{error}</p>}
           </DialogBody>

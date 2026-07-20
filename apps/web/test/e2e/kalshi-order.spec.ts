@@ -175,14 +175,15 @@ test("places a real single order through the confirm flow", async ({ page }) => 
 
   await expect(page.getByTestId("kalshi-order-env-badge")).toContainText("demo / sandbox");
 
-  // $10 quick-stake; fixture hero price 40¢ → 25 contracts.
+  // $10 quick-stake; fill-now prefills 40¢ + 3¢ buffer → 23 contracts.
   await page.getByText("$10", { exact: true }).click();
-  await expect(page.getByTestId("kalshi-order-preview")).toContainText("25 contracts");
+  await expect(page.getByTestId("kalshi-order-preview")).toContainText("23 contracts");
 
   await page.getByTestId("kalshi-order-review").click();
   const summary = page.getByTestId("kalshi-order-confirm-summary");
   await expect(summary).toContainText("Davion Mitchell 10+ points");
-  await expect(summary).toContainText("Total cost$10.00");
+  await expect(summary).toContainText("FILL NOW · YES up to");
+  await expect(summary).toContainText("Total cost$9.89");
   await expect(summary).toContainText("Per-order cap$25");
 
   await page.getByTestId("kalshi-order-confirm").click();
@@ -193,10 +194,10 @@ test("places a real single order through the confirm flow", async ({ page }) => 
     ticker: "KXNBAPTS-DAVION-10",
     side: "yes",
     action: "buy",
-    quantity: 25,
-    limit_price: 0.4,
+    quantity: 23,
+    limit_price: 0.43,
     approved: true,
-    time_in_force: "good_till_canceled",
+    time_in_force: "immediate_or_cancel",
   });
   expect(captured.unexpected).toEqual([]);
 });
@@ -232,12 +233,12 @@ test("builds a tray combo and places it as a real kalshi combo", async ({ page }
 
   await expect(page.getByTestId("kalshi-combo-legs")).toContainText("Davion Mitchell 10+ points");
   await page.getByText("$5", { exact: true }).click();
-  // $5 @ 22¢ (live ask prefill) → 23 contracts.
-  await expect(page.getByTestId("kalshi-combo-preview-line")).toContainText("23 contracts");
+  // $5 @ 25¢ (live ask 22¢ + fill-now buffer) → 20 contracts.
+  await expect(page.getByTestId("kalshi-combo-preview-line")).toContainText("20 contracts");
 
   await page.getByTestId("kalshi-combo-review").click();
   await expect(page.getByTestId("kalshi-combo-confirm-summary")).toContainText(
-    "Pays if ALL legs hit$23.00",
+    "Pays if ALL legs hit$20.00",
   );
 
   await page.getByTestId("kalshi-combo-confirm").click();
@@ -245,10 +246,10 @@ test("builds a tray combo and places it as a real kalshi combo", async ({ page }
     .poll(() => captured.kalshiCombos.length, { message: "combo POST captured" })
     .toBe(1);
   expect(captured.kalshiCombos[0]).toMatchObject({
-    quantity: 23,
-    limit_price: 0.22,
+    quantity: 20,
+    limit_price: 0.25,
     approved: true,
-    time_in_force: "good_till_canceled",
+    time_in_force: "immediate_or_cancel",
     legs: [
       expect.objectContaining({ ticker: "KXNBAPTS-DAVION-10", side: "yes", entry_price: 0.4 }),
       expect.objectContaining({ ticker: "KXNBAAST-DAVION-4", side: "yes" }),

@@ -39,6 +39,15 @@ interface KalshiOrderDialogProps {
 
 const QUICK_STAKE_AMOUNTS = [5, 10, 20, 50, 100] as const;
 
+/** Fill-now price buffer: bid this many cents above the reference
+ * price so a thin/moving book can't dodge the order between glance
+ * and tap. A limit is the WORST acceptable price — the exchange still
+ * fills at the actual ask, so the buffer costs nothing when the book
+ * holds still. */
+const FILL_NOW_BUFFER = 0.03;
+
+type FillMode = "fill_now" | "rest";
+
 /**
  * Real-order dialog — the live-money sibling of ``TradeDialog``.
  *
@@ -58,11 +67,30 @@ export function KalshiOrderDialog({
 }: KalshiOrderDialogProps) {
   const { mode, formatEditablePrice, formatPrice, parsePriceInput } = usePriceDisplay();
   const [stage, setStage] = useState<"form" | "confirm">("form");
+  const [fillMode, setFillMode] = useState<FillMode>("fill_now");
   const [stakeInput, setStakeInput] = useState("");
   const [priceInput, setPriceInput] = useState("");
   const [parsedPrice, setParsedPrice] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Reference price (the market's side price) and the per-mode prefill:
+  // fill-now bids reference + buffer so the book can't dodge; rest
+  // bids the reference itself and waits.
+  const referencePrice = defaults.price != null ? quantizeToCentPrice(defaults.price) : null;
+  const prefillFor = (nextMode: FillMode) =>
+    referencePrice == null
+      ? null
+      : nextMode === "fill_now"
+        ? quantizeToCentPrice(referencePrice + FILL_NOW_BUFFER)
+        : referencePrice;
+
+  function switchFillMode(nextMode: FillMode) {
+    setFillMode(nextMode);
+    const price = prefillFor(nextMode);
+    setParsedPrice(price);
+    setPriceInput(formatEditablePrice(price));
+  }
 
   const { data: tradingSettings } = useSWR(keys.tradingSettings, fetchTradingSettings);
   const capDollars = tradingSettings?.max_order_cost_dollars ?? null;
@@ -72,9 +100,14 @@ export function KalshiOrderDialog({
   // input on the trade desk's 30s poll (same footgun as TradeDialog).
   useEffect(() => {
     if (!open) return;
-    // Cent-snap up front — the exchange only takes whole-cent limits.
-    const initialPrice = defaults.price != null ? quantizeToCentPrice(defaults.price) : null;
+    // Default to fill-now: "place the bet" semantics. The buffered
+    // prefill is the worst-case price; actual fills happen at the ask.
+    const initialPrice =
+      referencePrice != null
+        ? quantizeToCentPrice(referencePrice + FILL_NOW_BUFFER)
+        : null;
     setStage("form");
+    setFillMode("fill_now");
     setStakeInput("");
     setPriceInput(formatEditablePrice(initialPrice));
     setParsedPrice(initialPrice);
@@ -131,7 +164,9 @@ export function KalshiOrderDialog({
         quantity: order.quantity,
         limit_price: parsedPrice,
         approved: true,
-        time_in_force: "good_till_canceled",
+        // Fill-now = IOC: execute what the book offers up to the max
+        // price, cancel the rest — never leaves a zombie resting order.
+        time_in_force: fillMode === "fill_now" ? "immediate_or_cancel" : "good_till_canceled",
       });
       await Promise.all([mutate(keys.kalshiOrders), mutate(keys.positions)]);
       onOpenChange(false);
@@ -254,13 +289,59 @@ export function KalshiOrderDialog({
               </div>
             </div>
 
+            <div className="flex gap-1.5" role="radiogroup" aria-label="Order mode">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={fillMode === "fill_now"}
+                onClick={() => switchFillMode("fill_now")}
+                className={cn(
+                  "flex-1 rounded-lg border px-3 py-2 text-left transition-colors duration-[120ms] focus-visible:ring-focus",
+                  fillMode === "fill_now"
+                    ? "border-accent/60 bg-accent/10"
+                    : "border-border/60 hover:border-accent/40",
+                )}
+                data-testid="kalshi-order-mode-fill"
+              >
+                <span className="block text-xs font-medium text-foreground">fill now</span>
+                <span className="block text-2xs text-muted-foreground">
+                  takes the market price · instant or nothing
+                </span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={fillMode === "rest"}
+                onClick={() => switchFillMode("rest")}
+                className={cn(
+                  "flex-1 rounded-lg border px-3 py-2 text-left transition-colors duration-[120ms] focus-visible:ring-focus",
+                  fillMode === "rest"
+                    ? "border-accent/60 bg-accent/10"
+                    : "border-border/60 hover:border-accent/40",
+                )}
+                data-testid="kalshi-order-mode-rest"
+              >
+                <span className="block text-xs font-medium text-foreground">rest at my price</span>
+                <span className="block text-2xs text-muted-foreground">
+                  waits on the book · better odds, may never fill
+                </span>
+              </button>
+            </div>
+
             <div>
               <label className="mb-1.5 block text-xs text-muted-foreground">
+                {fillMode === "fill_now" ? "Max price" : "Limit price"}
                 {mode === "american"
-                  ? "Limit price (American odds)"
+                  ? " (American odds)"
                   : mode === "prediction"
-                    ? "Limit price (prediction %)"
-                    : "Limit price (Kalshi cents)"}
+                    ? " (prediction %)"
+                    : " (Kalshi cents)"}
+                {fillMode === "fill_now" && (
+                  <span className="text-muted-foreground/60">
+                    {" "}
+                    · fills at the best available up to this
+                  </span>
+                )}
               </label>
               <Input
                 mono
@@ -313,7 +394,8 @@ export function KalshiOrderDialog({
                 {defaults.displayLabel ?? defaults.ticker}
               </p>
               <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                LIMIT {defaults.side.toUpperCase()} @ {parsedPrice != null ? formatPrice(parsedPrice) : "—"}
+                {fillMode === "fill_now" ? "FILL NOW" : "REST"} · {defaults.side.toUpperCase()} up to{" "}
+                {parsedPrice != null ? formatPrice(parsedPrice) : "—"}
               </p>
               {order && (
                 <>
@@ -354,8 +436,9 @@ export function KalshiOrderDialog({
               )}
             </div>
             <p className="text-2xs text-muted-foreground">
-              Limit orders can rest until filled — cancel anytime from the portfolio
-              orders panel. Resting fills are charged the lower maker fee.
+              {fillMode === "fill_now"
+                ? "Executes instantly at the best available price up to your max — cost and fee shown are the worst case. If the book is empty, nothing happens and nothing is charged."
+                : "Rests on the book until someone meets your price — cancel anytime from the portfolio orders panel. Resting fills are charged the lower maker fee."}
             </p>
             {error && <p className="text-xs text-negative" role="alert">{error}</p>}
           </DialogBody>

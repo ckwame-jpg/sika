@@ -124,21 +124,21 @@ describe("parlay tray → kalshi combo flow", () => {
     expect(placeButton).toHaveTextContent("place combo on kalshi · demo");
     await user.click(placeButton);
 
-    // Dialog: legs listed, price prefilled from the live ask (22¢).
+    // Dialog: legs listed; fill-now prefills live ask 22¢ + 3¢ buffer.
     expect(screen.getByTestId("kalshi-combo-legs")).toHaveTextContent("KXA prop");
-    expect(screen.getByTestId("kalshi-combo-price")).toHaveValue("22");
+    expect(screen.getByTestId("kalshi-combo-price")).toHaveValue("25");
 
     await user.type(screen.getByTestId("kalshi-combo-stake"), "5");
-    // $5 @ 22¢ → 23 contracts
+    // $5 @ max 25¢ → 20 contracts
     await waitFor(() =>
       expect(screen.getByTestId("kalshi-combo-preview-line")).toHaveTextContent(
-        "23 contracts",
+        "20 contracts",
       ),
     );
 
     await user.click(screen.getByTestId("kalshi-combo-review"));
     expect(screen.getByTestId("kalshi-combo-confirm-summary")).toHaveTextContent(
-      "Pays if ALL legs hit$23.00",
+      "Pays if ALL legs hit$20.00",
     );
 
     await user.click(screen.getByTestId("kalshi-combo-confirm"));
@@ -148,10 +148,10 @@ describe("parlay tray → kalshi combo flow", () => {
         expect.objectContaining({ ticker: "KXA", side: "yes" }),
         expect.objectContaining({ ticker: "KXB", side: "no" }),
       ],
-      quantity: 23,
-      limit_price: 0.22,
+      quantity: 20,
+      limit_price: 0.25,
       approved: true,
-      time_in_force: "good_till_canceled",
+      time_in_force: "immediate_or_cancel",
     });
 
     // Success clears the tray (legs are now a real order).
