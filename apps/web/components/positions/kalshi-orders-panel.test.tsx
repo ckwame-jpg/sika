@@ -16,10 +16,12 @@ function renderPanel() {
 const {
   mockFetchKalshiOrders,
   mockCancelKalshiOrder,
+  mockDismissKalshiOrder,
   mockFetchMyKalshiCredentials,
 } = vi.hoisted(() => ({
   mockFetchKalshiOrders: vi.fn(),
   mockCancelKalshiOrder: vi.fn(),
+  mockDismissKalshiOrder: vi.fn(),
   mockFetchMyKalshiCredentials: vi.fn(),
 }));
 
@@ -29,6 +31,7 @@ vi.mock("@/lib/api", async () => {
     ...actual,
     fetchKalshiOrders: mockFetchKalshiOrders,
     cancelKalshiOrder: mockCancelKalshiOrder,
+    dismissKalshiOrder: mockDismissKalshiOrder,
     fetchMyKalshiCredentials: mockFetchMyKalshiCredentials,
   };
 });
@@ -59,6 +62,7 @@ const RESTING_ORDER = {
 beforeEach(() => {
   mockFetchKalshiOrders.mockReset();
   mockCancelKalshiOrder.mockReset();
+  mockDismissKalshiOrder.mockReset();
   mockFetchMyKalshiCredentials.mockReset();
   mockFetchMyKalshiCredentials.mockResolvedValue({
     configured: true,
@@ -110,6 +114,31 @@ describe("KalshiOrdersPanel", () => {
     expect(screen.getByTestId("kalshi-order-status")).toHaveTextContent("submission failed");
     // terminal + no kalshi id → no cancel affordance
     expect(screen.queryByTestId("kalshi-order-cancel")).not.toBeInTheDocument();
+  });
+
+  it("dismisses failed rows but never resting ones", async () => {
+    const user = userEvent.setup();
+    mockDismissKalshiOrder.mockResolvedValue({ deleted: true });
+    mockFetchKalshiOrders.mockResolvedValue([
+      RESTING_ORDER,
+      {
+        ...RESTING_ORDER,
+        id: 12,
+        status: "mint_failed",
+        kalshi_order_id: null,
+        error_detail: "Kalshi couldn't create the combo market (403)",
+        fills: [],
+      },
+    ]);
+    renderPanel();
+
+    const dismissButtons = await screen.findAllByTestId("kalshi-order-dismiss");
+    // Only the failed row gets the affordance — resting must be
+    // cancelled first (matches the server's DISMISSIBLE_STATUSES).
+    expect(dismissButtons).toHaveLength(1);
+
+    await user.click(dismissButtons[0]);
+    await waitFor(() => expect(mockDismissKalshiOrder).toHaveBeenCalledWith(12));
   });
 
   it("expands combo legs under the combo row", async () => {

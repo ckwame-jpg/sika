@@ -5108,6 +5108,9 @@
 .parlay-tray-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 /* PAPER_PARLAY_SCOPE.md step 6 — save dialog. Visual rhymes with the

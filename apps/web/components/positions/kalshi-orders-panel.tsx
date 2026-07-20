@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import useSWR, { mutate } from "swr";
-import { cancelKalshiOrder, fetchKalshiOrders, fetchMyKalshiCredentials, keys } from "@/lib/api";
+import {
+  cancelKalshiOrder,
+  dismissKalshiOrder,
+  fetchKalshiOrders,
+  fetchMyKalshiCredentials,
+  keys,
+} from "@/lib/api";
 import type { KalshiOrderRead } from "@/lib/types";
 import { usePriceDisplay } from "@/lib/price-display";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,6 +18,10 @@ import { RefreshCw } from "lucide-react";
 /** Statuses the operator can still act on (cancel). */
 const CANCELLABLE = new Set(["resting", "pending_submission", "submitting"]);
 const TERMINAL_BAD = new Set(["submission_failed", "mint_failed"]);
+/** Terminal rows the operator may clear — mirrors the server's
+ * DISMISSIBLE_STATUSES (failed rows never reached the exchange;
+ * cancelled orders live on in Kalshi's own history). */
+const DISMISSIBLE = new Set(["submission_failed", "mint_failed", "cancelled"]);
 
 /**
  * Real Kalshi orders — the live-money sibling of the demo-orders view.
@@ -29,6 +39,7 @@ export function KalshiOrdersPanel() {
   );
   const [syncing, setSyncing] = useState(false);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const [dismissingId, setDismissingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   if (!creds?.configured) return null;
@@ -59,6 +70,19 @@ export function KalshiOrdersPanel() {
       setActionError(error instanceof Error ? error.message : "Cancel failed");
     } finally {
       setCancellingId(null);
+    }
+  }
+
+  async function handleDismiss(id: number) {
+    setDismissingId(id);
+    setActionError(null);
+    try {
+      await dismissKalshiOrder(id);
+      await mutate(keys.kalshiOrders);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Dismiss failed");
+    } finally {
+      setDismissingId(null);
     }
   }
 
@@ -118,7 +142,9 @@ export function KalshiOrdersPanel() {
               key={order.id}
               order={order}
               cancelling={cancellingId === order.id}
+              dismissing={dismissingId === order.id}
               onCancel={() => void handleCancel(order.id)}
+              onDismiss={() => void handleDismiss(order.id)}
             />
           ))}
         </div>
@@ -130,11 +156,15 @@ export function KalshiOrdersPanel() {
 function OrderRow({
   order,
   cancelling,
+  dismissing,
   onCancel,
+  onDismiss,
 }: {
   order: KalshiOrderRead;
   cancelling: boolean;
+  dismissing: boolean;
   onCancel: () => void;
+  onDismiss: () => void;
 }) {
   const { formatPrice } = usePriceDisplay();
   const [legsOpen, setLegsOpen] = useState(false);
@@ -215,6 +245,18 @@ function OrderRow({
           data-testid="kalshi-order-cancel"
         >
           {cancelling ? "cancelling…" : "cancel"}
+        </button>
+      )}
+      {DISMISSIBLE.has(order.status) && (
+        <button
+          type="button"
+          className="gi-btn-ghost"
+          onClick={onDismiss}
+          disabled={dismissing}
+          aria-label="Dismiss this order row"
+          data-testid="kalshi-order-dismiss"
+        >
+          {dismissing ? "…" : "✕ dismiss"}
         </button>
       )}
       </div>

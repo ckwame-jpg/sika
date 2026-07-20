@@ -276,6 +276,52 @@ def test_cancel_before_submission_conflicts(db_session):
     assert err.value.status_code == 409
 
 
+# ── dismiss ─────────────────────────────────────────────────────────
+
+
+def test_dismiss_failed_row_deletes_it(db_session, monkeypatch):
+    user = _seed(db_session)
+
+    class RejectingClient(FakeTradeClient):
+        def create_order(self, **kwargs):
+            request = httpx.Request("POST", "https://x/portfolio/events/orders")
+            response = httpx.Response(400, text="invalid price", request=request)
+            raise httpx.HTTPStatusError("400", request=request, response=response)
+
+    monkeypatch.setattr(ko, "client_for_order", lambda db, order: RejectingClient())
+    order = ko.create_kalshi_order(db_session, _payload(), user_id=user.id)
+    db_session.commit()
+    drain_once(db_session)
+    db_session.refresh(order)
+    assert order.status == "submission_failed"
+
+    ko.delete_kalshi_order(db_session, order.id, user_id=user.id)
+    db_session.commit()
+    assert db_session.get(KalshiOrder, order.id) is None
+
+
+def test_dismiss_blocks_resting_and_wrong_owner(db_session, monkeypatch):
+    user = _seed(db_session)
+    fake = FakeTradeClient()
+    monkeypatch.setattr(ko, "client_for_order", lambda db, order: fake)
+    order = ko.create_kalshi_order(db_session, _payload(), user_id=user.id)
+    db_session.commit()
+    drain_once(db_session)
+    db_session.refresh(order)
+    assert order.status == "resting"
+
+    with pytest.raises(HTTPException) as err:
+        ko.delete_kalshi_order(db_session, order.id, user_id=user.id)
+    assert err.value.status_code == 400
+    assert "Cancel resting orders first" in err.value.detail
+
+    order.status = "submission_failed"
+    db_session.commit()
+    with pytest.raises(HTTPException) as err:
+        ko.delete_kalshi_order(db_session, order.id, user_id=user.id + 999)
+    assert err.value.status_code == 403
+
+
 # ── reconcile ───────────────────────────────────────────────────────
 
 

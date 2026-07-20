@@ -267,6 +267,9 @@ export const fetchKalshiOrders = (options: { openOnly?: boolean; sync?: boolean 
 export const cancelKalshiOrder = (id: number) =>
   request<KalshiOrderRead>(`/kalshi-orders/${id}/cancel`, { method: "POST" });
 
+export const dismissKalshiOrder = (id: number) =>
+  request<{ deleted: boolean }>(`/kalshi-orders/${id}`, { method: "DELETE" });
+
 export const previewKalshiCombo = (body: KalshiComboPreviewRequest) =>
   request<KalshiComboPreviewRead>("/kalshi-combos/preview", {
     method: "POST",
