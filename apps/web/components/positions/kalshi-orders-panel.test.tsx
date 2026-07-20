@@ -168,7 +168,7 @@ describe("KalshiOrdersPanel", () => {
     mockFetchKalshiOrders.mockResolvedValue([]);
     renderPanel();
     expect(await screen.findByTestId("kalshi-orders-empty")).toHaveTextContent(
-      "No real orders yet",
+      "no real orders yet. the amber button on any ticket starts one.",
     );
   });
 });
