@@ -28,6 +28,12 @@ multi-user mode:
 You need demo-environment API credentials from
 [demo.kalshi.co](https://demo.kalshi.co) (its own account + API key).
 
+> **Key permissions matter:** when creating any Kalshi API key (demo or
+> prod), grant it **full trading permissions**. A read-only key can see
+> your portfolio but order placement fails with
+> `insufficient_scope` — and combo minting additionally requires write
+> access. The orders panel surfaces this with a fix hint if it happens.
+
 1. **settings → kalshi**: paste the demo key id + PEM, Environment =
    **Demo / sandbox**, save. The header chip should flip to
    `kalshi demo`.

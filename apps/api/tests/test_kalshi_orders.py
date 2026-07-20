@@ -113,6 +113,23 @@ def test_create_enforces_cost_cap(db_session):
     assert order.quantity == 100
 
 
+def test_create_quantizes_subcent_limit_price(db_session):
+    """American-odds input produces sub-cent prices (+245 → 0.2899…);
+    the row, cap check, and outbox payload all use the cent-snapped
+    value so the exchange never sees an invalid_price."""
+    user = _seed(db_session)
+    order = ko.create_kalshi_order(
+        db_session, _payload(limit_price=0.2899), user_id=user.id
+    )
+    db_session.commit()
+    assert order.limit_price == 0.29
+
+    entry = db_session.scalars(
+        select(OutboxEntry).where(OutboxEntry.target_id == order.id)
+    ).one()
+    assert entry.payload["limit_price"] == 0.29
+
+
 def test_create_unknown_ticker_404(db_session):
     user = _seed(db_session)
     with pytest.raises(HTTPException) as err:

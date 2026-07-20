@@ -75,6 +75,16 @@ def parse_price_dollars(raw_value: Any) -> float | None:
     return float(raw_value)
 
 
+def quantize_price_cents(price: float) -> float:
+    """Snap a dollar price to Kalshi's 1¢ tick, clamped to the tradable
+    1¢–99¢ band. The exchange rejects sub-cent prices with
+    ``invalid_price`` (seen live with american-odds-derived prices like
+    0.2899). Module-level so services can import it without touching
+    the client class (which tests monkeypatch)."""
+    cents = round(price * 100)
+    return max(1, min(99, cents)) / 100.0
+
+
 class KalshiPublicClient:
     _MAX_ATTEMPTS = 4
     _BACKOFF_SCHEDULE_SECONDS: tuple[float, ...] = (0.5, 1.0, 2.0, 4.0)
@@ -443,6 +453,8 @@ class KalshiTradeClient(KalshiAuthenticatedClient):
     choice from /settings/kalshi, which is what makes an order "real".
     """
 
+    quantize_price = staticmethod(lambda price: quantize_price_cents(price))
+
     def create_order(
         self,
         *,
@@ -454,30 +466,66 @@ class KalshiTradeClient(KalshiAuthenticatedClient):
         time_in_force: str,
         client_order_id: str | None = None,
     ) -> dict[str, Any]:
-        # ``client_order_id`` is Kalshi's idempotency key: a re-submit
-        # with the same id returns the existing order instead of
-        # creating a duplicate. Callers that persist an order row MUST
-        # pass the persisted id so outbox retries can't double-submit
-        # (real money on the live host). The uuid fallback exists only
-        # for ad-hoc/manual calls.
+        """Place a limit order via Kalshi's V2 endpoint.
+
+        The legacy ``POST /portfolio/orders`` began returning
+        ``deprecated_v1_order_endpoint`` (410) on prod in July 2026.
+        V2 (``POST /portfolio/events/orders``) expresses every order on
+        the YES book: buying YES at p is a ``bid`` at p; buying NO at p
+        is an ``ask`` at 1−p (and sells invert). Counts/prices are
+        fixed-point strings; ``self_trade_prevention_type`` is required.
+
+        ``client_order_id`` is Kalshi's idempotency key: a re-submit
+        with the same id returns the existing order instead of creating
+        a duplicate. Callers that persist an order row MUST pass the
+        persisted id so outbox retries can't double-submit. The uuid
+        fallback exists only for ad-hoc/manual calls.
+
+        The response is normalized to the legacy ``{"order": {...}}``
+        shape (order_id / client_order_id / status) so the outbox
+        handlers and reconcile stay agnostic to the API version.
+        """
         client_order_id = client_order_id or str(uuid.uuid4())
+        is_yes = side.lower() == "yes"
+        is_buy = (action or "buy").lower() == "buy"
+        # buy-yes / sell-no → bid; buy-no / sell-yes → ask.
+        book_side = "bid" if is_yes == is_buy else "ask"
+        yes_price = self.quantize_price(limit_price if is_yes else 1 - limit_price)
         payload: dict[str, Any] = {
             "ticker": ticker,
-            "side": side,
-            "action": action,
+            "side": book_side,
+            "count": f"{quantity:.2f}",
+            "price": f"{yes_price:.2f}",
+            "time_in_force": time_in_force or "good_till_canceled",
+            "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": client_order_id,
-            "count": quantity,
-            "count_fp": f"{quantity:.2f}",
-            "time_in_force": time_in_force,
         }
-        price_field = "yes_price_dollars" if side.lower() == "yes" else "no_price_dollars"
-        payload[price_field] = f"{limit_price:.4f}"
-        response = self._request("POST", "/portfolio/orders", json_body=payload)
-        response.setdefault("request", payload)
-        return response
+        response = self._request("POST", "/portfolio/events/orders", json_body=payload)
+        remaining = float(response.get("remaining_count") or 0)
+        filled = float(response.get("fill_count") or 0)
+        status = "executed" if remaining <= 0 and filled > 0 else "resting"
+        return {
+            "order": {
+                "order_id": response.get("order_id"),
+                "client_order_id": response.get("client_order_id") or client_order_id,
+                "status": status,
+            },
+            "request": payload,
+            "raw": response,
+        }
 
     def cancel_order(self, kalshi_order_id: str) -> dict[str, Any]:
-        return self._request("DELETE", f"/portfolio/orders/{kalshi_order_id}")
+        """Cancel via the V2 path; normalized like ``create_order``.
+        The V2 response has no status field — a 2xx means the resting
+        remainder was reduced/cancelled."""
+        response = self._request("DELETE", f"/portfolio/events/orders/{kalshi_order_id}")
+        return {
+            "order": {
+                "order_id": response.get("order_id") or kalshi_order_id,
+                "status": "cancelled",
+            },
+            "raw": response,
+        }
 
     def list_orders(self) -> list[dict[str, Any]]:
         return self._request("GET", "/portfolio/orders").get("orders") or []

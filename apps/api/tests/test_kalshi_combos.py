@@ -271,6 +271,44 @@ def test_combo_create_writes_order_legs_and_outbox(db_session, monkeypatch):
     assert entries[0].payload["selected_markets"][0]["event_ticker"] == "EV-NYY"
 
 
+def test_combo_create_quantizes_subcent_limit_price(db_session, monkeypatch):
+    """Implied multiplicative combo prices (0.157…) are never
+    cent-aligned — the row + outbox payload carry the snapped value."""
+    user = _seed(db_session, markets=[("KXA", "EV-NYY"), ("KXB", "EV-BOS")])
+    fake = FakeComboClient()
+    order = _place(db_session, user, fake, monkeypatch, limit_price=0.157)
+    db_session.commit()
+    assert order.limit_price == 0.16
+    entry = db_session.scalars(
+        select(OutboxEntry).where(OutboxEntry.target_id == order.id)
+    ).one()
+    assert entry.payload["limit_price"] == 0.16
+
+
+def test_combo_scope_rejection_carries_key_fix_hint(db_session, monkeypatch):
+    """insufficient_scope means the API key can't trade — the surfaced
+    error tells the operator exactly how to fix it."""
+    user = _seed(db_session, markets=[("KXA", "EV-NYY"), ("KXB", "EV-BOS")])
+
+    class ScopeRejectingMint(FakeComboClient):
+        def create_combo_market(self, collection_ticker, selected_markets, **kwargs):
+            request = httpx.Request("POST", "https://x/multivariate_event_collections/KXMLBCOMBO")
+            response = httpx.Response(
+                403,
+                text='{"error":{"code":"insufficient_scope:_write_required"}}',
+                request=request,
+            )
+            raise httpx.HTTPStatusError("403", request=request, response=response)
+
+    fake = ScopeRejectingMint(lookup_result=None)
+    order = _place(db_session, user, fake, monkeypatch)
+    db_session.commit()
+    drain_once(db_session)
+    db_session.refresh(order)
+    assert order.status == "mint_failed"
+    assert "full trading permissions" in order.error_detail
+
+
 def test_combo_create_rejects_uncombinable_legs(db_session, monkeypatch):
     user = _seed(db_session, markets=[("KXA", "EV-NYY"), ("KXB", "EV-UNKNOWN")])
     fake = FakeComboClient()

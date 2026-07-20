@@ -32,7 +32,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.clients.kalshi import KalshiTradeClient
+from app.clients.kalshi import KalshiTradeClient, quantize_price_cents
 from app.config import get_settings
 from app.models import KalshiOrder, KalshiOrderFill, Market
 from app.schemas import KalshiOrderCreate
@@ -73,6 +73,18 @@ def require_user_credentials(db: Session, user_id: int | None):
     return row
 
 
+def friendly_kalshi_rejection(prefix: str, exc: httpx.HTTPStatusError) -> str:
+    """Exchange rejection → error_detail with the raw body plus, where
+    we recognize the failure, the one-line fix the operator needs."""
+    detail = f"{prefix} ({exc.response.status_code}): {exc.response.text[:500]}"
+    if "insufficient_scope" in exc.response.text:
+        detail += (
+            " · fix: this api key can't trade — create a new kalshi api key with "
+            "full trading permissions and re-save it in settings → kalshi."
+        )
+    return detail
+
+
 def enforce_order_cost_cap(db: Session, *, quantity: int, limit_price: float) -> None:
     cap = effective_kalshi_max_order_cost(db)
     cost = quantity * limit_price
@@ -103,7 +115,11 @@ def create_kalshi_order(
             detail="Manual approval is required before submitting real orders",
         )
     creds = require_user_credentials(db, user_id)
-    enforce_order_cost_cap(db, quantity=payload.quantity, limit_price=payload.limit_price)
+    # Snap to Kalshi's 1¢ tick BEFORE the cap check and the persisted
+    # row — the exchange rejects sub-cent prices (invalid_price), and
+    # american-odds input naturally produces them (e.g. +245 → 0.2899).
+    limit_price = quantize_price_cents(payload.limit_price)
+    enforce_order_cost_cap(db, quantity=payload.quantity, limit_price=limit_price)
 
     market = db.scalar(select(Market).where(Market.ticker == payload.ticker))
     if not market:
@@ -122,7 +138,7 @@ def create_kalshi_order(
         side=payload.side.lower(),
         action=payload.action.lower(),
         quantity=payload.quantity,
-        limit_price=payload.limit_price,
+        limit_price=limit_price,
         approved_by_user=True,
         status="submitting",
     )
@@ -251,10 +267,7 @@ def _kalshi_live_submit_handler(db: Session, entry) -> None:
     except httpx.HTTPStatusError as exc:
         if 400 <= exc.response.status_code < 500:
             order.status = "submission_failed"
-            order.error_detail = (
-                f"Kalshi rejected the order ({exc.response.status_code}): "
-                f"{exc.response.text[:500]}"
-            )
+            order.error_detail = friendly_kalshi_rejection("Kalshi rejected the order", exc)
             order.last_synced_at = datetime.now(timezone.utc)
             logger.warning("kalshi live order %s rejected: %s", order.id, order.error_detail)
             return

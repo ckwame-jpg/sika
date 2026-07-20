@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { fetchTradingSettings, keys, placeKalshiCombo } from "@/lib/api";
-import { estimateTakerFeeDollars } from "@/lib/kalshi-fees";
+import { estimateTakerFeeDollars, quantizeToCentPrice } from "@/lib/kalshi-fees";
 import type { KalshiComboLegCreate, KalshiComboPreviewRead } from "@/lib/types";
 import { usePriceDisplay } from "@/lib/price-display";
 import { cn } from "@/lib/utils";
@@ -57,7 +57,10 @@ export function KalshiComboDialog({
   const { data: tradingSettings } = useSWR(keys.tradingSettings, fetchTradingSettings);
   const capDollars = tradingSettings?.max_order_cost_dollars ?? null;
 
-  const suggestedPrice = preview?.quote_yes_ask ?? preview?.implied_price ?? null;
+  // Cent-snap: implied multiplicative prices are essentially never
+  // cent-aligned, and Kalshi rejects sub-cent limits (invalid_price).
+  const rawSuggested = preview?.quote_yes_ask ?? preview?.implied_price ?? null;
+  const suggestedPrice = rawSuggested != null ? quantizeToCentPrice(rawSuggested) : null;
   const mintNeeded = !preview?.existing_market_ticker;
 
   // Reset on open transition only (same footgun note as TradeDialog).
@@ -253,7 +256,7 @@ export function KalshiComboDialog({
                   const value = event.target.value;
                   setPriceInput(value);
                   const parsed = parsePriceInput(value);
-                  if (parsed != null) setParsedPrice(parsed);
+                  if (parsed != null) setParsedPrice(quantizeToCentPrice(parsed));
                 }}
                 data-testid="kalshi-combo-price"
               />
