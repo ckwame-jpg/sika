@@ -37,7 +37,7 @@ from app.models import (
     Run,
 )
 from app.schemas import FreshnessAuditRowRead
-from app.services.ml.freshness_audit import compute_freshness_audit
+from app.services.ml.freshness_audit import AUDIT_ROW_LIMIT, compute_freshness_audit
 
 
 def _seed_settled_prediction(
@@ -173,7 +173,7 @@ def test_compute_freshness_audit_returns_empty_when_no_settled_predictions(db_se
     """No settled predictions → no audit rows. The endpoint must
     return ``[]`` rather than raise so the readiness panel renders
     a clean empty state."""
-    assert compute_freshness_audit(db_session) == []
+    assert compute_freshness_audit(db_session).rows == []
 
 
 def test_compute_freshness_audit_only_considers_settled_predictions(db_session):
@@ -186,7 +186,7 @@ def test_compute_freshness_audit_only_considers_settled_predictions(db_session):
         diagnostics=_diagnostics(stale_groups=["mlb_weather"]),
         market_index=0,
     )
-    assert compute_freshness_audit(db_session) == []
+    assert compute_freshness_audit(db_session).rows == []
 
 
 def test_compute_freshness_audit_skips_push_outcomes(db_session):
@@ -198,7 +198,7 @@ def test_compute_freshness_audit_skips_push_outcomes(db_session):
         diagnostics=_diagnostics(stale_groups=["mlb_weather"]),
         market_index=0,
     )
-    assert compute_freshness_audit(db_session) == []
+    assert compute_freshness_audit(db_session).rows == []
 
 
 def test_compute_freshness_audit_returns_row_per_group(db_session):
@@ -220,7 +220,7 @@ def test_compute_freshness_audit_returns_row_per_group(db_session):
         diagnostics=_diagnostics(fresh_groups=["mlb_weather"]),
         market_index=1,
     )
-    rows = compute_freshness_audit(db_session)
+    rows = compute_freshness_audit(db_session).rows
     assert len(rows) == 1
     assert isinstance(rows[0], FreshnessAuditRowRead)
     assert rows[0].group_key == "mlb_weather"
@@ -264,7 +264,7 @@ def test_compute_freshness_audit_calibration_delta_reflects_outcome_correlation(
         diagnostics=_diagnostics(fresh_groups=["mlb_weather"]),
         market_index=3,
     )
-    rows = compute_freshness_audit(db_session)
+    rows = compute_freshness_audit(db_session).rows
     weather = next(r for r in rows if r.group_key == "mlb_weather")
     assert weather.stale_count == 2
     assert weather.fresh_count == 2
@@ -298,7 +298,7 @@ def test_compute_freshness_audit_inverts_no_side_outcome_for_yes_calibration(db_
         diagnostics=_diagnostics(stale_groups=["mlb_weather"]),
         market_index=1,
     )
-    rows = compute_freshness_audit(db_session)
+    rows = compute_freshness_audit(db_session).rows
     weather = next(r for r in rows if r.group_key == "mlb_weather")
     # 1 YES happened of 2 predictions → 0.5 hit rate.
     assert weather.stale_hit_rate == pytest.approx(0.5, abs=1e-4)
@@ -322,7 +322,7 @@ def test_compute_freshness_audit_window_filters_old_predictions(db_session):
         diagnostics=_diagnostics(stale_groups=["mlb_weather"]),
         market_index=1,
     )
-    rows = compute_freshness_audit(db_session, window_days=30)
+    rows = compute_freshness_audit(db_session, window_days=30).rows
     weather = next(r for r in rows if r.group_key == "mlb_weather")
     # Only the recent (won) row counts.
     assert weather.stale_count == 1
@@ -347,7 +347,7 @@ def test_compute_freshness_audit_emits_multiple_group_rows_sorted_by_delta(db_se
         diagnostics=_diagnostics(fresh_groups=["mlb_weather", "nba_workload"]),
         market_index=1,
     )
-    rows = compute_freshness_audit(db_session)
+    rows = compute_freshness_audit(db_session).rows
     assert len(rows) >= 2
     deltas = [r.calibration_delta for r in rows]
     assert deltas == sorted(deltas, reverse=True), (
@@ -374,8 +374,72 @@ def test_compute_freshness_audit_skips_malformed_diagnostics_silently(db_session
         diagnostics=_diagnostics(fresh_groups=["mlb_weather"]),
         market_index=1,
     )
-    rows = compute_freshness_audit(db_session)
+    rows = compute_freshness_audit(db_session).rows
     weather = next((r for r in rows if r.group_key == "mlb_weather"), None)
     assert weather is not None
     assert weather.fresh_count == 1
     assert weather.stale_count == 0
+
+
+# -- window-honesty meta ------------------------------------------------
+
+
+def test_compute_freshness_audit_row_limit_clips_oldest_and_reports_it(db_session):
+    """Production regression (2026-07): at real settlement volume the
+    row cap clipped the nominal 30d window to ~30h and silently
+    discarded every stale-bucket sample. The cap keeps the NEWEST
+    rows, and when it clips, ``meta`` must admit it:
+    ``row_limit_hit`` flips true and ``effective_window_start``
+    reports the oldest row actually scanned — not the nominal
+    cutoff."""
+    now = datetime.now(timezone.utc)
+    settled_ats = [now - timedelta(hours=i + 1) for i in range(5)]
+    # Three newest rows: fresh-only.
+    for i in range(3):
+        _seed_settled_prediction(
+            db_session, side="yes", outcome="won",
+            fair_yes_price=0.7, settled_at=settled_ats[i],
+            diagnostics=_diagnostics(fresh_groups=["mlb_weather"]),
+            market_index=i,
+        )
+    # Two oldest rows: the only stale evidence.
+    for i in range(3, 5):
+        _seed_settled_prediction(
+            db_session, side="yes", outcome="lost",
+            fair_yes_price=0.7, settled_at=settled_ats[i],
+            diagnostics=_diagnostics(stale_groups=["mlb_weather"]),
+            market_index=i,
+        )
+
+    result = compute_freshness_audit(db_session, now=now, row_limit=3)
+
+    weather = next(r for r in result.rows if r.group_key == "mlb_weather")
+    # The stale evidence fell outside the scanned slice…
+    assert weather.fresh_count == 3
+    assert weather.stale_count == 0
+    # …so the meta must make the clip observable.
+    assert result.meta.row_limit == 3
+    assert result.meta.rows_scanned == 3
+    assert result.meta.row_limit_hit is True
+    assert result.meta.effective_window_start == settled_ats[2]
+
+
+def test_compute_freshness_audit_meta_reports_full_window_when_under_limit(db_session):
+    """When the whole window fits under the cap, the meta reports the
+    nominal window: ``row_limit_hit`` false and
+    ``effective_window_start`` = now − window_days."""
+    now = datetime.now(timezone.utc)
+    _seed_settled_prediction(
+        db_session, side="yes", outcome="won",
+        fair_yes_price=0.7, settled_at=now - timedelta(hours=1),
+        diagnostics=_diagnostics(fresh_groups=["mlb_weather"]),
+        market_index=0,
+    )
+
+    result = compute_freshness_audit(db_session, now=now)
+
+    assert result.meta.window_days == 30
+    assert result.meta.row_limit == AUDIT_ROW_LIMIT
+    assert result.meta.rows_scanned == 1
+    assert result.meta.row_limit_hit is False
+    assert result.meta.effective_window_start == now - timedelta(days=30)

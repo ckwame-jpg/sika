@@ -866,11 +866,13 @@ class FreshnessAuditRowRead(BaseModel):
     # When the corresponding bucket count is zero, all four
     # per-bucket fields below are 0.0 sentinels (no rows to average
     # over). The ``calibration_delta`` will therefore equal the
-    # other bucket's miss outright, which looks misleadingly large.
-    # The frontend's classifier gates promotion on a 20-sample floor
-    # per bucket — see ``apps/web/components/predictions/freshness-
-    # audit-panel.tsx`` ``classify()``. Operators reading raw JSON
-    # should apply the same gate before acting.
+    # other bucket's miss outright — its sign is an artifact of WHICH
+    # bucket is empty, not a tuning signal. The frontend suppresses
+    # the signed headline entirely when either bucket count is zero
+    # and gates promotion on a 20-sample floor per bucket — see
+    # ``apps/web/components/predictions/freshness-audit-panel.tsx``
+    # ``classify()``. Operators reading raw JSON should apply the
+    # same gates before acting.
     stale_avg_predicted: float
     fresh_avg_predicted: float
     stale_hit_rate: float
@@ -882,6 +884,28 @@ class FreshnessAuditRowRead(BaseModel):
     # tuning signal. NOT meaningful when either bucket count is zero
     # (see above).
     calibration_delta: float
+
+
+class FreshnessAuditMetaRead(BaseModel):
+    """Window-honesty metadata for the freshness audit.
+
+    The audit scans settled predictions newest-first under a row cap
+    (``freshness_audit.AUDIT_ROW_LIMIT``). At high settlement volume
+    the cap can clip the nominal ``window_days`` — the original 5k
+    cap silently shrank "30d" to ~30h at MLB volume. This sidecar
+    makes the clip observable: when ``row_limit_hit`` is true, the
+    UI labels the window from ``effective_window_start`` instead of
+    claiming the full nominal window."""
+
+    window_days: int = 30
+    row_limit: int = 0
+    rows_scanned: int = 0
+    row_limit_hit: bool = False
+    # Oldest ``settled_at`` actually included in the audit. Equals
+    # ``now - window_days`` when the full window fit under the cap;
+    # later than that when the cap clipped. None only when the audit
+    # has not run (schema default).
+    effective_window_start: UTCDateTime | None = None
 
 
 class IntervalModelStatusRead(BaseModel):
@@ -948,6 +972,12 @@ class ModelReadinessSummaryRead(BaseModel):
     # for promoting groups from IGNORE to PENALIZE in the policy
     # registry — see ``SMARTER_22_TUNING_PLAYBOOK.md``.
     freshness_audit: list[FreshnessAuditRowRead] = Field(default_factory=list)
+    # Window-honesty sidecar for ``freshness_audit`` — reports how
+    # much of the nominal window the row cap actually covered so the
+    # UI can label a clipped window instead of claiming "30d".
+    freshness_audit_meta: FreshnessAuditMetaRead = Field(
+        default_factory=FreshnessAuditMetaRead
+    )
 
 
 class ModelReadinessSettingsUpdate(BaseModel):

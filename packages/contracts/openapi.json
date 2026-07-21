@@ -393,6 +393,44 @@
         "title": "EventRead",
         "type": "object"
       },
+      "FreshnessAuditMetaRead": {
+        "description": "Window-honesty metadata for the freshness audit.\n\nThe audit scans settled predictions newest-first under a row cap\n(``freshness_audit.AUDIT_ROW_LIMIT``). At high settlement volume\nthe cap can clip the nominal ``window_days`` \u2014 the original 5k\ncap silently shrank \"30d\" to ~30h at MLB volume. This sidecar\nmakes the clip observable: when ``row_limit_hit`` is true, the\nUI labels the window from ``effective_window_start`` instead of\nclaiming the full nominal window.",
+        "properties": {
+          "effective_window_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Window Start"
+          },
+          "row_limit": {
+            "default": 0,
+            "title": "Row Limit",
+            "type": "integer"
+          },
+          "row_limit_hit": {
+            "default": false,
+            "title": "Row Limit Hit",
+            "type": "boolean"
+          },
+          "rows_scanned": {
+            "default": 0,
+            "title": "Rows Scanned",
+            "type": "integer"
+          },
+          "window_days": {
+            "default": 30,
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "title": "FreshnessAuditMetaRead",
+        "type": "object"
+      },
       "FreshnessAuditRowRead": {
         "description": "Smarter #22 PR B prep \u2014 per-feature-group calibration audit.\n\nBuilt by ``apps/api/app/services/ml/freshness_audit.py`` from\nsettled ``Prediction`` rows joined with the\n``scoring_diagnostics[\"freshness_stale_groups\"]`` +\n``scoring_diagnostics[\"feature_groups\"]`` JSON that PR A\n(sika#186) and Architecture #5 (sika#169) already persist.\n\nEach row answers the tuning question\n`SMARTER_22_TUNING_PLAYBOOK.md` asks: *for this group, when it\nwas stale, did calibration suffer compared to when it was fresh?*\nA positive ``calibration_delta`` means staleness measurably\ndegraded prediction accuracy \u2014 candidate for promotion from\n``IGNORE`` to ``PENALIZE`` in ``FEATURE_GROUP_POLICIES``.\n\nCalibration miss = ``|avg_predicted_yes_probability - actual_yes_hit_rate|``.\nHit rate is computed from the YES side of the market regardless of\nwhich side the prediction picked (NO-side wins are inverted), so\nthe comparison against ``fair_yes_price`` is apples-to-apples.",
         "properties": {
@@ -3226,6 +3264,9 @@
             },
             "title": "Freshness Audit",
             "type": "array"
+          },
+          "freshness_audit_meta": {
+            "$ref": "#/components/schemas/FreshnessAuditMetaRead"
           },
           "generated_at": {
             "title": "Generated At",

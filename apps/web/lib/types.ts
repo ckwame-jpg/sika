@@ -87,6 +87,10 @@ export type IntervalModelStatusRead = Wire<Schema<"IntervalModelStatusRead">>;
 // (positive ``calibration_delta``) before promoting them in the
 // scoring policy registry. See SMARTER_22_TUNING_PLAYBOOK.md.
 export type FreshnessAuditRowRead = Wire<Schema<"FreshnessAuditRowRead">>;
+// Window-honesty sidecar for the audit: reports how much of the
+// nominal window the backend row cap actually covered so the panel
+// can label a clipped window instead of claiming "30d".
+export type FreshnessAuditMetaRead = Wire<Schema<"FreshnessAuditMetaRead">>;
 export type ModelReadinessSummaryRead = Wire<Schema<"ModelReadinessSummaryRead">>;
 // Update DTOs use ``Partial<Schema<…>>`` instead of ``Wire<Schema<…>>``
 // because the partial-PATCH idiom (caller sends only the fields they

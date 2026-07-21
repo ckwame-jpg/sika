@@ -216,6 +216,21 @@ def test_models_readiness_endpoint_reports_insufficient_history_for_active_study
     assert nba["readiness_status"] == "insufficient_history"
 
 
+def test_models_readiness_endpoint_carries_freshness_audit_meta(client):
+    """The window-honesty sidecar must ship alongside the audit rows
+    so the UI can label a row-cap-clipped window instead of claiming
+    the nominal 30d."""
+    response = client.get("/ops/models/readiness")
+
+    assert response.status_code == 200
+    meta = response.json()["freshness_audit_meta"]
+    assert meta["window_days"] == 30
+    assert meta["row_limit"] > 0
+    assert meta["row_limit_hit"] is False
+    assert meta["rows_scanned"] == 0
+    assert meta["effective_window_start"] is not None
+
+
 def test_models_readiness_settings_update_enables_shadow_and_queues_backfill(client, db_session):
     response = client.patch(
         "/ops/models/readiness/settings",

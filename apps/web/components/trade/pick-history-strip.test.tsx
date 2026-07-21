@@ -52,6 +52,13 @@ function summaryFixture(n = 5): ModelReadinessSummaryRead {
     sportsbook_disagreement_threshold: 0.15,
     interval_models: [],
     freshness_audit: [],
+    freshness_audit_meta: {
+      window_days: 30,
+      row_limit: 250000,
+      rows_scanned: 0,
+      row_limit_hit: false,
+      effective_window_start: "2026-04-11T00:00:00Z",
+    },
   };
 }
 

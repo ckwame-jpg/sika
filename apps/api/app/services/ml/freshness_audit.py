@@ -33,31 +33,60 @@ balloon with irrelevant rows that depress the calibration baseline.
 that "won" means YES did NOT happen — so the YES hit rate must
 invert. Reuses the same logic as `readiness._did_yes_happen` for
 consistency with the calibration histogram on the readiness panel.
+
+## Window honesty
+
+The scan runs newest-first under ``AUDIT_ROW_LIMIT``. When settled
+volume is high enough that the cap clips the nominal window, the
+returned ``meta`` reports it (``row_limit_hit`` +
+``effective_window_start``) so the UI can label the real window
+instead of silently narrowing — the original 5k cap shrank "30d"
+to ~30h at MLB volume and hid every stale-bucket sample.
 """
 
 from __future__ import annotations
 
 import logging
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from typing import Any, Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Prediction
-from app.schemas import FreshnessAuditRowRead
+from app.schemas import FreshnessAuditMetaRead, FreshnessAuditRowRead
 
 
 logger = logging.getLogger(__name__)
 
 
 DEFAULT_WINDOW_DAYS = 30
-# Mirror ``readiness.READINESS_ROW_LIMIT``. At 100 predictions/day ×
-# 30 days = 3 000 rows the audit fits well under the limit; the cap
-# matters for unusual backfills or operators with very high volume.
+# Newest-first cap on settled rows the audit scans. Sized from
+# measured volume: at MLB peak the live DB settles ~15-20k singles a
+# day (a 30-day window held ~77k won/lost rows on 2026-07-21), so
+# 250k leaves ~3× headroom before clipping. The original 5k cap was
+# sized for ~100/day and silently shrank the "30d" window to ~30h —
+# clipping out 100% of the stale-bucket evidence. If this cap ever
+# clips again, the result's ``meta.row_limit_hit`` flips true and
+# ``effective_window_start`` reports the real (shorter) window so
+# the UI labels it honestly instead of narrowing in silence.
 # Ordering by settled_at DESC keeps the most-recent window preferred
-# if the cap clips.
-AUDIT_ROW_LIMIT = 5_000
+# when the cap clips.
+AUDIT_ROW_LIMIT = 250_000
+# Batch size for the streaming column select. Keeps memory flat while
+# scanning up to ``AUDIT_ROW_LIMIT`` rows (server-side cursor on
+# Postgres; plain batching on SQLite).
+AUDIT_FETCH_BATCH = 1_000
+
+
+@dataclass
+class FreshnessAuditResult:
+    """Audit rows plus the window-honesty sidecar the UI renders."""
+
+    rows: list[FreshnessAuditRowRead] = field(default_factory=list)
+    meta: FreshnessAuditMetaRead = field(default_factory=FreshnessAuditMetaRead)
 
 
 def _did_yes_happen(side: str | None, outcome: str | None) -> bool | None:
@@ -125,61 +154,85 @@ def _emitted_group_keys(diagnostics: dict) -> set[str]:
     return {key for key in raw.keys() if isinstance(key, str)}
 
 
-def _settled_predictions_in_window(
-    db: Session, *, window_days: int, now: datetime,
-) -> Iterable[Prediction]:
-    """Yield settled predictions whose ``settled_at`` falls in the
-    last ``window_days``. Outcomes restricted to ``won`` / ``lost``
-    (push and cancelled cannot inform calibration). Uses a server-
-    side filter so the audit scales with newer rows, not the full
-    settlement history."""
-    cutoff = now - timedelta(days=window_days)
+def _settled_rows_in_window(
+    db: Session, *, cutoff: datetime, row_limit: int,
+) -> Iterable[Any]:
+    """Stream ``(settled_at, side, prediction_outcome, fair_yes_price,
+    scoring_diagnostics)`` tuples for settled predictions whose
+    ``settled_at`` falls after ``cutoff``, newest first. Outcomes
+    restricted to ``won`` / ``lost`` (push and cancelled cannot inform
+    calibration).
+
+    Column-tuple select rather than full ORM rows: the audit only
+    needs five columns and ``scoring_diagnostics`` is by far the
+    heaviest, so materializing ``Prediction`` instances at the 250k
+    cap would waste both memory and identity-map bookkeeping.
+    ``yield_per`` batches the fetch (server-side cursor on Postgres,
+    plain batching on SQLite) so memory stays flat regardless of how
+    much of the cap the window fills."""
     stmt = (
-        select(Prediction)
+        select(
+            Prediction.settled_at,
+            Prediction.side,
+            Prediction.prediction_outcome,
+            Prediction.fair_yes_price,
+            Prediction.scoring_diagnostics,
+        )
         .where(Prediction.settled_at >= cutoff)
         .where(Prediction.prediction_outcome.in_(["won", "lost"]))
         .order_by(Prediction.settled_at.desc())
-        .limit(AUDIT_ROW_LIMIT)
+        .limit(row_limit)
+        .execution_options(yield_per=AUDIT_FETCH_BATCH)
     )
-    return db.scalars(stmt).all()
+    return db.execute(stmt)
 
 
 def compute_freshness_audit(
     db: Session, *, window_days: int = DEFAULT_WINDOW_DAYS,
     now: datetime | None = None,
-) -> list[FreshnessAuditRowRead]:
+    row_limit: int = AUDIT_ROW_LIMIT,
+) -> FreshnessAuditResult:
     """Compute the per-group calibration audit. See module docstring
     for the bucketing + inversion semantics.
 
-    Returns rows sorted by ``calibration_delta`` descending so the
-    most-actionable signals (biggest staleness penalty) are at the
-    top of the operator's view. Empty list when no settled
-    predictions in the window have any persisted freshness
-    diagnostics — the common pre-PR-A state.
+    Returns ``FreshnessAuditResult``: ``rows`` sorted by
+    ``calibration_delta`` descending so the most-actionable signals
+    (biggest staleness penalty) are at the top of the operator's
+    view — empty when no settled predictions in the window have any
+    persisted freshness diagnostics (the common pre-PR-A state) —
+    plus ``meta`` reporting how much of the nominal window the row
+    cap actually covered.
     """
     effective_now = now if now is not None else datetime.now(timezone.utc)
+    cutoff = effective_now - timedelta(days=window_days)
+    started = time.perf_counter()
 
-    # Accumulators per group_key. The ``predicted`` and ``actual``
-    # parallel lists support computing avg_predicted + hit_rate by a
-    # second pass; we keep them tiny (one float each per prediction)
-    # to avoid a second DB round-trip.
-    stale: dict[str, dict[str, list[float]]] = {}
-    fresh: dict[str, dict[str, list[float]]] = {}
+    # Running-sum accumulators per group_key. Only the per-bucket
+    # means are ever consumed, so ``count / predicted_sum /
+    # actual_sum`` keeps memory flat at the 250k-row cap where the
+    # parallel-list accumulators this replaced would not.
+    stale: dict[str, dict[str, float]] = {}
+    fresh: dict[str, dict[str, float]] = {}
 
-    for prediction in _settled_predictions_in_window(
-        db, window_days=window_days, now=effective_now,
-    ):
-        diagnostics = prediction.scoring_diagnostics
+    rows_scanned = 0
+    oldest_settled_at: datetime | None = None
+
+    for (
+        settled_at, side, outcome, fair_yes_price, diagnostics,
+    ) in _settled_rows_in_window(db, cutoff=cutoff, row_limit=row_limit):
+        rows_scanned += 1
+        # Newest-first ordering means the last row seen is the oldest
+        # actually included — the honest window edge when the cap clips.
+        oldest_settled_at = settled_at
         if not isinstance(diagnostics, dict):
             continue
-        yes_happened = _did_yes_happen(prediction.side, prediction.prediction_outcome)
+        yes_happened = _did_yes_happen(side, outcome)
         if yes_happened is None:
             continue
-        predicted_prob = prediction.fair_yes_price
-        if predicted_prob is None:
+        if fair_yes_price is None:
             continue
         try:
-            predicted = float(predicted_prob)
+            predicted = float(fair_yes_price)
         except (TypeError, ValueError):
             continue
         if predicted < 0.0 or predicted > 1.0:
@@ -203,27 +256,29 @@ def compute_freshness_audit(
         for group_key in emitted_keys:
             bucket = stale if group_key in stale_keys else fresh
             entry = bucket.setdefault(
-                group_key, {"predicted": [], "actual": []},
+                group_key,
+                {"count": 0.0, "predicted_sum": 0.0, "actual_sum": 0.0},
             )
-            entry["predicted"].append(predicted)
-            entry["actual"].append(actual)
+            entry["count"] += 1
+            entry["predicted_sum"] += predicted
+            entry["actual_sum"] += actual
 
     all_keys = sorted(set(stale.keys()) | set(fresh.keys()))
     rows: list[FreshnessAuditRowRead] = []
     for group_key in all_keys:
-        stale_data = stale.get(group_key) or {"predicted": [], "actual": []}
-        fresh_data = fresh.get(group_key) or {"predicted": [], "actual": []}
-        stale_avg_pred = _safe_mean(stale_data["predicted"])
-        fresh_avg_pred = _safe_mean(fresh_data["predicted"])
-        stale_hit = _safe_mean(stale_data["actual"])
-        fresh_hit = _safe_mean(fresh_data["actual"])
+        stale_data = stale.get(group_key)
+        fresh_data = fresh.get(group_key)
+        stale_avg_pred = _bucket_mean(stale_data, "predicted_sum")
+        fresh_avg_pred = _bucket_mean(fresh_data, "predicted_sum")
+        stale_hit = _bucket_mean(stale_data, "actual_sum")
+        fresh_hit = _bucket_mean(fresh_data, "actual_sum")
         stale_miss = abs(stale_avg_pred - stale_hit)
         fresh_miss = abs(fresh_avg_pred - fresh_hit)
         rows.append(
             FreshnessAuditRowRead(
                 group_key=group_key,
-                stale_count=len(stale_data["predicted"]),
-                fresh_count=len(fresh_data["predicted"]),
+                stale_count=int(stale_data["count"]) if stale_data else 0,
+                fresh_count=int(fresh_data["count"]) if fresh_data else 0,
                 stale_avg_predicted=round(stale_avg_pred, 4),
                 fresh_avg_predicted=round(fresh_avg_pred, 4),
                 stale_hit_rate=round(stale_hit, 4),
@@ -234,12 +289,37 @@ def compute_freshness_audit(
             )
         )
     rows.sort(key=lambda row: row.calibration_delta, reverse=True)
-    return rows
+
+    row_limit_hit = row_limit > 0 and rows_scanned >= row_limit
+    meta = FreshnessAuditMetaRead(
+        window_days=window_days,
+        row_limit=row_limit,
+        rows_scanned=rows_scanned,
+        row_limit_hit=row_limit_hit,
+        # When the cap clipped, the honest window starts at the oldest
+        # row actually scanned; otherwise the full nominal window fit.
+        effective_window_start=(
+            oldest_settled_at
+            if row_limit_hit and oldest_settled_at is not None
+            else cutoff
+        ),
+    )
+
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    # Perf guardrail — the readiness summary endpoint already runs
+    # 20-30s; this line is how we notice the audit creeping toward
+    # the web client's 60s timeout before operators do.
+    logger.info(
+        "freshness_audit.completed rows_scanned=%d groups=%d "
+        "row_limit_hit=%s duration_ms=%.0f",
+        rows_scanned, len(all_keys), row_limit_hit, duration_ms,
+    )
+    return FreshnessAuditResult(rows=rows, meta=meta)
 
 
-def _safe_mean(values: list[float]) -> float:
-    """Mean with empty-list → 0.0 fallback so the schema's
+def _bucket_mean(entry: dict[str, float] | None, sum_key: str) -> float:
+    """Mean with empty-bucket → 0.0 fallback so the schema's
     non-nullable float fields always have a value."""
-    if not values:
+    if not entry or not entry["count"]:
         return 0.0
-    return sum(values) / len(values)
+    return entry[sum_key] / entry["count"]

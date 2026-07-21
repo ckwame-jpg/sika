@@ -1,14 +1,14 @@
 {
-  "version": "2026-05-12",
+  "version": "2026-07-21",
   "serving_mode": "shadow",
   "families": [
     {
       "family_key": "global_v1",
       "model_name": "global_hist_gradient_boosting_residual",
-      "model_version": "2026-05-12",
+      "model_version": "2026-07-21",
       "calibration_version": "calibrated_v1",
       "feature_set_version": "public-feature-set-v2",
-      "artifact_path": "../artifacts/global_v1_20260512",
+      "artifact_path": "../artifacts/global_v1_20260721",
       "serves_family_key": "mlb_props",
       "mode": "shadow",
       "metadata": {
@@ -20,10 +20,10 @@
     {
       "family_key": "global_v1",
       "model_name": "global_hist_gradient_boosting_residual",
-      "model_version": "2026-05-12",
+      "model_version": "2026-07-21",
       "calibration_version": "calibrated_v1",
       "feature_set_version": "public-feature-set-v2",
-      "artifact_path": "../artifacts/global_v1_20260512",
+      "artifact_path": "../artifacts/global_v1_20260721",
       "serves_family_key": "nba_props",
       "mode": "shadow",
       "metadata": {
@@ -35,10 +35,40 @@
     {
       "family_key": "global_v1",
       "model_name": "global_hist_gradient_boosting_residual",
-      "model_version": "2026-05-12",
+      "model_version": "2026-07-21",
       "calibration_version": "calibrated_v1",
       "feature_set_version": "public-feature-set-v2",
-      "artifact_path": "../artifacts/global_v1_20260512",
+      "artifact_path": "../artifacts/global_v1_20260721",
+      "serves_family_key": "wnba_props",
+      "mode": "shadow",
+      "metadata": {
+        "behavior": "sklearn_predict_proba",
+        "feature_mode": "residual_calibration",
+        "target_type": "yes_won"
+      }
+    },
+    {
+      "family_key": "global_v1",
+      "model_name": "global_hist_gradient_boosting_residual",
+      "model_version": "2026-07-21",
+      "calibration_version": "calibrated_v1",
+      "feature_set_version": "public-feature-set-v2",
+      "artifact_path": "../artifacts/global_v1_20260721",
+      "serves_family_key": "nfl_props",
+      "mode": "shadow",
+      "metadata": {
+        "behavior": "sklearn_predict_proba",
+        "feature_mode": "residual_calibration",
+        "target_type": "yes_won"
+      }
+    },
+    {
+      "family_key": "global_v1",
+      "model_name": "global_hist_gradient_boosting_residual",
+      "model_version": "2026-07-21",
+      "calibration_version": "calibrated_v1",
+      "feature_set_version": "public-feature-set-v2",
+      "artifact_path": "../artifacts/global_v1_20260721",
       "serves_family_key": "mlb_singles",
       "mode": "shadow",
       "metadata": {
@@ -50,11 +80,41 @@
     {
       "family_key": "global_v1",
       "model_name": "global_hist_gradient_boosting_residual",
-      "model_version": "2026-05-12",
+      "model_version": "2026-07-21",
       "calibration_version": "calibrated_v1",
       "feature_set_version": "public-feature-set-v2",
-      "artifact_path": "../artifacts/global_v1_20260512",
+      "artifact_path": "../artifacts/global_v1_20260721",
       "serves_family_key": "nba_singles",
+      "mode": "shadow",
+      "metadata": {
+        "behavior": "sklearn_predict_proba",
+        "feature_mode": "residual_calibration",
+        "target_type": "yes_won"
+      }
+    },
+    {
+      "family_key": "global_v1",
+      "model_name": "global_hist_gradient_boosting_residual",
+      "model_version": "2026-07-21",
+      "calibration_version": "calibrated_v1",
+      "feature_set_version": "public-feature-set-v2",
+      "artifact_path": "../artifacts/global_v1_20260721",
+      "serves_family_key": "wnba_singles",
+      "mode": "shadow",
+      "metadata": {
+        "behavior": "sklearn_predict_proba",
+        "feature_mode": "residual_calibration",
+        "target_type": "yes_won"
+      }
+    },
+    {
+      "family_key": "global_v1",
+      "model_name": "global_hist_gradient_boosting_residual",
+      "model_version": "2026-07-21",
+      "calibration_version": "calibrated_v1",
+      "feature_set_version": "public-feature-set-v2",
+      "artifact_path": "../artifacts/global_v1_20260721",
+      "serves_family_key": "nfl_singles",
       "mode": "shadow",
       "metadata": {
         "behavior": "sklearn_predict_proba",
