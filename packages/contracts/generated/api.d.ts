@@ -1274,6 +1274,42 @@ export interface components {
             status: string;
         };
         /**
+         * FreshnessAuditMetaRead
+         * @description Window-honesty metadata for the freshness audit.
+         *
+         *     The audit scans settled predictions newest-first under a row cap
+         *     (``freshness_audit.AUDIT_ROW_LIMIT``). At high settlement volume
+         *     the cap can clip the nominal ``window_days`` — the original 5k
+         *     cap silently shrank "30d" to ~30h at MLB volume. This sidecar
+         *     makes the clip observable: when ``row_limit_hit`` is true, the
+         *     UI labels the window from ``effective_window_start`` instead of
+         *     claiming the full nominal window.
+         */
+        FreshnessAuditMetaRead: {
+            /** Effective Window Start */
+            effective_window_start?: string | null;
+            /**
+             * Row Limit
+             * @default 0
+             */
+            row_limit: number;
+            /**
+             * Row Limit Hit
+             * @default false
+             */
+            row_limit_hit: boolean;
+            /**
+             * Rows Scanned
+             * @default 0
+             */
+            rows_scanned: number;
+            /**
+             * Window Days
+             * @default 30
+             */
+            window_days: number;
+        };
+        /**
          * FreshnessAuditRowRead
          * @description Smarter #22 PR B prep — per-feature-group calibration audit.
          *
@@ -2183,6 +2219,7 @@ export interface components {
             families?: components["schemas"]["ModelFamilyReadinessRead"][];
             /** Freshness Audit */
             freshness_audit?: components["schemas"]["FreshnessAuditRowRead"][];
+            freshness_audit_meta?: components["schemas"]["FreshnessAuditMetaRead"];
             /** Generated At */
             generated_at: string;
             /** Interval Models */

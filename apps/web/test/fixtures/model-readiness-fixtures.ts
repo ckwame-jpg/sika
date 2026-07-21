@@ -162,4 +162,13 @@ export const modelReadinessSummaryFixture: ModelReadinessSummaryRead = {
   // pre-settled-history state. Tests that exercise the audit panel
   // populated state override this.
   freshness_audit: [],
+  // Window-honesty sidecar: default mirrors an un-clipped audit over
+  // an empty window (rows_scanned 0, cap nowhere near hit).
+  freshness_audit_meta: {
+    window_days: 30,
+    row_limit: 250000,
+    rows_scanned: 0,
+    row_limit_hit: false,
+    effective_window_start: "2026-03-08T18:00:00Z",
+  },
 };

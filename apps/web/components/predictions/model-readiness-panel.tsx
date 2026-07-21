@@ -543,7 +543,10 @@ export function ModelReadinessPanel() {
              IGNORE-default groups to promote in
              FEATURE_GROUP_POLICIES per SMARTER_22_TUNING_PLAYBOOK.md. */}
           <div className="mb-4">
-            <FreshnessAuditPanel rows={summary.freshness_audit ?? []} />
+            <FreshnessAuditPanel
+              rows={summary.freshness_audit ?? []}
+              meta={summary.freshness_audit_meta}
+            />
           </div>
           <div className="mb-4 grid gap-3 md:grid-cols-3">
             <div className="stats-tile">

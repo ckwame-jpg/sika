@@ -2,10 +2,13 @@
 
 import type { ReactElement } from "react";
 import { cn } from "@/lib/utils";
-import type { FreshnessAuditRowRead } from "@/lib/types";
+import type { FreshnessAuditMetaRead, FreshnessAuditRowRead } from "@/lib/types";
 
 interface FreshnessAuditPanelProps {
   rows: FreshnessAuditRowRead[];
+  // Optional so pre-meta payloads (and older fixtures) still render;
+  // absent meta falls back to the nominal "window 30d" label.
+  meta?: FreshnessAuditMetaRead | null;
 }
 
 type TuningSignal = "promote" | "low_sample" | "none";
@@ -32,12 +35,19 @@ function humanizeGroupKey(groupKey: string): string {
   return groupKey.replace(/_/g, " ").toLowerCase();
 }
 
+// JS Math.round rounds .5 toward +∞, so -22.5 → -22 while +22.5 → +23:
+// equal-magnitude deltas would print different magnitudes. Round the
+// magnitude instead so signs are symmetric.
+function roundHalfAwayFromZero(value: number): number {
+  return Math.sign(value) * Math.round(Math.abs(value));
+}
+
 function formatPct(value: number): string {
-  return `${Math.round(value * 100)}%`;
+  return `${roundHalfAwayFromZero(value * 100)}%`;
 }
 
 function formatSignedPct(value: number): string {
-  const pct = Math.round(value * 100);
+  const pct = roundHalfAwayFromZero(value * 100);
   if (pct === 0) return "±0%";
   return `${pct > 0 ? "+" : ""}${pct}%`;
 }
@@ -68,7 +78,7 @@ function barWidthPercent(miss: number): number {
  *   "need ≥N more samples" note explains why.
  * - ``none`` — quiet. The baseline; no policy change suggested.
  */
-export function FreshnessAuditPanel({ rows }: FreshnessAuditPanelProps): ReactElement {
+export function FreshnessAuditPanel({ rows, meta }: FreshnessAuditPanelProps): ReactElement {
   if (rows.length === 0) {
     return (
       <section
@@ -77,7 +87,7 @@ export function FreshnessAuditPanel({ rows }: FreshnessAuditPanelProps): ReactEl
         className="stats-tile"
         data-testid="freshness-audit-panel"
       >
-        <Header />
+        <Header meta={meta} />
         <div className="mt-3 flex items-start gap-3 rounded-md border border-dashed border-border/60 bg-surface-hover/30 p-3">
           <span
             className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full border border-muted-foreground/50"
@@ -110,7 +120,7 @@ export function FreshnessAuditPanel({ rows }: FreshnessAuditPanelProps): ReactEl
       className="stats-tile"
       data-testid="freshness-audit-panel"
     >
-      <Header />
+      <Header meta={meta} />
       <ol className="mt-3 space-y-2">
         {rows.map((row) => (
           <AuditRow key={row.group_key} row={row} />
@@ -121,7 +131,7 @@ export function FreshnessAuditPanel({ rows }: FreshnessAuditPanelProps): ReactEl
   );
 }
 
-function Header(): ReactElement {
+function Header({ meta }: { meta?: FreshnessAuditMetaRead | null }): ReactElement {
   return (
     <div className="flex items-end justify-between gap-3">
       <div>
@@ -130,10 +140,42 @@ function Header(): ReactElement {
           How stale features correlate with prediction accuracy
         </p>
       </div>
-      <span className="text-2xs uppercase tracking-wider text-muted-foreground/60">
-        window 30d
-      </span>
+      <WindowLabel meta={meta} />
     </div>
+  );
+}
+
+/**
+ * Honest window label. The backend scans newest-first under a row cap;
+ * at high settlement volume the cap can clip the nominal window (the
+ * original 5k cap silently shrank "30d" to ~30h). When the meta says
+ * the cap hit, label the window from the oldest row actually scanned
+ * instead of claiming the nominal span.
+ */
+function WindowLabel({ meta }: { meta?: FreshnessAuditMetaRead | null }): ReactElement {
+  const windowDays = meta?.window_days ?? 30;
+  if (!meta?.row_limit_hit) {
+    return (
+      <span className="text-2xs uppercase tracking-wider text-muted-foreground/60">
+        window {windowDays}d
+      </span>
+    );
+  }
+  const since = meta.effective_window_start
+    ? new Date(meta.effective_window_start)
+    : null;
+  const sinceLabel =
+    since && !Number.isNaN(since.getTime())
+      ? since.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      : null;
+  return (
+    <span
+      className="text-2xs uppercase tracking-wider text-warning/80"
+      title={`Row cap (${meta.row_limit.toLocaleString()}) hit before covering the full ${windowDays}d window — audit covers settlements since ${meta.effective_window_start ?? "unknown"}.`}
+      data-testid="freshness-audit-window-clipped"
+    >
+      {sinceLabel ? `window clipped · since ${sinceLabel}` : "window clipped"}
+    </span>
   );
 }
 
@@ -145,11 +187,13 @@ function AuditRow({ row }: AuditRowProps): ReactElement {
   const signal = classify(row);
   const staleWidth = barWidthPercent(row.stale_calibration_miss);
   const freshWidth = barWidthPercent(row.fresh_calibration_miss);
-  const samplesShort = row.stale_count < MIN_BUCKET_SAMPLES
-    ? row.stale_count
-    : row.fresh_count < MIN_BUCKET_SAMPLES
-      ? row.fresh_count
-      : null;
+  // The backend fills empty buckets with 0.0 sentinels, so with one
+  // bucket empty ``calibration_delta`` is just ± the other bucket's
+  // miss — its sign is an artifact of WHICH bucket is empty, not a
+  // tuning signal. Suppress the signed headline entirely.
+  const deltaUnavailable = row.stale_count === 0 || row.fresh_count === 0;
+  const smallerCount = Math.min(row.stale_count, row.fresh_count);
+  const samplesShort = smallerCount < MIN_BUCKET_SAMPLES ? smallerCount : null;
 
   return (
     <li
@@ -184,16 +228,31 @@ function AuditRow({ row }: AuditRowProps): ReactElement {
           </span>
           <SignalChip signal={signal} />
         </div>
-        <span
-          className={cn(
-            "font-mono text-[13px] tabular-nums tracking-tight",
-            signal === "promote" && "text-negative",
-            signal === "none" && "text-muted-foreground/70",
-            signal === "low_sample" && "text-muted-foreground",
-          )}
-        >
-          {formatSignedPct(row.calibration_delta)}
-        </span>
+        {deltaUnavailable ? (
+          <span
+            className="font-mono text-[13px] tabular-nums tracking-tight text-muted-foreground/50"
+            title={
+              row.stale_count === 0
+                ? "Delta unavailable — no stale-bucket settled rows in the window."
+                : "Delta unavailable — no fresh-bucket settled rows in the window."
+            }
+            aria-label="delta unavailable"
+            data-testid={`freshness-audit-delta-unavailable-${row.group_key}`}
+          >
+            —
+          </span>
+        ) : (
+          <span
+            className={cn(
+              "font-mono text-[13px] tabular-nums tracking-tight",
+              signal === "promote" && "text-negative",
+              signal === "none" && "text-muted-foreground/70",
+              signal === "low_sample" && "text-muted-foreground",
+            )}
+          >
+            {formatSignedPct(row.calibration_delta)}
+          </span>
+        )}
       </div>
 
       <div className="mt-2 space-y-1">
