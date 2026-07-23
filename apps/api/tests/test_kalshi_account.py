@@ -26,7 +26,8 @@ class FakeConfiguredKalshiAccountClient:
     def get_balance(self):
         return {"balance": 12550, "portfolio_value": 17125, "updated_ts": 1711814400}
 
-    def list_positions(self, *, count_filter, limit):
+    def list_positions(self, *, count_filter, limit, cursor=None):
+        assert count_filter == "total_traded"
         return {
             "market_positions": [
                 {
@@ -39,7 +40,8 @@ class FakeConfiguredKalshiAccountClient:
                     "resting_orders_count": 1,
                     "last_updated_ts": "2026-04-29T12:00:00Z",
                 }
-            ]
+            ],
+            "cursor": "",
         }
 
     def list_markets_by_tickers(self, tickers):
@@ -52,6 +54,10 @@ class FakeConfiguredKalshiAccountClient:
                 "no_sub_title": "Brooklyn Nets",
             }
         ]
+
+    def list_settlements(self, *, limit, cursor=None):
+        assert limit == 1000
+        return {"settlements": [], "cursor": ""}
 
     def list_fills(self, *, limit):
         return {
@@ -73,7 +79,7 @@ class FakeConfiguredKalshiAccountClient:
 
 
 class FakeUnknownTickerKalshiAccountClient(FakeConfiguredKalshiAccountClient):
-    def list_positions(self, *, count_filter, limit):
+    def list_positions(self, *, count_filter, limit, cursor=None):
         return {
             "market_positions": [
                 {
@@ -83,7 +89,8 @@ class FakeUnknownTickerKalshiAccountClient(FakeConfiguredKalshiAccountClient):
                     "realized_pnl_dollars": "0.0000",
                     "resting_orders_count": 0,
                 }
-            ]
+            ],
+            "cursor": "",
         }
 
     def list_fills(self, *, limit):
@@ -100,7 +107,7 @@ class FakeUnknownTickerKalshiAccountClient(FakeConfiguredKalshiAccountClient):
 
 
 class FakeMultilegKalshiAccountClient(FakeUnknownTickerKalshiAccountClient):
-    def list_positions(self, *, count_filter, limit):
+    def list_positions(self, *, count_filter, limit, cursor=None):
         return {
             "market_positions": [
                 {
@@ -110,7 +117,8 @@ class FakeMultilegKalshiAccountClient(FakeUnknownTickerKalshiAccountClient):
                     "realized_pnl_dollars": "0.0000",
                     "resting_orders_count": 0,
                 }
-            ]
+            ],
+            "cursor": "",
         }
 
     def list_markets_by_tickers(self, tickers):
@@ -132,6 +140,117 @@ class FakeMetadataFailureKalshiAccountClient(FakeUnknownTickerKalshiAccountClien
 class FakeMissingKalshiAccountClient:
     def is_configured(self):
         return False
+
+
+class FakePaginatedKalshiAccountClient(FakeConfiguredKalshiAccountClient):
+    def __init__(self) -> None:
+        self.position_calls: list[str | None] = []
+
+    def list_positions(self, *, count_filter, limit, cursor=None):
+        assert count_filter == "total_traded"
+        assert limit == 1000
+        self.position_calls.append(cursor)
+        page_number = 1 if cursor is None else 2
+        return {
+            "market_positions": [
+                {
+                    "ticker": f"NBA-PAGE-{page_number}-{index}",
+                    "position_fp": "1.00",
+                    "market_exposure_dollars": "0.50",
+                    "realized_pnl_dollars": "0.10",
+                }
+                for index in range(65)
+            ],
+            "cursor": "page-2" if cursor is None else "",
+        }
+
+    def list_fills(self, *, limit):
+        return {"fills": []}
+
+    def list_markets_by_tickers(self, tickers):
+        return []
+
+
+class FakeFlatTradedKalshiAccountClient(FakeConfiguredKalshiAccountClient):
+    def list_positions(self, *, count_filter, limit, cursor=None):
+        assert count_filter == "total_traded"
+        return {"market_positions": [], "cursor": ""}
+
+    def list_settlements(self, *, limit, cursor=None):
+        assert limit == 1000
+        return {
+            "settlements": [
+                {
+                    "ticker": "NBA-FLAT-HISTORY",
+                    "yes_count_fp": "100.00",
+                    "yes_total_cost_dollars": "76.2500",
+                    "no_count_fp": "0.00",
+                    "no_total_cost_dollars": "0.0000",
+                    "revenue": 10000,
+                    "fee_cost": "1.2500",
+                }
+            ],
+            "cursor": "",
+        }
+
+    def list_fills(self, *, limit):
+        return {"fills": []}
+
+    def list_markets_by_tickers(self, tickers):
+        return []
+
+
+class FakePaginatedSettlementsKalshiAccountClient(FakeConfiguredKalshiAccountClient):
+    def __init__(self) -> None:
+        self.settlement_calls: list[str | None] = []
+
+    def list_positions(self, *, count_filter, limit, cursor=None):
+        return {"market_positions": [], "cursor": ""}
+
+    def list_settlements(self, *, limit, cursor=None):
+        assert limit == 1000
+        self.settlement_calls.append(cursor)
+        if cursor is None:
+            return {
+                "settlements": [
+                    {
+                        "ticker": "NBA-SETTLED-1",
+                        "yes_total_cost_dollars": "70.0000",
+                        "no_total_cost_dollars": "10.0000",
+                        "revenue": 10000,
+                        "fee_cost": "5.0000",
+                    }
+                ],
+                "cursor": "settlements-page-2",
+            }
+        return {
+            "settlements": [
+                {
+                    "ticker": "NBA-SETTLED-2",
+                    "yes_total_cost_dollars": "20.0000",
+                    "no_total_cost_dollars": "10.0000",
+                    "revenue": 5000,
+                    "fee_cost": "2.0000",
+                }
+            ],
+            "cursor": "",
+        }
+
+
+class FakeMalformedSettlementKalshiAccountClient(FakeConfiguredKalshiAccountClient):
+    def list_settlements(self, *, limit, cursor=None):
+        return {
+            "settlements": [
+                {
+                    "ticker": "NBA-SETTLED-MALFORMED",
+                    "yes_total_cost_dollars": "not-a-number",
+                    "no_total_cost_dollars": "0.0000",
+                    "revenue": 10000,
+                    "fee_cost": "1.0000",
+                }
+            ],
+            "cursor": "",
+        }
 
 
 def test_kalshi_account_snapshot_maps_live_positions_and_fills(db_session):
@@ -159,9 +278,118 @@ def test_kalshi_account_snapshot_maps_live_positions_and_fills(db_session):
     assert snapshot.market_positions[0].bet_subtitle == "Celtics to win?"
     assert snapshot.market_positions[0].position == 3
     assert snapshot.market_positions[0].realized_pnl_dollars == 0.24
+    assert snapshot.realized_pnl_dollars_total == 0.24
+    assert snapshot.realized_pnl_truncated is False
+    assert snapshot.positions_truncated is False
     assert snapshot.recent_fills[0].ticker == "NBA-TEST"
     assert snapshot.recent_fills[0].bet_label == "YES Boston Celtics"
     assert snapshot.recent_fills[0].yes_price_dollars == 0.55
+
+
+def test_kalshi_account_snapshot_drains_all_position_cursor_pages(db_session):
+    client = FakePaginatedKalshiAccountClient()
+
+    snapshot = build_kalshi_account_snapshot(db_session, client=client)
+
+    assert client.position_calls == [None, "page-2"]
+    assert len(snapshot.market_positions) == 130
+    assert snapshot.realized_pnl_dollars_total == pytest.approx(13.0)
+    assert snapshot.positions_truncated is False
+
+
+def test_kalshi_account_snapshot_keeps_flat_market_pnl_outside_open_list(db_session):
+    snapshot = build_kalshi_account_snapshot(
+        db_session,
+        client=FakeFlatTradedKalshiAccountClient(),
+    )
+
+    assert snapshot.market_positions == []
+    assert snapshot.realized_pnl_dollars_total == 23.75
+    assert snapshot.realized_pnl_truncated is False
+    assert snapshot.positions_truncated is False
+
+
+def test_kalshi_account_snapshot_drains_settled_history_for_lifetime_pnl(db_session):
+    client = FakePaginatedSettlementsKalshiAccountClient()
+
+    snapshot = build_kalshi_account_snapshot(db_session, client=client)
+
+    assert client.settlement_calls == [None, "settlements-page-2"]
+    assert snapshot.market_positions == []
+    assert snapshot.realized_pnl_dollars_total == pytest.approx(40.0)
+    assert snapshot.realized_pnl_truncated is False
+
+
+def test_kalshi_account_snapshot_marks_malformed_settlement_total_partial(db_session):
+    snapshot = build_kalshi_account_snapshot(
+        db_session,
+        client=FakeMalformedSettlementKalshiAccountClient(),
+    )
+
+    # The valid unsettled component is retained, but the signed total is
+    # explicitly partial because a settled cost component is malformed.
+    assert snapshot.realized_pnl_dollars_total == pytest.approx(0.24)
+    assert snapshot.realized_pnl_truncated is True
+
+
+def test_kalshi_account_snapshot_marks_settlement_page_cap_partial(
+    db_session,
+    monkeypatch,
+):
+    client = FakePaginatedSettlementsKalshiAccountClient()
+    monkeypatch.setattr(kalshi_account_module, "_SETTLEMENTS_MAX_PAGES", 1)
+
+    snapshot = build_kalshi_account_snapshot(db_session, client=client)
+
+    assert client.settlement_calls == [None]
+    assert snapshot.positions_truncated is False
+    assert snapshot.realized_pnl_dollars_total == pytest.approx(20.0)
+    assert snapshot.realized_pnl_truncated is True
+
+
+def test_kalshi_account_snapshot_marks_defensive_position_page_cap(
+    db_session,
+    monkeypatch,
+):
+    client = FakePaginatedKalshiAccountClient()
+    monkeypatch.setattr(kalshi_account_module, "_POSITIONS_MAX_PAGES", 1)
+
+    snapshot = build_kalshi_account_snapshot(db_session, client=client)
+
+    assert len(snapshot.market_positions) == 65
+    assert snapshot.positions_truncated is True
+
+
+@pytest.mark.parametrize(
+    "position_row",
+    [
+        {
+            "ticker": "NBA-BAD-POSITION",
+            "position_fp": "not-a-number",
+            "realized_pnl_dollars": "0.0000",
+        },
+        {
+            "ticker": "",
+            "position_fp": "2.00",
+            "realized_pnl_dollars": "0.0000",
+        },
+    ],
+)
+def test_kalshi_account_snapshot_marks_unrenderable_open_rows_partial(
+    db_session,
+    position_row,
+):
+    client = FakeConfiguredKalshiAccountClient()
+    client.list_positions = lambda **_kwargs: {
+        "market_positions": [position_row],
+        "cursor": "",
+    }
+    client.list_fills = lambda **_kwargs: {"fills": []}
+
+    snapshot = build_kalshi_account_snapshot(db_session, client=client)
+
+    assert snapshot.market_positions == []
+    assert snapshot.positions_truncated is True
 
 
 def test_kalshi_account_snapshot_enriches_unknown_tickers_from_kalshi_metadata(db_session):
@@ -218,15 +446,24 @@ class _CountingKalshiAccountClient(FakeConfiguredKalshiAccountClient):
     def __init__(self) -> None:
         self.balance_calls = 0
         self.positions_calls = 0
+        self.settlements_calls = 0
         self.fills_calls = 0
 
     def get_balance(self):  # type: ignore[override]
         self.balance_calls += 1
         return super().get_balance()
 
-    def list_positions(self, *, count_filter, limit):  # type: ignore[override]
+    def list_positions(self, *, count_filter, limit, cursor=None):  # type: ignore[override]
         self.positions_calls += 1
-        return super().list_positions(count_filter=count_filter, limit=limit)
+        return super().list_positions(
+            count_filter=count_filter,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def list_settlements(self, *, limit, cursor=None):  # type: ignore[override]
+        self.settlements_calls += 1
+        return super().list_settlements(limit=limit, cursor=cursor)
 
     def list_fills(self, *, limit):  # type: ignore[override]
         self.fills_calls += 1
@@ -253,6 +490,7 @@ def test_kalshi_account_snapshot_caches_when_called_without_explicit_client(db_s
         "consecutive /positions calls must reuse the cached snapshot"
     )
     assert counting_client.positions_calls == 1
+    assert counting_client.settlements_calls == 1
     assert counting_client.fills_calls == 1
 
 

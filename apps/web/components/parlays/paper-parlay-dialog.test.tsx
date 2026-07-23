@@ -8,14 +8,19 @@ import { __testing, addLeg } from "./parlay-tray-store";
 import type { TradeSelection } from "@/components/trade/trade-ticket";
 import type { PaperParlayRead } from "@/lib/types";
 
-const { mockOpenPaperParlay, mockMutate } = vi.hoisted(() => ({
+const { mockOpenPaperParlay, mockQuotePaperParlay, mockMutate } = vi.hoisted(() => ({
   mockOpenPaperParlay: vi.fn(),
+  mockQuotePaperParlay: vi.fn(),
   mockMutate: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
-  return { ...actual, openPaperParlay: mockOpenPaperParlay };
+  return {
+    ...actual,
+    openPaperParlay: mockOpenPaperParlay,
+    quotePaperParlay: mockQuotePaperParlay,
+  };
 });
 
 vi.mock("swr", async () => {
@@ -73,7 +78,21 @@ function paperParlayFixture(): PaperParlayRead {
 beforeEach(() => {
   __testing.reset();
   mockOpenPaperParlay.mockReset();
+  mockQuotePaperParlay.mockReset();
   mockMutate.mockReset();
+  mockQuotePaperParlay.mockResolvedValue({
+    combined_market_price: 0.25,
+    joint_probability: 0.44,
+    edge: 0.19,
+    pair_counts: {
+      shared_subject: 0,
+      qb_receiver_stack: 0,
+      player_team_total: 0,
+      same_team: 1,
+      shared_opponent: 0,
+    },
+    correlation_factor: 0.3,
+  });
 });
 
 describe("PaperParlayDialog", () => {
@@ -126,6 +145,7 @@ describe("PaperParlayDialog", () => {
     mockOpenPaperParlay.mockResolvedValue(paperParlayFixture());
     const onOpenChange = vi.fn();
     renderWithProviders(<PaperParlayDialog open onOpenChange={onOpenChange} />);
+    await waitFor(() => expect(screen.getByText("44.0%")).toBeInTheDocument());
 
     const user = userEvent.setup();
     await user.type(screen.getByTestId("paper-parlay-dialog-stake"), "100");
@@ -140,6 +160,11 @@ describe("PaperParlayDialog", () => {
       { ticker: "A", side: "yes", suggested_price: 0.5 },
       { ticker: "B", side: "no", suggested_price: 0.4 },
     ]);
+    expect(payload.expected_quote).toEqual({
+      combined_market_price: 0.25,
+      joint_probability: 0.44,
+      edge: 0.19,
+    });
     // /positions invalidated so the portfolio table refetches.
     expect(mockMutate).toHaveBeenCalledWith("/positions");
     // Dialog closes on success.
@@ -154,6 +179,7 @@ describe("PaperParlayDialog", () => {
     );
     const onOpenChange = vi.fn();
     renderWithProviders(<PaperParlayDialog open onOpenChange={onOpenChange} />);
+    await waitFor(() => expect(screen.getByText("44.0%")).toBeInTheDocument());
 
     const user = userEvent.setup();
     await user.type(screen.getByTestId("paper-parlay-dialog-stake"), "50");
@@ -173,6 +199,7 @@ describe("PaperParlayDialog", () => {
     addLeg(makeLeg("B"));
     mockOpenPaperParlay.mockResolvedValue(paperParlayFixture());
     renderWithProviders(<PaperParlayDialog open onOpenChange={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("44.0%")).toBeInTheDocument());
 
     const user = userEvent.setup();
     await user.type(screen.getByTestId("paper-parlay-dialog-stake"), "100");
@@ -186,5 +213,62 @@ describe("PaperParlayDialog", () => {
     for (const list of legs) {
       expect(list.querySelectorAll("li")).toHaveLength(0);
     }
+  });
+
+  it("refreshes a stale quote and requires a second confirmation", async () => {
+    addLeg(makeLeg("A"));
+    addLeg(makeLeg("B"));
+    mockQuotePaperParlay
+      .mockReset()
+      .mockResolvedValueOnce({
+        combined_market_price: 0.25,
+        joint_probability: 0.44,
+        edge: 0.19,
+        pair_counts: {
+          shared_subject: 0,
+          qb_receiver_stack: 0,
+          player_team_total: 0,
+          same_team: 1,
+          shared_opponent: 0,
+        },
+        correlation_factor: 0.3,
+      })
+      .mockResolvedValue({
+        combined_market_price: 0.20,
+        joint_probability: 0.50,
+        edge: 0.30,
+        pair_counts: {
+          shared_subject: 0,
+          qb_receiver_stack: 0,
+          player_team_total: 0,
+          same_team: 1,
+          shared_opponent: 0,
+        },
+        correlation_factor: 0.3,
+      });
+    mockOpenPaperParlay.mockResolvedValue(paperParlayFixture());
+    renderWithProviders(<PaperParlayDialog open onOpenChange={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText("44.0%")).toBeInTheDocument());
+
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId("paper-parlay-dialog-stake"), "100");
+    await user.click(screen.getByTestId("paper-parlay-dialog-submit"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/quote updated/i);
+      expect(screen.getByText("50.0%")).toBeInTheDocument();
+    });
+    expect(mockOpenPaperParlay).not.toHaveBeenCalled();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("paper-parlay-dialog-submit")).toBeEnabled(),
+    );
+    await user.click(screen.getByTestId("paper-parlay-dialog-submit"));
+    await waitFor(() => expect(mockOpenPaperParlay).toHaveBeenCalledTimes(1));
+    expect(mockOpenPaperParlay.mock.calls[0][0].expected_quote).toEqual({
+      combined_market_price: 0.20,
+      joint_probability: 0.50,
+      edge: 0.30,
+    });
   });
 });

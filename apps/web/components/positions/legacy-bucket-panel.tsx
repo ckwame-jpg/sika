@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/table";
 import { fmtDatetime, pnlClass } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { TruncationHint } from "@/components/positions/truncation-hint";
 
 /**
  * Multi-user batch follow-up — read-only renderer for the legacy
@@ -87,11 +88,22 @@ export function LegacyBucketPanel() {
       {expanded && (
         <div className="cosmos-panel-body flush space-y-6 pt-2">
           {paperPositions.length > 0 && (
-            <LegacyPaperPositions positions={paperPositions} />
+            <LegacyPaperPositions
+              positions={paperPositions}
+              truncated={data.legacy_paper_truncated}
+            />
           )}
-          {demoOrders.length > 0 && <LegacyDemoOrders orders={demoOrders} />}
+          {demoOrders.length > 0 && (
+            <LegacyDemoOrders
+              orders={demoOrders}
+              truncated={data.legacy_demo_truncated}
+            />
+          )}
           {paperParlays.length > 0 && (
-            <LegacyPaperParlays parlays={paperParlays} />
+            <LegacyPaperParlays
+              parlays={paperParlays}
+              truncated={data.legacy_paper_parlays_truncated}
+            />
           )}
         </div>
       )}
@@ -109,10 +121,19 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
   );
 }
 
-function LegacyPaperPositions({ positions }: { positions: PaperPositionRead[] }) {
+function LegacyPaperPositions({
+  positions,
+  truncated,
+}: {
+  positions: PaperPositionRead[];
+  truncated: boolean;
+}) {
   return (
     <div data-testid="legacy-paper-positions">
       <SectionHeader title="Paper positions" count={positions.length} />
+      {truncated ? (
+        <TruncationHint visibleCount={positions.length} limitParam="paper_limit" />
+      ) : null}
       <Table>
         <TableHeader>
           <TableRow>
@@ -151,10 +172,19 @@ function LegacyPaperPositions({ positions }: { positions: PaperPositionRead[] })
   );
 }
 
-function LegacyDemoOrders({ orders }: { orders: DemoOrderRead[] }) {
+function LegacyDemoOrders({
+  orders,
+  truncated,
+}: {
+  orders: DemoOrderRead[];
+  truncated: boolean;
+}) {
   return (
     <div data-testid="legacy-demo-orders">
       <SectionHeader title="Demo orders" count={orders.length} />
+      {truncated ? (
+        <TruncationHint visibleCount={orders.length} limitParam="demo_limit" />
+      ) : null}
       <Table>
         <TableHeader>
           <TableRow>
@@ -187,10 +217,19 @@ function LegacyDemoOrders({ orders }: { orders: DemoOrderRead[] }) {
   );
 }
 
-function LegacyPaperParlays({ parlays }: { parlays: PaperParlayRead[] }) {
+function LegacyPaperParlays({
+  parlays,
+  truncated,
+}: {
+  parlays: PaperParlayRead[];
+  truncated: boolean;
+}) {
   return (
     <div data-testid="legacy-paper-parlays">
       <SectionHeader title="Paper parlays" count={parlays.length} />
+      {truncated ? (
+        <TruncationHint visibleCount={parlays.length} limitParam="paper_limit" />
+      ) : null}
       <Table>
         <TableHeader>
           <TableRow>

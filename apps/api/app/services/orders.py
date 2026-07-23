@@ -332,11 +332,30 @@ register_intent_handler(INTENT_KALSHI_ORDER_SUBMIT, _kalshi_submit_handler)
 register_intent_handler(INTENT_KALSHI_ORDER_CANCEL, _kalshi_cancel_handler)
 
 
+def _drain_demo_client_pages(client, *, iterator_name: str, list_name: str) -> list[dict]:
+    """Use the cursor API in production; retain explicit flat-list fake support."""
+    iterator = getattr(client, iterator_name, None)
+    if callable(iterator):
+        return [item for page, _cursor in iterator() for item in page]
+    result = getattr(client, list_name)()
+    if isinstance(result, tuple) and len(result) == 2:
+        return list(result[0] or [])
+    return list(result or [])
+
+
 def reconcile_demo_state(db: Session, client: KalshiDemoClient | None = None) -> None:
     kalshi_client = client or KalshiDemoClient()
     try:
-        orders = kalshi_client.list_orders()
-        fills = kalshi_client.list_fills()
+        orders = _drain_demo_client_pages(
+            kalshi_client,
+            iterator_name="iter_order_pages",
+            list_name="list_orders",
+        )
+        fills = _drain_demo_client_pages(
+            kalshi_client,
+            iterator_name="iter_fill_pages",
+            list_name="list_fills",
+        )
     except Exception:
         return
 

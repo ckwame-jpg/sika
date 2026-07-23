@@ -14,7 +14,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { fetchTradingSettings, keys, placeKalshiCombo } from "@/lib/api";
-import { estimateTakerFeeDollars, quantizeToCentPrice } from "@/lib/kalshi-fees";
+import {
+  estimateTakerFeeDollars,
+  orderTotalExceedsCap,
+  quantizeToCentPrice,
+  worstCaseTakerFeeDollars,
+} from "@/lib/kalshi-fees";
 import type { KalshiComboLegCreate, KalshiComboPreviewRead } from "@/lib/types";
 import { usePriceDisplay } from "@/lib/price-display";
 import { cn } from "@/lib/utils";
@@ -114,10 +119,14 @@ export function KalshiComboDialog({
     const quantity = Math.max(1, Math.round(stake / parsedPrice));
     const cost = quantity * parsedPrice;
     const fee = estimateTakerFeeDollars(quantity, parsedPrice);
-    return { stake, quantity, cost, fee, payout: quantity };
+    const worstCaseFee = worstCaseTakerFeeDollars(quantity, parsedPrice);
+    return { stake, quantity, cost, fee, worstCaseFee, payout: quantity };
   }, [parsedPrice, stakeInput]);
 
-  const overCap = order != null && capDollars != null && order.cost > capDollars;
+  const overCap =
+    order != null &&
+    capDollars != null &&
+    orderTotalExceedsCap(order.cost, order.worstCaseFee, capDollars);
 
   function legPayload(): KalshiComboLegCreate[] {
     return legs.map((leg) => ({
@@ -341,7 +350,8 @@ export function KalshiComboDialog({
               )}
               {overCap && capDollars != null && (
                 <p className="mt-1 text-2xs text-negative" data-testid="kalshi-combo-cap-warning">
-                  Over your ${capDollars.toFixed(0)} per-order cap.
+                  Principal plus worst-case taker fee is over your ${capDollars.toFixed(0)}
+                  {" "}per-order cap.
                 </p>
               )}
             </div>

@@ -40,6 +40,10 @@ from app.schemas import (
     KalshiComboPreviewRequest,
 )
 from app.services.kalshi_orders import (
+    _normalized_kalshi_status,
+    _remote_fill_count,
+    _response_with_fill_count_provenance,
+    _sync_fills_after_submit,
     client_for_order,
     enforce_order_cost_cap,
     environment_for_base_url,
@@ -374,6 +378,7 @@ def _kalshi_combo_submit_handler(db: Session, entry) -> None:
                     "Kalshi couldn't create the combo market", exc
                 )
                 order.last_synced_at = now
+                order.fills_synced_at = now
                 logger.warning("combo mint failed for order %s: %s", order.id, order.error_detail)
                 return
             raise
@@ -386,6 +391,7 @@ def _kalshi_combo_submit_handler(db: Session, entry) -> None:
         if not order.ticker:
             order.status = "mint_failed"
             order.error_detail = f"Mint response had no market_ticker: {minted}"
+            order.fills_synced_at = now
             return
         # CHECKPOINT: the drain loop only commits when the handler
         # returns. Persist the minted ticker NOW so a crash between
@@ -408,6 +414,7 @@ def _kalshi_combo_submit_handler(db: Session, entry) -> None:
             order.status = "submission_failed"
             order.error_detail = friendly_kalshi_rejection("Kalshi rejected the combo order", exc)
             order.last_synced_at = datetime.now(timezone.utc)
+            order.fills_synced_at = order.last_synced_at
             logger.warning("combo order %s rejected: %s", order.id, order.error_detail)
             return
         raise
@@ -415,16 +422,26 @@ def _kalshi_combo_submit_handler(db: Session, entry) -> None:
     remote_order = response.get("order", {})
     now = datetime.now(timezone.utc)
     order.kalshi_order_id = remote_order.get("order_id") or order.kalshi_order_id
-    order.status = remote_order.get("status") or "submitted"
+    order.status = _normalized_kalshi_status(
+        remote_order.get("status"),
+        "submitted",
+    )
     order.request_body = response.get("request", {})
     response_body = dict(order.response_body or {})
-    response_body["order"] = response
+    stored_order_response = _response_with_fill_count_provenance(
+        response,
+        status=order.status,
+        previous_payload=response_body.get("order"),
+    )
+    response_body["order"] = stored_order_response
     order.response_body = response_body
     order.submitted_at = order.submitted_at or now
     order.last_synced_at = now
+    _sync_fills_after_submit(db, client, order, stored_order_response)
     if (
         order.status == "cancelled"
         and payload.get("time_in_force") == "immediate_or_cancel"
+        and _remote_fill_count(response) == 0
     ):
         order.error_detail = (
             "no fill available up to your limit — the combo book was empty. "

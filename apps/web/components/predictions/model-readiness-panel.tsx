@@ -98,6 +98,20 @@ function shadowBacklogLabel(family: ModelFamilyReadinessRead): string {
   return `${backlog} ${unit} pending`;
 }
 
+function diagnosticsSampleCaption(family: ModelFamilyReadinessRead): string {
+  const windowStart = family.diagnostics_sample_window_start
+    ? new Date(family.diagnostics_sample_window_start)
+    : null;
+  const completeness = windowStart && !Number.isNaN(windowStart.getTime())
+    ? ` All capped-state slices are complete from ${windowStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })}; some included rows from the other state may extend earlier.`
+    : " Some included rows from the other state may extend earlier than the effective capped-state boundary.";
+  const rows = family.diagnostics_sample_rows.toLocaleString();
+  if (family.scope === "parlay") {
+    return `Diagnostics sample clipped: ${rows} matching rows from the global newest-first parlay slices. A settled or unsettled 5,000-row cap was reached, so other parlay families may have displaced older rows in that capped state.${completeness}`;
+  }
+  return `Diagnostics sample clipped: ${rows} rows from this family's newest settled and unsettled slices. A 5,000-row slice cap was reached, so older rows from that capped state are omitted.${completeness}`;
+}
+
 function defaultFamilyKey(families: ModelFamilyReadinessRead[]): string {
   const activeWithVolume = families.find(
     (family) =>
@@ -463,6 +477,9 @@ export function ModelReadinessPanel() {
   const selectedHasNoRecommendationRows = selected
     ? selected.total_predictions === 0 && selected.settled_predictions === 0 && selected.pending_predictions === 0
     : false;
+  const selectedSettledDiagnosticsClipped = selected
+    ? selected.settled_predictions > 0 && selected.diagnostics_settled_sample_truncated
+    : false;
   const settlementFamilies = summary.families.filter(
     (family) => family.study_track === "active" && family.pending_predictions > 0 && family.settled_predictions === 0,
   );
@@ -699,6 +716,15 @@ export function ModelReadinessPanel() {
               </div>
             ) : null}
 
+            {selected.diagnostics_sample_truncated ? (
+              <div
+                className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-warning-foreground"
+                data-testid="readiness-diagnostics-sample-clipped"
+              >
+                {diagnosticsSampleCaption(selected)}
+              </div>
+            ) : null}
+
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
               <div className="stats-tile">
                 <p className="stats-tile-label">Runtime</p>
@@ -762,7 +788,9 @@ export function ModelReadinessPanel() {
                     ? "Closing-line value. Positive = line moved toward our picks (sharp)."
                     : selected.scope === "parlay"
                       ? "Per-leg closing prices not yet aggregated for parlays."
-                      : "Populates as new predictions settle (rows captured before this shipped stay blank)."}
+                      : selectedSettledDiagnosticsClipped
+                        ? "Unavailable in the capped diagnostics sample; see the sample note above."
+                        : "Populates as new predictions settle (rows captured before this shipped stay blank)."}
                 </p>
               </div>
             </div>
@@ -795,7 +823,11 @@ export function ModelReadinessPanel() {
                 <p className="stats-tile-label">Feature Coverage</p>
                 <div className="mt-3 flex flex-col gap-2 text-sm">
                   {Object.entries(selected.feature_coverage_rates).length === 0 ? (
-                    <span className="text-muted-foreground">No coverage diagnostics yet.</span>
+                    <span className="text-muted-foreground">
+                      {selected.diagnostics_sample_truncated
+                        ? "Unavailable in the capped diagnostics sample."
+                        : "No coverage diagnostics yet."}
+                    </span>
                   ) : Object.entries(selected.feature_coverage_rates).map(([key, value]) => (
                     <div key={key} className="flex items-center justify-between gap-3">
                       <span className="text-foreground">{key.replaceAll("_", " ")}</span>
@@ -808,7 +840,11 @@ export function ModelReadinessPanel() {
                 <p className="stats-tile-label">Missing Context</p>
                 <div className="mt-3 flex flex-col gap-2 text-sm">
                   {Object.entries(selected.missing_context_rates).length === 0 ? (
-                    <span className="text-muted-foreground">No missing-context flags recorded.</span>
+                    <span className="text-muted-foreground">
+                      {selected.diagnostics_sample_truncated
+                        ? "Unavailable in the capped diagnostics sample."
+                        : "No missing-context flags recorded."}
+                    </span>
                   ) : Object.entries(selected.missing_context_rates).map(([key, value]) => (
                     <div key={key} className="flex items-center justify-between gap-3">
                       <span className="text-foreground">{key.replaceAll("_", " ")}</span>
@@ -821,7 +857,11 @@ export function ModelReadinessPanel() {
                 <p className="stats-tile-label">Top Failure Reasons</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {Object.entries(selected.top_failure_reasons).length === 0 ? (
-                    <span className="text-sm text-muted-foreground">No settled-loss diagnostics yet.</span>
+                    <span className="text-sm text-muted-foreground">
+                      {selectedSettledDiagnosticsClipped
+                        ? "Unavailable in the capped diagnostics sample."
+                        : "No settled-loss diagnostics yet."}
+                    </span>
                   ) : Object.entries(selected.top_failure_reasons).map(([key, value]) => (
                     <span key={key} className="outcome-pill">
                       {key.replaceAll("_", " ")} · {value}

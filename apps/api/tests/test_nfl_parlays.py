@@ -5,7 +5,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+from app.services.parlay_quotes import QuoteLeg, quote_joint_probability
 from app.services.parlays import (
+    _combo_is_valid,
     _correlation_adjusted_joint_probability,
     _count_correlation_pairs,
     _pair_weight,
@@ -49,7 +53,9 @@ def _stack_combo():
 def test_qb_receiver_stack_detected() -> None:
     pairs = _count_correlation_pairs(_stack_combo())
     assert pairs["qb_receiver_stack"] == 1
-    assert pairs["same_team"] == 1
+    # Exclusive precedence: a stack pair receives only the strongest matching
+    # category, never an additional same-team lift.
+    assert pairs["same_team"] == 0
     assert pairs["shared_subject"] == 0
     # Same-player pair is shared_subject, never a stack.
     qb = _candidate(subject="jalen hurts", team="PHI", stat_key="passing_yards")
@@ -57,6 +63,22 @@ def test_qb_receiver_stack_detected() -> None:
     self_pair = _count_correlation_pairs((qb, qb_rush))
     assert self_pair["qb_receiver_stack"] == 0
     assert self_pair["shared_subject"] == 1
+    assert self_pair["same_team"] == 0
+
+
+def test_qb_receiver_stack_requires_same_event() -> None:
+    qb, wr = _stack_combo()
+    wr.event.id = 2
+    pairs = _count_correlation_pairs((qb, wr))
+    assert pairs["qb_receiver_stack"] == 0
+    assert pairs["same_team"] == 1
+
+
+def test_auto_validation_remains_cross_event_only() -> None:
+    qb, wr = _stack_combo()
+    assert _combo_is_valid((qb, wr)) is False
+    wr.event.id = 2
+    assert _combo_is_valid((qb, wr)) is True
 
 
 def test_player_team_total_detected_same_event_only() -> None:
@@ -101,6 +123,67 @@ def test_stack_lifts_joint_probability_above_independence() -> None:
     nba_pairs = _count_correlation_pairs(nba_like)
     nba_joint = _correlation_adjusted_joint_probability(nba_like, nba_pairs)
     assert joint > nba_joint
+
+
+def test_mixed_parlay_keeps_pair_specific_nfl_stack_weight() -> None:
+    quote = quote_joint_probability(
+        (
+            QuoteLeg(
+                model_probability=0.6,
+                sport_key="NFL",
+                event_id=1,
+                subject_name="Quarterback",
+                subject_team="PHI",
+                stat_key="passing_yards",
+                market_family="player_prop",
+            ),
+            QuoteLeg(
+                model_probability=0.6,
+                sport_key="NFL",
+                event_id=1,
+                subject_name="Receiver",
+                subject_team="PHI",
+                stat_key="receiving_yards",
+                market_family="player_prop",
+            ),
+            QuoteLeg(
+                model_probability=0.6,
+                sport_key="NBA",
+                event_id=2,
+                subject_name="Guard",
+                subject_team="BOS",
+                stat_key="points",
+                market_family="player_prop",
+            ),
+        )
+    )
+    assert quote.pair_counts["qb_receiver_stack"] == 1
+    assert sum(quote.pair_counts.values()) == 1
+    assert quote.correlation_factor == pytest.approx(0.55 / 3, abs=1e-12)
+
+
+def test_generic_pair_labels_never_correlate_across_sports() -> None:
+    quote = quote_joint_probability(
+        (
+            QuoteLeg(
+                model_probability=0.6,
+                sport_key="NBA",
+                subject_name="Shared Name",
+                subject_team="CLE",
+                opponent="DET",
+            ),
+            QuoteLeg(
+                model_probability=0.5,
+                sport_key="NFL",
+                subject_name="Shared Name",
+                subject_team="CLE",
+                opponent="DET",
+            ),
+        )
+    )
+    assert sum(quote.pair_counts.values()) == 0
+    assert quote.correlation_factor == 0.0
+    assert quote.joint_probability == pytest.approx(0.3, abs=1e-12)
 
 
 def test_stack_penalty_in_diagnostics() -> None:

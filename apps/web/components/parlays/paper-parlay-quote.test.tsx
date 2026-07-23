@@ -32,8 +32,6 @@ describe("computePaperParlayQuote", () => {
     const quote = computePaperParlayQuote([]);
     expect(quote.legCount).toBe(0);
     expect(quote.combinedMarketPrice).toBe(0);
-    expect(quote.combinedModelProbability).toBe(0);
-    expect(quote.edge).toBe(0);
     expect(quote.potentialPayoutForStake(100)).toBeNull();
   });
 
@@ -46,73 +44,30 @@ describe("computePaperParlayQuote", () => {
     expect(quote.combinedMarketPrice).toBeCloseTo(0.2, 6);
   });
 
-  it("combined_model_probability is the strict product when legs share no correlation", () => {
-    // Different subjects, different teams.
-    const quote = computePaperParlayQuote([
-      makeLeg({
-        ticker: "A",
-        subjectName: "Alpha",
-        subjectTeam: "AAA",
-        selectedSideProbability: 0.6,
-        entryPrice: 0.5,
-      }),
-      makeLeg({
-        ticker: "B",
-        subjectName: "Beta",
-        subjectTeam: "BBB",
-        selectedSideProbability: 0.5,
-        entryPrice: 0.4,
-      }),
-    ]);
-    // 0.6 * 0.5 = 0.30
-    expect(quote.combinedModelProbability).toBeCloseTo(0.3, 6);
+  it("uses six-decimal pricing and the server price for payout math", () => {
+    const legs = [
+      makeLeg({ ticker: "A", entryPrice: 0.10 }),
+      makeLeg({ ticker: "B", entryPrice: 0.15 }),
+      makeLeg({ ticker: "C", entryPrice: 0.15 }),
+      makeLeg({ ticker: "D", entryPrice: 0.25 }),
+    ];
+    expect(computePaperParlayQuote(legs).combinedMarketPrice).toBe(0.000562);
+
+    const serverQuote = computePaperParlayQuote(legs, 0.000561);
+    expect(serverQuote.combinedMarketPrice).toBe(0.000561);
+    expect(serverQuote.potentialPayoutForStake(100)).toBeCloseTo(
+      100 * (1 / 0.000561 - 1),
+      2,
+    );
   });
 
-  it("lifts combined_model_probability for shared-subject legs (pins to backend formula)", () => {
-    // Two legs on the same player. Same expected value as the backend:
-    // 0.30 + 0.70 * (0.50 - 0.30) = 0.44.
+  it("does not duplicate server-owned joint probability or edge math", () => {
     const quote = computePaperParlayQuote([
-      makeLeg({
-        ticker: "A",
-        subjectName: "Same Player",
-        subjectTeam: "CLE",
-        selectedSideProbability: 0.6,
-        entryPrice: 0.5,
-      }),
-      makeLeg({
-        ticker: "B",
-        subjectName: "Same Player",
-        subjectTeam: "CLE",
-        selectedSideProbability: 0.5,
-        entryPrice: 0.45,
-      }),
+      makeLeg({ ticker: "A" }),
+      makeLeg({ ticker: "B" }),
     ]);
-    expect(quote.combinedModelProbability).toBeCloseTo(0.44, 6);
-    // Edge = 0.44 - (0.5 * 0.45) = 0.44 - 0.225 = 0.215
-    expect(quote.edge).toBeCloseTo(0.215, 6);
-  });
-
-  it("lifts (less) for same-team legs without shared subject", () => {
-    // Same team but different subjects → weight 0.3, 1 pair, 1 total pair.
-    // independent = 0.6 * 0.5 = 0.30, min = 0.5, correlation = 0.3.
-    // joint = 0.30 + 0.30 * (0.50 - 0.30) = 0.36.
-    const quote = computePaperParlayQuote([
-      makeLeg({
-        ticker: "A",
-        subjectName: "Player A",
-        subjectTeam: "CLE",
-        selectedSideProbability: 0.6,
-        entryPrice: 0.5,
-      }),
-      makeLeg({
-        ticker: "B",
-        subjectName: "Player B",
-        subjectTeam: "CLE",
-        selectedSideProbability: 0.5,
-        entryPrice: 0.45,
-      }),
-    ]);
-    expect(quote.combinedModelProbability).toBeCloseTo(0.36, 6);
+    expect(quote).not.toHaveProperty("combinedModelProbability");
+    expect(quote).not.toHaveProperty("edge");
   });
 
   it("potentialPayoutForStake returns stake * (1/combined - 1) on a positive stake", () => {

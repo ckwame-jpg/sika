@@ -31,3 +31,31 @@ export function estimateTakerFeeDollars(contracts: number, priceDollars: number)
   // which would ceil to 43¢ instead of the true 42¢.
   return Math.ceil(raw * 100 - 1e-9) / 100;
 }
+
+/**
+ * Largest possible taker fee for an order that can fill at or below
+ * its limit. The fee curve peaks at 50¢, so a fill below a limit over
+ * 50¢ can cost more in fees than a fill at the limit itself.
+ */
+export function worstCaseTakerFeeDollars(
+  contracts: number,
+  limitPriceDollars: number,
+): number {
+  return estimateTakerFeeDollars(contracts, Math.min(limitPriceDollars, 0.5));
+}
+
+/**
+ * Compare a cent-denominated order total with the operator's dollar cap.
+ * Principal and fee are mathematically whole cents, but adding their
+ * binary-float representations can produce values such as
+ * 0.42000000000000004. Round the total back to cents before applying the
+ * strict cap comparison so an order exactly at the cap remains allowed.
+ */
+export function orderTotalExceedsCap(
+  principalDollars: number,
+  feeDollars: number,
+  capDollars: number,
+): boolean {
+  const totalDollars = Math.round((principalDollars + feeDollars) * 100) / 100;
+  return totalDollars > capDollars;
+}

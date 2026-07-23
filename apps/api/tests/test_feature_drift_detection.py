@@ -115,7 +115,13 @@ def test_detect_drift_filters_known_training_only_missing_keys() -> None:
     features = {"recent_average": 21.4}
     extra, missing = _detect_feature_drift(
         features,
-        ["recent_average", "sport_is_nba", "sport_is_mlb"],
+        [
+            "recent_average",
+            "sport_is_nba",
+            "sport_is_mlb",
+            "sport_is_wnba",
+            "sport_is_nfl",
+        ],
     )
     assert extra == set()
     assert missing == set()
@@ -161,11 +167,13 @@ def test_detect_drift_handles_empty_ordered_keys() -> None:
 
 
 def test_known_training_only_set_includes_sport_indicators() -> None:
-    # Drift guard on the legitimate-miss list itself. The two sport_is_*
-    # keys are stable enrichments that have been in every feature spec
-    # since v1; they must always be filtered.
+    # Drift guard on the legitimate-miss list itself. These sport_is_*
+    # keys are row-derived training enrichments, so serving legitimately
+    # omits every one of them.
     assert "sport_is_nba" in _TRAINING_ONLY_FEATURE_KEYS
     assert "sport_is_mlb" in _TRAINING_ONLY_FEATURE_KEYS
+    assert "sport_is_wnba" in _TRAINING_ONLY_FEATURE_KEYS
+    assert "sport_is_nfl" in _TRAINING_ONLY_FEATURE_KEYS
 
 
 def test_vectorize_non_ordered_set_includes_family_key() -> None:
@@ -253,6 +261,8 @@ def test_inference_does_not_warn_on_legitimate_training_only_misses(
             "recent_average",
             "sport_is_nba",
             "sport_is_mlb",
+            "sport_is_wnba",
+            "sport_is_nfl",
             "heuristic_fair_yes_price",
         ],
     )

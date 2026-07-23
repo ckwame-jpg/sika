@@ -20,11 +20,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from ml.interval_dataset import (
     INTERVAL_DATASET_SKIP_REASONS,
@@ -135,6 +134,106 @@ _MLB_GAMELOG_PAYLOAD = {
                 }
             ]
         }
+    ],
+}
+
+
+_NFL_QB_GAMELOG_PAYLOAD = {
+    # Mirrors ESPN's QB-shaped cached payload used by the API stats-query
+    # tests: passing and rushing fields share one names vector, while a
+    # missing advanced value is represented by a dash.
+    "names": [
+        "completions",
+        "passingAttempts",
+        "passingYards",
+        "completionPct",
+        "yardsPerPassAttempt",
+        "passingTouchdowns",
+        "interceptions",
+        "longPassing",
+        "sacks",
+        "QBRating",
+        "adjQBR",
+        "rushingAttempts",
+        "rushingYards",
+        "yardsPerRushAttempt",
+        "rushingTouchdowns",
+        "longRushing",
+    ],
+    "events": {
+        "nfl-qb-0": {
+            "gameDate": "2026-01-04T18:00:00+00:00",
+            "opponent": {"displayName": "New York Giants", "abbreviation": "NYG"},
+            "atVs": "vs",
+            "team": {"displayName": "Philadelphia Eagles"},
+            "gameResult": "W",
+        },
+    },
+    "seasonTypes": [
+        {
+            "categories": [
+                {
+                    "events": [
+                        {
+                            "eventId": "nfl-qb-0",
+                            "stats": [
+                                "22", "31", "246", "71.0", "7.9", "2", "0", "41",
+                                "2", "104.8", "-", "10", "61", "6.1", "1", "18",
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+}
+
+
+_NFL_RECEIVER_GAMELOG_PAYLOAD = {
+    # Receiving-first names and dash placeholders mirror a live ESPN WR
+    # gamelog payload (the same shape pinned in API scaffolding tests).
+    "names": [
+        "receptions",
+        "receivingTargets",
+        "receivingYards",
+        "yardsPerReception",
+        "receivingTouchdowns",
+        "longReception",
+        "rushingAttempts",
+        "rushingYards",
+        "yardsPerRushAttempt",
+        "longRushing",
+        "rushingTouchdowns",
+        "fumbles",
+        "fumblesLost",
+        "fumblesForced",
+        "kicksBlocked",
+    ],
+    "events": {
+        "nfl-wr-0": {
+            "gameDate": "2026-01-04T18:00:00+00:00",
+            "opponent": {"displayName": "Green Bay Packers", "abbreviation": "GB"},
+            "atVs": "vs",
+            "team": {"displayName": "Minnesota Vikings"},
+            "gameResult": "W",
+        },
+    },
+    "seasonTypes": [
+        {
+            "categories": [
+                {
+                    "events": [
+                        {
+                            "eventId": "nfl-wr-0",
+                            "stats": [
+                                "8", "11", "101", "12.6", "1", "18", "1", "3",
+                                "3.0", "3", "0", "0", "-", "-", "-",
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
     ],
 }
 
@@ -332,6 +431,16 @@ def test_season_for_captured_at_nba_january_keeps_current_year() -> None:
     assert season_for_captured_at("NBA", captured_at) == 2026
 
 
+def test_season_for_captured_at_nfl_january_uses_prior_season() -> None:
+    captured_at = datetime(2026, 1, 4, tzinfo=timezone.utc)
+    assert season_for_captured_at("NFL", captured_at) == 2025
+
+
+def test_season_for_captured_at_nfl_august_starts_current_season() -> None:
+    captured_at = datetime(2026, 8, 15, tzinfo=timezone.utc)
+    assert season_for_captured_at("NFL", captured_at) == 2026
+
+
 def test_season_for_captured_at_mlb_march_starts_current_year() -> None:
     captured_at = datetime(2026, 3, 30, tzinfo=timezone.utc)
     assert season_for_captured_at("MLB", captured_at) == 2026
@@ -343,6 +452,142 @@ def test_season_for_captured_at_mlb_february_belongs_to_prior_season() -> None:
 
 
 # -- Happy path --------------------------------------------------------
+
+
+def test_parse_gamelog_entries_accepts_nfl_and_tolerates_dashes() -> None:
+    from ml.interval_dataset import _parse_gamelog_entries, _parse_nfl_stat
+
+    qb_rows = _parse_gamelog_entries("NFL", _NFL_QB_GAMELOG_PAYLOAD)
+    receiver_rows = _parse_gamelog_entries("NFL", _NFL_RECEIVER_GAMELOG_PAYLOAD)
+
+    assert len(qb_rows) == 1
+    assert qb_rows[0][0] == datetime(2026, 1, 4, 18, 0, tzinfo=timezone.utc)
+    assert qb_rows[0][1]["passing_yards"] == 246.0
+    assert qb_rows[0][1]["rushing_yards"] == 61.0
+    assert qb_rows[0][1]["qbr"] == 0.0
+
+    assert len(receiver_rows) == 1
+    assert receiver_rows[0][1]["receptions"] == 8.0
+    assert receiver_rows[0][1]["receiving_targets"] == 11.0
+    assert receiver_rows[0][1]["receiving_yards"] == 101.0
+    assert receiver_rows[0][1]["fumbles_lost"] == 0.0
+    # ESPN sometimes formats large numeric fields with separators.
+    assert _parse_nfl_stat("1,024") == 1024.0
+
+
+def test_nfl_stat_lookup_covers_canonical_props_and_explicit_combos() -> None:
+    from ml.interval_dataset import _stat_value_from_raw_metrics
+
+    raw_metrics = {
+        "completions": 22.0,
+        "passing_yards": 246.0,
+        "passing_touchdowns": 2.0,
+        "rushing_yards": 61.0,
+        "rushing_touchdowns": 1.0,
+        "receptions": 8.0,
+        "receiving_yards": 101.0,
+        "receiving_touchdowns": 1.0,
+    }
+    expected_direct = {
+        "completions": 22.0,
+        "passing_yards": 246.0,
+        "passing_touchdowns": 2.0,
+        "rushing_yards": 61.0,
+        "rushing_touchdowns": 1.0,
+        "receptions": 8.0,
+        "receiving_yards": 101.0,
+        "receiving_touchdowns": 1.0,
+    }
+    for stat_key, expected in expected_direct.items():
+        assert _stat_value_from_raw_metrics("NFL", stat_key, raw_metrics) == expected
+    assert (
+        _stat_value_from_raw_metrics(
+            "NFL", "rushing_yards_receiving_yards", raw_metrics,
+        )
+        == 162.0
+    )
+    assert (
+        _stat_value_from_raw_metrics(
+            "NFL", "passing_yards_rushing_yards", raw_metrics,
+        )
+        == 307.0
+    )
+
+
+def test_extracts_nfl_direct_and_combined_targets_end_to_end(tmp_path: Path) -> None:
+    """NFL predictions reach cached gamelogs, including January games
+    stored under the prior season, and produce both direct and explicitly
+    enumerated combined-stat targets."""
+    db_path = tmp_path / "nfl_props.db"
+    captured_at = datetime(2026, 1, 4, 12, 0, tzinfo=timezone.utc).isoformat()
+    _seed_db(
+        db_path,
+        predictions=[
+            {
+                "market_id": 1001,
+                "sport_key": "NFL",
+                "market_family": "player_prop",
+                "subject_name": "Jalen Hurts",
+                "subject_team": "PHI",
+                "stat_key": "passing_yards_rushing_yards",
+                "captured_at": captured_at,
+                "features": json.dumps({"expected_stat_output": 292.5}),
+            },
+            {
+                "market_id": 1002,
+                "sport_key": "NFL",
+                "market_family": "player_prop",
+                "subject_name": "Justin Jefferson",
+                "subject_team": "MIN",
+                "stat_key": "rushing_yards_receiving_yards",
+                "captured_at": captured_at,
+                "features": json.dumps({"expected_stat_output": 94.5}),
+            },
+            {
+                "market_id": 1003,
+                "sport_key": "NFL",
+                "market_family": "player_prop",
+                "subject_name": "Justin Jefferson",
+                "subject_team": "MIN",
+                "stat_key": "receiving_yards",
+                "captured_at": captured_at,
+                "features": json.dumps({"expected_stat_output": 91.5}),
+            },
+        ],
+        player_search=[
+            _player_search_row(
+                "NFL", "Jalen Hurts", "4040715", team_name="Philadelphia Eagles",
+            ),
+            _player_search_row(
+                "NFL", "Justin Jefferson", "4262921", team_name="Minnesota Vikings",
+            ),
+        ],
+        gamelogs=[
+            _gamelog_row("NFL", "4040715", 2025, _NFL_QB_GAMELOG_PAYLOAD),
+            _gamelog_row("NFL", "4262921", 2025, _NFL_RECEIVER_GAMELOG_PAYLOAD),
+        ],
+    )
+    feature_spec = _make_feature_spec(family_keys=("nfl_props",))
+
+    def extract_target(stat_key: str) -> IntervalDatasetExtract:
+        extract = build_interval_training_rows(
+            f"sqlite:///{db_path}",
+            family_key="nfl_props",
+            stat_key=stat_key,
+            feature_spec=feature_spec,
+            lookback_days=30,
+            min_samples=1,
+            now=datetime(2026, 1, 20, tzinfo=timezone.utc),
+        )
+        assert isinstance(extract, IntervalDatasetExtract)
+        assert extract.sample_size == 1
+        assert extract.features.shape == (1, 4)
+        assert extract.features[0, -1] == 1.0
+        return extract
+
+    assert extract_target("receiving_yards").targets.tolist() == [101.0]
+    assert extract_target("rushing_yards_receiving_yards").targets.tolist() == [104.0]
+    assert extract_target("passing_yards_rushing_yards").targets.tolist() == [307.0]
 
 
 def test_extracts_points_target_for_nba_happy_path(tmp_path: Path) -> None:
@@ -1059,13 +1304,11 @@ def test_team_abbreviation_map_matches_apps_api_canonical_source() -> None:
     """Drift guard — apps/ml duplicates
     ``ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME`` from
     apps/api/app/clients/espn.py (apps/ml can't import apps/api).
-    Read the canonical source as text, parse out the NBA + MLB maps,
+    Read the canonical source as text, parse the supported-sport maps,
     and assert the apps/ml copy agrees. Without this, a roster update
     on the API side (new abbreviation, renamed franchise) would
     silently drift between the two surfaces."""
     import ast
-    import re
-
     repo_root = Path(__file__).resolve().parents[3]
     canonical_path = repo_root / "apps" / "api" / "app" / "clients" / "espn.py"
     assert canonical_path.exists(), f"canonical source missing at {canonical_path}"

@@ -183,6 +183,64 @@ describe("parlay tray → kalshi combo flow", () => {
     expect(screen.getByTestId("parlay-tray-place-kalshi")).toBeDisabled();
   });
 
+  it("blocks a combo when principal fits but its fee exceeds the cap", async () => {
+    const user = userEvent.setup();
+    mockPreviewKalshiCombo.mockResolvedValue(COMBINABLE_PREVIEW);
+    mockFetchTradingSettings.mockResolvedValue({ max_order_cost_dollars: 5 });
+
+    addLeg(makeLeg("KXA"));
+    addLeg(makeLeg("KXB"));
+    renderTray();
+
+    const placeButton = await screen.findByTestId(
+      "parlay-tray-place-kalshi",
+      {},
+      { timeout: 3000 },
+    );
+    await waitFor(() => expect(placeButton).toBeEnabled(), { timeout: 3000 });
+    await user.click(placeButton);
+    await user.type(screen.getByTestId("kalshi-combo-stake"), "5");
+
+    // 20 @ 25¢ has exactly $5 principal, but a 27¢ worst-case fee.
+    expect(screen.getByTestId("kalshi-combo-preview-line")).toHaveTextContent("cost $5.00");
+    await waitFor(() =>
+      expect(screen.getByTestId("kalshi-combo-cap-warning")).toHaveTextContent(
+        "Principal plus worst-case taker fee",
+      ),
+    );
+    expect(screen.getByTestId("kalshi-combo-review")).toBeDisabled();
+    expect(mockPlaceKalshiCombo).not.toHaveBeenCalled();
+  });
+
+  it("allows a combo when one 40-cent contract plus its 2-cent fee equals the cap", async () => {
+    const user = userEvent.setup();
+    mockPreviewKalshiCombo.mockResolvedValue({
+      ...COMBINABLE_PREVIEW,
+      quote_yes_ask: 0.37,
+    });
+    mockFetchTradingSettings.mockResolvedValue({ max_order_cost_dollars: 0.42 });
+
+    addLeg(makeLeg("KXA"));
+    addLeg(makeLeg("KXB"));
+    renderTray();
+
+    const placeButton = await screen.findByTestId(
+      "parlay-tray-place-kalshi",
+      {},
+      { timeout: 3000 },
+    );
+    await waitFor(() => expect(placeButton).toBeEnabled(), { timeout: 3000 });
+    await user.click(placeButton);
+    await user.type(screen.getByTestId("kalshi-combo-stake"), "0.40");
+
+    expect(screen.getByTestId("kalshi-combo-preview-line")).toHaveTextContent(
+      "1 contract · cost $0.40",
+    );
+    await waitFor(() => expect(mockFetchTradingSettings).toHaveBeenCalled());
+    expect(screen.queryByTestId("kalshi-combo-cap-warning")).not.toBeInTheDocument();
+    expect(screen.getByTestId("kalshi-combo-review")).toBeEnabled();
+  });
+
   it("hides the combo affordance entirely without credentials", async () => {
     mockFetchMyKalshiCredentials.mockResolvedValue({ configured: false });
     addLeg(makeLeg("KXA"));

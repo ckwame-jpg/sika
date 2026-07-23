@@ -52,8 +52,8 @@ import numpy as np
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 
-from ml.dataset import _enrich_prediction_features, _family_key, normalize_database_url
-from ml_features import FeatureSpec, vectorize
+from ml.dataset import _enrich_prediction_features, normalize_database_url
+from ml_features import FeatureSpec, single_family_key, vectorize
 
 
 logger = logging.getLogger(__name__)
@@ -119,6 +119,33 @@ _MLB_STAT_TO_RAW = {
     "strikeouts": "strikeouts",
     "hit_by_pitch": "hit_by_pitch",
 }
+_NFL_STAT_TO_RAW = {
+    "completions": "completions",
+    "passing_attempts": "passing_attempts",
+    "passing_yards": "passing_yards",
+    "passing_touchdowns": "passing_touchdowns",
+    "interceptions": "interceptions",
+    "sacks": "sacks",
+    "qbr": "qbr",
+    "rushing_attempts": "rushing_attempts",
+    "rushing_yards": "rushing_yards",
+    "rushing_touchdowns": "rushing_touchdowns",
+    "receptions": "receptions",
+    "receiving_targets": "receiving_targets",
+    "receiving_yards": "receiving_yards",
+    "receiving_touchdowns": "receiving_touchdowns",
+    "fumbles_lost": "fumbles_lost",
+}
+
+# NFL's canonical component keys already contain underscores, so the
+# generic NBA/MLB ``stat_key.split("_")`` fallback cannot recover these
+# combinations (it would turn ``passing_yards`` into ``passing`` +
+# ``yards``). Keep the supported combined markets explicit, matching the
+# serving-time scoring kernel.
+_NFL_COMBINED_STAT_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "rushing_yards_receiving_yards": ("rushing_yards", "receiving_yards"),
+    "passing_yards_rushing_yards": ("passing_yards", "rushing_yards"),
+}
 
 
 # Documented skip taxonomy — every key in
@@ -173,6 +200,8 @@ def season_for_captured_at(sport_key: str, captured_at: datetime) -> int:
     year = captured_at.year
     if sport == "NBA":
         return year + 1 if month >= 10 else year
+    if sport == "NFL":
+        return year if month >= 8 else year - 1
     if sport == "MLB":
         return year if month >= 3 else year - 1
     return year
@@ -340,8 +369,8 @@ def _load_player_prop_predictions(
       a SQL ``WHERE captured_at >= :iso_string`` silently drops
       legitimate rows on SQLite. Filter in Python after
       ``_coerce_utc`` to get dialect-agnostic correctness.
-    - **Family bucket** derived in Python via ``ml.dataset._family_key``
-      (mirrors the recalibrate CLI) so the SQL stays portable across
+    - **Family bucket** derived in Python via the shared
+      ``ml_features.single_family_key`` mapper so the SQL stays portable across
       SQLite / Postgres without a CASE expression.
     - **Coverage exclusion + market_id dedupe**: mirror
       ``ml.dataset._prepare_frame`` so the interval training corpus
@@ -367,7 +396,7 @@ def _load_player_prop_predictions(
 
     surviving: list[dict[str, Any]] = []
     for row in raw_rows:
-        if _family_key(row["sport_key"], row["market_family"]) != family_key:
+        if single_family_key(row["sport_key"], row["market_family"]) != family_key:
             continue
         scope = row.get("capture_scope")
         if scope is not None and str(scope) == "coverage":
@@ -669,7 +698,7 @@ def _parse_gamelog_entries(
     unsupported sports or malformed payloads. Mirrors the narrow slice
     we need from ``apps/api/app/services/stats_query.py:_build_game_logs``
     (see module docstring for the cross-app rationale)."""
-    if sport_key not in {"NBA", "MLB", "WNBA"}:
+    if sport_key not in {"NBA", "NFL", "MLB", "WNBA"}:
         return []
     stat_names = list(payload.get("names") or [])
     events_metadata = dict(payload.get("events") or {})
@@ -689,7 +718,9 @@ def _parse_gamelog_entries(
                     name: stats[index] if index < len(stats) else None
                     for index, name in enumerate(stat_names)
                 }
-                if sport_key == "MLB":
+                if sport_key == "NFL":
+                    raw_metrics = _nfl_raw_metrics_from_stat_map(stat_map)
+                elif sport_key == "MLB":
                     raw_metrics = _mlb_raw_metrics_from_stat_map(stat_map)
                 else:  # NBA + WNBA share the same payload shape
                     raw_metrics = _nba_raw_metrics_from_stat_map(stat_map)
@@ -740,14 +771,41 @@ def _mlb_raw_metrics_from_stat_map(stat_map: dict[str, Any]) -> dict[str, float 
     }
 
 
+def _nfl_raw_metrics_from_stat_map(stat_map: dict[str, Any]) -> dict[str, float | None]:
+    """ESPN NFL gamelog → raw_metrics.
+
+    Mirrors ``apps/api/app/services/stats_query.py:_build_nfl_game_logs``.
+    NFL payloads use ``"-"`` (and occasionally a missing value) for
+    stats a position never accrues, so every field goes through the
+    dash-tolerant NFL coercer instead of the nullable NBA/MLB parser.
+    """
+    return {
+        "completions": _parse_nfl_stat(stat_map.get("completions")),
+        "passing_attempts": _parse_nfl_stat(stat_map.get("passingAttempts")),
+        "passing_yards": _parse_nfl_stat(stat_map.get("passingYards")),
+        "passing_touchdowns": _parse_nfl_stat(stat_map.get("passingTouchdowns")),
+        "interceptions": _parse_nfl_stat(stat_map.get("interceptions")),
+        "sacks": _parse_nfl_stat(stat_map.get("sacks")),
+        "qbr": _parse_nfl_stat(stat_map.get("adjQBR")),
+        "rushing_attempts": _parse_nfl_stat(stat_map.get("rushingAttempts")),
+        "rushing_yards": _parse_nfl_stat(stat_map.get("rushingYards")),
+        "rushing_touchdowns": _parse_nfl_stat(stat_map.get("rushingTouchdowns")),
+        "receptions": _parse_nfl_stat(stat_map.get("receptions")),
+        "receiving_targets": _parse_nfl_stat(stat_map.get("receivingTargets")),
+        "receiving_yards": _parse_nfl_stat(stat_map.get("receivingYards")),
+        "receiving_touchdowns": _parse_nfl_stat(stat_map.get("receivingTouchdowns")),
+        "fumbles_lost": _parse_nfl_stat(stat_map.get("fumblesLost")),
+    }
+
+
 def _stat_value_from_raw_metrics(
     sport_key: str, stat_key: str, raw_metrics: dict[str, float | None],
 ) -> float | None:
     """Resolve a sika ``stat_key`` to a single float from
     ``raw_metrics``.
 
-    Supports the canonical single stats per sport (see
-    ``_NBA_STAT_TO_RAW`` / ``_MLB_STAT_TO_RAW``) plus underscore-joined
+    Supports the canonical single stats per sport (see the
+    ``*_STAT_TO_RAW`` maps) plus underscore-joined
     component combos (``points_rebounds``, ``points_rebounds_assists``,
     etc.) which sum the per-component values. MLB ``total_bases`` is
     computed from singles (= hits − extra-base hits) + 2×doubles +
@@ -760,6 +818,18 @@ def _stat_value_from_raw_metrics(
     """
     if sport_key == "MLB" and stat_key == "total_bases":
         return _mlb_total_bases(raw_metrics)
+
+    if sport_key == "NFL":
+        components = _NFL_COMBINED_STAT_COMPONENTS.get(stat_key)
+        if components is None:
+            return _direct_lookup(sport_key, stat_key, raw_metrics)
+        component_values: list[float] = []
+        for component in components:
+            value = _direct_lookup(sport_key, component, raw_metrics)
+            if value is None:
+                return None
+            component_values.append(value)
+        return float(sum(component_values))
 
     # Direct alias hit (e.g. ``points`` → ``points``, ``made_threes`` →
     # ``three_points_made``). Single-stat keys resolve here without
@@ -787,9 +857,11 @@ def _direct_lookup(
     sport_key: str, key: str, raw_metrics: dict[str, float | None],
 ) -> float | None:
     # WNBA shares NBA's stat-to-raw mapping (both reuse
-    # ``_nba_raw_metrics_from_stat_map``); MLB has its own.
+    # ``_nba_raw_metrics_from_stat_map``); MLB and NFL have their own.
     if sport_key == "MLB":
         table = _MLB_STAT_TO_RAW
+    elif sport_key == "NFL":
+        table = _NFL_STAT_TO_RAW
     else:
         table = _NBA_STAT_TO_RAW
     raw_field = table.get(key)
@@ -866,6 +938,21 @@ def _parse_number(value: Any) -> float | None:
         return None
 
 
+def _parse_nfl_stat(value: Any) -> float:
+    """Parse an ESPN NFL stat value, treating placeholders as zero.
+
+    This intentionally mirrors the API stats-query parser: NFL rows
+    commonly contain ``"-"`` for position-inapplicable stats, while
+    otherwise numeric values may include thousands separators.
+    """
+    if value in (None, ""):
+        return 0.0
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _parse_made_attempted(value: Any) -> tuple[float | None, float | None]:
     if not isinstance(value, str) or "-" not in value:
         return (None, None)
@@ -880,7 +967,7 @@ def _normalize_subject(value: Any) -> str:
 # -- Team-hint matching (duplicated from apps/api/app/clients/espn.py)
 #
 # apps/ml doesn't sit on the API's import path, so we duplicate the
-# NBA + MLB abbreviation maps + the matcher. A drift-guard test reads
+# supported-sport abbreviation maps + the matcher. A drift-guard test reads
 # apps/api/app/clients/espn.py as text and parses the maps + asserts
 # the two copies agree; any roster update on the API side that adds /
 # changes an abbreviation will fail CI here until the duplicate is
@@ -927,6 +1014,26 @@ _ESPN_TEAM_ABBREVIATION_TO_DISPLAY_NAME: dict[str, dict[str, str]] = {
         "LA": "Los Angeles Sparks", "LAS": "Los Angeles Sparks",
         "MIN": "Minnesota Lynx", "PHX": "Phoenix Mercury",
         "POR": "Portland Fire", "SEA": "Seattle Storm",
+    },
+    # NFL — ESPN canonical abbreviations plus Kalshi/legacy alternates.
+    # Kept byte-for-byte aligned with apps/api/app/clients/espn.py by
+    # test_team_abbreviation_map_matches_apps_api_canonical_source.
+    "NFL": {
+        "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+        "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+        "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+        "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+        "HOU": "Houston Texans", "IND": "Indianapolis Colts",
+        "JAX": "Jacksonville Jaguars", "JAC": "Jacksonville Jaguars",
+        "KC": "Kansas City Chiefs", "LAC": "Los Angeles Chargers",
+        "LAR": "Los Angeles Rams", "LA": "Los Angeles Rams",
+        "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+        "NE": "New England Patriots", "NO": "New Orleans Saints",
+        "NYG": "New York Giants", "NYJ": "New York Jets",
+        "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+        "SEA": "Seattle Seahawks", "SF": "San Francisco 49ers",
+        "TB": "Tampa Bay Buccaneers", "TEN": "Tennessee Titans",
+        "WSH": "Washington Commanders", "WAS": "Washington Commanders",
     },
 }
 

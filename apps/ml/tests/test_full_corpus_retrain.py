@@ -22,6 +22,7 @@ import pytest
 from ml.cli import build_parser
 from ml.dataset import settled_predictions_from_records
 from ml.training import train_and_package
+from ml_features import DEFAULT_SERVE_FAMILY_KEYS, single_family_key
 
 
 def _mixed_records(total: int = 240) -> list[dict]:
@@ -85,6 +86,43 @@ def test_prepare_frame_retains_singles_rows():
     assert {"nba_props", "mlb_props", "nba_singles", "mlb_singles"}.issubset(families)
 
 
+def test_nfl_family_mapping_keeps_props_out_of_singles() -> None:
+    assert single_family_key("NFL", "player_prop") == "nfl_props"
+    assert single_family_key("NFL", "winner") == "nfl_singles"
+    assert single_family_key("NFL", "game_line") == "nfl_singles"
+    assert single_family_key("NFL", "player_prop") != "nfl_singles"
+
+
+def test_prepare_frame_retains_and_encodes_settled_nfl_rows() -> None:
+    prop, winner = _mixed_records(total=2)
+    prop.update(
+        sport_key="NFL",
+        market_family="player_prop",
+        market_kind="player_prop",
+        stat_key="passing_yards",
+    )
+    winner.update(
+        sport_key="NFL",
+        market_family="winner",
+        market_kind="winner",
+        stat_key="winner",
+    )
+    # Exercise the canonical row-derived mapping instead of trusting a
+    # pre-populated family_key inside the historical feature blob.
+    prop["features"].pop("family_key", None)
+    winner["features"].pop("family_key", None)
+
+    frame = settled_predictions_from_records([prop, winner])
+
+    assert len(frame) == 2
+    assert set(frame["family_key"]) == {"nfl_props", "nfl_singles"}
+    for features in frame["features"]:
+        assert features["sport_is_nfl"] == 1.0
+        assert features["sport_is_nba"] == 0.0
+        assert features["sport_is_mlb"] == 0.0
+        assert features["sport_is_wnba"] == 0.0
+
+
 def test_train_and_package_emits_one_manifest_entry_per_serve_family_key(tmp_path):
     frame = settled_predictions_from_records(_mixed_records(total=240))
     serve_keys = ("mlb_props", "nba_props", "mlb_singles", "nba_singles")
@@ -103,6 +141,32 @@ def test_train_and_package_emits_one_manifest_entry_per_serve_family_key(tmp_pat
     assert emitted_keys == serve_keys
     artifact_paths = {family["artifact_path"] for family in manifest["families"]}
     assert len(artifact_paths) == 1, "All families share one global artifact path."
+
+
+def test_train_and_package_defaults_to_all_shared_serve_families(tmp_path):
+    frame = settled_predictions_from_records(_mixed_records(total=240))
+    expected_keys = (
+        "mlb_props",
+        "nba_props",
+        "wnba_props",
+        "nfl_props",
+        "mlb_singles",
+        "nba_singles",
+        "wnba_singles",
+        "nfl_singles",
+    )
+
+    result = train_and_package(
+        frame,
+        artifact_root=tmp_path / "artifacts",
+        manifest_out=tmp_path / "manifests" / "current.json",
+        model_version="2026-07-21",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    emitted_keys = tuple(family["serves_family_key"] for family in manifest["families"])
+    assert DEFAULT_SERVE_FAMILY_KEYS == expected_keys
+    assert emitted_keys == expected_keys
 
 
 def test_train_and_package_back_compat_with_serve_family_key(tmp_path):
@@ -162,14 +226,7 @@ def test_train_and_package_advanced_only_false_keeps_all_rows(tmp_path):
 def test_cli_train_defaults_cover_all_active_families():
     parser = build_parser()
     args = parser.parse_args(["train"])
-    # Smarter WNBA PR 5 adds the WNBA families to the default. Order
-    # matters: the tuple here mirrors the comma-separated string in
-    # _DEFAULT_SERVE_FAMILY_KEYS — props first (NBA, MLB, WNBA), then
-    # singles in the same sport order.
-    assert args.serve_family_keys == (
-        "mlb_props", "nba_props", "wnba_props",
-        "mlb_singles", "nba_singles", "wnba_singles",
-    )
+    assert args.serve_family_keys == DEFAULT_SERVE_FAMILY_KEYS
     assert args.advanced_only == "auto"
 
 
@@ -241,3 +298,11 @@ def test_train_and_package_emits_wnba_family_entries_when_in_serve_set(tmp_path)
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     emitted_keys = {family["serves_family_key"] for family in manifest["families"]}
     assert {"wnba_props", "wnba_singles"}.issubset(emitted_keys)
+    rows_by_family = {
+        family["serves_family_key"]: family["metadata"]["training_rows"]
+        for family in manifest["families"]
+    }
+    assert rows_by_family["mlb_props"] > 0
+    assert rows_by_family["nba_props"] > 0
+    assert rows_by_family["wnba_props"] == 0
+    assert rows_by_family["wnba_singles"] == 0

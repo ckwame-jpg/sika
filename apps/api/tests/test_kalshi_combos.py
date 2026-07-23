@@ -17,13 +17,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models import KalshiOrder, Market, OutboxEntry, User
+from app.models import KalshiOrderFill, Market, OutboxEntry, User
 from app.schemas import (
     KalshiComboLegCreate,
     KalshiComboOrderCreate,
     KalshiComboPreviewRequest,
 )
 from app.services import kalshi_combos as kc
+from app.services.operator_settings import set_kalshi_max_order_cost
 from app.services.outbox import STATUS_DONE, drain_once
 from app.services.user_kalshi import upsert_user_credentials
 from app.services.users import seed_users_from_settings
@@ -246,6 +247,7 @@ def _place(db_session, user, fake, monkeypatch, **overrides):
         quantity=overrides.get("quantity", 10),
         limit_price=overrides.get("limit_price", 0.25),
         approved=overrides.get("approved", True),
+        time_in_force=overrides.get("time_in_force", "good_till_canceled"),
     )
     return kc.create_kalshi_combo_order(db_session, payload, user_id=user.id)
 
@@ -292,7 +294,9 @@ def test_combo_scope_rejection_carries_key_fix_hint(db_session, monkeypatch):
 
     class ScopeRejectingMint(FakeComboClient):
         def create_combo_market(self, collection_ticker, selected_markets, **kwargs):
-            request = httpx.Request("POST", "https://x/multivariate_event_collections/KXMLBCOMBO")
+            request = httpx.Request(
+                "POST", "https://x/multivariate_event_collections/KXMLBCOMBO"
+            )
             response = httpx.Response(
                 403,
                 text='{"error":{"code":"insufficient_scope:_write_required"}}',
@@ -322,9 +326,40 @@ def test_combo_create_enforces_cost_cap(db_session, monkeypatch):
     user = _seed(db_session, markets=[("KXA", "EV-NYY"), ("KXB", "EV-BOS")])
     fake = FakeComboClient()
     with pytest.raises(HTTPException) as err:
-        _place(db_session, user, fake, monkeypatch, quantity=200)  # 200 × .25 = $50 > $25
+        _place(
+            db_session, user, fake, monkeypatch, quantity=200
+        )  # 200 × .25 = $50 > $25
     assert err.value.status_code == 400
     assert "cap" in err.value.detail.lower()
+
+
+def test_combo_cost_cap_includes_worst_case_taker_fee(db_session, monkeypatch):
+    user = _seed(db_session, markets=[("KXA", "EV-NYY"), ("KXB", "EV-BOS")])
+    fake = FakeComboClient()
+
+    with pytest.raises(HTTPException) as err:
+        _place(
+            db_session,
+            user,
+            fake,
+            monkeypatch,
+            quantity=50,
+            limit_price=0.50,
+        )
+    assert "Order total $25.88" in err.value.detail
+    assert "worst-case taker fee $0.88" in err.value.detail
+
+    set_kalshi_max_order_cost(db_session, 25.88)
+    db_session.commit()
+    order = _place(
+        db_session,
+        user,
+        fake,
+        monkeypatch,
+        quantity=50,
+        limit_price=0.50,
+    )
+    assert order.quantity == 50
 
 
 def test_combo_drain_mints_then_orders_with_persisted_id(db_session, monkeypatch):
@@ -345,6 +380,62 @@ def test_combo_drain_mints_then_orders_with_persisted_id(db_session, monkeypatch
     assert order.kalshi_order_id == "combo_ord_1"
     assert fake.order_calls[0]["client_order_id"] == order.client_order_id
     assert fake.order_calls[0]["ticker"] == "KXCOMBO-MINTED"
+
+
+def test_combo_immediate_execution_imports_fill_and_fee(db_session, monkeypatch):
+    user = _seed(db_session, markets=[("KXA", "EV-NYY"), ("KXB", "EV-BOS")])
+
+    class ImmediateComboClient(FakeComboClient):
+        def create_order(self, **kwargs):
+            self.order_calls.append(kwargs)
+            return {
+                "request": {"ticker": kwargs["ticker"]},
+                "order": {
+                    "order_id": "combo-ioc",
+                    "client_order_id": kwargs.get("client_order_id"),
+                    "status": "executed",
+                    "fill_count": 10.0,
+                    "remaining_count": 0.0,
+                },
+                "raw": {"fill_count": "10.00", "remaining_count": "0.00"},
+            }
+
+        def list_fills(self, *, order_id=None, limit=1000, cursor=None):
+            assert order_id == "combo-ioc"
+            return (
+                [
+                    {
+                        "fill_id": "combo-fill",
+                        "order_id": "combo-ioc",
+                        "count_fp": "10.00",
+                        "yes_price_dollars": "0.24",
+                        "side": "yes",
+                        "fee_cost": "0.08",
+                    }
+                ],
+                None,
+            )
+
+    fake = ImmediateComboClient(lookup_result=None)
+    order = _place(
+        db_session,
+        user,
+        fake,
+        monkeypatch,
+        time_in_force="immediate_or_cancel",
+    )
+    db_session.commit()
+
+    drain_once(db_session)
+    db_session.refresh(order)
+
+    fill = db_session.scalars(
+        select(KalshiOrderFill).where(KalshiOrderFill.kalshi_order_id == order.id)
+    ).one()
+    assert order.status == "executed"
+    assert order.fills_synced_at is not None
+    assert fill.count == 10.0
+    assert fill.fee_dollars == 0.08
 
 
 def test_combo_drain_skips_mint_when_lookup_hits(db_session, monkeypatch):
@@ -411,8 +502,12 @@ def test_combo_mint_4xx_is_terminal(db_session, monkeypatch):
     class RejectingMintClient(FakeComboClient):
         def create_combo_market(self, collection_ticker, selected_markets, **kwargs):
             self.mint_calls += 1
-            request = httpx.Request("POST", "https://x/multivariate_event_collections/KXMLBCOMBO")
-            response = httpx.Response(400, text="markets not combinable", request=request)
+            request = httpx.Request(
+                "POST", "https://x/multivariate_event_collections/KXMLBCOMBO"
+            )
+            response = httpx.Response(
+                400, text="markets not combinable", request=request
+            )
             raise httpx.HTTPStatusError("400", request=request, response=response)
 
     fake = RejectingMintClient(lookup_result=None)

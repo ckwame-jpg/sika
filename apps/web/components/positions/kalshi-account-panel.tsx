@@ -174,7 +174,7 @@ function FillRow({ fill }: { fill: KalshiAccountFillRead }) {
 
 interface CollapsibleAccountSectionProps {
   title: string;
-  count: number;
+  count: number | string;
   expanded: boolean;
   onToggle: () => void;
   panelId: string;
@@ -260,10 +260,7 @@ export function KalshiAccountPanel() {
   const account = data?.kalshi_account;
   const positions = account?.market_positions ?? [];
   const fills = account?.recent_fills ?? [];
-  const realizedPnl = positions.reduce(
-    (total, position) => total + (position.realized_pnl_dollars ?? 0),
-    0,
-  );
+  const realizedPnl = account?.realized_pnl_dollars_total ?? 0;
   const isRefreshing = isValidating || isForcing;
 
   async function refresh() {
@@ -331,6 +328,12 @@ export function KalshiAccountPanel() {
     );
   }
 
+  const openPositionPrefix = account.positions_truncated ? "≥" : "";
+  const openPositionCount = `${openPositionPrefix}${positions.length}`;
+  const realizedPnlDisplay = account.realized_pnl_truncated
+    ? `${fmtSignedDollars(realizedPnl)} · partial`
+    : fmtSignedDollars(realizedPnl);
+
   return (
     <div className="space-y-4 p-4" data-testid="kalshi-account-panel">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -349,10 +352,10 @@ export function KalshiAccountPanel() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Cash" value={fmtDollars(account.balance?.cash_balance_dollars)} />
         <Metric label="Portfolio" value={fmtDollars(account.balance?.portfolio_value_dollars)} />
-        <Metric label="Open Picks" value={String(positions.length)} testId="kalshi-open-picks" />
+        <Metric label="Open Picks" value={openPositionCount} testId="kalshi-open-picks" />
         <Metric
           label="Realized PnL"
-          value={fmtSignedDollars(realizedPnl)}
+          value={realizedPnlDisplay}
           tone={realizedPnl >= 0 ? "positive" : "negative"}
         />
       </div>
@@ -360,7 +363,7 @@ export function KalshiAccountPanel() {
       <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
         <CollapsibleAccountSection
           title="Open Picks"
-          count={positions.length}
+          count={openPositionCount}
           expanded={openPicksExpanded}
           onToggle={() => setOpenPicksExpanded((current) => !current)}
           panelId="kalshi-open-picks-table"

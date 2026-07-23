@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 import pandas as pd
+from ml_features import SUPPORTED_SPORTS, single_family_key, sport_one_hot
 from sqlalchemy import create_engine, text
 
 
@@ -19,25 +20,6 @@ def normalize_database_url(database_url: str) -> str:
     if database_url.startswith("postgresql://"):
         return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
     return database_url
-
-
-def _family_key(sport_key: str | None, market_family: str | None) -> str:
-    sport = (sport_key or "").upper()
-    family = (market_family or "").lower()
-    if family == "player_prop":
-        if sport == "NBA":
-            return "nba_props"
-        if sport == "MLB":
-            return "mlb_props"
-        if sport == "WNBA":
-            return "wnba_props"
-    if sport == "NBA":
-        return "nba_singles"
-    if sport == "MLB":
-        return "mlb_singles"
-    if sport == "WNBA":
-        return "wnba_singles"
-    return f"{sport.lower()}_singles" if sport else "unknown_singles"
 
 
 def _enrich_prediction_features(row: dict[str, Any], base_features: dict[str, Any]) -> dict[str, Any]:
@@ -59,18 +41,15 @@ def _enrich_prediction_features(row: dict[str, Any], base_features: dict[str, An
 
     Returns a fresh dict — does not mutate ``base_features``.
     """
-    sport = str(row.get("sport_key") or "").upper()
     family_key = str(
         base_features.get("family_key")
-        or _family_key(row.get("sport_key"), row.get("market_family"))
+        or single_family_key(row.get("sport_key"), row.get("market_family"))
     )
     enriched = dict(base_features)
     enriched.update(
         {
             "family_key": family_key,
-            "sport_is_nba": 1.0 if sport == "NBA" else 0.0,
-            "sport_is_mlb": 1.0 if sport == "MLB" else 0.0,
-            "sport_is_wnba": 1.0 if sport == "WNBA" else 0.0,
+            **sport_one_hot(row.get("sport_key")),
             "suggested_price": row.get("suggested_price"),
             "heuristic_fair_yes_price": row.get("fair_yes_price"),
             "heuristic_edge": row.get("edge"),
@@ -102,7 +81,7 @@ def _prepare_frame(rows: pd.DataFrame, *, drop_pushes: bool, dedupe_markets: boo
     frame = frame[frame["prediction_outcome"].isin(SETTLED_OUTCOMES)]
     if drop_pushes:
         frame = frame[frame["prediction_outcome"].isin({"won", "lost"})]
-    frame = frame[frame["sport_key"].astype(str).str.upper().isin({"NBA", "MLB", "WNBA"})]
+    frame = frame[frame["sport_key"].astype(str).str.upper().isin(SUPPORTED_SPORTS)]
     # Target derivation below relies on side being "yes" or "no" — drop anything
     # else (null, empty, unknown values) before computing, so we never silently
     # mislabel a row whose side was missing.

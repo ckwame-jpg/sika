@@ -155,7 +155,7 @@ def test_seed_users_backfills_existing_paper_data_to_legacy_bucket(
 
 def test_create_paper_position_attributes_to_supplied_user(db_session: Session) -> None:
     chris, _canaan, _legacy = _seed_users(db_session)
-    market = _add_market(db_session, "SVC-A")
+    _add_market(db_session, "SVC-A")
     db_session.commit()
     pos = create_paper_position(
         db_session,
@@ -195,7 +195,7 @@ def test_create_paper_parlay_attributes_to_supplied_user(db_session: Session) ->
 def test_close_paper_position_rejects_cross_user_exit(db_session: Session) -> None:
     """Codex pattern 5 (reset edge cases): only the owner can exit."""
     chris, canaan, _legacy = _seed_users(db_session)
-    market = _add_market(db_session, "OWN-A")
+    _add_market(db_session, "OWN-A")
     db_session.commit()
     pos = create_paper_position(
         db_session,
@@ -237,7 +237,7 @@ def test_close_paper_position_rejects_legacy_exit(db_session: Session) -> None:
 
 def test_close_paper_position_allows_owner_exit(db_session: Session) -> None:
     chris, _canaan, _legacy = _seed_users(db_session)
-    market = _add_market(db_session, "ALLOW-A")
+    _add_market(db_session, "ALLOW-A")
     db_session.commit()
     pos = create_paper_position(
         db_session,
@@ -257,7 +257,7 @@ def test_close_paper_position_single_tenant_mode_skips_ownership(
     """When no current user is supplied (single-tenant), the legacy
     ownership check is skipped — pre-multi-user deployments keep
     working unchanged."""
-    market = _add_market(db_session, "ST-A")
+    _add_market(db_session, "ST-A")
     db_session.commit()
     pos = create_paper_position(
         db_session,
@@ -333,6 +333,82 @@ def test_get_positions_returns_user_data_plus_legacy_bucket(
     assert body["paper_positions"][0]["entry_price"] == 0.5
     assert len(body["legacy_paper_positions"]) == 1
     assert body["legacy_paper_positions"][0]["entry_price"] == 0.4
+
+
+def test_get_positions_legacy_caps_are_flagged_and_totals_stay_exact(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    chris, _canaan, legacy = _seed_users(db_session)
+    market = _add_market(db_session, "LEG-CAP")
+    for index in range(4):
+        db_session.add(
+            PaperPosition(
+                user_id=legacy.id,
+                market_id=market.id,
+                ticker=f"LEG-CAP-{index}",
+                side="yes",
+                quantity=1,
+                entry_price=0.5,
+                opened_at=_utcnow() + timedelta(minutes=index),
+            )
+        )
+    db_session.commit()
+
+    client.post("/users/switch", json={"username": chris.username})
+    body = client.get("/positions?paper_limit=2").json()
+
+    assert len(body["legacy_paper_positions"]) == 2
+    assert body["legacy_paper_truncated"] is True
+    assert body["legacy_demo_truncated"] is False
+    assert body["legacy_paper_parlays_truncated"] is False
+    assert body["paper_totals"]["open_count"] == 4
+    assert body["paper_totals"]["open_exposure_dollars"] == 2.0
+
+
+def test_positions_export_includes_current_and_legacy_but_not_other_users(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    chris, canaan, legacy = _seed_users(db_session)
+    market = _add_market(db_session, "EXP-SCOPE")
+    db_session.add_all(
+        [
+            PaperPosition(
+                user_id=chris.id,
+                market_id=market.id,
+                ticker="EXP-CHRIS",
+                side="yes",
+                quantity=1,
+                entry_price=0.5,
+            ),
+            PaperPosition(
+                user_id=canaan.id,
+                market_id=market.id,
+                ticker="EXP-CANAAN",
+                side="yes",
+                quantity=1,
+                entry_price=0.5,
+            ),
+            PaperPosition(
+                user_id=legacy.id,
+                market_id=market.id,
+                ticker="EXP-LEGACY",
+                side="yes",
+                quantity=1,
+                entry_price=0.5,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    client.post("/users/switch", json={"username": chris.username})
+    response = client.get("/positions/export")
+
+    assert response.status_code == 200
+    assert "EXP-CHRIS" in response.text
+    assert "EXP-LEGACY" in response.text
+    assert "EXP-CANAAN" not in response.text
 
 
 def test_get_positions_single_tenant_returns_everything_in_primary_lists(

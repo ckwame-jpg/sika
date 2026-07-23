@@ -49,7 +49,6 @@ default (25%).
 
 from __future__ import annotations
 
-import logging
 import math
 from typing import Any
 
@@ -63,8 +62,6 @@ from app.services.kelly_sizing_db import (
     compute_rolling_pnl_fraction,
     resolve_bankroll,
 )
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "compute_kelly_sizing_diagnostics",
@@ -120,11 +117,10 @@ def compute_kelly_sizing_diagnostics(
     if bankroll is None:
         return None
 
-    try:
-        rolling_pnl_fraction = compute_rolling_pnl_fraction(db, bankroll=bankroll)
-    except Exception as exc:  # noqa: BLE001 — defensive at persistence boundary
-        logger.warning("kelly_sizing: rolling_pnl fetch failed (%s) — skipping brake", exc)
-        rolling_pnl_fraction = 0.0
+    # A failed PnL source is not equivalent to a flat PnL window. Let
+    # the error propagate so the persistence boundary can treat sizing
+    # as unavailable instead of silently disabling the drawdown brake.
+    rolling_pnl_fraction = compute_rolling_pnl_fraction(db, bankroll=bankroll)
     brake_multiplier = drawdown_brake_multiplier(rolling_pnl_fraction)
     sized = size_position(
         probability=selected_probability,

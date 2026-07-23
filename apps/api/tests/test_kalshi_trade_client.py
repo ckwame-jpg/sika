@@ -18,14 +18,12 @@ public client has).
 
 from __future__ import annotations
 
-import json
-
 import httpx
 import pytest
 from sqlalchemy.orm import Session
 
 import app.clients.kalshi as kalshi_module
-from app.clients.kalshi import KalshiDemoClient, KalshiTradeClient
+from app.clients.kalshi import KalshiAccountClient, KalshiDemoClient, KalshiTradeClient
 from app.config import Settings, get_settings
 from app.services.user_kalshi import (
     build_demo_client_for_user,
@@ -71,6 +69,58 @@ def _patch_http(monkeypatch, responses: list[httpx.Response]) -> _CapturingTrans
     transport = _CapturingTransport(responses)
     monkeypatch.setattr(kalshi_module.httpx, "request", transport)
     return transport
+
+
+def test_account_settlements_are_scoped_to_primary_subaccount(monkeypatch) -> None:
+    monkeypatch.setattr(
+        KalshiAccountClient,
+        "_headers",
+        lambda self, method, url: {"Content-Type": "application/json"},
+    )
+    account_client = KalshiAccountClient(
+        key_id="test-key",
+        private_key_pem=b"unused",
+        base_url=PROD_URL,
+    )
+    transport = _patch_http(
+        monkeypatch,
+        [httpx.Response(200, json={"settlements": [], "cursor": ""})],
+    )
+
+    account_client.list_settlements(limit=500, cursor="next-page")
+
+    assert transport.calls[0]["url"].endswith("/portfolio/settlements")
+    assert transport.calls[0]["params"] == {
+        "limit": 500,
+        "subaccount": 0,
+        "cursor": "next-page",
+    }
+
+
+def test_account_fills_are_scoped_to_primary_subaccount(monkeypatch) -> None:
+    monkeypatch.setattr(
+        KalshiAccountClient,
+        "_headers",
+        lambda self, method, url: {"Content-Type": "application/json"},
+    )
+    account_client = KalshiAccountClient(
+        key_id="test-key",
+        private_key_pem=b"unused",
+        base_url=PROD_URL,
+    )
+    transport = _patch_http(
+        monkeypatch,
+        [httpx.Response(200, json={"fills": [], "cursor": ""})],
+    )
+
+    account_client.list_fills(limit=200, cursor="next-page")
+
+    assert transport.calls[0]["url"].endswith("/portfolio/fills")
+    assert transport.calls[0]["params"] == {
+        "limit": 200,
+        "subaccount": 0,
+        "cursor": "next-page",
+    }
 
 
 # ── create_order (V2 endpoint) ───────────────────────────────────────
@@ -155,6 +205,28 @@ def test_create_order_normalizes_immediate_fill_to_executed(monkeypatch, client)
         time_in_force="immediate_or_cancel",
     )
     assert result["order"]["status"] == "executed"
+    assert result["order"]["fill_count"] == 2.0
+    assert result["order"]["remaining_count"] == 0.0
+
+
+def test_create_order_normalizes_partial_ioc_to_cancelled(monkeypatch, client) -> None:
+    partial = {
+        "order_id": "o-partial",
+        "fill_count": "5.00",
+        "remaining_count": "0.00",
+        "ts_ms": 1,
+    }
+    _patch_http(monkeypatch, [httpx.Response(200, json=partial)])
+    result = client.create_order(
+        ticker="KXTEST",
+        side="yes",
+        action="buy",
+        quantity=10,
+        limit_price=0.5,
+        time_in_force="immediate_or_cancel",
+    )
+    assert result["order"]["status"] == "cancelled"
+    assert result["order"]["fill_count"] == 5.0
 
 
 def test_create_order_normalizes_ioc_zero_fill_to_cancelled(monkeypatch, client) -> None:
@@ -174,6 +246,30 @@ def test_create_order_normalizes_ioc_zero_fill_to_cancelled(monkeypatch, client)
     assert result["order"]["status"] == "cancelled"
 
 
+def test_create_order_preserves_missing_v2_counts_as_unknown(
+    monkeypatch,
+    client,
+) -> None:
+    sparse = {"order_id": "o-sparse", "client_order_id": "cid", "ts_ms": 1}
+    _patch_http(monkeypatch, [httpx.Response(200, json=sparse)])
+
+    result = client.create_order(
+        ticker="KXTEST",
+        side="yes",
+        action="buy",
+        quantity=2,
+        limit_price=0.5,
+        time_in_force="immediate_or_cancel",
+        client_order_id="cid",
+    )
+
+    assert result["order"]["status"] == "submitted"
+    assert result["order"]["fill_count"] is None
+    assert result["order"]["remaining_count"] is None
+    assert "fill_count" not in result["raw"]
+    assert "remaining_count" not in result["raw"]
+
+
 def test_cancel_order_uses_v2_path_and_normalizes(monkeypatch, client) -> None:
     transport = _patch_http(
         monkeypatch,
@@ -190,6 +286,111 @@ def test_quantize_price_clamps_to_tradable_band() -> None:
     assert KalshiTradeClient.quantize_price(0.2899) == 0.29
     assert KalshiTradeClient.quantize_price(0.005) == 0.01
     assert KalshiTradeClient.quantize_price(0.999) == 0.99
+
+
+# ── cursor-aware order/fill reads ───────────────────────────────────
+
+
+def test_order_and_fill_reads_return_items_with_cursor(monkeypatch, client) -> None:
+    transport = _patch_http(
+        monkeypatch,
+        [
+            httpx.Response(200, json={"orders": [{"order_id": "o1"}], "cursor": "o2"}),
+            httpx.Response(200, json={"fills": [{"fill_id": "f1"}], "cursor": "f2"}),
+        ],
+    )
+
+    orders, order_cursor = client.list_orders(limit=250, cursor="o1")
+    fills, fill_cursor = client.list_fills(
+        limit=500,
+        cursor="f1",
+        order_id="order-target",
+    )
+
+    assert orders == [{"order_id": "o1"}]
+    assert order_cursor == "o2"
+    assert fills == [{"fill_id": "f1"}]
+    assert fill_cursor == "f2"
+    assert transport.calls[0]["params"] == {"limit": 250, "cursor": "o1"}
+    assert transport.calls[1]["params"] == {
+        "limit": 500,
+        "cursor": "f1",
+        "order_id": "order-target",
+    }
+
+
+def test_historical_order_and_fill_reads_use_archived_endpoints(
+    monkeypatch,
+    client,
+) -> None:
+    transport = _patch_http(
+        monkeypatch,
+        [
+            httpx.Response(
+                200,
+                json={"orders": [{"order_id": "old-o1"}], "cursor": "old-o2"},
+            ),
+            httpx.Response(
+                200,
+                json={"fills": [{"fill_id": "old-f1"}], "cursor": "old-f2"},
+            ),
+        ],
+    )
+
+    orders, order_cursor = client.list_historical_orders(
+        ticker="KX-OLD",
+        limit=250,
+        cursor="orders-page",
+    )
+    fills, fill_cursor = client.list_historical_fills(
+        ticker="KX-OLD",
+        limit=500,
+        cursor="fills-page",
+    )
+
+    assert orders == [{"order_id": "old-o1"}]
+    assert order_cursor == "old-o2"
+    assert fills == [{"fill_id": "old-f1"}]
+    assert fill_cursor == "old-f2"
+    assert transport.calls[0]["url"].endswith("/historical/orders")
+    assert transport.calls[0]["params"] == {
+        "limit": 250,
+        "ticker": "KX-OLD",
+        "cursor": "orders-page",
+    }
+    assert transport.calls[1]["url"].endswith("/historical/fills")
+    assert transport.calls[1]["params"] == {
+        "limit": 500,
+        "ticker": "KX-OLD",
+        "cursor": "fills-page",
+    }
+
+
+def test_iter_fill_pages_drains_cursor_and_exposes_live_cap(
+    monkeypatch, client
+) -> None:
+    transport = _patch_http(
+        monkeypatch,
+        [
+            httpx.Response(200, json={"fills": [{"fill_id": "f1"}], "cursor": "next"}),
+            httpx.Response(
+                200, json={"fills": [{"fill_id": "f2"}], "cursor": "still-live"}
+            ),
+        ],
+    )
+
+    pages = list(client.iter_fill_pages(order_id="o1", limit=1, max_pages=2))
+
+    assert pages == [
+        ([{"fill_id": "f1"}], "next"),
+        ([{"fill_id": "f2"}], "still-live"),
+    ]
+    assert transport.calls[0]["params"] == {"limit": 1, "order_id": "o1"}
+    assert transport.calls[1]["params"] == {
+        "limit": 1,
+        "cursor": "next",
+        "order_id": "o1",
+    }
 
 
 # ── combo endpoints ──────────────────────────────────────────────────

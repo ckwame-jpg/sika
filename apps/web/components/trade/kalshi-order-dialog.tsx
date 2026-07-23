@@ -14,7 +14,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { fetchTradingSettings, keys, placeKalshiOrder } from "@/lib/api";
-import { estimateTakerFeeDollars, quantizeToCentPrice } from "@/lib/kalshi-fees";
+import {
+  estimateTakerFeeDollars,
+  orderTotalExceedsCap,
+  quantizeToCentPrice,
+  worstCaseTakerFeeDollars,
+} from "@/lib/kalshi-fees";
 import { usePriceDisplay } from "@/lib/price-display";
 import { cn } from "@/lib/utils";
 
@@ -128,11 +133,15 @@ export function KalshiOrderDialog({
     const quantity = Math.max(1, Math.round(stake / parsedPrice));
     const cost = quantity * parsedPrice;
     const fee = estimateTakerFeeDollars(quantity, parsedPrice);
+    const worstCaseFee = worstCaseTakerFeeDollars(quantity, parsedPrice);
     const payout = quantity; // $1 per contract if the side hits
-    return { stake, quantity, cost, fee, payout, profit: payout - cost - fee };
+    return { stake, quantity, cost, fee, worstCaseFee, payout, profit: payout - cost - fee };
   }, [parsedPrice, stakeInput]);
 
-  const overCap = order != null && capDollars != null && order.cost > capDollars;
+  const overCap =
+    order != null &&
+    capDollars != null &&
+    orderTotalExceedsCap(order.cost, order.worstCaseFee, capDollars);
 
   function handleReview() {
     const price = parsePriceInput(priceInput);
@@ -373,8 +382,8 @@ export function KalshiOrderDialog({
               )}
               {overCap && capDollars != null && (
                 <p className="mt-1 text-2xs text-negative" data-testid="kalshi-order-cap-warning">
-                  Over your ${capDollars.toFixed(0)} per-order cap — lower the stake or raise
-                  the cap in settings.
+                  Principal plus worst-case taker fee is over your ${capDollars.toFixed(0)}
+                  {" "}per-order cap — lower the stake or raise the cap in settings.
                 </p>
               )}
             </div>

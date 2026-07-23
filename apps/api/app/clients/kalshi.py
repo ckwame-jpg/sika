@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -437,8 +438,33 @@ class KalshiAccountClient(KalshiAuthenticatedClient):
             params["cursor"] = cursor
         return self._request("GET", "/portfolio/positions", params=params, timeout=8)
 
+    def list_settlements(
+        self,
+        *,
+        limit: int = 1000,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """Return settled-market history for the primary subaccount.
+
+        Kalshi removed settled markets from ``/portfolio/positions`` in
+        December 2025. Unlike the positions endpoint, settlements defaults to
+        *all* subaccounts when this parameter is omitted, so pinning zero keeps
+        the history aligned with the primary-account positions/balance reads.
+        """
+
+        params: dict[str, Any] = {
+            "limit": min(max(limit, 1), 1000),
+            "subaccount": 0,
+        }
+        if cursor:
+            params["cursor"] = cursor
+        return self._request("GET", "/portfolio/settlements", params=params, timeout=8)
+
     def list_fills(self, *, limit: int = 25, cursor: str | None = None) -> dict[str, Any]:
-        params: dict[str, Any] = {"limit": min(max(limit, 1), 200)}
+        params: dict[str, Any] = {
+            "limit": min(max(limit, 1), 200),
+            "subaccount": 0,
+        }
         if cursor:
             params["cursor"] = cursor
         return self._request("GET", "/portfolio/fills", params=params, timeout=8)
@@ -501,24 +527,36 @@ class KalshiTradeClient(KalshiAuthenticatedClient):
             "client_order_id": client_order_id,
         }
         response = self._request("POST", "/portfolio/events/orders", json_body=payload)
-        remaining = float(response.get("remaining_count") or 0)
-        filled = float(response.get("fill_count") or 0)
-        if filled > 0 and remaining <= 0:
-            status = "executed"
-        elif remaining > 0:
+        remaining_raw = response.get("remaining_count")
+        filled_raw = response.get("fill_count")
+        remaining = (
+            None if remaining_raw in (None, "") else float(remaining_raw)
+        )
+        filled = None if filled_raw in (None, "") else float(filled_raw)
+        if remaining is not None and remaining > 0:
             # GTC resting (possibly partially filled).
             status = "resting"
-        elif filled > 0:
+        elif filled is not None and filled >= float(quantity):
             status = "executed"
-        else:
-            # Nothing filled and nothing resting — an IOC/FOK that found
-            # no liquidity. The exchange charged nothing.
+        elif remaining == 0 and filled is not None:
+            # Nothing rests, but an IOC can still have filled only part
+            # of the requested quantity before its remainder was cancelled.
             status = "cancelled"
+        else:
+            # A sparse V2 response does not prove either a terminal zero-fill
+            # outcome or a resting remainder. Keep it reconcilable until an
+            # order-list response supplies authoritative counts/status.
+            status = "submitted"
         return {
             "order": {
                 "order_id": response.get("order_id"),
                 "client_order_id": response.get("client_order_id") or client_order_id,
                 "status": status,
+                # Keep the matching-engine counts in the normalized shape.
+                # Submit handlers use fill_count to decide whether they must
+                # fetch structured fills before retiring a terminal order.
+                "fill_count": filled,
+                "remaining_count": remaining,
             },
             "request": payload,
             "raw": response,
@@ -537,11 +575,212 @@ class KalshiTradeClient(KalshiAuthenticatedClient):
             "raw": response,
         }
 
-    def list_orders(self) -> list[dict[str, Any]]:
-        return self._request("GET", "/portfolio/orders").get("orders") or []
+    def list_orders(
+        self,
+        *,
+        limit: int = 1000,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        params: dict[str, Any] = {"limit": min(max(int(limit), 1), 1000)}
+        if cursor:
+            params["cursor"] = cursor
+        payload = self._request("GET", "/portfolio/orders", params=params, timeout=8)
+        return list(payload.get("orders") or []), payload.get("cursor")
 
-    def list_fills(self) -> list[dict[str, Any]]:
-        return self._request("GET", "/portfolio/fills").get("fills") or []
+    def iter_order_pages(
+        self,
+        *,
+        limit: int = 1000,
+        cursor: str | None = None,
+        max_pages: int = 100,
+    ) -> Iterator[tuple[list[dict[str, Any]], str | None]]:
+        """Drain order pages while exposing each page's continuation cursor.
+
+        The final yielded cursor is intentionally observable by callers:
+        an empty cursor proves natural exhaustion, while a live cursor after
+        ``max_pages`` means the result was truncated.
+        """
+        per_page = min(max(int(limit), 1), 1000)
+        next_cursor = cursor
+        pages_fetched = 0
+        orders_seen = 0
+        for _ in range(max(int(max_pages), 1)):
+            orders, next_cursor = self.list_orders(
+                limit=per_page,
+                cursor=next_cursor,
+            )
+            pages_fetched += 1
+            orders_seen += len(orders)
+            # Yield even an empty page. Its cursor is completion evidence;
+            # suppressing it could make a capped/odd response look drained.
+            yield orders, next_cursor
+            if not next_cursor:
+                break
+        else:
+            if next_cursor:
+                logger.warning(
+                    "iter_order_pages hit max_pages=%d with a live cursor: "
+                    "scanned %d orders across %d pages; remaining orders NOT fetched",
+                    max_pages,
+                    orders_seen,
+                    pages_fetched,
+                )
+
+    def list_historical_orders(
+        self,
+        *,
+        ticker: str | None = None,
+        limit: int = 1000,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Read archived terminal orders from Kalshi's historical tier."""
+        params: dict[str, Any] = {"limit": min(max(int(limit), 1), 1000)}
+        if ticker:
+            params["ticker"] = ticker
+        if cursor:
+            params["cursor"] = cursor
+        payload = self._request(
+            "GET", "/historical/orders", params=params, timeout=8
+        )
+        return list(payload.get("orders") or []), payload.get("cursor")
+
+    def iter_historical_order_pages(
+        self,
+        *,
+        ticker: str | None = None,
+        limit: int = 1000,
+        cursor: str | None = None,
+        max_pages: int = 100,
+    ) -> Iterator[tuple[list[dict[str, Any]], str | None]]:
+        """Drain archived order pages with the same bounded cursor contract."""
+        per_page = min(max(int(limit), 1), 1000)
+        next_cursor = cursor
+        pages_fetched = 0
+        orders_seen = 0
+        for _ in range(max(int(max_pages), 1)):
+            orders, next_cursor = self.list_historical_orders(
+                ticker=ticker,
+                limit=per_page,
+                cursor=next_cursor,
+            )
+            pages_fetched += 1
+            orders_seen += len(orders)
+            yield orders, next_cursor
+            if not next_cursor:
+                break
+        else:
+            if next_cursor:
+                logger.warning(
+                    "iter_historical_order_pages hit max_pages=%d with a live "
+                    "cursor: scanned %d orders across %d pages; remaining "
+                    "orders NOT fetched",
+                    max_pages,
+                    orders_seen,
+                    pages_fetched,
+                )
+
+    def list_fills(
+        self,
+        *,
+        limit: int = 1000,
+        cursor: str | None = None,
+        order_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        params: dict[str, Any] = {"limit": min(max(int(limit), 1), 1000)}
+        if cursor:
+            params["cursor"] = cursor
+        if order_id:
+            params["order_id"] = order_id
+        payload = self._request("GET", "/portfolio/fills", params=params, timeout=8)
+        return list(payload.get("fills") or []), payload.get("cursor")
+
+    def iter_fill_pages(
+        self,
+        *,
+        limit: int = 1000,
+        cursor: str | None = None,
+        order_id: str | None = None,
+        max_pages: int = 100,
+    ) -> Iterator[tuple[list[dict[str, Any]], str | None]]:
+        """Drain fill pages, optionally restricted to one exchange order."""
+        per_page = min(max(int(limit), 1), 1000)
+        next_cursor = cursor
+        pages_fetched = 0
+        fills_seen = 0
+        for _ in range(max(int(max_pages), 1)):
+            fills, next_cursor = self.list_fills(
+                limit=per_page,
+                cursor=next_cursor,
+                order_id=order_id,
+            )
+            pages_fetched += 1
+            fills_seen += len(fills)
+            # See iter_order_pages: the cursor on an empty page still matters.
+            yield fills, next_cursor
+            if not next_cursor:
+                break
+        else:
+            if next_cursor:
+                logger.warning(
+                    "iter_fill_pages hit max_pages=%d with a live cursor: "
+                    "scanned %d fills across %d pages; remaining fills NOT fetched",
+                    max_pages,
+                    fills_seen,
+                    pages_fetched,
+                )
+
+    def list_historical_fills(
+        self,
+        *,
+        ticker: str | None = None,
+        limit: int = 1000,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Read archived user fills; the endpoint has no order-id filter."""
+        params: dict[str, Any] = {"limit": min(max(int(limit), 1), 1000)}
+        if ticker:
+            params["ticker"] = ticker
+        if cursor:
+            params["cursor"] = cursor
+        payload = self._request(
+            "GET", "/historical/fills", params=params, timeout=8
+        )
+        return list(payload.get("fills") or []), payload.get("cursor")
+
+    def iter_historical_fill_pages(
+        self,
+        *,
+        ticker: str | None = None,
+        limit: int = 1000,
+        cursor: str | None = None,
+        max_pages: int = 100,
+    ) -> Iterator[tuple[list[dict[str, Any]], str | None]]:
+        """Drain archived fills, normally narrowed by the local ticker."""
+        per_page = min(max(int(limit), 1), 1000)
+        next_cursor = cursor
+        pages_fetched = 0
+        fills_seen = 0
+        for _ in range(max(int(max_pages), 1)):
+            fills, next_cursor = self.list_historical_fills(
+                ticker=ticker,
+                limit=per_page,
+                cursor=next_cursor,
+            )
+            pages_fetched += 1
+            fills_seen += len(fills)
+            yield fills, next_cursor
+            if not next_cursor:
+                break
+        else:
+            if next_cursor:
+                logger.warning(
+                    "iter_historical_fill_pages hit max_pages=%d with a live "
+                    "cursor: scanned %d fills across %d pages; remaining "
+                    "fills NOT fetched",
+                    max_pages,
+                    fills_seen,
+                    pages_fetched,
+                )
 
     def get_market(self, ticker: str) -> dict[str, Any]:
         """Single-market read on THIS client's host — used for combo

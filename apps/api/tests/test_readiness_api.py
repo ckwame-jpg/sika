@@ -5,8 +5,17 @@ import pytest
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.models import ModelFamilyRuntimeHealth, OperatorSetting, Prediction, RefreshJob, Run, ShadowInference
+from app.models import (
+    ModelFamilyRuntimeHealth,
+    OperatorSetting,
+    ParlayPrediction,
+    Prediction,
+    RefreshJob,
+    Run,
+    ShadowInference,
+)
 from app.services.ingestion import run_shadow_capture_cycle
+from app.services.ml import readiness as readiness_service
 from app.services.ml.runtime import sync_family_runtime_health
 from app.services.ml.shadow_modes import DIAGNOSTIC_BACKFILL_CAPTURE_MODE
 
@@ -784,3 +793,260 @@ def test_models_readiness_endpoint_counts_older_settled_rows_under_high_pending_
     assert payload["settled_predictions"] == settled_count
     assert payload["pending_predictions"] == pending_count
     assert payload["total_predictions"] == settled_count + pending_count
+    assert payload["diagnostics_sample_rows"] == settled_count + pending_count
+    assert payload["diagnostics_sample_truncated"] is False
+    assert payload["diagnostics_sample_window_start"] is not None
+    assert payload["feature_coverage_rates"]["market_snapshot"] == 1.0
+    assert sum(bucket["settled_count"] for bucket in payload["calibration_buckets"]) == settled_count
+
+
+def test_diagnostic_window_start_is_capped_state_completeness_boundary(
+    client,
+    db_session,
+    monkeypatch,
+):
+    """An uncapped state keeps older evidence before the completeness boundary."""
+
+    monkeypatch.setattr(readiness_service, "READINESS_ROW_LIMIT", 2)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    newest_pending = now - timedelta(hours=1)
+    pending_times = [newest_pending - timedelta(minutes=index) for index in range(3)]
+    older_settled = now - timedelta(days=2)
+
+    db_session.add_all(
+        [
+            Prediction(
+                run_id=45,
+                market_id=45_000 + index,
+                ticker=f"NBA-COMPLETENESS-PENDING-{index}",
+                sport_key="NBA",
+                market_title="Recent pending market",
+                market_family="winner",
+                market_kind="game_winner",
+                side="yes",
+                suggested_price=0.45,
+                fair_yes_price=0.58,
+                fair_no_price=0.42,
+                edge=0.13,
+                confidence=0.68,
+                model_name="heuristic-v1",
+                rationale="Clipped pending state",
+                scoring_diagnostics={"feature_flags": {"recent_pending": True}},
+                settlement_status="pending",
+                prediction_outcome="pending",
+                captured_at=captured_at,
+            )
+            for index, captured_at in enumerate(pending_times)
+        ]
+        + [
+            Prediction(
+                run_id=46,
+                market_id=46_000,
+                ticker="NBA-COMPLETENESS-OLDER-SETTLED",
+                sport_key="NBA",
+                market_title="Older settled market",
+                market_family="winner",
+                market_kind="game_winner",
+                side="yes",
+                suggested_price=0.45,
+                fair_yes_price=0.58,
+                fair_no_price=0.42,
+                edge=0.13,
+                confidence=0.68,
+                model_name="heuristic-v1",
+                rationale="Unclipped settled evidence",
+                scoring_diagnostics={"feature_flags": {"older_settled_evidence": True}},
+                settlement_status="settled",
+                prediction_outcome="won",
+                settled_at=older_settled + timedelta(hours=2),
+                realized_pnl=0.77,
+                captured_at=older_settled,
+            )
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/ops/models/readiness/nba_singles")
+
+    assert response.status_code == 200
+    payload = response.json()
+    boundary = datetime.fromisoformat(
+        payload["diagnostics_sample_window_start"].replace("Z", "+00:00")
+    )
+    assert payload["total_predictions"] == 4
+    assert payload["diagnostics_sample_rows"] == 3
+    assert payload["diagnostics_sample_truncated"] is True
+    assert payload["diagnostics_settled_sample_truncated"] is False
+    assert payload["diagnostics_unsettled_sample_truncated"] is True
+    assert boundary == pending_times[1]
+    assert older_settled < boundary
+    assert payload["average_realized_pnl"] == 0.77
+    assert payload["feature_coverage_rates"]["older_settled_evidence"] == 0.3333
+    assert sum(bucket["settled_count"] for bucket in payload["calibration_buckets"]) == 1
+
+
+def test_models_readiness_summary_keeps_low_volume_family_diagnostics_under_cross_family_pressure(
+    client,
+    db_session,
+):
+    """A high-volume sport cannot consume another family's diagnostic slice."""
+
+    now = datetime.now(timezone.utc)
+    older = now - timedelta(days=2)
+    newer = now - timedelta(hours=1)
+
+    pending_mlb = [
+        Prediction(
+            run_id=30,
+            market_id=30_000 + index,
+            ticker=f"MLB-CROSS-PENDING-{index}",
+            sport_key="MLB",
+            market_title="MLB pending market",
+            market_family="winner",
+            market_kind="game_winner",
+            side="yes",
+            suggested_price=0.45,
+            fair_yes_price=0.58,
+            fair_no_price=0.42,
+            edge=0.13,
+            confidence=0.68,
+            model_name="heuristic-v1",
+            rationale="Cross-family cap pressure",
+            scoring_diagnostics={"feature_flags": {"mlb_context": True}},
+            settlement_status="pending",
+            prediction_outcome="pending",
+            captured_at=newer,
+        )
+        for index in range(5_000)
+    ]
+    settled_wnba = [
+        Prediction(
+            run_id=31,
+            market_id=40_000 + index,
+            ticker=f"WNBA-CROSS-SETTLED-{index}",
+            sport_key="WNBA",
+            market_title="WNBA settled market",
+            market_family="winner",
+            market_kind="game_winner",
+            side="yes",
+            suggested_price=0.45,
+            fair_yes_price=0.58,
+            fair_no_price=0.42,
+            edge=0.13,
+            confidence=0.68,
+            model_name="heuristic-v1",
+            rationale="Cross-family settled evidence",
+            scoring_diagnostics={
+                "feature_flags": {"wnba_context": True},
+                "missing_context": [],
+                "penalties": {},
+            },
+            settlement_status="settled",
+            prediction_outcome="won" if index % 2 == 0 else "lost",
+            settled_at=older + timedelta(hours=2),
+            realized_pnl=0.18 if index % 2 == 0 else -0.42,
+            captured_at=older,
+        )
+        for index in range(50)
+    ]
+    db_session.add_all([*pending_mlb, *settled_wnba])
+    db_session.commit()
+
+    response = client.get("/ops/models/readiness")
+
+    assert response.status_code == 200
+    family = next(item for item in response.json()["families"] if item["family_key"] == "wnba_singles")
+    assert family["settled_predictions"] == 50
+    assert family["diagnostics_sample_rows"] == 50
+    assert family["diagnostics_sample_truncated"] is False
+    assert family["feature_coverage_rates"] == {"wnba_context": 1.0}
+    assert sum(bucket["settled_count"] for bucket in family["calibration_buckets"]) == 50
+
+
+def test_parlay_readiness_discloses_global_diagnostic_cap(client, db_session):
+    captured_at = datetime.now(timezone.utc) - timedelta(days=1)
+    row_count = 5_001
+    db_session.add_all(
+        [
+            ParlayPrediction(
+                run_id=40,
+                leg_count=2,
+                sport_scope="NBA",
+                participating_sports=["NBA"],
+                combined_market_price=0.31,
+                combined_model_probability=0.44,
+                american_odds="+223",
+                edge=0.13,
+                confidence=0.68,
+                model_name="heuristic-v1",
+                rationale="Parlay cap disclosure regression",
+                settlement_status="settled",
+                prediction_outcome="won",
+                settled_at=captured_at + timedelta(hours=2),
+                realized_pnl=0.69,
+                captured_at=captured_at,
+            )
+            for _ in range(row_count)
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/ops/models/readiness/nba_parlay_2leg")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["settled_predictions"] == row_count
+    assert payload["diagnostics_sample_rows"] == 5_000
+    assert payload["diagnostics_sample_truncated"] is True
+    assert payload["diagnostics_settled_sample_truncated"] is True
+    assert payload["diagnostics_unsettled_sample_truncated"] is False
+    assert payload["diagnostics_sample_window_start"] is not None
+
+
+def test_shadow_sample_cap_is_scoped_by_sport_before_family_refinement(
+    client,
+    db_session,
+    monkeypatch,
+):
+    monkeypatch.setattr(readiness_service, "READINESS_ROW_LIMIT", 2)
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            ShadowInference(
+                ticker=f"MLB-SHADOW-PRESSURE-{index}",
+                sport_key="MLB",
+                market_family="winner",
+                confidence=0.61,
+                model_name="shadow-v1",
+                captured_at=now - timedelta(minutes=index),
+            )
+            for index in range(2)
+        ]
+        + [
+            ShadowInference(
+                ticker="WNBA-SHADOW-SINGLE",
+                sport_key="WNBA",
+                market_family="winner",
+                confidence=0.62,
+                model_name="shadow-v1",
+                captured_at=now - timedelta(days=1),
+            ),
+            ShadowInference(
+                ticker="WNBA-SHADOW-PROP",
+                sport_key="WNBA",
+                market_family="player_prop",
+                confidence=0.63,
+                model_name="shadow-v1",
+                captured_at=now - timedelta(days=1, minutes=1),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    singles = client.get("/ops/models/readiness/wnba_singles")
+    props = client.get("/ops/models/readiness/wnba_props")
+
+    assert singles.status_code == 200
+    assert props.status_code == 200
+    assert singles.json()["last_shadow_capture_at"] is not None
+    assert props.json()["last_shadow_capture_at"] is not None

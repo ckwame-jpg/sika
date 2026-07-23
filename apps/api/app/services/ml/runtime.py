@@ -72,6 +72,8 @@ _TRAINING_ONLY_FEATURE_KEYS: frozenset[str] = frozenset({
     # path's features dict will never contain them.
     "sport_is_nba",
     "sport_is_mlb",
+    "sport_is_wnba",
+    "sport_is_nfl",
     "suggested_price",
     "heuristic_fair_yes_price",
     "heuristic_edge",

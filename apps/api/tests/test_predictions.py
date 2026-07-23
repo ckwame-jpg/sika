@@ -1604,3 +1604,48 @@ def test_prediction_history_and_summary_endpoints(client, db_session):
     assert payload["pending_predictions"] == 1
     assert payload["by_market_family"]["player_prop"] == 2
     assert payload["by_outcome"]["won"] == 1
+
+
+def test_prediction_summary_is_exact_beyond_previous_five_thousand_row_cap(client, db_session):
+    captured_at = datetime.now(timezone.utc) - timedelta(days=1)
+    row_count = 5_001
+    db_session.add_all(
+        [
+            Prediction(
+                run_id=501,
+                market_id=100_000 + index,
+                ticker=f"NBA-SUMMARY-EXACT-{index}",
+                sport_key="NBA",
+                market_title="Exact summary market",
+                market_family="winner",
+                market_kind="game_winner",
+                side="yes",
+                suggested_price=0.45,
+                fair_yes_price=0.58,
+                fair_no_price=0.42,
+                edge=0.125,
+                confidence=0.75,
+                model_name="heuristic-v1",
+                rationale="Exact aggregate regression",
+                settlement_status="settled",
+                prediction_outcome="won",
+                settled_at=captured_at + timedelta(hours=2),
+                realized_pnl=0.2,
+                captured_at=captured_at,
+            )
+            for index in range(row_count)
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/predictions/summary?sport=NBA")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_predictions"] == row_count
+    assert payload["settled_predictions"] == row_count
+    assert payload["won_predictions"] == row_count
+    assert payload["average_edge"] == 0.125
+    assert payload["average_confidence"] == 0.75
+    assert payload["average_realized_pnl"] == 0.2
+    assert datetime.fromisoformat(payload["window_start"].replace("Z", "+00:00")) == captured_at

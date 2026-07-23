@@ -3,6 +3,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from math import isfinite
 from typing import Any
 
 import httpx
@@ -65,6 +66,13 @@ _ACCOUNT_SNAPSHOT_ERROR_BACKOFF_SECONDS = 15.0
 # Tuned to be longer than a typical Kalshi response (~1 s) but short
 # enough that a hung worker doesn't make /positions hang.
 _ACCOUNT_SNAPSHOT_SYNC_COALESCE_TIMEOUT_SECONDS = 5.0
+# Kalshi accepts at most 1,000 positions or settlements per request. The
+# page caps are deliberately generous, but finite so a broken or cyclic
+# upstream cursor cannot hang the portfolio endpoint forever.
+_POSITIONS_PAGE_LIMIT = 1000
+_POSITIONS_MAX_PAGES = 100
+_SETTLEMENTS_PAGE_LIMIT = 1000
+_SETTLEMENTS_MAX_PAGES = 100
 _account_snapshot_cache: dict[str, Any] = {
     "value": None,
     "fresh_until": 0.0,
@@ -130,9 +138,10 @@ def _float_or_none(value: Any) -> float | None:
     if value in (None, ""):
         return None
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    return parsed if isfinite(parsed) else None
 
 
 def _cents_to_dollars(value: Any) -> float | None:
@@ -169,6 +178,92 @@ def _account_error_message(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPError):
         return f"Kalshi account request failed: {exc}"
     return f"Kalshi account sync failed ({type(exc).__name__}): {exc}"
+
+
+def _drain_total_traded_positions(
+    client: KalshiAccountClient,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Drain Kalshi's unsettled position ledger.
+
+    Returns ``(rows, truncated)``. ``truncated`` is true when the
+    defensive page limit or a repeated cursor stops the drain while the
+    upstream still advertises another page.
+    """
+
+    rows: list[dict[str, Any]] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+
+    for _page_number in range(_POSITIONS_MAX_PAGES):
+        payload = client.list_positions(
+            count_filter="total_traded",
+            limit=_POSITIONS_PAGE_LIMIT,
+            cursor=cursor,
+        )
+        rows.extend(list(payload.get("market_positions") or []))
+
+        next_cursor = str(payload.get("cursor") or "").strip() or None
+        if next_cursor is None:
+            return rows, False
+        if next_cursor in seen_cursors:
+            return rows, True
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+
+    return rows, cursor is not None
+
+
+def _drain_settlements(
+    client: KalshiAccountClient,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Drain settled-market history with bounded cursor protection."""
+
+    rows: list[dict[str, Any]] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+
+    for _page_number in range(_SETTLEMENTS_MAX_PAGES):
+        payload = client.list_settlements(
+            limit=_SETTLEMENTS_PAGE_LIMIT,
+            cursor=cursor,
+        )
+        rows.extend(list(payload.get("settlements") or []))
+
+        next_cursor = str(payload.get("cursor") or "").strip() or None
+        if next_cursor is None:
+            return rows, False
+        if next_cursor in seen_cursors:
+            return rows, True
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+
+    return rows, cursor is not None
+
+
+def _settlement_realized_pnl_dollars(item: dict[str, Any]) -> float | None:
+    """Derive settled PnL using the positions feed's gross-PnL semantics.
+
+    ``revenue`` is denominated in cents and total costs are dollar strings.
+    Kalshi reports fees separately from ``realized_pnl_dollars`` on open
+    positions, so ``fee_cost`` is intentionally not subtracted here; doing so
+    would splice net settled PnL into a gross unsettled-PnL metric. Missing or
+    malformed components return ``None`` so the caller can disclose a partial
+    signed total instead of treating unknown money as zero.
+    """
+
+    revenue = _float_or_none(item.get("revenue_dollars"))
+    if revenue is None:
+        revenue = _cents_to_dollars(item.get("revenue"))
+    yes_cost = _float_or_none(item.get("yes_total_cost_dollars"))
+    no_cost = _float_or_none(item.get("no_total_cost_dollars"))
+    if (
+        revenue is None
+        or yes_cost is None
+        or no_cost is None
+        or min(revenue, yes_cost, no_cost) < 0
+    ):
+        return None
+    return revenue - yes_cost - no_cost
 
 
 def _market_lookup(db: Session, tickers: set[str]) -> dict[str, Market]:
@@ -581,7 +676,10 @@ def _build_kalshi_account_snapshot_uncached(
 
     try:
         balance_payload = kalshi_client.get_balance()
-        positions_payload = kalshi_client.list_positions(count_filter="position", limit=100)
+        raw_position_ledger, positions_truncated = _drain_total_traded_positions(
+            kalshi_client
+        )
+        raw_settlements, settlements_truncated = _drain_settlements(kalshi_client)
         fills_payload = kalshi_client.list_fills(limit=25)
     except Exception as exc:
         return KalshiAccountRead(
@@ -590,12 +688,49 @@ def _build_kalshi_account_snapshot_uncached(
             error_message=_account_error_message(exc),
         )
 
-    raw_positions = list(positions_payload.get("market_positions") or [])
+    realized_pnl_dollars_total = 0.0
+    realized_pnl_truncated = positions_truncated or settlements_truncated
+    for item in raw_position_ledger:
+        realized_pnl = _float_or_none(item.get("realized_pnl_dollars"))
+        if realized_pnl is None:
+            realized_pnl_truncated = True
+            continue
+        realized_pnl_dollars_total += realized_pnl
+    for item in raw_settlements:
+        realized_pnl = _settlement_realized_pnl_dollars(item)
+        if realized_pnl is None:
+            realized_pnl_truncated = True
+            continue
+        realized_pnl_dollars_total += realized_pnl
+
+    # Kalshi's positions endpoint contains unsettled markets only. Keep every
+    # unsettled row in the realized-PnL calculation above, but render only
+    # non-zero positions in the Open Picks list. Settled-market PnL comes from
+    # the disjoint settlements ledger.
+    raw_positions: list[tuple[dict[str, Any], str, float]] = []
+    for item in raw_position_ledger:
+        raw_position = item.get("position_fp")
+        if raw_position in (None, ""):
+            raw_position = item.get("position")
+        position_value = _float_or_none(raw_position)
+        if position_value is None:
+            # We cannot honestly claim an exact Open Picks list if a ledger
+            # row's position cannot be classified as open or flat.
+            positions_truncated = True
+            continue
+        if position_value == 0:
+            continue
+        ticker = str(item.get("ticker") or item.get("market_ticker") or "").strip()
+        if not ticker:
+            positions_truncated = True
+            continue
+        raw_positions.append((item, ticker, position_value))
     raw_fills = list(fills_payload.get("fills") or [])
-    tickers = {
+    tickers = {ticker for _, ticker, _ in raw_positions}
+    tickers.update(
         str(item.get("ticker") or item.get("market_ticker") or "").strip()
-        for item in [*raw_positions, *raw_fills]
-    }
+        for item in raw_fills
+    )
     tickers.discard("")
     markets_by_ticker = _market_lookup(db, tickers)
     try:
@@ -604,12 +739,8 @@ def _build_kalshi_account_snapshot_uncached(
         remote_markets_by_ticker = {}
 
     positions: list[KalshiAccountMarketPositionRead] = []
-    for item in raw_positions:
-        ticker = str(item.get("ticker") or item.get("market_ticker") or "").strip()
-        if not ticker:
-            continue
+    for item, ticker, position_value in raw_positions:
         market = markets_by_ticker.get(ticker)
-        position_value = _float_or_none(item.get("position_fp") or item.get("position")) or 0.0
         bet_label, bet_subtitle, market_title, market_subtitle = _bet_copy(
             ticker=ticker,
             side=_selected_side_for_position(position_value),
@@ -676,5 +807,8 @@ def _build_kalshi_account_snapshot_uncached(
             updated_ts=balance_payload.get("updated_ts"),
         ),
         market_positions=positions,
+        realized_pnl_dollars_total=round(realized_pnl_dollars_total, 4),
+        realized_pnl_truncated=realized_pnl_truncated,
+        positions_truncated=positions_truncated,
         recent_fills=fills,
     )

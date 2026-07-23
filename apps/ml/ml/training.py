@@ -22,6 +22,7 @@ from sklearn.preprocessing import StandardScaler
 from ml.dataset import load_settled_predictions
 from ml.manifest import ModelArtifact, ModelManifest
 from ml_features import (
+    DEFAULT_SERVE_FAMILY_KEYS,
     FeatureSpec,
     build_monotonic_cst,
     has_any_constraint,
@@ -93,6 +94,15 @@ ADVANCED_COMPLETENESS_MARKERS = (
     # explicitly. Captures the original "batting-order position is
     # populated" intent that ``lineup_data_complete`` used to carry alone.
     "player_in_starting_lineup",
+    # NFL scoring features. Each marker identifies a real cache-backed
+    # feature group and therefore participates in weighting/advanced-only
+    # selection exactly like the NBA, MLB, and WNBA emitters above.
+    "nfl_consensus_data_complete",
+    "nfl_opponent_data_complete",
+    "nfl_qb_status_data_complete",
+    "nfl_ratings_data_complete",
+    "nfl_snap_data_complete",
+    "nfl_weather_data_complete",
 )
 
 
@@ -872,7 +882,7 @@ def train_and_package(
     elif serve_family_key is not None:
         resolved_serve_keys = (serve_family_key,)
     else:
-        resolved_serve_keys = ("mlb_props", "nba_props", "mlb_singles", "nba_singles")
+        resolved_serve_keys = DEFAULT_SERVE_FAMILY_KEYS
     if not resolved_serve_keys:
         raise ValueError("serve_family_keys must contain at least one family key.")
 
@@ -1044,6 +1054,10 @@ def train_and_package(
     timestamp = model_version.replace("-", "")
     artifact_dir = Path(artifact_root) / f"global_v1_{timestamp}"
     manifest_path = Path(manifest_out) if manifest_out is not None else None
+    training_rows_by_family = {
+        str(family_key): int(row_count)
+        for family_key, row_count in dataset["family_key"].astype(str).value_counts().items()
+    }
     metadata = {
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "training_rows": int(len(dataset)),
@@ -1112,6 +1126,9 @@ def train_and_package(
                             # Manifests missing this field were trained against the
                             # selected-side-won target (bug #2) and should be retrained.
                             "target_type": "yes_won",
+                            # Keep zero-row entries explicit: a served family may be
+                            # intentionally shadow-only while its history cold-starts.
+                            "training_rows": training_rows_by_family.get(serves_key, 0),
                         },
                     )
                     for serves_key in resolved_serve_keys

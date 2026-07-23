@@ -29,6 +29,9 @@ const connectedPositions: PositionsRead = {
       portfolio_value_dollars: 171.25,
       updated_ts: 1711814400,
     },
+    realized_pnl_dollars_total: 9.75,
+    positions_truncated: false,
+    realized_pnl_truncated: false,
     market_positions: [
       {
         ticker: "NBA-TEST",
@@ -67,6 +70,19 @@ const connectedPositions: PositionsRead = {
       },
     ],
   },
+  paper_totals: {
+    open_count: 0,
+    closed_count: 0,
+    open_exposure_dollars: 0,
+    realized_pnl_dollars: 0,
+    pending_parlay_count: 0,
+    settled_parlay_count: 0,
+    pending_parlay_exposure_dollars: 0,
+    parlay_realized_pnl_dollars: 0,
+    settled_7d_count: 0,
+    wins_7d_count: 0,
+    realized_pnl_7d_dollars: 0,
+  },
   // Bug #28 truncation flags + Smarter #32 drawdown brake snapshot.
   // Previously the hand-written interface marked these optional so
   // fixtures could skip them; the generated schema treats them as
@@ -83,6 +99,9 @@ const connectedPositions: PositionsRead = {
   legacy_paper_positions: [],
   legacy_demo_orders: [],
   legacy_paper_parlays: [],
+  legacy_paper_truncated: false,
+  legacy_demo_truncated: false,
+  legacy_paper_parlays_truncated: false,
   drawdown_brake: null,
 };
 
@@ -112,6 +131,7 @@ describe("KalshiAccountPanel", () => {
     expect(screen.getByText("YES Celtics")).toBeInTheDocument();
     expect(screen.getByText("Celtics to win?")).toBeInTheDocument();
     expect(screen.getByText("NBA-TEST")).toBeInTheDocument();
+    expect(screen.getByText("+$9.75")).toBeInTheDocument();
     expect(screen.getAllByText("+$0.24").length).toBeGreaterThan(0);
     expect(screen.queryByText("YES Lakers")).not.toBeInTheDocument();
     expect(screen.queryByText("$0.55")).not.toBeInTheDocument();
@@ -152,6 +172,24 @@ describe("KalshiAccountPanel", () => {
 
     expect(screen.getByText("$0.10")).toBeInTheDocument(); // paid the NO price
     expect(screen.queryByText("$0.90")).not.toBeInTheDocument(); // not the YES complement
+  });
+
+  it("marks live totals as partial when the defensive page cap is hit", async () => {
+    mockFetchPositions.mockResolvedValue({
+      ...connectedPositions,
+      kalshi_account: {
+        ...connectedPositions.kalshi_account,
+        positions_truncated: true,
+        realized_pnl_truncated: true,
+      },
+    });
+
+    renderWithProviders(<KalshiAccountPanel />);
+
+    expect(await screen.findByTestId("kalshi-open-picks")).toHaveTextContent("≥1");
+    expect(screen.getByText("+$9.75 · partial")).toBeInTheDocument();
+    expect(screen.queryByText("≥+$9.75")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /open picks ≥1/i })).toBeInTheDocument();
   });
 
   it("toggles account tables independently", async () => {
@@ -242,6 +280,9 @@ describe("KalshiAccountPanel", () => {
         error_message: "Set KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_PATH to connect your Kalshi account.",
         balance: null,
         market_positions: [],
+        realized_pnl_dollars_total: null,
+        positions_truncated: false,
+        realized_pnl_truncated: false,
         recent_fills: [],
       },
     });

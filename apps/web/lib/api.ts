@@ -16,6 +16,8 @@ import type {
   CreateUserPayload,
   CurrentUserRead,
   PaperParlayCreate,
+  PaperParlayQuoteRead,
+  PaperParlayQuoteRequest,
   PaperParlayRead,
   PaperPositionCreate,
   SwitchUserPayload,
@@ -298,6 +300,12 @@ export const updateTradingSettings = (body: TradingSettingsUpdate) =>
 
 export const openPaperParlay = (body: PaperParlayCreate) =>
   request<PaperParlayRead>("/paper-parlays", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
+export const quotePaperParlay = (body: PaperParlayQuoteRequest) =>
+  request<PaperParlayQuoteRead>("/paper-parlays/quote", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -599,6 +607,8 @@ export const keys = {
     pathWithQuery("/events", serializeQuery({ sport: normalizeAllSports(sport), day })),
   watchlistDiagnostics: "/ops/watchlist/diagnostics",
   positions: "/positions",
+  paperParlayQuote: (legFingerprint: string) =>
+    `paper-parlay-quote:${legFingerprint}`,
   market: (ticker: string) => `/markets/${ticker}`,
   marketHistory: (ticker: string, range: string) =>
     `/markets/${ticker}/history?range=${range}`,
