@@ -306,8 +306,8 @@ function TradingGuardrailsSection() {
           <h2 className="cosmos-panel-title">Trading guardrails</h2>
           <p className="cosmos-panel-desc">
             Every real order is checked server-side against this per-order cap
-            (contracts × limit price). A fat-fingered stake can never cost more
-            than the cap.
+            (contracts × limit price, plus the worst-case taker fee). Orders whose
+            maximum principal and fee exceed the cap are rejected before submission.
           </p>
         </div>
       </div>

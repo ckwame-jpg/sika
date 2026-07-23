@@ -81,6 +81,10 @@ high-volume players, and the snap-share gate excludes unstable roles.
 
 ### Known caveats
 
+- **Retrain required before NFL week 1.** The current
+  `global_v1_20260721` artifact predates NFL training ingestion and its
+  feature spec lacks `sport_is_nfl`; keep NFL families in shadow until a
+  replacement artifact has been trained and deployed.
 - The margin grid (2011–2025) includes 2025 rows — distribution-shape
   reuse only, no per-game leakage; rebuild the grid on 2011–2025 after
   the 2026 season ends (`scripts/build_nfl_margin_distribution.py`).

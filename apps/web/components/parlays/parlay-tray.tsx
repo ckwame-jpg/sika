@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useParlayTray, MAX_TRAY_LEGS } from "./parlay-tray-store";
 import { computePaperParlayQuote } from "./paper-parlay-quote";
+import { usePaperParlayServerQuote } from "./use-paper-parlay-quote";
 import { KalshiComboDialog } from "./kalshi-combo-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,7 +99,15 @@ interface ParlayTrayProps {
 
 export function ParlayTray({ onSave }: ParlayTrayProps) {
   const { legs, stake, collapsed, removeLeg, setStake, setCollapsed, clear } = useParlayTray();
-  const quote = useMemo(() => computePaperParlayQuote(legs), [legs]);
+  const {
+    data: serverQuote,
+    error: serverQuoteError,
+    isLoading: serverQuoteLoading,
+  } = usePaperParlayServerQuote(legs);
+  const priceQuote = useMemo(
+    () => computePaperParlayQuote(legs, serverQuote?.combined_market_price),
+    [legs, serverQuote?.combined_market_price],
+  );
 
   // Local input string mirrors the store's parsed stake so the user
   // can type "$2" without the cursor jumping every keystroke. Sync
@@ -116,17 +125,17 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
 
   const canSave = legs.length >= 2 && Boolean(onSave);
   const canPlaceCombo = legs.length >= 2 && Boolean(preview?.combinable);
-  const edgePositive = quote.edge > 0;
+  const edgePositive = (serverQuote?.edge ?? 0) > 0;
 
   // Live projection — uses the live tray combined price (a sweep over
   // the chips), so the operator sees their projected payout shift in
   // real time as they add or drop legs.
   const parsedStake = parseStake(stakeInput);
   const projection =
-    parsedStake != null && Number.isFinite(quote.combinedMarketPrice) && quote.combinedMarketPrice > 0
+    parsedStake != null && Number.isFinite(priceQuote.combinedMarketPrice) && priceQuote.combinedMarketPrice > 0
       ? {
-          payout: parsedStake / quote.combinedMarketPrice,
-          profit: parsedStake / quote.combinedMarketPrice - parsedStake,
+          payout: parsedStake / priceQuote.combinedMarketPrice,
+          profit: parsedStake / priceQuote.combinedMarketPrice - parsedStake,
         }
       : null;
 
@@ -220,13 +229,32 @@ export function ParlayTray({ onSave }: ParlayTrayProps) {
         </ol>
 
         <div className="parlay-tray-quote" data-testid="parlay-tray-quote">
-          <QuoteStat label="combined" value={formatPrice(quote.combinedMarketPrice)} />
-          <QuoteStat label="odds" value={quote.americanOdds} />
-          <QuoteStat label="joint prob" value={formatPercent(quote.combinedModelProbability)} />
+          <QuoteStat label="combined" value={formatPrice(priceQuote.combinedMarketPrice)} />
+          <QuoteStat label="odds" value={priceQuote.americanOdds} />
+          <QuoteStat
+            label="joint prob"
+            value={formatServerQuoteValue(
+              serverQuote?.joint_probability,
+              serverQuoteLoading,
+              Boolean(serverQuoteError),
+              formatPercent,
+            )}
+          />
           <QuoteStat
             label="edge"
-            value={formatEdge(quote.edge)}
-            tone={edgePositive ? "positive" : "negative"}
+            value={formatServerQuoteValue(
+              serverQuote?.edge,
+              serverQuoteLoading,
+              Boolean(serverQuoteError),
+              formatEdge,
+            )}
+            tone={
+              serverQuote
+                ? edgePositive
+                  ? "positive"
+                  : "negative"
+                : undefined
+            }
           />
         </div>
 
@@ -385,7 +413,7 @@ function chipLabel(leg: {
 
 function formatPrice(price: number | null | undefined): string {
   if (price == null || !Number.isFinite(price)) return "—";
-  // Always 2 decimals so chips line up; expressed as cents-style "0.65".
+  if (price > 0 && price < 0.01) return price.toFixed(6);
   return price.toFixed(2);
 }
 
@@ -399,6 +427,18 @@ function formatEdge(value: number): string {
   const pct = value * 100;
   const prefix = pct >= 0 ? "+" : "";
   return `${prefix}${pct.toFixed(1)}%`;
+}
+
+function formatServerQuoteValue(
+  value: number | undefined,
+  loading: boolean,
+  failed: boolean,
+  formatter: (value: number) => string,
+): string {
+  if (value != null) return formatter(value);
+  if (loading) return "loading…";
+  if (failed) return "unavailable";
+  return "—";
 }
 
 function parseStake(raw: string): number | null {

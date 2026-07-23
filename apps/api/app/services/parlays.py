@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import combinations
-from math import prod
 from typing import Any
 
 from sqlalchemy import and_, or_, select
@@ -24,6 +23,17 @@ from app.models import (
 from app.services.ml.lineage import HEURISTIC_PARLAY_MODEL
 from app.services.ml.runtime import run_serving_inference
 from app.services.model_families import parlay_family_key
+from app.services.parlay_quotes import (
+    PARLAY_QUOTE_DECIMAL_PLACES,
+    QuoteLeg,
+    classify_quote_pair,
+    count_correlation_pairs,
+    load_quote_empirical_correlations,
+    pair_weight,
+    quote_parlay,
+    quote_joint_probability,
+    refresh_quote_empirical_correlations,
+)
 from app.services.predictions import OPEN_MARKET_STATUSES
 
 
@@ -148,124 +158,59 @@ def _candidate_opponent_key(candidate: ParlayCandidateInput) -> str | None:
     return None
 
 
+def _quote_leg_from_candidate(candidate: ParlayCandidateInput) -> QuoteLeg:
+    return QuoteLeg(
+        model_probability=_selected_model_probability(candidate),
+        sport_key=candidate.market.sport_key or candidate.event.sport_key,
+        event_id=candidate.event.id,
+        subject_name=str(
+            candidate.metadata.get("copilot_subject_name") or ""
+        ).strip()
+        or None,
+        subject_team=str(
+            candidate.metadata.get("copilot_subject_team") or ""
+        ).strip()
+        or None,
+        opponent=_candidate_opponent_key(candidate),
+        stat_key=str(candidate.metadata.get("copilot_stat_key") or "").strip()
+        or None,
+        market_family=str(
+            candidate.metadata.get("copilot_market_family")
+            or candidate.metadata.get("copilot_market_kind")
+            or ""
+        ).strip()
+        or None,
+    )
+
+
 def _count_correlation_pairs(combo: tuple[ParlayCandidateInput, ...]) -> dict[str, int]:
-    """Pair counts that signal positive correlation between parlay legs.
+    """Canonical exclusive pair counts used by quote and diagnostics."""
 
-    Used both by ``_parlay_diagnostics_for_combo`` (drives the confidence
-    penalty) and by ``_correlation_adjusted_joint_probability`` (drives
-    bug #5's joint probability lift).
-    """
-    teams = [_candidate_team_key(candidate) for candidate in combo]
-    subjects = [_candidate_subject_key(candidate) for candidate in combo]
-    opponents = [_candidate_opponent_key(candidate) for candidate in combo]
-    same_team_pairs = 0
-    shared_subject_pairs = 0
-    shared_opponent_pairs = 0
-    qb_receiver_stack_pairs = 0
-    player_team_total_pairs = 0
-    for left in range(len(combo)):
-        for right in range(left + 1, len(combo)):
-            if teams[left] and teams[left] == teams[right]:
-                same_team_pairs += 1
-            if subjects[left] and subjects[left] == subjects[right]:
-                shared_subject_pairs += 1
-            if opponents[left] and opponents[left] == opponents[right]:
-                shared_opponent_pairs += 1
-            # Smarter NFL PR 10b — same-game stack signals. One offense
-            # drives QB passing yards, WR receiving yards, and the team
-            # total together; these correlate harder than basketball's
-            # same-team pairs. Stat-key prefixes only match NFL props,
-            # so the counters are structurally zero for other sports.
-            if _is_qb_receiver_stack(combo[left], combo[right]):
-                qb_receiver_stack_pairs += 1
-            if _is_player_team_total_pair(combo[left], combo[right]):
-                player_team_total_pairs += 1
-    return {
-        "same_team": same_team_pairs,
-        "shared_subject": shared_subject_pairs,
-        "shared_opponent": shared_opponent_pairs,
-        "qb_receiver_stack": qb_receiver_stack_pairs,
-        "player_team_total": player_team_total_pairs,
-    }
-
-
-_NFL_PASSING_PROP_STATS = ("passing_yards", "passing_touchdowns", "completions")
-_NFL_RECEIVING_PROP_STATS = ("receiving_yards", "receptions", "receiving_touchdowns")
-
-
-def _candidate_stat_key(candidate: ParlayCandidateInput) -> str:
-    return str(candidate.metadata.get("copilot_stat_key") or "")
-
-
-def _candidate_market_family(candidate: ParlayCandidateInput) -> str:
-    return str(candidate.metadata.get("copilot_market_family") or "")
+    return count_correlation_pairs(
+        tuple(_quote_leg_from_candidate(candidate) for candidate in combo)
+    )
 
 
 def _is_qb_receiver_stack(
     left: ParlayCandidateInput, right: ParlayCandidateInput
 ) -> bool:
-    """Same-team, different-player passing↔receiving prop pair — the
-    classic QB/WR stack (a completed deep ball scores BOTH legs)."""
-    left_team, right_team = _candidate_team_key(left), _candidate_team_key(right)
-    if not left_team or left_team != right_team:
-        return False
-    if _candidate_subject_key(left) == _candidate_subject_key(right):
-        return False  # same player is shared_subject, not a stack
-    left_stat, right_stat = _candidate_stat_key(left), _candidate_stat_key(right)
-    passing_receiving = (
-        left_stat in _NFL_PASSING_PROP_STATS and right_stat in _NFL_RECEIVING_PROP_STATS
-    ) or (
-        right_stat in _NFL_PASSING_PROP_STATS and left_stat in _NFL_RECEIVING_PROP_STATS
+    return (
+        classify_quote_pair(
+            _quote_leg_from_candidate(left), _quote_leg_from_candidate(right)
+        )
+        == "qb_receiver_stack"
     )
-    return passing_receiving
 
 
 def _is_player_team_total_pair(
     left: ParlayCandidateInput, right: ParlayCandidateInput
 ) -> bool:
-    """Same-event NFL yardage prop + game-line/winner leg — the player's
-    production and the game script co-move."""
-    if left.event.id != right.event.id:
-        return False
-    nfl_yardage = _NFL_PASSING_PROP_STATS + _NFL_RECEIVING_PROP_STATS + (
-        "rushing_yards", "rushing_touchdowns", "rushing_yards_receiving_yards",
+    return (
+        classify_quote_pair(
+            _quote_leg_from_candidate(left), _quote_leg_from_candidate(right)
+        )
+        == "player_team_total"
     )
-    left_family, right_family = _candidate_market_family(left), _candidate_market_family(right)
-    prop_side = None
-    line_side = None
-    if left_family == "player_prop" and right_family in {"winner", "game_line"}:
-        prop_side, line_side = left, right
-    elif right_family == "player_prop" and left_family in {"winner", "game_line"}:
-        prop_side, line_side = right, left
-    if prop_side is None or line_side is None:
-        return False
-    return _candidate_stat_key(prop_side) in nfl_yardage
-
-
-# Theoretical per-pair-type weights for the correlation blend (bug
-# #5 / PR #31). Smarter #8 phase 3 layers a sample-size-aware blend
-# with empirical estimates on top of these — see ``_pair_weight``
-# below.
-_THEORETICAL_PAIR_WEIGHTS = {
-    "shared_subject": 0.7,
-    "same_team": 0.3,
-    "shared_opponent": 0.2,
-}
-
-# Smarter NFL PR 10b — per-sport overrides. NFL same-team legs correlate
-# harder than basketball's (one offense drives every offensive stat) and
-# the stack categories only exist for NFL. Single-sport combos consult
-# their sport's override first; mixed combos use the defaults (the stack
-# categories are structurally zero outside NFL anyway).
-_SPORT_PAIR_WEIGHT_OVERRIDES: dict[str, dict[str, float]] = {
-    "NFL": {
-        "shared_subject": 0.75,
-        "same_team": 0.45,
-        "shared_opponent": 0.25,
-        "qb_receiver_stack": 0.55,
-        "player_team_total": 0.35,
-    },
-}
 
 
 def _pair_weight(
@@ -274,43 +219,13 @@ def _pair_weight(
     *,
     sport_scope: str | None = None,
 ) -> float:
-    """Smarter #8 phase 3: blend the theoretical prior with the
-    empirical pair-correlation estimate when one is available.
+    """Compatibility wrapper around the canonical quote engine."""
 
-    ``empirical_map`` is the dict returned by
-    ``cached_empirical_pair_correlations`` — pair type → ``PairCorrelation``
-    or ``None``. When the entry is ``None`` (insufficient settled
-    history for that pair type) the blend collapses to the
-    theoretical prior. When it's populated the blend smoothly shifts
-    toward the empirical estimate as the sample size grows.
-
-    The empirical coefficient is in ``[-1, 1]`` (Pearson / phi) and
-    the theoretical weights are in ``[0, 1]``; we map the empirical
-    coefficient onto the weight axis using ``max(coefficient, 0)``
-    since negative-correlation entries indicate the live combiner
-    shouldn't be lifting those legs at all (it'd over-state the
-    joint). A future phase can add ``min`` floors when negative-
-    correlation parlays become a thing sika ranks.
-    """
-    # Lazy import: ``parlay_correlation`` is shipped with apps/api but
-    # the import here keeps the dependency one-way (parlays.py imports
-    # parlay_correlation, not the reverse).
-    from app.services.parlay_correlation import blend_theoretical_with_empirical
-
-    sport_overrides = _SPORT_PAIR_WEIGHT_OVERRIDES.get((sport_scope or "").upper(), {})
-    theoretical = sport_overrides.get(pair_type, _THEORETICAL_PAIR_WEIGHTS.get(pair_type, 0.0))
-    if empirical_map is None:
-        return theoretical
-    empirical = empirical_map.get(pair_type)
-    if empirical is None:
-        return theoretical
-    # Map negative empirical correlation onto 0 so the blend never
-    # drives the per-pair weight negative (the combiner's
-    # correlation_factor is min(weighted, 0.85) below; a negative
-    # empirical wiping out the prior would understate the joint).
-    blendable = max(empirical.coefficient, 0.0)
-    blendable_estimate = type(empirical)(coefficient=blendable, sample_size=empirical.sample_size)
-    return blend_theoretical_with_empirical(theoretical, blendable_estimate)
+    return pair_weight(
+        pair_type,
+        empirical_map,
+        sport_scope=sport_scope,
+    )
 
 
 def _correlation_adjusted_joint_probability(
@@ -319,66 +234,19 @@ def _correlation_adjusted_joint_probability(
     *,
     empirical_correlations: dict[str, Any] | None = None,
 ) -> float:
-    """Joint probability of all legs hitting, corrected for correlation.
+    """Compatibility wrapper around the canonical quote engine.
 
-    Bug #5: the strict product of leg probabilities assumes independence.
-    For the parlays sika constructs — same player, same team, shared
-    opponent — that assumption is wrong in a specific direction: those
-    legs are POSITIVELY correlated, and probability theory guarantees
-    that for positive correlation ``P(A∩B) >= P(A) * P(B)``. The strict
-    product UNDERSTATES the joint, so genuine same-game-parlay edges
-    get filtered out before the user sees them.
-
-    (Aside: the punch list framing said independence "overstates" the
-    joint. That's only true for *negatively* correlated legs — mutually
-    exclusive outcomes like "Lakers win + Thunder win". Sika's combo
-    construction filters those out, so in practice every correlated
-    parlay we see is positive correlation and needs to move UP.)
-
-    Formula: blend between the strict product (lower bound, independence)
-    and the minimum leg probability (upper bound, since ``P(A∩B) <=
-    min(P(A), P(B))`` regardless of correlation direction). Correlation
-    factor scales with the number of shared-subject/team/opponent pairs.
-    For independent legs the factor is zero and this returns the product.
-
-    Smarter #8 phase 3: per-pair weights now blend the theoretical
-    priors (0.7 / 0.3 / 0.2) with empirical estimates from settled
-    parlay history when an ``empirical_correlations`` map is supplied.
-    Empirical entries with ``None`` (insufficient samples) fall back
-    to the theoretical prior; entries with enough samples shift the
-    weight toward the observed correlation via
-    ``blend_theoretical_with_empirical``. When no map is passed the
-    function is byte-identical to the pre-phase-3 behavior.
+    ``pairs`` remains in the signature for older callers, but production pair
+    counts are recomputed from the normalized legs so exclusive precedence
+    cannot be bypassed by a stale caller.
     """
-    leg_probs = [_selected_model_probability(candidate) for candidate in combo]
-    independent = prod(leg_probs)
-    if len(leg_probs) <= 1:
-        return float(independent)
-    # Codex PR #31 P1: P(A∩B) ≤ min(P(A), P(B)) — the joint can never
-    # exceed the weakest leg's probability. Anchoring the blend on
-    # min_leg keeps the result mathematically valid.
-    min_leg = min(leg_probs)
-    total_pairs = len(leg_probs) * (len(leg_probs) - 1) // 2
-    # Per-pair weights: same player on both legs (subject) is the strongest
-    # positive-correlation signal, same team is moderate, shared opponent
-    # is mild. Hard cap below 1.0 so the joint never reaches min_leg fully
-    # (some idiosyncratic noise remains even on co-moving legs).
-    combo_sports = {
-        (candidate.market.sport_key or candidate.event.sport_key or "").upper()
-        for candidate in combo
-    }
-    sport_scope = next(iter(combo_sports)) if len(combo_sports) == 1 else None
-    weighted = (
-        _pair_weight("shared_subject", empirical_correlations, sport_scope=sport_scope) * pairs.get("shared_subject", 0)
-        + _pair_weight("same_team", empirical_correlations, sport_scope=sport_scope) * pairs.get("same_team", 0)
-        + _pair_weight("shared_opponent", empirical_correlations, sport_scope=sport_scope) * pairs.get("shared_opponent", 0)
-        # Smarter NFL PR 10b — same-game stack categories (NFL-only by
-        # construction; zero counts elsewhere).
-        + _pair_weight("qb_receiver_stack", empirical_correlations, sport_scope=sport_scope) * pairs.get("qb_receiver_stack", 0)
-        + _pair_weight("player_team_total", empirical_correlations, sport_scope=sport_scope) * pairs.get("player_team_total", 0)
-    ) / max(total_pairs, 1)
-    correlation_factor = min(weighted, 0.85)
-    return float(independent + correlation_factor * (min_leg - independent))
+
+    del pairs
+    quote = quote_joint_probability(
+        tuple(_quote_leg_from_candidate(candidate) for candidate in combo),
+        empirical_correlations=empirical_correlations,
+    )
+    return quote.joint_probability
 
 
 def _parlay_diagnostics_for_combo(
@@ -448,19 +316,9 @@ def _build_generated_parlays(db: Session, candidates: list[ParlayCandidateInput]
     if len(eligible) < settings.parlay_min_legs:
         return []
 
-    # Smarter #8 phase 3: fetch the cached empirical correlations
-    # once per build. The lazy import keeps the dependency one-way
-    # (parlays.py imports the cache, not the reverse). Wrapped in
-    # try/except so a cache read failure can't crash parlay
-    # generation — the combiner falls back to theoretical priors
-    # when ``empirical_correlations`` is ``None``.
-    try:
-        from app.services.parlay_correlation_cache import (  # noqa: PLC0415
-            cached_empirical_pair_correlations,
-        )
-        empirical_correlations: dict[str, Any] | None = cached_empirical_pair_correlations(db)
-    except Exception:  # noqa: BLE001 — defensive, never crash scoring on a cache miss
-        empirical_correlations = None
+    # Resolve empirical inputs once per build through the same cache/fallback
+    # policy used by paper create and the read-only quote endpoint.
+    empirical_correlations = load_quote_empirical_correlations(db)
 
     generated: list[GeneratedParlay] = []
     max_legs = min(settings.parlay_max_legs, len(eligible))
@@ -469,18 +327,22 @@ def _build_generated_parlays(db: Session, candidates: list[ParlayCandidateInput]
             if not _combo_is_valid(combo):
                 continue
 
-            combined_market_price = round(prod(candidate.recommendation.suggested_price for candidate in combo), 4)
-            # Bug #5: lift the joint probability toward max_leg when legs
-            # share subject/team/opponent. Independent legs are unchanged.
-            # Smarter #8 phase 3: per-pair weights blend the theoretical
-            # priors with the empirical estimate when available.
-            pair_counts = _count_correlation_pairs(combo)
-            combined_model_probability = round(
-                _correlation_adjusted_joint_probability(
-                    combo, pair_counts, empirical_correlations=empirical_correlations,
-                ),
-                4,
-            )
+            try:
+                workflow_quote = quote_parlay(
+                    tuple(_quote_leg_from_candidate(candidate) for candidate in combo),
+                    tuple(
+                        candidate.recommendation.suggested_price
+                        for candidate in combo
+                    ),
+                    empirical_correlations=empirical_correlations,
+                )
+            except ValueError:
+                # Invalid or underflowed quote inputs cannot produce a usable
+                # recommendation. Paper creation surfaces the same canonical
+                # validation as a 400; batch generation skips that combo.
+                continue
+            combined_market_price = workflow_quote.combined_market_price
+            combined_model_probability = workflow_quote.joint_probability
             participating_sports = sorted({(candidate.market.sport_key or candidate.event.sport_key or "UNKNOWN").upper() for candidate in combo})
             sport_scope = _sport_scope(participating_sports)
             confidence, diagnostics = _parlay_diagnostics_for_combo(
@@ -497,7 +359,14 @@ def _build_generated_parlays(db: Session, candidates: list[ParlayCandidateInput]
                 features=diagnostics,
             )
             if ml_result is not None:
-                combined_model_probability = round(ml_result.probability, 4)
+                # Paper/tray quotes always expose the canonical correlation
+                # model.  A promoted parlay ML artifact intentionally
+                # supersedes only the auto-generated model probability; its
+                # lineage and effective serving mode below make that distinct
+                # provenance explicit.  Both paths still share price precision.
+                combined_model_probability = round(
+                    ml_result.probability, PARLAY_QUOTE_DECIMAL_PLACES
+                )
                 confidence = round(ml_result.confidence, 4)
                 active_lineage = ml_result.lineage
                 diagnostics = {
@@ -521,7 +390,10 @@ def _build_generated_parlays(db: Session, candidates: list[ParlayCandidateInput]
             else:
                 diagnostics["serving_mode"] = "heuristic"
 
-            edge = round(combined_model_probability - combined_market_price, 4)
+            edge = round(
+                combined_model_probability - combined_market_price,
+                PARLAY_QUOTE_DECIMAL_PLACES,
+            )
             if edge <= 0:
                 continue
 
@@ -641,6 +513,10 @@ def capture_parlay_artifacts(
     run_id: int | None,
     candidates: list[ParlayCandidateInput],
 ) -> tuple[int, int]:
+    # This workflow already persists recommendation/prediction artifacts, so
+    # it owns the expensive TTL-based empirical refresh. Interactive quote
+    # requests only read the stored snapshot and remain strictly read-only.
+    refresh_quote_empirical_correlations(db)
     generated = _build_generated_parlays(db, candidates)
     if not generated:
         return 0, 0

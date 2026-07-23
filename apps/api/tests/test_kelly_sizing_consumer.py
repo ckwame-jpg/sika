@@ -19,8 +19,6 @@ Covers:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from app.models import Market, Recommendation, SignalSnapshot
@@ -123,6 +121,25 @@ def test_no_edge_yields_zero_fraction(db_session) -> None:
     assert out is not None
     assert out["fraction"] == 0.0
     assert out["below_floor"] is True
+
+
+def test_rolling_pnl_source_failure_propagates(db_session, monkeypatch) -> None:
+    """A source failure must not silently disable the drawdown brake."""
+    def fail_rolling_pnl(*args, **kwargs):
+        raise RuntimeError("rolling PnL unavailable")
+
+    monkeypatch.setattr(
+        "app.services.kelly_sizing_consumer.compute_rolling_pnl_fraction",
+        fail_rolling_pnl,
+    )
+
+    with pytest.raises(RuntimeError, match="rolling PnL unavailable"):
+        compute_kelly_sizing_diagnostics(
+            db_session,
+            probability_yes=0.55,
+            price_yes=0.50,
+            side="yes",
+        )
 
 
 # -- _enrich_with_kelly_sizing ---------------------------------------
@@ -237,8 +254,6 @@ def test_enrich_skips_when_recommendation_is_none(db_session) -> None:
 
 def test_enrich_swallows_helper_exception(db_session, monkeypatch) -> None:
     """If the helper raises, persistence must continue uncrashed."""
-    from app.services.scoring import persistence as persistence_module
-
     def boom(*args, **kwargs):
         raise RuntimeError("synthetic failure")
 

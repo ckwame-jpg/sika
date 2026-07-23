@@ -189,6 +189,41 @@ def test_create_paper_parlay_rejects_combined_price_underflow(db_session: Sessio
     assert exc.value.status_code == 400
 
 
+def test_create_paper_parlay_preserves_six_decimal_long_shot_price(
+    db_session: Session,
+) -> None:
+    event = _add_event(db_session, prefix="long-shot")
+    prices = (0.10, 0.15, 0.15, 0.25)
+    legs: list[PaperParlayLegCreate] = []
+    for index, price in enumerate(prices):
+        market = _add_market(
+            db_session,
+            event=event,
+            ticker=f"LONG-{index}",
+            subject_name=f"Player {index}",
+            subject_team=f"TEAM-{index}",
+        )
+        _add_prediction(
+            db_session,
+            market=market,
+            fair_yes_price=0.5,
+            fair_no_price=0.5,
+        )
+        legs.append(
+            PaperParlayLegCreate(
+                ticker=market.ticker,
+                side="yes",
+                suggested_price=price,
+            )
+        )
+
+    parlay = create_paper_parlay(
+        db_session,
+        PaperParlayCreate(stake=10.0, legs=legs),
+    )
+    assert parlay.combined_market_price == 0.000562
+
+
 def test_create_paper_parlay_rejects_unknown_ticker(db_session: Session) -> None:
     event = _add_event(db_session, prefix="unk")
     leg = _add_market(db_session, event=event, ticker="REAL", subject_name="A", subject_team="X")
@@ -411,7 +446,7 @@ def test_create_paper_parlay_rejects_when_no_model_probability_available(
     silently producing a degenerate parlay."""
     event = _add_event(db_session, prefix="noprob")
     market_a = _add_market(db_session, event=event, ticker="NOPROB-A", subject_name="A", subject_team="X")
-    market_b = _add_market(db_session, event=event, ticker="NOPROB-B", subject_name="B", subject_team="Y")
+    _add_market(db_session, event=event, ticker="NOPROB-B", subject_name="B", subject_team="Y")
     _add_prediction(db_session, market=market_a)
     # No prediction at all for market_b.
     payload = PaperParlayCreate(

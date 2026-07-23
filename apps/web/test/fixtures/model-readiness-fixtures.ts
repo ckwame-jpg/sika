@@ -77,6 +77,14 @@ function family(overrides: Partial<ModelFamilyReadinessRead>): ModelFamilyReadin
     lost_predictions: overrides.lost_predictions ?? 20,
     push_predictions: overrides.push_predictions ?? 1,
     cancelled_predictions: overrides.cancelled_predictions ?? 0,
+    diagnostics_sample_rows: overrides.diagnostics_sample_rows ?? 50,
+    diagnostics_sample_truncated: overrides.diagnostics_sample_truncated ?? false,
+    diagnostics_settled_sample_truncated:
+      overrides.diagnostics_settled_sample_truncated ?? false,
+    diagnostics_unsettled_sample_truncated:
+      overrides.diagnostics_unsettled_sample_truncated ?? false,
+    diagnostics_sample_window_start:
+      overrides.diagnostics_sample_window_start ?? "2026-03-08T18:00:00Z",
     average_edge: overrides.average_edge ?? 0.11,
     average_confidence: overrides.average_confidence ?? 0.72,
     average_realized_pnl: overrides.average_realized_pnl ?? 0.06,

@@ -23,7 +23,13 @@ from app.services.ml.study_progress import (
     shadow_coverage_ready,
     walk_forward_history_ready,
 )
-from app.services.model_families import FAMILY_DEFINITIONS, family_definition, parlay_family_key, single_family_key
+from app.services.model_families import (
+    FAMILY_DEFINITIONS,
+    family_definition,
+    parlay_family_key,
+    single_family_key,
+    single_family_sql_predicate,
+)
 from app.services.operator_settings import (
     effective_ml_serving_mode,
     effective_narrator_enabled,
@@ -91,6 +97,209 @@ def _shadow_parlay_family_key(item: ShadowParlayInference) -> str:
     if metadata.get("family_key"):
         return str(metadata["family_key"])
     return parlay_family_key(item.leg_count, item.participating_sports or [item.sport_scope])
+
+
+def _capped_rows(db: Session, stmt) -> tuple[list[Any], bool]:
+    """Execute a newest-first diagnostic query and report exact clipping.
+
+    Fetching one sentinel row beyond the public cap distinguishes an exact
+    5,000-row slice from a genuinely truncated one. Only the first 5,000 rows
+    are retained for diagnostics.
+    """
+
+    rows = list(db.scalars(stmt.limit(READINESS_ROW_LIMIT + 1)).all())
+    return rows[:READINESS_ROW_LIMIT], len(rows) > READINESS_ROW_LIMIT
+
+
+def _diagnostic_window_start(
+    *,
+    cutoff: datetime,
+    slices: list[tuple[list[Any], bool]],
+) -> datetime:
+    """Return the boundary after which every clipped state slice is complete.
+
+    This is an effective *completeness* boundary, not the oldest timestamp in
+    the concatenated diagnostic sample. An untruncated settled or unsettled
+    slice still contributes its full retained-window evidence and may contain
+    rows older than this value. When multiple state slices clip, the latest of
+    their individual boundaries is the first point where all are complete.
+    """
+
+    clipped_state_boundaries = [
+        rows[-1].captured_at
+        for rows, truncated in slices
+        if truncated and rows
+    ]
+    return max(clipped_state_boundaries) if clipped_state_boundaries else cutoff
+
+
+def _single_prediction_sample(
+    db: Session,
+    *,
+    family_key: str,
+    cutoff: datetime,
+) -> tuple[list[Prediction], bool, datetime]:
+    """Load separate settled/unsettled per-family diagnostic slices."""
+
+    base_stmt = (
+        select(Prediction)
+        .options(
+            load_only(
+                Prediction.id,
+                Prediction.run_id,
+                Prediction.market_id,
+                Prediction.ticker,
+                Prediction.sport_key,
+                Prediction.market_family,
+                Prediction.capture_scope,
+                Prediction.side,
+                Prediction.fair_yes_price,
+                Prediction.edge,
+                Prediction.confidence,
+                Prediction.scoring_diagnostics,
+                Prediction.prediction_outcome,
+                Prediction.realized_pnl,
+                Prediction.closing_line_value,
+                Prediction.settled_at,
+                Prediction.captured_at,
+            )
+        )
+        .where(Prediction.captured_at >= cutoff)
+        .where(func.coalesce(Prediction.capture_scope, "recommendation") != "coverage")
+        .where(
+            single_family_sql_predicate(
+                family_key,
+                sport_column=Prediction.sport_key,
+                market_family_column=Prediction.market_family,
+            )
+        )
+        .order_by(Prediction.captured_at.desc(), Prediction.id.desc())
+    )
+    normalized_outcome = func.coalesce(Prediction.prediction_outcome, "pending")
+    settled_rows, settled_truncated = _capped_rows(
+        db,
+        base_stmt.where(normalized_outcome.in_(SETTLED_OUTCOMES)),
+    )
+    unsettled_rows, unsettled_truncated = _capped_rows(
+        db,
+        base_stmt.where(normalized_outcome.not_in(SETTLED_OUTCOMES)),
+    )
+    slices = [
+        (settled_rows, settled_truncated),
+        (unsettled_rows, unsettled_truncated),
+    ]
+    return (
+        [*settled_rows, *unsettled_rows],
+        settled_truncated or unsettled_truncated,
+        _diagnostic_window_start(cutoff=cutoff, slices=slices),
+    )
+
+
+def _parlay_prediction_sample(
+    db: Session,
+    *,
+    cutoff: datetime,
+) -> tuple[list[ParlayPrediction], bool, datetime]:
+    """Load global settled/unsettled parlay slices with honest cap metadata.
+
+    ``participating_sports`` is JSON, so deriving every mixed/single-sport
+    parlay family in portable SQL would reintroduce backend-specific logic.
+    The global cap therefore remains for parlays and is disclosed on every
+    parlay-family response when it binds.
+    """
+
+    base_stmt = (
+        select(ParlayPrediction)
+        .options(
+            load_only(
+                ParlayPrediction.id,
+                ParlayPrediction.run_id,
+                ParlayPrediction.sport_scope,
+                ParlayPrediction.leg_count,
+                ParlayPrediction.participating_sports,
+                ParlayPrediction.combined_model_probability,
+                ParlayPrediction.edge,
+                ParlayPrediction.confidence,
+                ParlayPrediction.prediction_outcome,
+                ParlayPrediction.realized_pnl,
+                ParlayPrediction.settled_at,
+                ParlayPrediction.captured_at,
+            ),
+            selectinload(ParlayPrediction.legs),
+        )
+        .where(ParlayPrediction.captured_at >= cutoff)
+        .order_by(ParlayPrediction.captured_at.desc(), ParlayPrediction.id.desc())
+    )
+    normalized_outcome = func.coalesce(ParlayPrediction.prediction_outcome, "pending")
+    settled_rows, settled_truncated = _capped_rows(
+        db,
+        base_stmt.where(normalized_outcome.in_(SETTLED_OUTCOMES)),
+    )
+    unsettled_rows, unsettled_truncated = _capped_rows(
+        db,
+        base_stmt.where(normalized_outcome.not_in(SETTLED_OUTCOMES)),
+    )
+    slices = [
+        (settled_rows, settled_truncated),
+        (unsettled_rows, unsettled_truncated),
+    ]
+    return (
+        [*settled_rows, *unsettled_rows],
+        settled_truncated or unsettled_truncated,
+        _diagnostic_window_start(cutoff=cutoff, slices=slices),
+    )
+
+
+def _single_shadow_sample_for_sport(
+    db: Session,
+    *,
+    sport_scope: str,
+    cutoff: datetime,
+) -> list[ShadowInference]:
+    """Scope the shadow cap to one sport, then refine family in Python."""
+
+    rows, _ = _capped_rows(
+        db,
+        select(ShadowInference)
+        .options(
+            load_only(
+                ShadowInference.source_prediction_id,
+                ShadowInference.run_id,
+                ShadowInference.market_id,
+                ShadowInference.ticker,
+                ShadowInference.sport_key,
+                ShadowInference.market_family,
+                ShadowInference.model_metadata,
+                ShadowInference.captured_at,
+            )
+        )
+        .where(ShadowInference.captured_at >= cutoff)
+        .where(func.upper(func.coalesce(ShadowInference.sport_key, "")) == sport_scope.upper())
+        .order_by(ShadowInference.captured_at.desc(), ShadowInference.id.desc()),
+    )
+    return rows
+
+
+def _parlay_shadow_sample(db: Session, *, cutoff: datetime) -> list[ShadowParlayInference]:
+    rows, _ = _capped_rows(
+        db,
+        select(ShadowParlayInference)
+        .options(
+            load_only(
+                ShadowParlayInference.source_parlay_prediction_id,
+                ShadowParlayInference.run_id,
+                ShadowParlayInference.sport_scope,
+                ShadowParlayInference.leg_count,
+                ShadowParlayInference.participating_sports,
+                ShadowParlayInference.leg_tickers,
+                ShadowParlayInference.model_metadata,
+                ShadowParlayInference.captured_at,
+            )
+        )
+        .where(ShadowParlayInference.captured_at >= cutoff)
+        .order_by(ShadowParlayInference.captured_at.desc(), ShadowParlayInference.id.desc()),
+    )
+    return rows
 
 
 def _single_shadow_fallback_key(run_id: int | None, market_id: int | None, ticker: str) -> tuple[int | None, int | None, str]:
@@ -550,6 +759,8 @@ def _summary_for_family(
     parlay_outcome_counts: dict[str, dict[str, int]] | None = None,
     single_shadow_match_counts: dict[str, int] | None = None,
     parlay_shadow_match_counts: dict[str, int] | None = None,
+    diagnostics_sample_truncated: bool = False,
+    diagnostics_sample_window_start: datetime | None = None,
 ) -> dict[str, Any]:
     definition = family_definition(family_key)
     scope = definition.scope
@@ -616,6 +827,9 @@ def _summary_for_family(
     )
     feature_rates, missing_rates, top_failures = _rates_from_diagnostics(predictions)
     settled_rows = [row for row in predictions if getattr(row, "prediction_outcome", None) in SETTLED_OUTCOMES]
+    sampled_settled_count = len(settled_rows)
+    sampled_unsettled_count = len(predictions) - sampled_settled_count
+    exact_unsettled_count = max(total_predictions - settled_count, 0)
     last_settled_at = max((row.settled_at for row in settled_rows if row.settled_at is not None), default=None)
     last_shadow_capture_at = max((row.captured_at for row in shadows if row.captured_at is not None), default=None)
 
@@ -666,6 +880,15 @@ def _summary_for_family(
         "lost_predictions": losses,
         "push_predictions": pushes,
         "cancelled_predictions": cancelled,
+        "diagnostics_sample_rows": len(predictions),
+        "diagnostics_sample_truncated": diagnostics_sample_truncated,
+        "diagnostics_settled_sample_truncated": (
+            settled_count > sampled_settled_count
+        ),
+        "diagnostics_unsettled_sample_truncated": (
+            exact_unsettled_count > sampled_unsettled_count
+        ),
+        "diagnostics_sample_window_start": diagnostics_sample_window_start,
         "average_edge": _average_metric(edges),
         "average_confidence": _average_metric(confidences),
         "average_realized_pnl": _average_metric(pnls),
@@ -695,122 +918,42 @@ def build_model_readiness_summary(
 ) -> dict[str, Any]:
     serving_mode = effective_ml_serving_mode(db)
     cutoff = retained_study_cutoff()
-    single_predictions = db.scalars(
-        select(Prediction)
-        .options(
-            load_only(
-                Prediction.id,
-                Prediction.run_id,
-                Prediction.market_id,
-                Prediction.ticker,
-                Prediction.sport_key,
-                Prediction.market_family,
-                Prediction.capture_scope,
-                # Smarter #1 (codex pattern-2 catch): ``side`` and
-                # ``fair_yes_price`` are consumed by ``_calibration_buckets``
-                # → ``_did_yes_happen`` / ``_predicted_yes_probability``.
-                # Without them in the projection SQLAlchemy lazy-loads each
-                # one per row — a query storm proportional to
-                # ``READINESS_ROW_LIMIT`` on every readiness fetch.
-                Prediction.side,
-                Prediction.fair_yes_price,
-                Prediction.edge,
-                Prediction.confidence,
-                Prediction.scoring_diagnostics,
-                Prediction.prediction_outcome,
-                Prediction.realized_pnl,
-                # Smarter #3: consumed by ``average_clv``. Same lazy-load
-                # storm gotcha as the smarter-#1 ``fair_yes_price`` /
-                # ``side`` additions — must be in the projection.
-                Prediction.closing_line_value,
-                Prediction.settled_at,
-                Prediction.captured_at,
-            )
-        )
-        .where(Prediction.captured_at >= cutoff)
-        .order_by(Prediction.captured_at.desc(), Prediction.id.desc())
-        .limit(READINESS_ROW_LIMIT)
-    ).all()
-    parlay_predictions = db.scalars(
-        select(ParlayPrediction)
-        .options(
-            load_only(
-                ParlayPrediction.id,
-                ParlayPrediction.run_id,
-                ParlayPrediction.sport_scope,
-                ParlayPrediction.leg_count,
-                ParlayPrediction.participating_sports,
-                # Smarter #1 (codex pattern-2 catch): joint probability is
-                # consumed by ``_calibration_buckets`` →
-                # ``_predicted_yes_probability`` for parlay rows. Not in the
-                # projection → SQLAlchemy lazy-loads per row.
-                ParlayPrediction.combined_model_probability,
-                ParlayPrediction.edge,
-                ParlayPrediction.confidence,
-                ParlayPrediction.prediction_outcome,
-                ParlayPrediction.realized_pnl,
-                ParlayPrediction.settled_at,
-                ParlayPrediction.captured_at,
-            ),
-            selectinload(ParlayPrediction.legs),
-        )
-        .where(ParlayPrediction.captured_at >= cutoff)
-        .order_by(ParlayPrediction.captured_at.desc(), ParlayPrediction.id.desc())
-        .limit(READINESS_ROW_LIMIT)
-    ).all()
-    shadow_singles = db.scalars(
-        select(ShadowInference)
-        .options(
-            load_only(
-                ShadowInference.source_prediction_id,
-                ShadowInference.run_id,
-                ShadowInference.market_id,
-                ShadowInference.ticker,
-                ShadowInference.sport_key,
-                ShadowInference.market_family,
-                ShadowInference.model_metadata,
-                ShadowInference.captured_at,
-            )
-        )
-        .where(ShadowInference.captured_at >= cutoff)
-        .order_by(ShadowInference.captured_at.desc(), ShadowInference.id.desc())
-        .limit(READINESS_ROW_LIMIT)
-    ).all()
-    shadow_parlays = db.scalars(
-        select(ShadowParlayInference)
-        .options(
-            load_only(
-                ShadowParlayInference.source_parlay_prediction_id,
-                ShadowParlayInference.run_id,
-                ShadowParlayInference.sport_scope,
-                ShadowParlayInference.leg_count,
-                ShadowParlayInference.participating_sports,
-                ShadowParlayInference.leg_tickers,
-                ShadowParlayInference.model_metadata,
-                ShadowParlayInference.captured_at,
-            )
-        )
-        .where(ShadowParlayInference.captured_at >= cutoff)
-        .order_by(ShadowParlayInference.captured_at.desc(), ShadowParlayInference.id.desc())
-        .limit(READINESS_ROW_LIMIT)
-    ).all()
-
     singles_by_family: dict[str, list[Prediction]] = {}
-    for prediction in single_predictions:
-        singles_by_family.setdefault(_single_prediction_family_key(prediction), []).append(prediction)
+    single_sample_meta: dict[str, tuple[bool, datetime]] = {}
+    for definition in FAMILY_DEFINITIONS:
+        if definition.scope != "single":
+            continue
+        rows, truncated, window_start = _single_prediction_sample(
+            db,
+            family_key=definition.key,
+            cutoff=cutoff,
+        )
+        singles_by_family[definition.key] = rows
+        single_sample_meta[definition.key] = (truncated, window_start)
+
+    parlay_predictions, parlay_sample_truncated, parlay_sample_window_start = _parlay_prediction_sample(
+        db,
+        cutoff=cutoff,
+    )
 
     parlays_by_family: dict[str, list[ParlayPrediction]] = {}
     for prediction in parlay_predictions:
         parlays_by_family.setdefault(_parlay_prediction_family_key(prediction), []).append(prediction)
 
     shadow_singles_by_family: dict[str, list[ShadowInference]] = {}
-    for item in shadow_singles:
-        if is_promotion_excluded_metadata(item.model_metadata):
-            continue
-        shadow_singles_by_family.setdefault(_shadow_single_family_key(item), []).append(item)
+    single_sport_scopes = {
+        definition.sport_scope
+        for definition in FAMILY_DEFINITIONS
+        if definition.scope == "single"
+    }
+    for sport_scope in single_sport_scopes:
+        for item in _single_shadow_sample_for_sport(db, sport_scope=sport_scope, cutoff=cutoff):
+            if is_promotion_excluded_metadata(item.model_metadata):
+                continue
+            shadow_singles_by_family.setdefault(_shadow_single_family_key(item), []).append(item)
 
     shadow_parlays_by_family: dict[str, list[ShadowParlayInference]] = {}
-    for item in shadow_parlays:
+    for item in _parlay_shadow_sample(db, cutoff=cutoff):
         if is_promotion_excluded_metadata(item.model_metadata):
             continue
         shadow_parlays_by_family.setdefault(_shadow_parlay_family_key(item), []).append(item)
@@ -822,6 +965,11 @@ def build_model_readiness_summary(
 
     families = []
     for definition in FAMILY_DEFINITIONS:
+        if definition.scope == "single":
+            sample_truncated, sample_window_start = single_sample_meta[definition.key]
+        else:
+            sample_truncated = parlay_sample_truncated
+            sample_window_start = parlay_sample_window_start
         families.append(
             _summary_for_family(
                 db,
@@ -834,6 +982,8 @@ def build_model_readiness_summary(
                 parlay_outcome_counts=parlay_counts,
                 single_shadow_match_counts=single_shadow_matches,
                 parlay_shadow_match_counts=parlay_shadow_matches,
+                diagnostics_sample_truncated=sample_truncated,
+                diagnostics_sample_window_start=sample_window_start,
             )
         )
 
@@ -921,63 +1071,18 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
     cutoff = retained_study_cutoff()
 
     if definition.scope == "single":
-        single_predictions = [
-            prediction
-            for prediction in db.scalars(
-                select(Prediction)
-                .options(
-                    load_only(
-                        Prediction.id,
-                        Prediction.run_id,
-                        Prediction.market_id,
-                        Prediction.ticker,
-                        Prediction.sport_key,
-                        Prediction.market_family,
-                        Prediction.capture_scope,
-                        # Smarter #1 + #3 (codex pattern-2 catch on the
-                        # DETAIL path — same N+1 storm as the summary path
-                        # had pre-fix). ``side`` / ``fair_yes_price`` feed
-                        # calibration buckets; ``closing_line_value`` feeds
-                        # ``average_clv``. Missing them here lazy-loads
-                        # every row.
-                        Prediction.side,
-                        Prediction.fair_yes_price,
-                        Prediction.edge,
-                        Prediction.confidence,
-                        Prediction.scoring_diagnostics,
-                        Prediction.prediction_outcome,
-                        Prediction.realized_pnl,
-                        Prediction.closing_line_value,
-                        Prediction.settled_at,
-                        Prediction.captured_at,
-                    )
-                )
-                .where(Prediction.captured_at >= cutoff)
-                .order_by(Prediction.captured_at.desc(), Prediction.id.desc())
-                .limit(READINESS_ROW_LIMIT)
-            ).all()
-            if _single_prediction_family_key(prediction) == family_key
-        ]
+        single_predictions, sample_truncated, sample_window_start = _single_prediction_sample(
+            db,
+            family_key=family_key,
+            cutoff=cutoff,
+        )
         shadow_singles = [
             item
-            for item in db.scalars(
-                select(ShadowInference)
-                .options(
-                    load_only(
-                        ShadowInference.source_prediction_id,
-                        ShadowInference.run_id,
-                        ShadowInference.market_id,
-                        ShadowInference.ticker,
-                        ShadowInference.sport_key,
-                        ShadowInference.market_family,
-                        ShadowInference.model_metadata,
-                        ShadowInference.captured_at,
-                    )
-                )
-                .where(ShadowInference.captured_at >= cutoff)
-                .order_by(ShadowInference.captured_at.desc(), ShadowInference.id.desc())
-                .limit(READINESS_ROW_LIMIT)
-            ).all()
+            for item in _single_shadow_sample_for_sport(
+                db,
+                sport_scope=definition.sport_scope,
+                cutoff=cutoff,
+            )
             if _shadow_single_family_key(item) == family_key and not is_promotion_excluded_metadata(item.model_metadata)
         ]
         return _summary_for_family(
@@ -989,58 +1094,22 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
             [],
             single_outcome_counts=_single_outcome_counts(db, cutoff=cutoff),
             single_shadow_match_counts=_single_shadow_match_counts(db, cutoff=cutoff),
+            diagnostics_sample_truncated=sample_truncated,
+            diagnostics_sample_window_start=sample_window_start,
         )
 
+    all_parlay_predictions, sample_truncated, sample_window_start = _parlay_prediction_sample(
+        db,
+        cutoff=cutoff,
+    )
     parlay_predictions = [
         prediction
-        for prediction in db.scalars(
-            select(ParlayPrediction)
-            .options(
-                load_only(
-                    ParlayPrediction.id,
-                    ParlayPrediction.run_id,
-                    ParlayPrediction.sport_scope,
-                    ParlayPrediction.leg_count,
-                    ParlayPrediction.participating_sports,
-                    # Smarter #1 (codex pattern-2 catch on the DETAIL path).
-                    # Joint probability feeds calibration buckets via
-                    # ``_predicted_yes_probability``.
-                    ParlayPrediction.combined_model_probability,
-                    ParlayPrediction.edge,
-                    ParlayPrediction.confidence,
-                    ParlayPrediction.prediction_outcome,
-                    ParlayPrediction.realized_pnl,
-                    ParlayPrediction.settled_at,
-                    ParlayPrediction.captured_at,
-                ),
-                selectinload(ParlayPrediction.legs),
-            )
-            .where(ParlayPrediction.captured_at >= cutoff)
-            .order_by(ParlayPrediction.captured_at.desc(), ParlayPrediction.id.desc())
-            .limit(READINESS_ROW_LIMIT)
-        ).all()
+        for prediction in all_parlay_predictions
         if _parlay_prediction_family_key(prediction) == family_key
     ]
     shadow_parlays = [
         item
-        for item in db.scalars(
-            select(ShadowParlayInference)
-            .options(
-                load_only(
-                    ShadowParlayInference.source_parlay_prediction_id,
-                    ShadowParlayInference.run_id,
-                    ShadowParlayInference.sport_scope,
-                    ShadowParlayInference.leg_count,
-                    ShadowParlayInference.participating_sports,
-                    ShadowParlayInference.leg_tickers,
-                    ShadowParlayInference.model_metadata,
-                    ShadowParlayInference.captured_at,
-                )
-            )
-            .where(ShadowParlayInference.captured_at >= cutoff)
-            .order_by(ShadowParlayInference.captured_at.desc(), ShadowParlayInference.id.desc())
-            .limit(READINESS_ROW_LIMIT)
-        ).all()
+        for item in _parlay_shadow_sample(db, cutoff=cutoff)
         if _shadow_parlay_family_key(item) == family_key and not is_promotion_excluded_metadata(item.model_metadata)
     ]
     return _summary_for_family(
@@ -1052,4 +1121,6 @@ def build_model_readiness_detail(db: Session, family_key: str) -> dict[str, Any]
         shadow_parlays,
         parlay_outcome_counts=_parlay_outcome_counts(db, cutoff=cutoff),
         parlay_shadow_match_counts=_parlay_shadow_match_counts(db, cutoff=cutoff),
+        diagnostics_sample_truncated=sample_truncated,
+        diagnostics_sample_window_start=sample_window_start,
     )

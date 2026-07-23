@@ -26,7 +26,15 @@ function basePositions(): PositionsRead {
     demo_orders: [],
     kalshi_account: {
       configured: false, status: "not_configured", error_message: null,
-      balance: null, market_positions: [], recent_fills: [],
+      balance: null, market_positions: [], realized_pnl_dollars_total: null,
+      positions_truncated: false, realized_pnl_truncated: false, recent_fills: [],
+    },
+    paper_totals: {
+      open_count: 0, closed_count: 0, open_exposure_dollars: 0,
+      realized_pnl_dollars: 0, pending_parlay_count: 0,
+      settled_parlay_count: 0, pending_parlay_exposure_dollars: 0,
+      parlay_realized_pnl_dollars: 0, settled_7d_count: 0,
+      wins_7d_count: 0, realized_pnl_7d_dollars: 0,
     },
     paper_truncated: false,
     demo_truncated: false,
@@ -35,6 +43,9 @@ function basePositions(): PositionsRead {
     legacy_paper_positions: [],
     legacy_demo_orders: [],
     legacy_paper_parlays: [],
+    legacy_paper_truncated: false,
+    legacy_demo_truncated: false,
+    legacy_paper_parlays_truncated: false,
     drawdown_brake: null,
   };
 }
@@ -155,5 +166,18 @@ describe("LegacyBucketPanel", () => {
     await waitFor(() => expect(screen.getByTestId("legacy-paper-parlay-1")).toBeInTheDocument());
     expect(screen.getByTestId("legacy-paper-parlay-1")).toHaveTextContent("+$150.00");
     expect(screen.getByTestId("legacy-paper-parlay-2")).toHaveTextContent("-$50.00");
+  });
+
+  it("surfaces truncation for capped legacy rows", async () => {
+    mockFetchPositions.mockResolvedValue({
+      ...basePositions(),
+      legacy_paper_positions: [legacyPosition()],
+      legacy_paper_truncated: true,
+    });
+
+    renderWithProviders(<LegacyBucketPanel />);
+
+    expect(await screen.findByText(/1 most recent/)).toBeInTheDocument();
+    expect(screen.getByText("paper_limit")).toBeInTheDocument();
   });
 });

@@ -1,14 +1,13 @@
 """WNBA PR 1 scaffolding pin — apps/ml side.
 
-The handoff doc requires WNBA to surface as a first-class family in
-``ml.dataset`` so the training pipeline picks up settled WNBA rows the
-same way it does NBA / MLB. These tests pin the minimum shape:
+The handoff doc requires WNBA to surface as a first-class family in the
+shared train/serve mapper so the training pipeline picks up settled WNBA
+rows the same way it does NBA / MLB. These tests pin the minimum shape:
 
-- ``_family_key`` derives ``wnba_props`` / ``wnba_singles`` correctly.
+- ``single_family_key`` derives ``wnba_props`` / ``wnba_singles`` correctly.
 - ``_enrich_prediction_features`` adds the ``sport_is_wnba`` one-hot
   the trainer reads.
-- The ``cli._family_key_for_row`` mirror agrees with ``dataset._family_key``
-  (already enforced for NBA / MLB; PR 1 extends the contract to WNBA).
+- Dataset enrichment uses the same shared mapper.
 
 End-to-end training behavior lands in later PRs once WNBA settled rows
 exist. The drift-guard test in ``test_interval_dataset.py``
@@ -20,26 +19,20 @@ the apps/ml copy agrees.
 
 from __future__ import annotations
 
-from ml.cli import _family_key_for_row
-from ml.dataset import _family_key, _enrich_prediction_features
+from ml.dataset import _enrich_prediction_features
+from ml_features import single_family_key
 
 
 def test_family_key_wnba_player_prop() -> None:
-    assert _family_key("WNBA", "player_prop") == "wnba_props"
+    assert single_family_key("WNBA", "player_prop") == "wnba_props"
 
 
 def test_family_key_wnba_non_prop_falls_back_to_singles() -> None:
-    assert _family_key("WNBA", "winner") == "wnba_singles"
-    assert _family_key("WNBA", None) == "wnba_singles"
+    assert single_family_key("WNBA", "winner") == "wnba_singles"
+    assert single_family_key("WNBA", None) == "wnba_singles"
 
 
-def test_family_key_for_row_mirror_agrees_with_dataset_for_wnba() -> None:
-    """Drift guard — ``cli._family_key_for_row`` exists because
-    apps/ml's recalibrate path runs a query that doesn't import
-    ``dataset._family_key`` directly. The two must agree for every
-    (sport, family) combination training touches; pin WNBA explicitly
-    so a future divergence is caught.
-    """
+def test_dataset_enrichment_uses_shared_family_key_for_wnba() -> None:
     pairs = [
         ("WNBA", "player_prop"),
         ("WNBA", "winner"),
@@ -47,9 +40,12 @@ def test_family_key_for_row_mirror_agrees_with_dataset_for_wnba() -> None:
         ("WNBA", ""),
     ]
     for sport_key, market_family in pairs:
-        assert _family_key(sport_key, market_family) == _family_key_for_row(
-            sport_key, market_family,
-        ), f"divergence at ({sport_key!r}, {market_family!r})"
+        row = {
+            "sport_key": sport_key,
+            "market_family": market_family,
+        }
+        enriched = _enrich_prediction_features(row, {})
+        assert enriched["family_key"] == single_family_key(sport_key, market_family)
 
 
 def test_parse_gamelog_entries_accepts_wnba_via_nba_parser() -> None:

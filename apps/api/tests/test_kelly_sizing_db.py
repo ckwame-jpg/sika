@@ -47,14 +47,18 @@ def _settings(**overrides) -> Settings:
 
 def test_resolve_bankroll_returns_static_setting_by_default(db_session) -> None:
     """Kalshi opt-in off → resolver returns the operator setting."""
-    bankroll = resolve_bankroll(db_session, settings=_settings(kelly_sizing_bankroll_dollars=5_000.0))
+    bankroll = resolve_bankroll(
+        db_session, settings=_settings(kelly_sizing_bankroll_dollars=5_000.0)
+    )
     assert bankroll == 5_000.0
 
 
 def test_resolve_bankroll_returns_none_when_setting_non_positive(db_session) -> None:
     """A non-positive bankroll is an obvious config error; resolver
     returns None rather than letting zero-sized positions ship."""
-    bankroll = resolve_bankroll(db_session, settings=_settings(kelly_sizing_bankroll_dollars=0.0))
+    bankroll = resolve_bankroll(
+        db_session, settings=_settings(kelly_sizing_bankroll_dollars=0.0)
+    )
     assert bankroll is None
 
 
@@ -114,7 +118,9 @@ def test_resolve_bankroll_falls_back_when_portfolio_value_missing(db_session) ->
     assert bankroll == 750.0
 
 
-def test_resolve_bankroll_falls_back_when_portfolio_value_non_positive(db_session) -> None:
+def test_resolve_bankroll_falls_back_when_portfolio_value_non_positive(
+    db_session,
+) -> None:
     """Portfolio value of zero or negative → fall back. A blown
     account shouldn't size everything down to nothing
     automatically; operator intervention is the right path."""
@@ -138,8 +144,10 @@ def test_resolve_bankroll_falls_back_when_portfolio_value_non_positive(db_sessio
 # -- Rolling PnL dollars ------------------------------------------------
 
 
-def _seed_market(db_session) -> Market:
-    market = Market(ticker="NBA-T", sport_key="NBA", title="t", status="open", raw_data={})
+def _seed_market(db_session, *, ticker: str = "NBA-T") -> Market:
+    market = Market(
+        ticker=ticker, sport_key="NBA", title="t", status="open", raw_data={}
+    )
     db_session.add(market)
     db_session.flush()
     return market
@@ -152,20 +160,29 @@ def _seed_settled_prediction(
     realized_pnl: float | None,
     settled_at: datetime,
     capture_scope: str = "recommendation",
-) -> None:
-    db_session.add(
-        Prediction(
-            market_id=market.id, ticker=market.ticker, sport_key="NBA",
-            market_title="t", side="yes", action="buy",
-            suggested_price=0.5, edge=0.05, confidence=0.6, rationale="x",
-            prediction_outcome="won", settlement_status="settled",
-            captured_at=settled_at - timedelta(hours=2),
-            settled_at=settled_at,
-            realized_pnl=realized_pnl,
-            capture_scope=capture_scope,
-        )
+    suggested_price: float = 0.5,
+) -> Prediction:
+    prediction = Prediction(
+        market_id=market.id,
+        ticker=market.ticker,
+        sport_key="NBA",
+        market_title="t",
+        side="yes",
+        action="buy",
+        suggested_price=suggested_price,
+        edge=0.05,
+        confidence=0.6,
+        rationale="x",
+        prediction_outcome="won",
+        settlement_status="settled",
+        captured_at=settled_at - timedelta(hours=2),
+        settled_at=settled_at,
+        realized_pnl=realized_pnl,
+        capture_scope=capture_scope,
     )
+    db_session.add(prediction)
     db_session.flush()
+    return prediction
 
 
 def test_pnl_dollars_returns_zero_for_empty_window(db_session) -> None:
@@ -173,35 +190,55 @@ def test_pnl_dollars_returns_zero_for_empty_window(db_session) -> None:
 
 
 def test_pnl_dollars_sums_realized_pnl(db_session) -> None:
-    market = _seed_market(db_session)
+    market_a = _seed_market(db_session, ticker="NBA-A")
+    market_b = _seed_market(db_session, ticker="NBA-B")
+    market_c = _seed_market(db_session, ticker="NBA-C")
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=0.20, settled_at=_NOW - timedelta(days=2),
+        db_session,
+        market=market_a,
+        realized_pnl=0.20,
+        settled_at=_NOW - timedelta(days=2),
     )
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-0.10, settled_at=_NOW - timedelta(days=3),
+        db_session,
+        market=market_b,
+        realized_pnl=-0.10,
+        settled_at=_NOW - timedelta(days=3),
     )
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=0.05, settled_at=_NOW - timedelta(days=1),
+        db_session,
+        market=market_c,
+        realized_pnl=0.05,
+        settled_at=_NOW - timedelta(days=1),
     )
     db_session.commit()
     total = compute_rolling_pnl_dollars(db_session, end_date=_NOW)
-    assert total == pytest.approx(0.15)
+    # At a $0.50 entry, a $100 cash notional buys 200 contracts:
+    # (0.20 - 0.10 + 0.05) * 200 = $30.
+    assert total == pytest.approx(30.0)
 
 
 def test_pnl_dollars_respects_lookback_window(db_session) -> None:
-    market = _seed_market(db_session)
+    recent_market = _seed_market(db_session, ticker="NBA-RECENT")
+    old_market = _seed_market(db_session, ticker="NBA-OLD")
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=0.50, settled_at=_NOW - timedelta(days=2),
+        db_session,
+        market=recent_market,
+        realized_pnl=0.50,
+        settled_at=_NOW - timedelta(days=2),
     )
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=1.00, settled_at=_NOW - timedelta(days=20),
+        db_session,
+        market=old_market,
+        realized_pnl=1.00,
+        settled_at=_NOW - timedelta(days=20),
     )
     db_session.commit()
     # Default 7-day window: only the recent row counts.
     short = compute_rolling_pnl_dollars(db_session, end_date=_NOW)
     long = compute_rolling_pnl_dollars(db_session, end_date=_NOW, lookback_days=30)
-    assert short == pytest.approx(0.50)
-    assert long == pytest.approx(1.50)
+    assert short == pytest.approx(100.0)
+    assert long == pytest.approx(300.0)
 
 
 def test_pnl_dollars_skips_null_realized_pnl(db_session) -> None:
@@ -209,14 +246,20 @@ def test_pnl_dollars_skips_null_realized_pnl(db_session) -> None:
     excluded — they have no PnL signal."""
     market = _seed_market(db_session)
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=None, settled_at=_NOW - timedelta(days=1),
+        db_session,
+        market=market,
+        realized_pnl=None,
+        settled_at=_NOW - timedelta(days=1),
     )
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=0.10, settled_at=_NOW - timedelta(days=1),
+        db_session,
+        market=market,
+        realized_pnl=0.10,
+        settled_at=_NOW - timedelta(days=1),
     )
     db_session.commit()
     total = compute_rolling_pnl_dollars(db_session, end_date=_NOW)
-    assert total == pytest.approx(0.10)
+    assert total == pytest.approx(20.0)
 
 
 def test_pnl_dollars_excludes_coverage_scope(db_session) -> None:
@@ -225,16 +268,93 @@ def test_pnl_dollars_excludes_coverage_scope(db_session) -> None:
     brake that sizes real recommendations."""
     market = _seed_market(db_session)
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=0.30,
-        settled_at=_NOW - timedelta(days=1), capture_scope="recommendation",
+        db_session,
+        market=market,
+        realized_pnl=0.30,
+        settled_at=_NOW - timedelta(days=1),
+        capture_scope="recommendation",
     )
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-5.0,
-        settled_at=_NOW - timedelta(days=1), capture_scope="coverage",
+        db_session,
+        market=market,
+        realized_pnl=-5.0,
+        settled_at=_NOW - timedelta(days=1),
+        capture_scope="coverage",
     )
     db_session.commit()
     total = compute_rolling_pnl_dollars(db_session, end_date=_NOW)
-    assert total == pytest.approx(0.30)  # coverage row excluded
+    assert total == pytest.approx(60.0)  # coverage row excluded
+
+
+def test_pnl_dollars_equal_cash_losses_are_price_invariant(db_session) -> None:
+    """Equal cash stakes lose equal dollars at different entry prices.
+
+    A $100 stake is 1,000 contracts at $0.10 and 125 contracts at
+    $0.80. Losing either position costs $100, not $10 and $80.
+    """
+    cheap_market = _seed_market(db_session, ticker="NBA-CHEAP")
+    expensive_market = _seed_market(db_session, ticker="NBA-EXPENSIVE")
+    _seed_settled_prediction(
+        db_session,
+        market=cheap_market,
+        realized_pnl=-0.10,
+        suggested_price=0.10,
+        settled_at=_NOW - timedelta(days=1),
+    )
+    _seed_settled_prediction(
+        db_session,
+        market=expensive_market,
+        realized_pnl=-0.80,
+        suggested_price=0.80,
+        settled_at=_NOW - timedelta(days=1),
+    )
+    db_session.commit()
+
+    total = compute_rolling_pnl_dollars(db_session, end_date=_NOW)
+
+    assert total == pytest.approx(-200.0)
+
+
+def test_pnl_dollars_counts_latest_snapshot_per_market_once(db_session) -> None:
+    """Refresh snapshots for one market represent one hypothetical stake."""
+    market = _seed_market(db_session)
+    for days_ago in (3, 2, 1):
+        _seed_settled_prediction(
+            db_session,
+            market=market,
+            realized_pnl=-0.10,
+            suggested_price=0.10,
+            settled_at=_NOW - timedelta(days=days_ago),
+        )
+    db_session.commit()
+
+    total = compute_rolling_pnl_dollars(db_session, end_date=_NOW)
+
+    assert total == pytest.approx(-100.0)
+
+
+def test_pnl_dollars_skips_non_positive_entry_price(db_session) -> None:
+    """Invalid entry prices cannot be converted to contract counts."""
+    market = _seed_market(db_session)
+    _seed_settled_prediction(
+        db_session,
+        market=market,
+        realized_pnl=-0.10,
+        suggested_price=0.0,
+        settled_at=_NOW - timedelta(days=1),
+    )
+    db_session.commit()
+
+    assert compute_rolling_pnl_dollars(db_session, end_date=_NOW) == 0.0
+
+
+def test_pnl_dollars_propagates_database_errors(db_session) -> None:
+    """A failed source query must not masquerade as a flat PnL window."""
+    with patch.object(
+        db_session, "scalar", side_effect=RuntimeError("database unavailable")
+    ):
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            compute_rolling_pnl_dollars(db_session, end_date=_NOW)
 
 
 def test_pnl_dollars_rejects_non_positive_lookback(db_session) -> None:
@@ -242,17 +362,34 @@ def test_pnl_dollars_rejects_non_positive_lookback(db_session) -> None:
         compute_rolling_pnl_dollars(db_session, lookback_days=0, end_date=_NOW)
 
 
+@pytest.mark.parametrize("notional", [0.0, -1.0, float("nan"), float("inf")])
+def test_pnl_dollars_rejects_invalid_notional(db_session, notional: float) -> None:
+    with pytest.raises(ValueError, match="notional_per_pick_dollars"):
+        compute_rolling_pnl_dollars(
+            db_session,
+            end_date=_NOW,
+            notional_per_pick_dollars=notional,
+        )
+
+
 # -- Rolling PnL fraction ----------------------------------------------
 
 
 def test_pnl_fraction_applies_notional_multiplier(db_session) -> None:
-    """fraction = sum(realized_pnl) * notional / bankroll."""
-    market = _seed_market(db_session)
+    """fraction = dollar PnL after price conversion / bankroll."""
+    market_a = _seed_market(db_session, ticker="NBA-A")
+    market_b = _seed_market(db_session, ticker="NBA-B")
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-0.20, settled_at=_NOW - timedelta(days=1),
+        db_session,
+        market=market_a,
+        realized_pnl=-0.20,
+        settled_at=_NOW - timedelta(days=1),
     )
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-0.30, settled_at=_NOW - timedelta(days=2),
+        db_session,
+        market=market_b,
+        realized_pnl=-0.30,
+        settled_at=_NOW - timedelta(days=2),
     )
     db_session.commit()
     fraction = compute_rolling_pnl_fraction(
@@ -261,8 +398,9 @@ def test_pnl_fraction_applies_notional_multiplier(db_session) -> None:
         end_date=_NOW,
         notional_per_pick_dollars=100.0,
     )
-    # sum = -0.5; -0.5 * 100 / 1000 = -0.05 (5% drawdown).
-    assert fraction == pytest.approx(-0.05)
+    # At $0.50, the two $100 notionals buy 200 contracts each:
+    # (-0.2 - 0.3) * 200 / $1,000 = -0.10.
+    assert fraction == pytest.approx(-0.10)
 
 
 def test_pnl_fraction_returns_zero_for_invalid_bankroll(db_session) -> None:
@@ -272,26 +410,40 @@ def test_pnl_fraction_returns_zero_for_invalid_bankroll(db_session) -> None:
     further by a bookkeeping error)."""
     market = _seed_market(db_session)
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-0.50, settled_at=_NOW - timedelta(days=1),
+        db_session,
+        market=market,
+        realized_pnl=-0.50,
+        settled_at=_NOW - timedelta(days=1),
     )
     db_session.commit()
     assert compute_rolling_pnl_fraction(db_session, bankroll=0.0, end_date=_NOW) == 0.0
-    assert compute_rolling_pnl_fraction(db_session, bankroll=-100.0, end_date=_NOW) == 0.0
-    assert compute_rolling_pnl_fraction(db_session, bankroll=float("nan"), end_date=_NOW) == 0.0
+    assert (
+        compute_rolling_pnl_fraction(db_session, bankroll=-100.0, end_date=_NOW) == 0.0
+    )
+    assert (
+        compute_rolling_pnl_fraction(db_session, bankroll=float("nan"), end_date=_NOW)
+        == 0.0
+    )
 
 
-def test_pnl_fraction_returns_zero_for_invalid_notional(db_session) -> None:
-    """Non-positive / non-finite notional → 0 (same defensive
-    behavior as bankroll)."""
+@pytest.mark.parametrize("notional", [0.0, -1.0, float("nan"), float("inf")])
+def test_pnl_fraction_rejects_invalid_notional(db_session, notional: float) -> None:
+    """A bad notional must not masquerade as a flat PnL window."""
     market = _seed_market(db_session)
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-0.50, settled_at=_NOW - timedelta(days=1),
+        db_session,
+        market=market,
+        realized_pnl=-0.50,
+        settled_at=_NOW - timedelta(days=1),
     )
     db_session.commit()
-    fraction = compute_rolling_pnl_fraction(
-        db_session, bankroll=1000.0, end_date=_NOW, notional_per_pick_dollars=0.0,
-    )
-    assert fraction == 0.0
+    with pytest.raises(ValueError, match="notional_per_pick_dollars"):
+        compute_rolling_pnl_fraction(
+            db_session,
+            bankroll=1000.0,
+            end_date=_NOW,
+            notional_per_pick_dollars=notional,
+        )
 
 
 def test_pnl_fraction_defaults_to_settings_notional(db_session) -> None:
@@ -300,18 +452,26 @@ def test_pnl_fraction_defaults_to_settings_notional(db_session) -> None:
     (default $100). Verifies the env-default flow."""
     market = _seed_market(db_session)
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-0.50, settled_at=_NOW - timedelta(days=1),
+        db_session,
+        market=market,
+        realized_pnl=-0.50,
+        settled_at=_NOW - timedelta(days=1),
     )
     db_session.commit()
     fraction = compute_rolling_pnl_fraction(db_session, bankroll=1000.0, end_date=_NOW)
-    # -0.5 * 100 / 1000 = -0.05.
-    assert fraction == pytest.approx(-0.05)
+    # -0.5 * (100 / 0.5) / 1000 = -0.10.
+    assert fraction == pytest.approx(-0.10)
 
 
 def test_pnl_fraction_returns_zero_for_empty_window(db_session) -> None:
-    assert compute_rolling_pnl_fraction(
-        db_session, bankroll=1000.0, end_date=_NOW,
-    ) == 0.0
+    assert (
+        compute_rolling_pnl_fraction(
+            db_session,
+            bankroll=1000.0,
+            end_date=_NOW,
+        )
+        == 0.0
+    )
 
 
 def test_default_lookback_matches_drawdown_brake_horizon() -> None:
@@ -329,7 +489,9 @@ def test_drawdown_brake_snapshot_inactive_with_no_pnl(db_session) -> None:
     ``is_active`` False. The snapshot still surfaces so the UI can
     render the "no drawdown" baseline."""
     snapshot = compute_drawdown_brake_snapshot(
-        db_session, end_date=_NOW, settings=_settings(),
+        db_session,
+        end_date=_NOW,
+        settings=_settings(),
     )
     assert isinstance(snapshot, DrawdownBrakeSnapshot)
     assert snapshot.bankroll == 1000.0
@@ -340,37 +502,34 @@ def test_drawdown_brake_snapshot_inactive_with_no_pnl(db_session) -> None:
     assert snapshot.is_active is False
 
 
-def test_drawdown_brake_snapshot_activates_below_threshold(db_session) -> None:
-    """A 5% drawdown lands exactly at the brake threshold (default
-    -0.05) → multiplier stays at 1.0 by linear-ramp construction
-    (boundary inclusive). Pushing past the threshold engages the
-    brake."""
-    market = _seed_market(db_session)
-    # -0.5 per-share * 100 notional / 1000 bankroll = -0.05 fraction.
-    _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-0.50, settled_at=_NOW - timedelta(days=1),
-    )
-    db_session.commit()
-    at_threshold = compute_drawdown_brake_snapshot(
-        db_session, end_date=_NOW, settings=_settings(),
-    )
-    assert at_threshold is not None
-    assert at_threshold.rolling_pnl_fraction == pytest.approx(-0.05)
-    assert at_threshold.brake_multiplier == 1.0
-    assert at_threshold.is_active is False
+def test_five_low_price_losses_trigger_deep_drawdown_floor(db_session) -> None:
+    """Five $100 losses at $0.10 are a $500 / 50% drawdown.
 
-    # Add another -$0.05/share row → fraction = -0.055 → brake engages.
-    _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-0.05, settled_at=_NOW - timedelta(days=2),
-    )
+    The old conversion treated each cash stake as 100 contracts and
+    reported only a $50 / 5% drawdown, leaving the brake disengaged.
+    """
+    for index in range(5):
+        market = _seed_market(db_session, ticker=f"NBA-LOSS-{index}")
+        _seed_settled_prediction(
+            db_session,
+            market=market,
+            realized_pnl=-0.10,
+            suggested_price=0.10,
+            settled_at=_NOW - timedelta(days=index + 1),
+        )
     db_session.commit()
-    engaged = compute_drawdown_brake_snapshot(
-        db_session, end_date=_NOW, settings=_settings(),
+
+    snapshot = compute_drawdown_brake_snapshot(
+        db_session,
+        end_date=_NOW,
+        settings=_settings(),
     )
-    assert engaged is not None
-    assert engaged.rolling_pnl_fraction < at_threshold.rolling_pnl_fraction
-    assert engaged.brake_multiplier < 1.0
-    assert engaged.is_active is True
+
+    assert snapshot is not None
+    assert snapshot.rolling_pnl_dollars == pytest.approx(-500.0)
+    assert snapshot.rolling_pnl_fraction == pytest.approx(-0.50)
+    assert snapshot.brake_multiplier == pytest.approx(0.25)
+    assert snapshot.is_active is True
 
 
 def test_drawdown_brake_snapshot_returns_none_when_no_bankroll(db_session) -> None:
@@ -385,18 +544,37 @@ def test_drawdown_brake_snapshot_returns_none_when_no_bankroll(db_session) -> No
     assert snapshot is None
 
 
+@pytest.mark.parametrize("notional", [0.0, -1.0, float("nan"), float("inf")])
+def test_drawdown_brake_snapshot_rejects_invalid_notional(
+    db_session,
+    notional: float,
+) -> None:
+    """Invalid operator config must surface instead of disabling the brake."""
+    with pytest.raises(ValueError, match="notional_per_pick_dollars"):
+        compute_drawdown_brake_snapshot(
+            db_session,
+            end_date=_NOW,
+            settings=_settings(kelly_sizing_assumed_notional_dollars=notional),
+        )
+
+
 def test_drawdown_brake_snapshot_positive_pnl_keeps_brake_off(db_session) -> None:
     """A profitable week never engages the brake (multiplier 1.0)."""
     market = _seed_market(db_session)
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=0.40, settled_at=_NOW - timedelta(days=1),
+        db_session,
+        market=market,
+        realized_pnl=0.40,
+        settled_at=_NOW - timedelta(days=1),
     )
     db_session.commit()
     snapshot = compute_drawdown_brake_snapshot(
-        db_session, end_date=_NOW, settings=_settings(),
+        db_session,
+        end_date=_NOW,
+        settings=_settings(),
     )
     assert snapshot is not None
-    assert snapshot.rolling_pnl_dollars == pytest.approx(0.40)
+    assert snapshot.rolling_pnl_dollars == pytest.approx(80.0)
     assert snapshot.rolling_pnl_fraction > 0.0
     assert snapshot.brake_multiplier == 1.0
     assert snapshot.is_active is False
@@ -407,11 +585,16 @@ def test_drawdown_brake_snapshot_respects_lookback_window(db_session) -> None:
     fraction. Defaults to 7 days."""
     market = _seed_market(db_session)
     _seed_settled_prediction(
-        db_session, market=market, realized_pnl=-1.00, settled_at=_NOW - timedelta(days=20),
+        db_session,
+        market=market,
+        realized_pnl=-1.00,
+        settled_at=_NOW - timedelta(days=20),
     )
     db_session.commit()
     snapshot = compute_drawdown_brake_snapshot(
-        db_session, end_date=_NOW, settings=_settings(),
+        db_session,
+        end_date=_NOW,
+        settings=_settings(),
     )
     assert snapshot is not None
     assert snapshot.rolling_pnl_dollars == 0.0

@@ -27,27 +27,33 @@ Locked decisions from PAPER_PARLAY_SCOPE.md (see "Operator decisions"):
 Settlement runs separately in step 4 (``settle_paper_parlays``); this
 service only handles creation.
 
-The correlation-adjusted joint probability re-uses the same math the
-auto-parlay generator uses (``_correlation_adjusted_joint_probability``
-in ``parlays.py``). To avoid a fragile private-import coupling, the
-formula is reproduced locally with a comment pointing at the
-authoritative source. If the auto-generator updates its formula and
-this copy drifts, the regression tests below (which pin both the
-independent product and the correlation lift) will catch it.
+Correlation-adjusted quotes are computed by the same canonical engine used by
+the auto generator.  Same-event relationships are intentionally reachable
+here even though the auto generator's combination validator remains
+cross-event-only.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from math import prod
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Market, PaperParlay, PaperParlayLeg, Prediction
-from app.schemas import PaperParlayCreate, PaperParlayLegCreate
+from app.schemas import (
+    PaperParlayCreate,
+    PaperParlayLegCreate,
+    PaperParlayQuoteExpectation,
+)
+from app.services.parlay_quotes import (
+    ParlayQuote,
+    QuoteLeg,
+    load_quote_empirical_correlations,
+    quote_parlay,
+)
 from app.services.parlays import american_odds_from_probability
 from app.services.predictions import OPEN_MARKET_STATUSES
 
@@ -58,15 +64,6 @@ def _now_utc() -> datetime:
 
 MIN_LEG_COUNT = 2
 MAX_LEG_COUNT = 6  # Hard cap mirroring the auto-generator's parlay_max_output.
-
-# Same per-pair weights the auto-generator uses (parlays.py
-# ``_pair_weight`` theoretical priors). Duplicated here to avoid
-# importing the underscore-prefixed helper. If you change one, change
-# both — the regression test pins these by value.
-_PAIR_WEIGHT_SHARED_SUBJECT = 0.7
-_PAIR_WEIGHT_SAME_TEAM = 0.3
-_PAIR_WEIGHT_SHARED_OPPONENT = 0.2
-_CORRELATION_CAP = 0.85
 
 
 @dataclass(slots=True)
@@ -82,8 +79,10 @@ class _ResolvedLeg:
     subject_team: str | None
     opponent: str | None
     sport_key: str | None
+    event_id: int | None
     event_name: str | None
     market_kind: str | None
+    market_family: str | None
     stat_key: str | None
     threshold: float | None
     fair_yes_price: float | None
@@ -103,46 +102,18 @@ def create_paper_parlay(
     bail early to give the operator a fast 4xx if the parlay can't be
     placed at all.
     """
-    if len(payload.legs) < MIN_LEG_COUNT:
+    resolved_legs, quote = _resolve_and_quote_legs(db, payload.legs)
+    if payload.expected_quote is not None and not _quote_matches_expectation(
+        quote, payload.expected_quote
+    ):
         raise HTTPException(
-            status_code=400,
-            detail=f"Paper parlay requires at least {MIN_LEG_COUNT} legs.",
+            status_code=409,
+            detail=(
+                "Paper parlay quote changed before save; refresh and confirm "
+                "the updated quote."
+            ),
         )
-    if len(payload.legs) > MAX_LEG_COUNT:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Paper parlay accepts at most {MAX_LEG_COUNT} legs.",
-        )
-
-    # Duplicate-ticker check happens here, before any DB lookups, so a
-    # bad payload is rejected before we spend round trips on it.
-    tickers = [leg.ticker for leg in payload.legs]
-    if len(set(tickers)) != len(tickers):
-        raise HTTPException(
-            status_code=400,
-            detail="Paper parlay legs must reference distinct tickers.",
-        )
-
-    resolved_legs = [_resolve_leg(db, leg) for leg in payload.legs]
-
-    combined_market_price = round(
-        prod(leg.request.suggested_price for leg in resolved_legs),
-        6,
-    )
-    # Guard against underflow: the product of enough long-shot legs rounds to
-    # exactly 0.0 (e.g. four 2-cent legs), which the win-settlement branch then
-    # divides by — a ZeroDivisionError that poisons the entire settlement pass.
-    if combined_market_price <= 0.0:
-        raise HTTPException(
-            status_code=400,
-            detail="Combined parlay price is too small to price; the legs are too long-shot.",
-        )
-    combined_model_probability = round(
-        _correlation_adjusted_joint(resolved_legs),
-        6,
-    )
-    edge = round(combined_model_probability - combined_market_price, 6)
-    american_odds = american_odds_from_probability(combined_market_price)
+    american_odds = american_odds_from_probability(quote.combined_market_price)
 
     participating_sports = sorted(
         {leg.sport_key.upper() for leg in resolved_legs if leg.sport_key}
@@ -157,10 +128,10 @@ def create_paper_parlay(
         leg_count=len(resolved_legs),
         sport_scope=sport_scope,
         participating_sports=participating_sports,
-        combined_market_price=combined_market_price,
-        combined_model_probability=combined_model_probability,
+        combined_market_price=quote.combined_market_price,
+        combined_model_probability=quote.joint_probability,
         american_odds=american_odds,
-        edge=edge,
+        edge=quote.edge,
         notes=payload.notes,
     )
     parlay.legs = [
@@ -191,6 +162,77 @@ def create_paper_parlay(
     return parlay
 
 
+def quote_paper_parlay(
+    db: Session,
+    legs: list[PaperParlayLegCreate],
+) -> ParlayQuote:
+    """Resolve and quote legs without persisting any parlay rows."""
+
+    _resolved_legs, quote = _resolve_and_quote_legs(db, legs)
+    return quote
+
+
+def _resolve_and_quote_legs(
+    db: Session,
+    legs: list[PaperParlayLegCreate],
+) -> tuple[list[_ResolvedLeg], ParlayQuote]:
+    _validate_leg_requests(legs)
+    resolved_legs = [_resolve_leg(db, leg) for leg in legs]
+    try:
+        quote = quote_parlay(
+            tuple(_quote_leg_from_resolved(leg) for leg in resolved_legs),
+            tuple(leg.request.suggested_price for leg in resolved_legs),
+            empirical_correlations=load_quote_empirical_correlations(db),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return resolved_legs, quote
+
+
+def _validate_leg_requests(legs: list[PaperParlayLegCreate]) -> None:
+    if len(legs) < MIN_LEG_COUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Paper parlay requires at least {MIN_LEG_COUNT} legs.",
+        )
+    if len(legs) > MAX_LEG_COUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Paper parlay accepts at most {MAX_LEG_COUNT} legs.",
+        )
+    tickers = [leg.ticker for leg in legs]
+    if len(set(tickers)) != len(tickers):
+        raise HTTPException(
+            status_code=400,
+            detail="Paper parlay legs must reference distinct tickers.",
+        )
+
+
+def _quote_leg_from_resolved(leg: _ResolvedLeg) -> QuoteLeg:
+    return QuoteLeg(
+        model_probability=leg.model_probability,
+        sport_key=leg.sport_key,
+        event_id=leg.event_id,
+        subject_name=leg.subject_name,
+        subject_team=leg.subject_team,
+        opponent=leg.opponent,
+        stat_key=leg.stat_key,
+        market_family=leg.market_family,
+    )
+
+
+def _quote_matches_expectation(
+    quote: ParlayQuote, expectation: PaperParlayQuoteExpectation
+) -> bool:
+    """Compare canonical six-decimal values sent back by the browser."""
+
+    return (
+        quote.combined_market_price == expectation.combined_market_price
+        and quote.joint_probability == expectation.joint_probability
+        and quote.edge == expectation.edge
+    )
+
+
 def delete_paper_parlay(
     db: Session, parlay_id: int, *, user_id: int | None = None
 ) -> None:
@@ -198,8 +240,7 @@ def delete_paper_parlay(
 
     Multi-user follow-up: same ownership check as the close /
     cancel flows. ``user_id=None`` skips the check for single-
-    tenant deployments. Deletes regardless of settlement status —
-    pending parlays, settled wins/losses, all qualify.
+    tenant deployments. Both pending and settled rows qualify.
     """
     parlay = db.get(PaperParlay, parlay_id)
     if parlay is None:
@@ -318,9 +359,20 @@ def _resolve_leg(db: Session, leg: PaperParlayLegCreate) -> _ResolvedLeg:
         subject_team=subject_team,
         opponent=opponent,
         sport_key=sport_key,
+        event_id=event.id if event is not None else None,
         event_name=event_name,
-        market_kind=metadata.get("copilot_market_kind"),
-        stat_key=metadata.get("copilot_stat_key"),
+        market_kind=(
+            str(metadata.get("copilot_market_kind") or "").strip() or None
+        ),
+        market_family=(
+            str(
+                metadata.get("copilot_market_family")
+                or metadata.get("copilot_market_kind")
+                or ""
+            ).strip()
+            or None
+        ),
+        stat_key=str(metadata.get("copilot_stat_key") or "").strip() or None,
         threshold=_safe_float(metadata.get("copilot_threshold")),
         fair_yes_price=fair_yes_price,
         fair_no_price=fair_no_price,
@@ -353,69 +405,6 @@ def _model_probability_for_side(
             return 1.0 - fair_yes_price
         return None
     return None
-
-
-def _correlation_adjusted_joint(legs: list[_ResolvedLeg]) -> float:
-    """Joint probability with positive-correlation lift.
-
-    Mirrors ``parlays._correlation_adjusted_joint_probability``:
-    independent product as the lower bound, ``min(leg_probs)`` as the
-    upper bound, lifted by a per-pair-weighted blend capped at
-    ``_CORRELATION_CAP``. The formula's rationale is in the
-    auto-generator docstring; the regression tests here pin the
-    expected lift behavior so a drift between the two implementations
-    is caught at test time.
-    """
-    leg_probs = [leg.model_probability for leg in legs]
-    independent = prod(leg_probs)
-    if len(leg_probs) <= 1:
-        return float(independent)
-    min_leg = min(leg_probs)
-
-    pairs = _count_correlation_pairs(legs)
-    total_pairs = len(leg_probs) * (len(leg_probs) - 1) // 2
-    weighted = (
-        _PAIR_WEIGHT_SHARED_SUBJECT * pairs["shared_subject"]
-        + _PAIR_WEIGHT_SAME_TEAM * pairs["same_team"]
-        + _PAIR_WEIGHT_SHARED_OPPONENT * pairs["shared_opponent"]
-    ) / max(total_pairs, 1)
-    correlation_factor = min(weighted, _CORRELATION_CAP)
-    return float(independent + correlation_factor * (min_leg - independent))
-
-
-def _count_correlation_pairs(legs: list[_ResolvedLeg]) -> dict[str, int]:
-    """Count pairwise correlation overlaps across legs.
-
-    A leg pair counts toward at most ONE correlation category — same
-    subject (strongest) > same team > shared opponent — so we don't
-    double-count a pair where multiple keys overlap. Mirrors the
-    pairwise reduction in ``parlays._count_correlation_pairs``.
-    """
-    counts = {"shared_subject": 0, "same_team": 0, "shared_opponent": 0}
-    n = len(legs)
-    for i in range(n):
-        for j in range(i + 1, n):
-            left = legs[i]
-            right = legs[j]
-            if (
-                left.subject_name
-                and right.subject_name
-                and left.subject_name.lower() == right.subject_name.lower()
-            ):
-                counts["shared_subject"] += 1
-            elif (
-                left.subject_team
-                and right.subject_team
-                and left.subject_team == right.subject_team
-            ):
-                counts["same_team"] += 1
-            elif (
-                left.opponent
-                and right.opponent
-                and left.opponent == right.opponent
-            ):
-                counts["shared_opponent"] += 1
-    return counts
 
 
 def _safe_float(value: object) -> float | None:

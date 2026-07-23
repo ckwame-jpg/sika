@@ -1236,6 +1236,27 @@
             "title": "Market Positions",
             "type": "array"
           },
+          "positions_truncated": {
+            "default": false,
+            "title": "Positions Truncated",
+            "type": "boolean"
+          },
+          "realized_pnl_dollars_total": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Pnl Dollars Total"
+          },
+          "realized_pnl_truncated": {
+            "default": false,
+            "title": "Realized Pnl Truncated",
+            "type": "boolean"
+          },
           "recent_fills": {
             "items": {
               "$ref": "#/components/schemas/KalshiAccountFillRead"
@@ -2752,6 +2773,37 @@
             "title": "Coverage Settled Predictions",
             "type": "integer"
           },
+          "diagnostics_sample_rows": {
+            "default": 0,
+            "title": "Diagnostics Sample Rows",
+            "type": "integer"
+          },
+          "diagnostics_sample_truncated": {
+            "default": false,
+            "title": "Diagnostics Sample Truncated",
+            "type": "boolean"
+          },
+          "diagnostics_sample_window_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostics Sample Window Start"
+          },
+          "diagnostics_settled_sample_truncated": {
+            "default": false,
+            "title": "Diagnostics Settled Sample Truncated",
+            "type": "boolean"
+          },
+          "diagnostics_unsettled_sample_truncated": {
+            "default": false,
+            "title": "Diagnostics Unsettled Sample Truncated",
+            "type": "boolean"
+          },
           "edge_buckets": {
             "items": {
               "$ref": "#/components/schemas/ReadinessBucketRead"
@@ -3352,6 +3404,16 @@
       "PaperParlayCreate": {
         "description": "Operator's paper-parlay save payload.\n\nStake is a freeform dollar amount (decision #1). Min/max leg\nconstraints are enforced at both the schema layer (here) and the\nservice layer (``create_paper_parlay``) \u2014 schema catches obvious\nbad payloads at the boundary; the service-side check is the\nauthoritative guard against a future caller bypassing the schema.",
         "properties": {
+          "expected_quote": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaperParlayQuoteExpectation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "legs": {
             "items": {
               "$ref": "#/components/schemas/PaperParlayLegCreate"
@@ -3573,6 +3635,85 @@
           "suggested_price"
         ],
         "title": "PaperParlayLegRead",
+        "type": "object"
+      },
+      "PaperParlayQuoteExpectation": {
+        "description": "Canonical quote the operator most recently confirmed in the tray.",
+        "properties": {
+          "combined_market_price": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1.0,
+            "title": "Combined Market Price",
+            "type": "number"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "joint_probability": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Joint Probability",
+            "type": "number"
+          }
+        },
+        "required": [
+          "combined_market_price",
+          "joint_probability",
+          "edge"
+        ],
+        "title": "PaperParlayQuoteExpectation",
+        "type": "object"
+      },
+      "PaperParlayQuoteRead": {
+        "properties": {
+          "combined_market_price": {
+            "title": "Combined Market Price",
+            "type": "number"
+          },
+          "correlation_factor": {
+            "title": "Correlation Factor",
+            "type": "number"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "number"
+          },
+          "joint_probability": {
+            "title": "Joint Probability",
+            "type": "number"
+          },
+          "pair_counts": {
+            "$ref": "#/components/schemas/ParlayPairCountsRead"
+          }
+        },
+        "required": [
+          "combined_market_price",
+          "joint_probability",
+          "edge",
+          "pair_counts",
+          "correlation_factor"
+        ],
+        "title": "PaperParlayQuoteRead",
+        "type": "object"
+      },
+      "PaperParlayQuoteRequest": {
+        "description": "Read-only quote payload using the same leg snapshots as creation.",
+        "properties": {
+          "legs": {
+            "items": {
+              "$ref": "#/components/schemas/PaperParlayLegCreate"
+            },
+            "maxItems": 6,
+            "minItems": 2,
+            "title": "Legs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "legs"
+        ],
+        "title": "PaperParlayQuoteRequest",
         "type": "object"
       },
       "PaperParlayRead": {
@@ -3845,6 +3986,106 @@
           "opened_at"
         ],
         "title": "PaperPositionRead",
+        "type": "object"
+      },
+      "PaperTotalsRead": {
+        "description": "Exact paper-portfolio aggregates, independent of list pagination.\n\nSingles and parlays remain split where the UI needs an exposure\nbreakdown. The trailing-seven-day fields are the complete inputs for\nthe PnL/win-rate gauge, so the browser never has to infer a KPI from a\ncapped ledger page.",
+        "properties": {
+          "closed_count": {
+            "default": 0,
+            "title": "Closed Count",
+            "type": "integer"
+          },
+          "open_count": {
+            "default": 0,
+            "title": "Open Count",
+            "type": "integer"
+          },
+          "open_exposure_dollars": {
+            "default": 0.0,
+            "title": "Open Exposure Dollars",
+            "type": "number"
+          },
+          "parlay_realized_pnl_dollars": {
+            "default": 0.0,
+            "title": "Parlay Realized Pnl Dollars",
+            "type": "number"
+          },
+          "pending_parlay_count": {
+            "default": 0,
+            "title": "Pending Parlay Count",
+            "type": "integer"
+          },
+          "pending_parlay_exposure_dollars": {
+            "default": 0.0,
+            "title": "Pending Parlay Exposure Dollars",
+            "type": "number"
+          },
+          "realized_pnl_7d_dollars": {
+            "default": 0.0,
+            "title": "Realized Pnl 7D Dollars",
+            "type": "number"
+          },
+          "realized_pnl_dollars": {
+            "default": 0.0,
+            "title": "Realized Pnl Dollars",
+            "type": "number"
+          },
+          "settled_7d_count": {
+            "default": 0,
+            "title": "Settled 7D Count",
+            "type": "integer"
+          },
+          "settled_parlay_count": {
+            "default": 0,
+            "title": "Settled Parlay Count",
+            "type": "integer"
+          },
+          "wins_7d_count": {
+            "default": 0,
+            "title": "Wins 7D Count",
+            "type": "integer"
+          }
+        },
+        "title": "PaperTotalsRead",
+        "type": "object"
+      },
+      "ParlayPairCountsRead": {
+        "properties": {
+          "player_team_total": {
+            "minimum": 0.0,
+            "title": "Player Team Total",
+            "type": "integer"
+          },
+          "qb_receiver_stack": {
+            "minimum": 0.0,
+            "title": "Qb Receiver Stack",
+            "type": "integer"
+          },
+          "same_team": {
+            "minimum": 0.0,
+            "title": "Same Team",
+            "type": "integer"
+          },
+          "shared_opponent": {
+            "minimum": 0.0,
+            "title": "Shared Opponent",
+            "type": "integer"
+          },
+          "shared_subject": {
+            "minimum": 0.0,
+            "title": "Shared Subject",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "shared_subject",
+          "qb_receiver_stack",
+          "player_team_total",
+          "same_team",
+          "shared_opponent"
+        ],
+        "title": "ParlayPairCountsRead",
         "type": "object"
       },
       "ParlayPredictionLegRead": {
@@ -4651,6 +4892,11 @@
             "title": "Legacy Demo Orders",
             "type": "array"
           },
+          "legacy_demo_truncated": {
+            "default": false,
+            "title": "Legacy Demo Truncated",
+            "type": "boolean"
+          },
           "legacy_paper_parlays": {
             "default": [],
             "items": {
@@ -4659,6 +4905,11 @@
             "title": "Legacy Paper Parlays",
             "type": "array"
           },
+          "legacy_paper_parlays_truncated": {
+            "default": false,
+            "title": "Legacy Paper Parlays Truncated",
+            "type": "boolean"
+          },
           "legacy_paper_positions": {
             "default": [],
             "items": {
@@ -4666,6 +4917,11 @@
             },
             "title": "Legacy Paper Positions",
             "type": "array"
+          },
+          "legacy_paper_truncated": {
+            "default": false,
+            "title": "Legacy Paper Truncated",
+            "type": "boolean"
           },
           "paper_parlays": {
             "default": [],
@@ -4686,6 +4942,9 @@
             },
             "title": "Paper Positions",
             "type": "array"
+          },
+          "paper_totals": {
+            "$ref": "#/components/schemas/PaperTotalsRead"
           },
           "paper_truncated": {
             "default": false,
@@ -5366,6 +5625,17 @@
               }
             ],
             "title": "Win Rate"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
           },
           "won_predictions": {
             "title": "Won Predictions",
@@ -9767,6 +10037,45 @@
         "summary": "Open Paper Parlay"
       }
     },
+    "/paper-parlays/quote": {
+      "post": {
+        "description": "Resolve and price a tray exactly like creation, without persisting.",
+        "operationId": "paper_parlay_quote_paper_parlays_quote_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperParlayQuoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperParlayQuoteRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Paper Parlay Quote"
+      }
+    },
     "/paper-parlays/{parlay_id}": {
       "delete": {
         "description": "Permanently delete a paper parlay + its legs. Owner-only;\nlegacy rows are read-only (403); 404 on unknown id. Pending\n+ settled parlays both qualify.",
@@ -10202,6 +10511,25 @@
           }
         },
         "summary": "Get Positions"
+      }
+    },
+    "/positions/export": {
+      "get": {
+        "description": "Stream the complete paper ledger for the visible portfolio scope.",
+        "operationId": "export_positions_positions_export_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Complete visible paper ledger as CSV."
+          }
+        },
+        "summary": "Export Positions"
       }
     },
     "/predictions": {

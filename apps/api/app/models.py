@@ -1314,6 +1314,10 @@ class KalshiOrder(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)
     submitted_at = Column(DateTime(timezone=True), nullable=True)
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    # NULL means the structured fill ledger has not yet been confirmed
+    # complete. This is deliberately separate from exchange order status:
+    # terminal IOC orders can still have fills and fees to import.
+    fills_synced_at = Column(DateTime(timezone=True), nullable=True)
 
     market = relationship("Market")
     user = relationship("User")

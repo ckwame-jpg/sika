@@ -18,7 +18,17 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models import Event, EventParticipant, Market, Participant, Prediction
+from app.models import (
+    Event,
+    EventParticipant,
+    Market,
+    OperatorSetting,
+    PaperParlay,
+    Participant,
+    Prediction,
+)
+from app.services import parlay_correlation_cache
+from app.services.parlay_correlation_cache import CACHE_KEY
 
 
 def _utcnow() -> datetime:
@@ -141,6 +151,96 @@ def test_post_paper_parlays_creates_and_returns_serialized_parlay(
     assert {leg["ticker"] for leg in body["legs"]} == {"POST-A", "POST-B"}
     # combined_market_price = 0.50 * 0.50 = 0.25
     assert body["combined_market_price"] == 0.25
+
+
+def test_post_paper_parlay_quote_is_read_only(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    event = _add_event(db_session, prefix="quote-only")
+    market_a = _add_market(
+        db_session,
+        event=event,
+        ticker="QUOTE-A",
+        subject_name="Same Player",
+        subject_team="CLE",
+    )
+    market_b = _add_market(
+        db_session,
+        event=event,
+        ticker="QUOTE-B",
+        subject_name="Same Player",
+        subject_team="CLE",
+    )
+    _add_prediction(db_session, market=market_a)
+    _add_prediction(db_session, market=market_b)
+    db_session.commit()
+
+    def fail_if_computed(*_args, **_kwargs):
+        raise AssertionError("read-only quote must not scan settled history")
+
+    monkeypatch.setattr(
+        parlay_correlation_cache,
+        "compute_empirical_pair_correlations",
+        fail_if_computed,
+    )
+
+    for _attempt in range(2):
+        response = client.post(
+            "/paper-parlays/quote",
+            json={"legs": _make_payload(tickers=["QUOTE-A", "QUOTE-B"])["legs"]},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["pair_counts"]["shared_subject"] == 1
+    assert db_session.query(PaperParlay).count() == 0
+    assert (
+        db_session.query(OperatorSetting)
+        .filter(OperatorSetting.key == CACHE_KEY)
+        .count()
+        == 0
+    )
+
+
+def test_post_paper_parlays_rejects_a_changed_expected_quote(
+    client: TestClient, db_session: Session
+) -> None:
+    event = _add_event(db_session, prefix="quote-conflict")
+    market_a = _add_market(
+        db_session,
+        event=event,
+        ticker="CONFLICT-A",
+        subject_name="Player A",
+        subject_team="CLE",
+    )
+    market_b = _add_market(
+        db_session,
+        event=event,
+        ticker="CONFLICT-B",
+        subject_name="Player B",
+        subject_team="DET",
+    )
+    _add_prediction(db_session, market=market_a)
+    prediction_b = _add_prediction(db_session, market=market_b)
+    db_session.commit()
+
+    payload = _make_payload(tickers=["CONFLICT-A", "CONFLICT-B"])
+    quoted = client.post(
+        "/paper-parlays/quote", json={"legs": payload["legs"]}
+    )
+    assert quoted.status_code == 200, quoted.text
+    initial = quoted.json()
+
+    prediction_b.fair_yes_price = 0.75
+    prediction_b.fair_no_price = 0.25
+    db_session.commit()
+    payload["expected_quote"] = {
+        "combined_market_price": initial["combined_market_price"],
+        "joint_probability": initial["joint_probability"],
+        "edge": initial["edge"],
+    }
+    response = client.post("/paper-parlays", json=payload)
+    assert response.status_code == 409, response.text
+    assert "quote changed" in response.json()["detail"].lower()
+    assert db_session.query(PaperParlay).count() == 0
 
 
 def test_post_paper_parlays_propagates_validation_errors_as_4xx(

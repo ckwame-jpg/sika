@@ -1,7 +1,10 @@
-from datetime import date, datetime, timezone
+import csv
+import io
+from datetime import date, datetime, timedelta, timezone
 from math import isfinite
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.config import get_settings
@@ -46,7 +49,10 @@ from app.schemas import (
     ModelReadinessSettingsUpdate,
     ModelReadinessSummaryRead,
     CurrentUserRead,
+    PaperTotalsRead,
     PaperParlayCreate,
+    PaperParlayQuoteRead,
+    PaperParlayQuoteRequest,
     PaperParlayRead,
     PaperPositionCreate,
     PaperPositionExit,
@@ -135,7 +141,11 @@ from app.services.orders import (
     delete_demo_order,
     delete_paper_position,
 )
-from app.services.paper_parlays import create_paper_parlay, delete_paper_parlay
+from app.services.paper_parlays import (
+    create_paper_parlay,
+    delete_paper_parlay,
+    quote_paper_parlay,
+)
 from app.services.user_kalshi import (
     delete_user_credentials,
     get_user_credentials,
@@ -179,7 +189,6 @@ from app.services.watchlist_coverage import (
 from app.sports.base import alias_tokens
 
 router = APIRouter()
-PREDICTION_SUMMARY_ROW_LIMIT = 5_000
 
 # Slice 5 + Slice 7a: v2 IA splits the URL space into three axes — product,
 # research, and ops. The handler bodies still live in this file (they share
@@ -911,7 +920,6 @@ def _aggregate_prediction_summary(
     captured_from: date | None = None,
     captured_to: date | None = None,
 ) -> PredictionSummaryRead:
-    use_recent_window_limit = captured_from is None and captured_to is None
     if captured_from is None and captured_to is None:
         captured_from = retained_study_cutoff().date()
     base_stmt = _prediction_stmt(
@@ -922,11 +930,6 @@ def _aggregate_prediction_summary(
         captured_from=captured_from,
         captured_to=captured_to,
     ).order_by(None)
-    if use_recent_window_limit:
-        base_stmt = base_stmt.order_by(
-            Prediction.captured_at.desc(),
-            Prediction.id.desc(),
-        ).limit(PREDICTION_SUMMARY_ROW_LIMIT)
     subquery = base_stmt.subquery()
 
     totals = db.execute(
@@ -935,6 +938,7 @@ def _aggregate_prediction_summary(
             func.avg(subquery.c.edge),
             func.avg(subquery.c.confidence),
             func.avg(subquery.c.realized_pnl),
+            func.min(subquery.c.captured_at),
         )
     ).one()
     total_predictions = int(totals[0] or 0)
@@ -980,6 +984,7 @@ def _aggregate_prediction_summary(
         average_edge=_rounded_metric(totals[1]),
         average_confidence=_rounded_metric(totals[2]),
         average_realized_pnl=_rounded_metric(totals[3]),
+        window_start=totals[4],
         by_sport=by_sport,
         by_market_family=by_market_family,
         by_outcome=by_outcome,
@@ -1760,6 +1765,291 @@ def parlay_prediction_summary(
     return _aggregate_parlay_prediction_summary(db, sport_scope=scope, leg_count=validated_leg_count)
 
 
+def _paper_portfolio_totals(
+    db: Session,
+    *,
+    owner_ids: tuple[int, ...] | None,
+) -> PaperTotalsRead:
+    """Compute exact paper totals without depending on list-page caps."""
+
+    seven_day_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    position_closed = PaperPosition.status != "open"
+    position_in_window = position_closed & (
+        PaperPosition.closed_at >= seven_day_cutoff
+    )
+    position_stmt = select(
+        func.coalesce(
+            func.sum(case((PaperPosition.status == "open", 1), else_=0)),
+            0,
+        ).label("open_count"),
+        func.coalesce(
+            func.sum(case((position_closed, 1), else_=0)),
+            0,
+        ).label("closed_count"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        PaperPosition.status == "open",
+                        PaperPosition.quantity * PaperPosition.entry_price,
+                    ),
+                    else_=0.0,
+                )
+            ),
+            0.0,
+        ).label("open_exposure_dollars"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (position_closed, func.coalesce(PaperPosition.pnl, 0.0)),
+                    else_=0.0,
+                )
+            ),
+            0.0,
+        ).label("realized_pnl_dollars"),
+        func.coalesce(
+            func.sum(case((position_in_window, 1), else_=0)),
+            0,
+        ).label("settled_7d_count"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (position_in_window & (PaperPosition.pnl > 0), 1),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("wins_7d_count"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        position_in_window,
+                        func.coalesce(PaperPosition.pnl, 0.0),
+                    ),
+                    else_=0.0,
+                )
+            ),
+            0.0,
+        ).label("realized_pnl_7d_dollars"),
+    )
+    if owner_ids is not None:
+        position_stmt = position_stmt.where(PaperPosition.user_id.in_(owner_ids))
+    position_totals = db.execute(position_stmt).one()
+
+    parlay_pending = PaperParlay.outcome.in_(("pending", "unresolved"))
+    parlay_settled = ~parlay_pending
+    parlay_in_window = parlay_settled & (
+        PaperParlay.settled_at >= seven_day_cutoff
+    )
+    parlay_stmt = select(
+        func.coalesce(
+            func.sum(case((parlay_pending, 1), else_=0)),
+            0,
+        ).label("pending_count"),
+        func.coalesce(
+            func.sum(case((parlay_settled, 1), else_=0)),
+            0,
+        ).label("settled_count"),
+        func.coalesce(
+            func.sum(case((parlay_pending, PaperParlay.stake), else_=0.0)),
+            0.0,
+        ).label("pending_exposure_dollars"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        parlay_settled,
+                        func.coalesce(PaperParlay.realized_pnl, 0.0),
+                    ),
+                    else_=0.0,
+                )
+            ),
+            0.0,
+        ).label("realized_pnl_dollars"),
+        func.coalesce(
+            func.sum(case((parlay_in_window, 1), else_=0)),
+            0,
+        ).label("settled_7d_count"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (parlay_in_window & (PaperParlay.realized_pnl > 0), 1),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("wins_7d_count"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        parlay_in_window,
+                        func.coalesce(PaperParlay.realized_pnl, 0.0),
+                    ),
+                    else_=0.0,
+                )
+            ),
+            0.0,
+        ).label("realized_pnl_7d_dollars"),
+    )
+    if owner_ids is not None:
+        parlay_stmt = parlay_stmt.where(PaperParlay.user_id.in_(owner_ids))
+    parlay_totals = db.execute(parlay_stmt).one()
+
+    return PaperTotalsRead(
+        open_count=int(position_totals.open_count),
+        closed_count=int(position_totals.closed_count),
+        open_exposure_dollars=float(position_totals.open_exposure_dollars),
+        realized_pnl_dollars=float(position_totals.realized_pnl_dollars),
+        pending_parlay_count=int(parlay_totals.pending_count),
+        settled_parlay_count=int(parlay_totals.settled_count),
+        pending_parlay_exposure_dollars=float(
+            parlay_totals.pending_exposure_dollars
+        ),
+        parlay_realized_pnl_dollars=float(parlay_totals.realized_pnl_dollars),
+        settled_7d_count=int(
+            position_totals.settled_7d_count + parlay_totals.settled_7d_count
+        ),
+        wins_7d_count=int(
+            position_totals.wins_7d_count + parlay_totals.wins_7d_count
+        ),
+        realized_pnl_7d_dollars=float(
+            position_totals.realized_pnl_7d_dollars
+            + parlay_totals.realized_pnl_7d_dollars
+        ),
+    )
+
+
+def _paper_ledger_csv_line(
+    writer,
+    buffer: io.StringIO,
+    row: list[object],
+) -> str:
+    buffer.seek(0)
+    buffer.truncate(0)
+    writer.writerow(row)
+    return buffer.getvalue()
+
+
+@router.get(
+    "/positions/export",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "Complete visible paper ledger as CSV.",
+            "content": {
+                "text/csv": {
+                    "schema": {"type": "string"},
+                }
+            },
+        }
+    },
+)
+def export_positions(
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user_optional),
+) -> StreamingResponse:
+    """Stream the complete paper ledger for the visible portfolio scope."""
+
+    legacy_user = db.scalar(select(User).where(User.username == LEGACY_USERNAME))
+    if current_user is None:
+        owner_ids: tuple[int, ...] | None = None
+    else:
+        owner_ids = tuple(
+            dict.fromkeys(
+                [
+                    current_user.id,
+                    *([legacy_user.id] if legacy_user is not None else []),
+                ]
+            )
+        )
+
+    position_stmt = select(PaperPosition).order_by(
+        PaperPosition.opened_at.desc(),
+        PaperPosition.id.desc(),
+    )
+    parlay_stmt = select(PaperParlay).order_by(
+        PaperParlay.created_at.desc(),
+        PaperParlay.id.desc(),
+    )
+    if owner_ids is not None:
+        position_stmt = position_stmt.where(PaperPosition.user_id.in_(owner_ids))
+        parlay_stmt = parlay_stmt.where(PaperParlay.user_id.in_(owner_ids))
+
+    # FastAPI <0.118 finalizes ``yield`` dependencies before consuming a
+    # StreamingResponse. Capture only the bind here; the generator owns a
+    # fresh session for the lifetime of the response body and closes it even
+    # if the client disconnects partway through the download.
+    export_bind = db.get_bind()
+
+    def _rows():
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer, lineterminator="\n")
+        yield _paper_ledger_csv_line(
+            writer,
+            buffer,
+            [
+                "type",
+                "id",
+                "ticker_or_scope",
+                "side",
+                "entry_price",
+                "quantity_or_stake",
+                "status",
+                "pnl",
+                "opened_at",
+                "closed_at",
+            ],
+        )
+        with Session(bind=export_bind) as export_db:
+            for position in export_db.scalars(
+                position_stmt.execution_options(yield_per=500)
+            ):
+                yield _paper_ledger_csv_line(
+                    writer,
+                    buffer,
+                    [
+                        "single",
+                        position.id,
+                        position.ticker,
+                        position.side,
+                        position.entry_price,
+                        position.quantity,
+                        position.status,
+                        position.pnl if position.pnl is not None else "",
+                        position.opened_at.isoformat() if position.opened_at else "",
+                        position.closed_at.isoformat() if position.closed_at else "",
+                    ],
+                )
+            for parlay in export_db.scalars(
+                parlay_stmt.execution_options(yield_per=500)
+            ):
+                yield _paper_ledger_csv_line(
+                    writer,
+                    buffer,
+                    [
+                        "parlay",
+                        parlay.id,
+                        parlay.sport_scope,
+                        "yes",
+                        parlay.combined_market_price,
+                        parlay.stake,
+                        parlay.outcome,
+                        parlay.realized_pnl if parlay.realized_pnl is not None else "",
+                        parlay.created_at.isoformat() if parlay.created_at else "",
+                        parlay.settled_at.isoformat() if parlay.settled_at else "",
+                    ],
+                )
+
+    filename = f"sika-paper-ledger-{datetime.now(timezone.utc).date().isoformat()}.csv"
+    return StreamingResponse(
+        _rows(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/positions", response_model=PositionsRead)
 def get_positions(
     force: bool = False,
@@ -1802,6 +2092,18 @@ def get_positions(
     # haven't opted into multi-user.
     legacy_user = db.scalar(select(User).where(User.username == LEGACY_USERNAME))
     legacy_id = legacy_user.id if legacy_user is not None else None
+    portfolio_owner_ids = (
+        tuple(
+            dict.fromkeys(
+                [
+                    current_user.id,
+                    *([legacy_id] if legacy_id is not None else []),
+                ]
+            )
+        )
+        if current_user is not None
+        else None
+    )
 
     def _scoped(stmt, table_user_id):
         if current_user is not None:
@@ -1840,31 +2142,49 @@ def get_positions(
     legacy_paper_positions: list[PaperPosition] = []
     legacy_demo_orders: list[DemoOrder] = []
     legacy_paper_parlays: list[PaperParlay] = []
+    legacy_paper_truncated = False
+    legacy_demo_truncated = False
+    legacy_paper_parlays_truncated = False
     if current_user is not None and legacy_id is not None:
-        legacy_paper_positions = list(
+        legacy_paper_position_rows = list(
             db.scalars(
                 select(PaperPosition)
                 .where(PaperPosition.user_id == legacy_id)
                 .order_by(PaperPosition.opened_at.desc(), PaperPosition.id.desc())
-                .limit(paper_limit)
+                .limit(paper_limit + 1)
             ).all()
         )
-        legacy_demo_orders = list(
+        legacy_paper_truncated = len(legacy_paper_position_rows) > paper_limit
+        legacy_paper_positions = legacy_paper_position_rows[:paper_limit]
+
+        legacy_demo_order_rows = list(
             db.scalars(
                 select(DemoOrder)
                 .where(DemoOrder.user_id == legacy_id)
                 .order_by(DemoOrder.id.desc())
-                .limit(demo_limit)
+                .limit(demo_limit + 1)
             ).all()
         )
-        legacy_paper_parlays = list(
+        legacy_demo_truncated = len(legacy_demo_order_rows) > demo_limit
+        legacy_demo_orders = legacy_demo_order_rows[:demo_limit]
+
+        legacy_paper_parlay_rows = list(
             db.scalars(
                 select(PaperParlay)
                 .where(PaperParlay.user_id == legacy_id)
                 .order_by(PaperParlay.created_at.desc(), PaperParlay.id.desc())
-                .limit(paper_limit)
+                .limit(paper_limit + 1)
             ).all()
         )
+        legacy_paper_parlays_truncated = (
+            len(legacy_paper_parlay_rows) > paper_limit
+        )
+        legacy_paper_parlays = legacy_paper_parlay_rows[:paper_limit]
+
+    paper_totals = _paper_portfolio_totals(
+        db,
+        owner_ids=portfolio_owner_ids,
+    )
 
     # Multi-user batch PR 4 — per-user Kalshi snapshot. Owner falls
     # back to the env var (cached); other users use their own DB
@@ -1899,6 +2219,7 @@ def get_positions(
         paper_positions=[PaperPositionRead.model_validate(item) for item in paper_positions],
         demo_orders=[DemoOrderRead.model_validate(item) for item in demo_orders],
         kalshi_account=kalshi_account,
+        paper_totals=paper_totals,
         paper_truncated=paper_truncated,
         demo_truncated=demo_truncated,
         paper_parlays=[PaperParlayRead.model_validate(item) for item in paper_parlays],
@@ -1912,6 +2233,9 @@ def get_positions(
         legacy_paper_parlays=[
             PaperParlayRead.model_validate(item) for item in legacy_paper_parlays
         ],
+        legacy_paper_truncated=legacy_paper_truncated,
+        legacy_demo_truncated=legacy_demo_truncated,
+        legacy_paper_parlays_truncated=legacy_paper_parlays_truncated,
         drawdown_brake=drawdown_brake,
     )
 
@@ -2098,6 +2422,23 @@ def open_paper_parlay(
     db.commit()
     db.refresh(parlay)
     return PaperParlayRead.model_validate(parlay)
+
+
+@router.post("/paper-parlays/quote", response_model=PaperParlayQuoteRead)
+def paper_parlay_quote(
+    payload: PaperParlayQuoteRequest,
+    db: Session = Depends(get_db),
+) -> PaperParlayQuoteRead:
+    """Resolve and price a tray exactly like creation, without persisting."""
+
+    quote = quote_paper_parlay(db, payload.legs)
+    return PaperParlayQuoteRead(
+        combined_market_price=quote.combined_market_price,
+        joint_probability=quote.joint_probability,
+        edge=quote.edge,
+        pair_counts=quote.pair_counts,
+        correlation_factor=quote.correlation_factor,
+    )
 
 
 @router.get("/paper-parlays", response_model=list[PaperParlayRead])

@@ -796,6 +796,20 @@ class ModelFamilyReadinessRead(BaseModel):
     lost_predictions: int
     push_predictions: int
     cancelled_predictions: int
+    # Headline counts above are exact SQL aggregates. The metrics below are
+    # intentionally bounded diagnostic samples; these fields disclose when a
+    # per-family (or, for parlays, global) slice cap clipped that sample.
+    diagnostics_sample_rows: int = 0
+    diagnostics_sample_truncated: bool = False
+    # State-specific completeness lets consumers distinguish a clipped
+    # pending slice from an incomplete settled-only metric such as CLV.
+    diagnostics_settled_sample_truncated: bool = False
+    diagnostics_unsettled_sample_truncated: bool = False
+    # Effective completeness boundary for all clipped settled/unsettled state
+    # slices. It is not necessarily the oldest included row: the other state
+    # may be untruncated, or may have an earlier clipped boundary, and its
+    # retained evidence remains in the sample.
+    diagnostics_sample_window_start: UTCDateTime | None = None
     average_edge: float | None = None
     average_confidence: float | None = None
     average_realized_pnl: float | None = None
@@ -1132,6 +1146,14 @@ class PaperParlayLegCreate(BaseModel):
     suggested_price: float = Field(gt=0, lt=1)
 
 
+class PaperParlayQuoteExpectation(BaseModel):
+    """Canonical quote the operator most recently confirmed in the tray."""
+
+    combined_market_price: float = Field(gt=0, le=1, allow_inf_nan=False)
+    joint_probability: float = Field(ge=0, le=1, allow_inf_nan=False)
+    edge: float = Field(allow_inf_nan=False)
+
+
 class PaperParlayCreate(BaseModel):
     """Operator's paper-parlay save payload.
 
@@ -1145,6 +1167,29 @@ class PaperParlayCreate(BaseModel):
     legs: list[PaperParlayLegCreate] = Field(min_length=2, max_length=6)
     stake: float = Field(gt=0, description="Dollar amount wagered.")
     notes: str | None = None
+    expected_quote: PaperParlayQuoteExpectation | None = None
+
+
+class PaperParlayQuoteRequest(BaseModel):
+    """Read-only quote payload using the same leg snapshots as creation."""
+
+    legs: list[PaperParlayLegCreate] = Field(min_length=2, max_length=6)
+
+
+class ParlayPairCountsRead(BaseModel):
+    shared_subject: int = Field(ge=0)
+    qb_receiver_stack: int = Field(ge=0)
+    player_team_total: int = Field(ge=0)
+    same_team: int = Field(ge=0)
+    shared_opponent: int = Field(ge=0)
+
+
+class PaperParlayQuoteRead(BaseModel):
+    combined_market_price: float
+    joint_probability: float
+    edge: float
+    pair_counts: ParlayPairCountsRead
+    correlation_factor: float
 
 
 class PaperParlayLegRead(BaseModel):
@@ -1379,6 +1424,13 @@ class KalshiAccountRead(BaseModel):
     error_message: str | None = None
     balance: KalshiAccountBalanceRead | None = None
     market_positions: list[KalshiAccountMarketPositionRead] = Field(default_factory=list)
+    # ``market_positions`` is the complete unsettled-position slice, filtered
+    # to non-zero positions for display. Realized PnL combines that feed with
+    # Kalshi's separate settled-market ledger. Independent flags keep an
+    # incomplete signed total from being presented as a lower bound.
+    realized_pnl_dollars_total: float | None = None
+    realized_pnl_truncated: bool = False
+    positions_truncated: bool = False
     recent_fills: list[KalshiAccountFillRead] = Field(default_factory=list)
 
 
@@ -1400,10 +1452,33 @@ class DrawdownBrakeRead(BaseModel):
     is_active: bool
 
 
+class PaperTotalsRead(BaseModel):
+    """Exact paper-portfolio aggregates, independent of list pagination.
+
+    Singles and parlays remain split where the UI needs an exposure
+    breakdown. The trailing-seven-day fields are the complete inputs for
+    the PnL/win-rate gauge, so the browser never has to infer a KPI from a
+    capped ledger page.
+    """
+
+    open_count: int = 0
+    closed_count: int = 0
+    open_exposure_dollars: float = 0.0
+    realized_pnl_dollars: float = 0.0
+    pending_parlay_count: int = 0
+    settled_parlay_count: int = 0
+    pending_parlay_exposure_dollars: float = 0.0
+    parlay_realized_pnl_dollars: float = 0.0
+    settled_7d_count: int = 0
+    wins_7d_count: int = 0
+    realized_pnl_7d_dollars: float = 0.0
+
+
 class PositionsRead(BaseModel):
     paper_positions: list[PaperPositionRead]
     demo_orders: list[DemoOrderRead]
     kalshi_account: KalshiAccountRead
+    paper_totals: PaperTotalsRead = Field(default_factory=PaperTotalsRead)
     # Bug #28: ``True`` when the server hit ``paper_limit`` /
     # ``demo_limit`` and at least one additional row exists past the
     # cap. The UI surfaces a "showing N of more" hint so operators
@@ -1425,6 +1500,9 @@ class PositionsRead(BaseModel):
     legacy_paper_positions: list[PaperPositionRead] = []
     legacy_demo_orders: list[DemoOrderRead] = []
     legacy_paper_parlays: list[PaperParlayRead] = []
+    legacy_paper_truncated: bool = False
+    legacy_demo_truncated: bool = False
+    legacy_paper_parlays_truncated: bool = False
     # Smarter #32 — drawdown brake snapshot. ``None`` when bankroll
     # resolution fails (operator hasn't configured
     # ``kelly_sizing_bankroll_dollars`` and the Kalshi opt-in is off
@@ -1509,6 +1587,7 @@ class PredictionSummaryRead(BaseModel):
     average_edge: float | None = None
     average_confidence: float | None = None
     average_realized_pnl: float | None = None
+    window_start: UTCDateTime | None = None
     by_sport: dict[str, int] = Field(default_factory=dict)
     by_market_family: dict[str, int] = Field(default_factory=dict)
     by_outcome: dict[str, int] = Field(default_factory=dict)

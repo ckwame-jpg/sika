@@ -24,19 +24,14 @@ from ml.recalibration import (
     write_sidecar_recalibrator,
 )
 from ml.training import train_and_package
-from ml_features import FeatureSpec
+from ml_features import DEFAULT_SERVE_FAMILY_KEYS, FeatureSpec, single_family_key
 
 
 _ADVANCED_ONLY_MAP = {"auto": None, "yes": True, "no": False}
 
-# Smarter WNBA PR 5 — WNBA families added to the default training set.
-# PR 4 registered ``wnba_props`` + ``wnba_singles`` in FAMILY_DEFINITIONS
-# with ``study_track="active"``; this keeps the weekly retrain CLI in
-# sync so the manifest auto-includes WNBA entries. Until WNBA settled
-# rows accumulate the readiness panel will mark them
-# ``insufficient_history`` — same shape NBA + MLB families used during
-# their cold-start windows.
-_DEFAULT_SERVE_FAMILY_KEYS = "mlb_props,nba_props,wnba_props,nfl_props,mlb_singles,nba_singles,wnba_singles,nfl_singles"
+# Keep argparse's comma-separated representation derived from the shared
+# train/serve family contract so adding a sport cannot leave the CLI behind.
+_DEFAULT_SERVE_FAMILY_KEYS = ",".join(DEFAULT_SERVE_FAMILY_KEYS)
 
 
 def _now() -> datetime:
@@ -138,30 +133,6 @@ def _train(args: argparse.Namespace) -> int:
 
 
 # -- Smarter #20 phase 2b: ``recalibrate`` subcommand -----------------
-
-
-def _family_key_for_row(sport_key: str | None, market_family: str | None) -> str:
-    """Mirror ``ml.dataset._family_key`` — derive the family key from
-    ``sport_key`` + ``market_family`` exactly as ``dataset.py`` does so
-    rows pulled by the recalibrate query bucket the same way training
-    rows do.
-    """
-    sport = (sport_key or "").upper()
-    family = (market_family or "").lower()
-    if family == "player_prop":
-        if sport == "NBA":
-            return "nba_props"
-        if sport == "MLB":
-            return "mlb_props"
-        if sport == "WNBA":
-            return "wnba_props"
-    if sport == "NBA":
-        return "nba_singles"
-    if sport == "MLB":
-        return "mlb_singles"
-    if sport == "WNBA":
-        return "wnba_singles"
-    return f"{sport.lower()}_singles" if sport else "unknown_singles"
 
 
 def _bump_calibration_version(existing: str, *, today: datetime) -> str:
@@ -442,7 +413,7 @@ def _load_settled_for_family(
         outcome = (row["prediction_outcome"] or "").lower()
         if outcome not in ("won", "lost"):
             continue
-        if _family_key_for_row(row["sport_key"], row["market_family"]) != family_key:
+        if single_family_key(row["sport_key"], row["market_family"]) != family_key:
             continue
         source_id = int(row["source_id"])
         if source_id in seen_source_ids:

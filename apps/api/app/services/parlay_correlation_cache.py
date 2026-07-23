@@ -59,6 +59,7 @@ __all__ = [
     "DEFAULT_CACHE_TTL_MINUTES",
     "cached_empirical_pair_correlations",
     "invalidate_parlay_correlation_cache",
+    "read_stored_empirical_pair_correlations",
 ]
 
 CACHE_KEY = "parlay_correlation_empirical_v1"
@@ -190,6 +191,32 @@ def cached_empirical_pair_correlations(
         now=reference_now,
     )
     return estimates
+
+
+def read_stored_empirical_pair_correlations(
+    db: Session,
+) -> dict[str, PairCorrelation | None] | None:
+    """Return the stored estimate snapshot without refresh side effects.
+
+    Unlike :func:`cached_empirical_pair_correlations`, this helper never scans
+    settled history, adds or updates an ``OperatorSetting``, or flushes the
+    session.  It is therefore safe for read-only HTTP quote paths.  Missing or
+    malformed snapshots return ``None`` so callers fall back to theoretical
+    priors.
+    """
+
+    row = db.scalar(select(OperatorSetting).where(OperatorSetting.key == CACHE_KEY))
+    if row is None or not row.value:
+        return None
+    try:
+        blob = json.loads(row.value)
+    except (TypeError, json.JSONDecodeError):
+        logger.warning("parlay_correlation_cache: stored payload unparseable")
+        return None
+    if not isinstance(blob, dict) or not isinstance(blob.get("estimates"), dict):
+        logger.warning("parlay_correlation_cache: stored estimates are malformed")
+        return None
+    return _deserialize(blob["estimates"])
 
 
 def invalidate_parlay_correlation_cache(db: Session) -> bool:

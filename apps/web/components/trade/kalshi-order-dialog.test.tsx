@@ -121,6 +121,38 @@ describe("KalshiOrderDialog", () => {
     expect(mockPlaceKalshiOrder).not.toHaveBeenCalled();
   });
 
+  it("blocks review when principal fits but the worst-case fee exceeds the cap", async () => {
+    const user = userEvent.setup();
+    renderDialog("live");
+
+    // Fill-now at 43¢: $25 input rounds to 58 contracts / $24.94
+    // principal, which was previously allowed despite its fee.
+    await user.type(screen.getByTestId("kalshi-order-stake"), "25");
+    expect(screen.getByTestId("kalshi-order-preview")).toHaveTextContent("cost $24.94");
+    await waitFor(() =>
+      expect(screen.getByTestId("kalshi-order-cap-warning")).toHaveTextContent(
+        "Principal plus worst-case taker fee",
+      ),
+    );
+    expect(screen.getByTestId("kalshi-order-review")).toBeDisabled();
+  });
+
+  it("allows review when one 40-cent contract plus its 2-cent fee equals the cap", async () => {
+    const user = userEvent.setup();
+    mockFetchTradingSettings.mockResolvedValue({ max_order_cost_dollars: 0.42 });
+    renderDialog("live");
+
+    await user.click(screen.getByTestId("kalshi-order-mode-rest"));
+    await user.type(screen.getByTestId("kalshi-order-stake"), "0.40");
+
+    expect(screen.getByTestId("kalshi-order-preview")).toHaveTextContent(
+      "1 contract · cost $0.40",
+    );
+    await waitFor(() => expect(mockFetchTradingSettings).toHaveBeenCalled());
+    expect(screen.queryByTestId("kalshi-order-cap-warning")).not.toBeInTheDocument();
+    expect(screen.getByTestId("kalshi-order-review")).toBeEnabled();
+  });
+
   it("labels the sandbox environment distinctly", async () => {
     renderDialog("demo");
     expect(screen.getByTestId("kalshi-order-env-badge")).toHaveTextContent("demo / sandbox");

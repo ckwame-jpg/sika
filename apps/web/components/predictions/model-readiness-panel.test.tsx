@@ -214,4 +214,66 @@ describe("ModelReadinessPanel", () => {
     const neutralRow = screen.getByTestId("freshness-audit-row-nba_workload");
     expect(neutralRow.getAttribute("data-tuning-signal")).toBe("none");
   });
+
+  it("labels clipped family diagnostics instead of presenting empty settled metrics as complete", async () => {
+    const clippedFamily = {
+      ...activeStudyFamilyFixture,
+      settled_predictions: 50,
+      diagnostics_sample_rows: 5_000,
+      diagnostics_sample_truncated: true,
+      diagnostics_settled_sample_truncated: true,
+      diagnostics_unsettled_sample_truncated: false,
+      diagnostics_sample_window_start: "2026-07-20T18:00:00Z",
+      average_clv: null,
+      feature_coverage_rates: {},
+      missing_context_rates: {},
+      top_failure_reasons: {},
+    };
+    mockFetchModelReadinessSummary.mockResolvedValue({
+      ...modelReadinessSummaryFixture,
+      families: [clippedFamily],
+    });
+    mockFetchModelReadinessDetail.mockResolvedValue(clippedFamily);
+
+    renderWithProviders(<ModelReadinessPanel />);
+
+    const caption = await screen.findByTestId("readiness-diagnostics-sample-clipped");
+    expect(caption).toHaveTextContent("5,000 rows");
+    expect(caption).toHaveTextContent("5,000-row slice cap was reached");
+    expect(caption).toHaveTextContent("All capped-state slices are complete from Jul 20");
+    expect(caption).toHaveTextContent("some included rows from the other state may extend earlier");
+    expect(screen.getAllByText("Unavailable in the capped diagnostics sample.").length).toBeGreaterThan(0);
+    expect(screen.queryByText("No settled-loss diagnostics yet.")).not.toBeInTheDocument();
+  });
+
+  it("does not label complete settled metrics unavailable when only pending diagnostics clip", async () => {
+    const pendingClippedFamily = {
+      ...activeStudyFamilyFixture,
+      settled_predictions: 1,
+      pending_predictions: 5_001,
+      diagnostics_sample_rows: 5_001,
+      diagnostics_sample_truncated: true,
+      diagnostics_settled_sample_truncated: false,
+      diagnostics_unsettled_sample_truncated: true,
+      diagnostics_sample_window_start: "2026-07-20T18:00:00Z",
+      average_clv: null,
+      feature_coverage_rates: {},
+      missing_context_rates: {},
+      top_failure_reasons: {},
+    };
+    mockFetchModelReadinessSummary.mockResolvedValue({
+      ...modelReadinessSummaryFixture,
+      families: [pendingClippedFamily],
+    });
+    mockFetchModelReadinessDetail.mockResolvedValue(pendingClippedFamily);
+
+    renderWithProviders(<ModelReadinessPanel />);
+
+    expect(await screen.findByText("No settled-loss diagnostics yet.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Populates as new predictions settle (rows captured before this shipped stay blank).",
+      ),
+    ).toBeInTheDocument();
+  });
 });

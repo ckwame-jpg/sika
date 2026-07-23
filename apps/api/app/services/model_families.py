@@ -16,7 +16,12 @@ documented here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
+
+from sqlalchemy import and_, false, func, or_
+from sqlalchemy.sql.elements import ColumnElement
+
+from ml_features import SUPPORTED_SPORTS, single_family_key as shared_single_family_key
 
 
 StudyTrack = Literal["active", "heuristic_only"]
@@ -212,31 +217,65 @@ def watchlist_min_edge_for(family_key: str, default: float) -> float:
 # package) because ``apps/ml/ml/training.py`` can't import from
 # ``apps/api``. Re-export here so operators see the per-family
 # mechanism alongside the other per-family knobs.
-from ml_features.monotonic import (  # noqa: E402 — re-export at module bottom
+from ml_features.monotonic import (  # noqa: E402, F401 — public re-export at module bottom
     MONOTONIC_CONSTRAINTS_BY_FAMILY,
     monotonic_constraints_for,
 )
 
 
 def single_family_key(sport_key: str | None, market_family: str | None) -> str:
-    sport = (sport_key or "").upper()
-    family = (market_family or "").lower()
-    if family == "player_prop":
-        if sport == "NBA":
-            return "nba_props"
-        if sport == "MLB":
-            return "mlb_props"
-        if sport == "WNBA":
-            return "wnba_props"
-        if sport == "NFL":
-            return "nfl_props"
-    if sport == "NBA":
-        return "nba_singles"
-    if sport == "MLB":
-        return "mlb_singles"
-    if sport == "WNBA":
-        return "wnba_singles"
-    return f"{sport.lower()}_singles" if sport else "unknown_singles"
+    """Public API wrapper around the shared train/serve family mapper."""
+    return shared_single_family_key(sport_key, market_family)
+
+
+def single_family_sql_predicate(
+    family_key: str,
+    *,
+    sport_column: Any,
+    market_family_column: Any,
+) -> ColumnElement[bool]:
+    """Return the portable SQL equivalent of :func:`single_family_key`.
+
+    Readiness diagnostics must filter to a family *before* applying their
+    defensive row cap.  Keeping this inverse mapping next to the canonical
+    Python wrapper makes that database filter reviewable and testable instead
+    of duplicating slightly different CASE expressions at each call site.
+
+    ``coalesce`` plus ``upper``/``lower`` intentionally mirror the Python
+    mapper's ``(value or "").upper()/lower()`` behavior and work on both
+    SQLite test databases and Postgres production databases.
+    """
+
+    normalized_key = str(family_key or "").lower()
+    normalized_sport = func.upper(func.coalesce(sport_column, ""))
+    normalized_market_family = func.lower(func.coalesce(market_family_column, ""))
+    supported_sports = set(SUPPORTED_SPORTS)
+
+    if normalized_key.endswith("_props"):
+        sport = normalized_key.removesuffix("_props").upper()
+        if sport not in supported_sports:
+            return false()
+        return and_(
+            normalized_sport == sport,
+            normalized_market_family == "player_prop",
+        )
+
+    if not normalized_key.endswith("_singles"):
+        return false()
+
+    sport = normalized_key.removesuffix("_singles").upper()
+    if sport in supported_sports:
+        return and_(
+            normalized_sport == sport,
+            normalized_market_family != "player_prop",
+        )
+
+    # The Python mapper uses ``unknown_singles`` both for a missing sport and
+    # for a literal ``UNKNOWN`` sport. Other unsupported sports map directly
+    # to ``<sport>_singles`` regardless of market family (including props).
+    if sport == "UNKNOWN":
+        return or_(normalized_sport == "", normalized_sport == "UNKNOWN")
+    return normalized_sport == sport
 
 
 def parlay_family_key(leg_count: int, participating_sports: list[str] | tuple[str, ...] | set[str]) -> str:

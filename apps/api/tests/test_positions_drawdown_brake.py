@@ -50,19 +50,19 @@ def test_positions_drawdown_brake_activates_after_losing_week(
 
     Patches ``compute_rolling_pnl_dollars`` rather than seeding rows
     so the test is deterministic regardless of wall-clock NOW vs.
-    the ``settled_at`` window the real query applies. -0.55
-    per-share * $100 notional / $1000 bankroll = -0.055 fraction
-    (just past the default -0.05 threshold)."""
+    the ``settled_at`` window the real query applies. -$55 / $1000
+    bankroll = -0.055 fraction (just past the default -0.05
+    threshold)."""
     with patch(
         "app.services.kelly_sizing_db.compute_rolling_pnl_dollars",
-        return_value=-0.55,
+        return_value=-55.0,
     ):
         response = client.get("/positions")
 
     assert response.status_code == 200
     brake = response.json()["drawdown_brake"]
     assert brake is not None
-    assert brake["rolling_pnl_dollars"] == pytest.approx(-0.55)
+    assert brake["rolling_pnl_dollars"] == pytest.approx(-55.0)
     assert brake["rolling_pnl_fraction"] < brake["threshold"]
     assert brake["brake_multiplier"] < 1.0
     assert brake["is_active"] is True

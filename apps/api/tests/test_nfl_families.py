@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+from itertools import product
+
+from sqlalchemy import literal, select
+
 from app.services.model_families import (
+    FAMILY_DEFINITIONS,
     FAMILY_DEFINITION_BY_KEY,
     parlay_family_key,
     single_family_key,
+    single_family_sql_predicate,
 )
 from app.services.watchlist_coverage import (
     CURRENT_WATCHLIST_FAMILIES_BY_SPORT,
     CURRENT_WATCHLIST_MARKET_FAMILIES,
     current_families_for_sport,
 )
+from ml_features import DEFAULT_SERVE_FAMILY_KEYS
 
 
 def test_nfl_family_definitions_registered() -> None:
@@ -26,10 +33,54 @@ def test_nfl_family_definitions_registered() -> None:
     assert FAMILY_DEFINITION_BY_KEY["nfl_parlay_3leg"].study_track == "heuristic_only"
 
 
+def test_active_single_registry_matches_default_training_families() -> None:
+    active_single_keys = {
+        definition.key
+        for definition in FAMILY_DEFINITIONS
+        if definition.scope == "single" and definition.study_track == "active"
+    }
+    assert active_single_keys == set(DEFAULT_SERVE_FAMILY_KEYS)
+
+
 def test_single_family_key_routes_nfl() -> None:
     assert single_family_key("NFL", "player_prop") == "nfl_props"
     assert single_family_key("NFL", "winner") == "nfl_singles"
     assert single_family_key("NFL", "game_line") == "nfl_singles"
+
+
+def test_single_family_sql_predicate_matches_python_mapper_full_cross_product(db_session) -> None:
+    """The pre-cap SQL filter and in-Python family refinement cannot drift."""
+
+    sports = (None, "", "NBA", "nba", "MLB", "WNBA", "NFL", "NHL", "unknown", " wnba")
+    market_families = (None, "", "winner", "game_line", "player_prop", "PLAYER_PROP")
+    combinations = list(product(sports, market_families))
+    family_keys = {
+        single_family_key(sport, market_family)
+        for sport, market_family in combinations
+    } | {
+        definition.key
+        for definition in FAMILY_DEFINITIONS
+        if definition.scope == "single"
+    }
+
+    for sport, market_family in combinations:
+        expected_key = single_family_key(sport, market_family)
+        for family_key in family_keys:
+            matched = db_session.scalar(
+                select(
+                    single_family_sql_predicate(
+                        family_key,
+                        sport_column=literal(sport),
+                        market_family_column=literal(market_family),
+                    )
+                )
+            )
+            assert bool(matched) is (family_key == expected_key), (
+                sport,
+                market_family,
+                family_key,
+                expected_key,
+            )
 
 
 def test_parlay_family_key_routes_nfl_not_mixed() -> None:

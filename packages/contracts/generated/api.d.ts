@@ -621,6 +621,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/paper-parlays/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Paper Parlay Quote
+         * @description Resolve and price a tray exactly like creation, without persisting.
+         */
+        post: operations["paper_parlay_quote_paper_parlays_quote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/paper-parlays/{parlay_id}": {
         parameters: {
             query?: never;
@@ -769,6 +789,26 @@ export interface paths {
         };
         /** Get Positions */
         get: operations["get_positions_positions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/positions/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Positions
+         * @description Stream the complete paper ledger for the visible portfolio scope.
+         */
+        get: operations["export_positions_positions_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1582,6 +1622,18 @@ export interface components {
             error_message?: string | null;
             /** Market Positions */
             market_positions?: components["schemas"]["KalshiAccountMarketPositionRead"][];
+            /**
+             * Positions Truncated
+             * @default false
+             */
+            positions_truncated: boolean;
+            /** Realized Pnl Dollars Total */
+            realized_pnl_dollars_total?: number | null;
+            /**
+             * Realized Pnl Truncated
+             * @default false
+             */
+            realized_pnl_truncated: boolean;
             /** Recent Fills */
             recent_fills?: components["schemas"]["KalshiAccountFillRead"][];
             /**
@@ -2027,6 +2079,28 @@ export interface components {
              * @default 0
              */
             coverage_settled_predictions: number;
+            /**
+             * Diagnostics Sample Rows
+             * @default 0
+             */
+            diagnostics_sample_rows: number;
+            /**
+             * Diagnostics Sample Truncated
+             * @default false
+             */
+            diagnostics_sample_truncated: boolean;
+            /** Diagnostics Sample Window Start */
+            diagnostics_sample_window_start?: string | null;
+            /**
+             * Diagnostics Settled Sample Truncated
+             * @default false
+             */
+            diagnostics_settled_sample_truncated: boolean;
+            /**
+             * Diagnostics Unsettled Sample Truncated
+             * @default false
+             */
+            diagnostics_unsettled_sample_truncated: boolean;
             /** Edge Buckets */
             edge_buckets?: components["schemas"]["ReadinessBucketRead"][];
             /** Family Key */
@@ -2293,6 +2367,7 @@ export interface components {
          *     authoritative guard against a future caller bypassing the schema.
          */
         PaperParlayCreate: {
+            expected_quote?: components["schemas"]["PaperParlayQuoteExpectation"] | null;
             /** Legs */
             legs: components["schemas"]["PaperParlayLegCreate"][];
             /** Notes */
@@ -2358,6 +2433,38 @@ export interface components {
             threshold?: number | null;
             /** Ticker */
             ticker: string;
+        };
+        /**
+         * PaperParlayQuoteExpectation
+         * @description Canonical quote the operator most recently confirmed in the tray.
+         */
+        PaperParlayQuoteExpectation: {
+            /** Combined Market Price */
+            combined_market_price: number;
+            /** Edge */
+            edge: number;
+            /** Joint Probability */
+            joint_probability: number;
+        };
+        /** PaperParlayQuoteRead */
+        PaperParlayQuoteRead: {
+            /** Combined Market Price */
+            combined_market_price: number;
+            /** Correlation Factor */
+            correlation_factor: number;
+            /** Edge */
+            edge: number;
+            /** Joint Probability */
+            joint_probability: number;
+            pair_counts: components["schemas"]["ParlayPairCountsRead"];
+        };
+        /**
+         * PaperParlayQuoteRequest
+         * @description Read-only quote payload using the same leg snapshots as creation.
+         */
+        PaperParlayQuoteRequest: {
+            /** Legs */
+            legs: components["schemas"]["PaperParlayLegCreate"][];
         };
         /** PaperParlayRead */
         PaperParlayRead: {
@@ -2444,6 +2551,85 @@ export interface components {
             status: string;
             /** Ticker */
             ticker: string;
+        };
+        /**
+         * PaperTotalsRead
+         * @description Exact paper-portfolio aggregates, independent of list pagination.
+         *
+         *     Singles and parlays remain split where the UI needs an exposure
+         *     breakdown. The trailing-seven-day fields are the complete inputs for
+         *     the PnL/win-rate gauge, so the browser never has to infer a KPI from a
+         *     capped ledger page.
+         */
+        PaperTotalsRead: {
+            /**
+             * Closed Count
+             * @default 0
+             */
+            closed_count: number;
+            /**
+             * Open Count
+             * @default 0
+             */
+            open_count: number;
+            /**
+             * Open Exposure Dollars
+             * @default 0
+             */
+            open_exposure_dollars: number;
+            /**
+             * Parlay Realized Pnl Dollars
+             * @default 0
+             */
+            parlay_realized_pnl_dollars: number;
+            /**
+             * Pending Parlay Count
+             * @default 0
+             */
+            pending_parlay_count: number;
+            /**
+             * Pending Parlay Exposure Dollars
+             * @default 0
+             */
+            pending_parlay_exposure_dollars: number;
+            /**
+             * Realized Pnl 7D Dollars
+             * @default 0
+             */
+            realized_pnl_7d_dollars: number;
+            /**
+             * Realized Pnl Dollars
+             * @default 0
+             */
+            realized_pnl_dollars: number;
+            /**
+             * Settled 7D Count
+             * @default 0
+             */
+            settled_7d_count: number;
+            /**
+             * Settled Parlay Count
+             * @default 0
+             */
+            settled_parlay_count: number;
+            /**
+             * Wins 7D Count
+             * @default 0
+             */
+            wins_7d_count: number;
+        };
+        /** ParlayPairCountsRead */
+        ParlayPairCountsRead: {
+            /** Player Team Total */
+            player_team_total: number;
+            /** Qb Receiver Stack */
+            qb_receiver_stack: number;
+            /** Same Team */
+            same_team: number;
+            /** Shared Opponent */
+            shared_opponent: number;
+            /** Shared Subject */
+            shared_subject: number;
         };
         /** ParlayPredictionLegRead */
         ParlayPredictionLegRead: {
@@ -2673,15 +2859,30 @@ export interface components {
              */
             legacy_demo_orders: components["schemas"]["DemoOrderRead"][];
             /**
+             * Legacy Demo Truncated
+             * @default false
+             */
+            legacy_demo_truncated: boolean;
+            /**
              * Legacy Paper Parlays
              * @default []
              */
             legacy_paper_parlays: components["schemas"]["PaperParlayRead"][];
             /**
+             * Legacy Paper Parlays Truncated
+             * @default false
+             */
+            legacy_paper_parlays_truncated: boolean;
+            /**
              * Legacy Paper Positions
              * @default []
              */
             legacy_paper_positions: components["schemas"]["PaperPositionRead"][];
+            /**
+             * Legacy Paper Truncated
+             * @default false
+             */
+            legacy_paper_truncated: boolean;
             /**
              * Paper Parlays
              * @default []
@@ -2694,6 +2895,7 @@ export interface components {
             paper_parlays_truncated: boolean;
             /** Paper Positions */
             paper_positions: components["schemas"]["PaperPositionRead"][];
+            paper_totals?: components["schemas"]["PaperTotalsRead"];
             /**
              * Paper Truncated
              * @default false
@@ -2904,6 +3106,8 @@ export interface components {
             unresolved_predictions: number;
             /** Win Rate */
             win_rate?: number | null;
+            /** Window Start */
+            window_start?: string | null;
             /** Won Predictions */
             won_predictions: number;
         };
@@ -5063,6 +5267,39 @@ export interface operations {
             };
         };
     };
+    paper_parlay_quote_paper_parlays_quote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperParlayQuoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperParlayQuoteRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     remove_paper_parlay_paper_parlays__parlay_id__delete: {
         parameters: {
             query?: never;
@@ -5324,6 +5561,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_positions_positions_export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Complete visible paper ledger as CSV. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
                 };
             };
         };

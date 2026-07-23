@@ -106,6 +106,12 @@ SCHEMA_PATCHES: dict[str, dict[str, str]] = {
     "demo_orders": {
         "user_id": "INTEGER",
     },
+    "kalshi_orders": {
+        # F1 — terminal order status does not prove that its structured
+        # fills/fees were imported. Existing rows land NULL and reconcile
+        # oldest-first until the exchange cursor is fully drained.
+        "fills_synced_at": "TIMESTAMP WITH TIME ZONE",
+    },
     "markets": {
         # Bug #17 — surface fuzzy-mapping confidence + candidates plus
         # the manual-override stamp so ops can review ambiguous Kalshi

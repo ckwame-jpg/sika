@@ -134,7 +134,7 @@ function GaugeRow({ summary, predictions }: { summary: PredictionSummaryRead; pr
         <div className="gi-gauge-meta">
           <span className="gi-micro-label">surfaced today</span>
           <span className="gi-gauge-title">{surfacedToday} picks</span>
-          <span className="gi-gauge-sub">of {summary.total_predictions} in view</span>
+          <span className="gi-gauge-sub">{surfacedToday} of {predictions.length} shown</span>
         </div>
       </div>
     </div>
